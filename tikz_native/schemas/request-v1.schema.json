@@ -1,0 +1,90 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:tikz-native:bridge:request:v1",
+  "title": "TikZ-native bridge request v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "operation", "job_id", "input", "output_dir"],
+  "properties": {
+    "schema": {
+      "const": "tikz-native-bridge.request/v1"
+    },
+    "operation": {
+      "enum": ["compile_asset", "render_static"]
+    },
+    "job_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "output_dir": {
+      "type": "string",
+      "minLength": 1
+    },
+    "input": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source_path", "source_sha256", "picture_index"],
+      "properties": {
+        "source_path": {
+          "type": "string",
+          "minLength": 1
+        },
+        "source_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-fA-F]{64}$"
+        },
+        "entry_macro": {
+          "type": ["string", "null"]
+        },
+        "picture_index": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "conversion": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "subset_version": {
+          "const": "0.1.0"
+        },
+        "scene_unit_per_cm": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "strict_native": {
+          "type": "boolean"
+        },
+        "view_mode": {
+          "const": "tikz_fixed"
+        }
+      }
+    },
+    "render": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "quality": {
+          "enum": ["preview", "formal"]
+        },
+        "pixel_width": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "pixel_height": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "frame_rate": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "background": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    }
+  }
+}

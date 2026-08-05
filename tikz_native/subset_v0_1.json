@@ -1,0 +1,291 @@
+{
+  "schema_version": 1,
+  "subset_version": "0.1.0",
+  "title": "TikZ → 原生 Manim 标准化子集",
+  "levels": {
+    "A": {
+      "name": "动态安全",
+      "meaning": "可原生实例化，并能通过稳定对象 ID 或已保留的几何关系参与动画。主动参数和教学时间线仍需显式指定。"
+    },
+    "B": {
+      "name": "静态安全",
+      "meaning": "静态复刻可接受，但该选项不进入动态几何，或只能近似保留；报告必须明确列出。"
+    },
+    "C": {
+      "name": "不支持",
+      "meaning": "当前没有可靠的原生映射；严格模式必须报告并停止，不能退回 SVG、位图或通用路径。"
+    }
+  },
+  "features": [
+    {
+      "id": "coordinate.named",
+      "level": "A",
+      "description": "命名坐标与命名几何点",
+      "requirement": "后续需要连线、标记或动画的点应先命名"
+    },
+    {
+      "id": "coordinate.xyz",
+      "level": "A",
+      "description": "保留世界坐标的三维命名点",
+      "requirement": "三维坐标必须配套 3d view 或显式 x/y/z 投影基向量"
+    },
+    {
+      "id": "projection.3d_view",
+      "level": "A",
+      "description": "TikZ perspective 库的 3d view 方位角与仰角",
+      "requirement": "按 TikZ 官方基向量公式生成正交 Manim 相机矩阵"
+    },
+    {
+      "id": "projection.basis_3d",
+      "level": "A",
+      "description": "TikZ x/y/z 二维投影基向量",
+      "requirement": "保留前两行工程投影，第三行仅用于深度排序；非正交矩阵不能使用球面相机轨道"
+    },
+    {
+      "id": "macro.numeric",
+      "level": "A",
+      "description": "当前受控范围内的纯数值宏",
+      "requirement": "不得包含随机数、文件读写或依赖 TeX 盒子尺寸的副作用"
+    },
+    {
+      "id": "relation.interpolation",
+      "level": "A",
+      "description": "calc 两点插值、外分与中心对称关系",
+      "requirement": "依赖端点必须命名"
+    },
+    {
+      "id": "relation.translation",
+      "level": "A",
+      "description": "命名点的坐标平移关系",
+      "requirement": "平移基点和位移应可解析"
+    },
+    {
+      "id": "relation.projection",
+      "level": "A",
+      "description": "点到命名直线的正交投影",
+      "requirement": "投影点和直线端点必须命名"
+    },
+    {
+      "id": "relation.named_path",
+      "level": "A",
+      "description": "原生 name path 关系",
+      "requirement": "当前动态求交仅覆盖直线、椭圆和圆"
+    },
+    {
+      "id": "relation.intersection.line_line",
+      "level": "A",
+      "description": "直线—直线命名路径求交",
+      "requirement": "必须用 sort by 指定有向直线路径"
+    },
+    {
+      "id": "relation.intersection.line_ellipse",
+      "level": "A",
+      "description": "直线—椭圆或直线—圆命名路径求交",
+      "requirement": "必须用 sort by 指定有向直线路径；相切和交点消失不在本级保证内"
+    },
+    {
+      "id": "object.line",
+      "level": "A",
+      "description": "两点间原生 Line",
+      "requirement": "需要稳定动画 ID 时端点应命名"
+    },
+    {
+      "id": "object.arrow_stealth",
+      "level": "A",
+      "description": "原生 Line 与 StealthTip 箭头",
+      "requirement": "箭头尺寸按 pt 独立换算"
+    },
+    {
+      "id": "object.polygon_fill",
+      "level": "A",
+      "description": "原生 Polygon 填充区域",
+      "requirement": "填充与边线分开写，避免 filldraw 绑定动画语义"
+    },
+    {
+      "id": "object.ellipse",
+      "level": "A",
+      "description": "原生 Ellipse",
+      "requirement": "中心与半轴必须可解析"
+    },
+    {
+      "id": "object.circle",
+      "level": "A",
+      "description": "原生 Circle",
+      "requirement": "圆心与半径必须可解析"
+    },
+    {
+      "id": "object.dot",
+      "level": "A",
+      "description": "原生 Dot 点标记",
+      "requirement": "点半径按 pt 独立换算"
+    },
+    {
+      "id": "node.label",
+      "level": "A",
+      "description": "普通 MathTex 或 Tex 标签",
+      "requirement": "默认 11pt，数学片段显式使用 displaystyle"
+    },
+    {
+      "id": "node.label_billboard_3d",
+      "level": "A",
+      "description": "三维图中始终正对屏幕并保持 TikZ anchor 的标签",
+      "requirement": "相机运动时必须按当前投影矩阵逐帧重算屏幕方向偏移"
+    },
+    {
+      "id": "node.path_label",
+      "level": "A",
+      "description": "带 pos 和 anchor 的路径标签",
+      "requirement": "默认保持页面水平"
+    },
+    {
+      "id": "node.path_label.sloped",
+      "level": "A",
+      "description": "沿路径切向旋转的 sloped 标签",
+      "requirement": "动态时保留切向与法向局部偏移"
+    },
+    {
+      "id": "marker.angle",
+      "level": "A",
+      "description": "原生 Arc 角弧与独立角标签",
+      "requirement": "三点顺序和半径必须显式"
+    },
+    {
+      "id": "marker.right_angle",
+      "level": "A",
+      "description": "原生 RightAngle 直角记号",
+      "requirement": "三点顺序决定记号象限"
+    },
+    {
+      "id": "style.line_width_pt",
+      "level": "A",
+      "description": "以 pt 明确给出的线宽",
+      "requirement": "不随 TikZ 几何 scale 二次缩放"
+    },
+    {
+      "id": "style.dash_pattern_explicit",
+      "level": "A",
+      "description": "显式 on/off 节距的 dash pattern",
+      "requirement": "动态改变长度时按实时端点重建节距"
+    },
+    {
+      "id": "style.xcolor_mix",
+      "level": "A",
+      "description": "HTML 颜色和 xcolor A!p!B 混色",
+      "requirement": "混色与透明度分别处理"
+    },
+    {
+      "id": "style.opacity",
+      "level": "A",
+      "description": "填充、描边或整体透明度",
+      "requirement": "不得把颜色混合比例误当透明度"
+    },
+    {
+      "id": "style.font_command",
+      "level": "A",
+      "description": "受控 TeX 字号命令，如 small",
+      "requirement": "保留 11pt 文档字号表和 displaystyle"
+    },
+    {
+      "id": "style.dash_keyword",
+      "level": "B",
+      "description": "dashed 或 densely dashed 关键字",
+      "requirement": "使用固定近似节距；需要像素复刻时改写为显式 dash pattern"
+    },
+    {
+      "id": "layout.baseline",
+      "level": "B",
+      "description": "TikZ 图片在 TeX 行盒中的 baseline",
+      "requirement": "记录但不进入 Manim 几何；PPT 对齐由布局层处理"
+    },
+    {
+      "id": "layout.trim_right",
+      "level": "B",
+      "description": "TeX 图片外部 trim right 版面修正",
+      "requirement": "记录但不改写 Manim 对象坐标"
+    },
+    {
+      "id": "scope.redundant_draw_none",
+      "level": "B",
+      "description": "对 fill 无影响的 scope draw=none 冗余选项",
+      "requirement": "当前只允许这一种已证明安全的 scope 忽略"
+    },
+    {
+      "id": "path.bezier",
+      "level": "C",
+      "description": "一般 Bézier controls 路径",
+      "requirement": "需要新增明确的原生曲线与动态参数映射"
+    },
+    {
+      "id": "path.arc_general",
+      "level": "C",
+      "description": "一般 TikZ arc 路径",
+      "requirement": "需要区分圆弧语义、方向和变换"
+    },
+    {
+      "id": "path.plot_smooth",
+      "level": "C",
+      "description": "plot、smooth 与采样曲线",
+      "requirement": "需要定义采样、参数方向和动态重建策略"
+    },
+    {
+      "id": "layout.clip",
+      "level": "C",
+      "description": "clip 裁剪路径",
+      "requirement": "当前没有可靠的通用原生遮罩映射"
+    },
+    {
+      "id": "style.decoration",
+      "level": "C",
+      "description": "decorations 路径装饰",
+      "requirement": "必须按具体装饰建立有语义的对象映射"
+    },
+    {
+      "id": "style.pattern_shade_gradient",
+      "level": "C",
+      "description": "pattern、shade 与 gradient",
+      "requirement": "禁止静默栅格化"
+    },
+    {
+      "id": "node.complex",
+      "level": "C",
+      "description": "复杂 node 形状、边框、text width 与自动换行",
+      "requirement": "需要独立的原生布局模型"
+    },
+    {
+      "id": "node.matrix",
+      "level": "C",
+      "description": "TikZ matrix",
+      "requirement": "需要原生表格/节点网格映射"
+    },
+    {
+      "id": "scope.transform_nested",
+      "level": "C",
+      "description": "嵌套 scope 旋转、缩放、平移与样式继承",
+      "requirement": "必须区分几何、线宽、箭头和字体的变换规则"
+    },
+    {
+      "id": "macro.arbitrary",
+      "level": "C",
+      "description": "任意参数宏、条件分支与复杂 pgfkeys",
+      "requirement": "当前只允许受控、无副作用的简单展开"
+    },
+    {
+      "id": "relation.intersection.complex",
+      "level": "C",
+      "description": "复杂曲线多交点与闭合路径排序",
+      "requirement": "需要分支身份和路径参数连续性规则"
+    },
+    {
+      "id": "relation.topology_change",
+      "level": "C",
+      "description": "相切、交点合并、消失或重新出现",
+      "requirement": "需要明确 safe interval、事件动画或严格报错策略"
+    },
+    {
+      "id": "syntax.unsupported",
+      "level": "C",
+      "description": "尚未分类的未支持 TikZ 语句",
+      "requirement": "必须报告原语句并停止严格转换"
+    }
+  ]
+}

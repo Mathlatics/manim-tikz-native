@@ -1,0 +1,384 @@
+\definecolor{lectureteal}{HTML}{157A6E}
+\definecolor{lecturetealTitle}{HTML}{D7F3EE}
+\definecolor{lectureblue}{HTML}{1D4E89}
+\definecolor{lecturegold}{HTML}{B8860B}
+\definecolor{lecturered}{HTML}{A23E48}
+\definecolor{lectureink}{HTML}{20242A}
+\definecolor{lecturesoft}{HTML}{F5F8FA}
+\definecolor{lectureline}{HTML}{B7C6D0}
+\definecolor{lectureblueTitle}{HTML}{D9ECFF}
+\definecolor{lecturegoldTitle}{HTML}{FFE8A6}
+\definecolor{lectureredTitle}{HTML}{FFE0E5}
+  \gdef\analysisfigsetup{%
+    % 图形参数
+    \pgfmathsetmacro{\figEllipseA}{2}%
+    \pgfmathsetmacro{\figEllipseB}{sqrt(3)}%
+    \pgfmathsetmacro{\figFocusX}{-1}%
+    \pgfmathsetmacro{\figSlope}{3/4}%
+    \pgfmathsetmacro{\figLineLeftX}{-2.25}%
+    \pgfmathsetmacro{\figLineRightX}{1.55}%
+    % 由直线 y=\figSlope(x-\figFocusX) 与椭圆交点计算 P,Q
+    \pgfmathsetmacro{\figQuadA}{1/(\figEllipseA*\figEllipseA)+\figSlope*\figSlope/(\figEllipseB*\figEllipseB)}%
+    \pgfmathsetmacro{\figQuadB}{-2*\figSlope*\figSlope*\figFocusX/(\figEllipseB*\figEllipseB)}%
+    \pgfmathsetmacro{\figQuadC}{\figSlope*\figSlope*\figFocusX*\figFocusX/(\figEllipseB*\figEllipseB)-1}%
+    \pgfmathsetmacro{\figDelta}{\figQuadB*\figQuadB-4*\figQuadA*\figQuadC}%
+    \pgfmathsetmacro{\figPx}{(-\figQuadB+sqrt(\figDelta))/(2*\figQuadA)}%
+    \pgfmathsetmacro{\figQx}{(-\figQuadB-sqrt(\figDelta))/(2*\figQuadA)}%
+    \pgfmathsetmacro{\figPy}{\figSlope*(\figPx-\figFocusX)}%
+    \pgfmathsetmacro{\figQy}{\figSlope*(\figQx-\figFocusX)}%
+    \pgfmathsetmacro{\figRx}{-\figPx}%
+    \pgfmathsetmacro{\figRy}{-\figPy}%
+    \pgfmathsetmacro{\figLineLeftY}{\figSlope*(\figLineLeftX-\figFocusX)}%
+    \pgfmathsetmacro{\figLineRightY}{\figSlope*(\figLineRightX-\figFocusX)}%
+    \coordinate (O) at (0,0);
+    \coordinate (F) at (\figFocusX,0);
+    \coordinate (P) at (\figPx,\figPy);
+    \coordinate (Q) at (\figQx,\figQy);
+    \coordinate (R) at (\figRx,\figRy);
+  }
+  \gdef\analysisfigsetupnative{%
+    % 第一幅图使用 TikZ 原生路径求交：路径方向决定 Q、P 的稳定次序
+    \pgfmathsetmacro{\figEllipseA}{2}%
+    \pgfmathsetmacro{\figEllipseB}{sqrt(3)}%
+    \pgfmathsetmacro{\figFocusX}{-1}%
+    \coordinate (O) at (0,0);
+    \coordinate (F) at (\figFocusX,0);
+    % 该辅助点只确定静态图中直线 l 的初始方向，不作为可见对象
+    \coordinate (analysisfigPguide) at (1,1.5);
+    \coordinate (analysisfigLineStart) at ($(F)!-0.625!(analysisfigPguide)$);
+    \coordinate (analysisfigLineEnd) at ($(F)!1.275!(analysisfigPguide)$);
+    \path[name path=analysisfigC]
+      (O) ellipse [x radius=\figEllipseA,y radius=\figEllipseB];
+    \path[name path=analysisfigL]
+      (analysisfigLineStart) -- (analysisfigLineEnd);
+    \path[name intersections={
+      of=analysisfigC and analysisfigL,
+      sort by=analysisfigL,
+      by={Q,P}
+    }];
+    \coordinate (R) at ($(O)!-1!(P)$);
+  }
+  \gdef\analysisfigbase{%
+    \draw[-{Stealth[length=1.7mm,width=1.3mm]}] (-2.45,0) -- (2.5,0) node[below] {$x$};
+    \draw[-{Stealth[length=1.7mm,width=1.3mm]}] (0,-2.1) -- (0,2.15) node[left] {$y$};
+    \draw (0,0) ellipse [x radius=\figEllipseA,y radius=\figEllipseB];
+    \draw (\figLineLeftX,\figLineLeftY) -- (\figLineRightX,\figLineRightY) node[right] {$l$};
+  }
+  \gdef\analysisfigbasenative{%
+    \draw[-{Stealth[length=1.7mm,width=1.3mm]}] (-2.45,0) -- (2.5,0) node[below] {$x$};
+    \draw[-{Stealth[length=1.7mm,width=1.3mm]}] (0,-2.1) -- (0,2.15) node[left] {$y$};
+    \draw (0,0) ellipse [x radius=\figEllipseA,y radius=\figEllipseB];
+    \draw ($(F)!-0.625!(analysisfigPguide)$) -- ($(F)!1.275!(analysisfigPguide)$) node[right] {$l$};
+  }
+  \gdef\analysisfigpoints{%
+    \foreach \X in {O,F,P,Q,R}{\fill (\X) circle (1pt);}
+    \node[below right=-1pt] at (O) {$O$};
+    \node[above=8pt,left=-5pt] at (F) {$F$};
+    \node[above=9pt,right=-8pt] at (P) {$P$};
+    \node[above=3pt,left=1pt] at (Q) {$Q$};
+    \node[below=8pt,left=-5pt] at (R) {$R$};
+  }
+      \begin{tikzpicture}[line width=0.9pt,scale=0.9,line cap=round,line join=round]
+        \analysisfigsetupnative
+        \begin{scope}[draw=none]
+          \fill[lectureteal!14] (P) -- (Q) -- (R) -- cycle;
+          \fill[lecturegold!30,opacity=0.72] (P) -- (F) -- (O) -- cycle;
+        \end{scope}
+        \analysisfigbasenative
+        \draw (P) -- (Q) -- (R) -- cycle;
+        \draw (P) -- (F) -- (O) -- cycle;
+        \draw[dashed] (Q) -- (O);
+        \analysisfigpoints
+      \end{tikzpicture}
+
+      \begin{tikzpicture}[line width=0.9pt,scale=1.25,line cap=round,line join=round]
+        \analysisfigsetup
+        \pgfmathsetmacro{\angleFigTikzScale}{1.25}
+        \pgfmathsetmacro{\angleFigScale}{1}
+        \pgfmathsetmacro{\angleFigPx}{(\figPx-\figQx)*\angleFigScale}
+        \pgfmathsetmacro{\angleFigPy}{(\figPy-\figQy)*\angleFigScale}
+        \pgfmathsetmacro{\angleFigRx}{(\figRx-\figQx)*\angleFigScale}
+        \pgfmathsetmacro{\angleFigRy}{(\figRy-\figQy)*\angleFigScale}
+        \pgfmathsetmacro{\angleFigFPos}{(\figFocusX-\figQx)/(\figPx-\figQx)}
+        \pgfmathsetlengthmacro{\angleFigQFRadius}{\angleFigTikzScale*\angleFigFPos*sqrt(\angleFigPx*\angleFigPx+\angleFigPy*\angleFigPy)*1cm}
+        \coordinate (Q) at (0,0);
+        \coordinate (P) at (\angleFigPx,\angleFigPy);
+        \coordinate (R) at (\angleFigRx,\angleFigRy);
+        \coordinate (F) at ($(Q)!\angleFigFPos!(P)$);
+        \coordinate (Qxdir) at ($(Q)+({0.52*\angleFigPx},0)$);
+          \coordinate (Qxleft) at ($(Q)+({-0.20*\angleFigPx},0)$);
+          \coordinate (Qxright) at ($(Q)+({1.14*\angleFigPx},0)$);
+          \coordinate (Rincl) at ($(Q)!-0.86!(R)$);
+          \coordinate (Rray) at ($(Q)!1.4!(R)$);
+          \draw[lectureline] (Qxleft) -- (Qxright);
+          \draw (Q) -- ($(Q)!2!(F)$);
+          \draw (Rincl) -- (Rray);
+          \node[font=\small,anchor=west] at ($(Q)!2!(F)$) {$QP:k_{QP}=\tan\alpha$};
+          \node[font=\small,anchor=west] at (Rray) {$QR:\ k_{QR}=\tan\beta$};
+          \pic[draw=lectureblue!70!black,line width=0.65pt,angle radius=10pt,angle eccentricity=1.7,"$\alpha$"] {angle=Qxdir--Q--P};
+          \pic[draw=lecturegold!80!black,line width=0.65pt,angle radius=26pt,angle eccentricity=1.35,"$\beta$"] {angle=Qxdir--Q--Rincl};
+          \pic[draw=lecturered!85!black,line width=0.8pt,angle radius=\angleFigQFRadius,angle eccentricity=1.2,"$\theta$"] {angle=R--Q--P};
+          \foreach \X in {F,Q,R}{\fill (\X) circle (1pt);}
+          \node[above=9pt,left=-8pt] at (F) {$F$};
+          \node[below=9pt,left=-3pt] at (Q) {$Q$};
+          \node[below=7pt,left=-3pt] at (R) {$R$};
+
+      \end{tikzpicture}
+
+        \begin{tikzpicture}[line width=0.9pt,scale=0.9,line cap=round,line join=round]
+          \analysisfigsetup
+          \coordinate (Pfoot) at (\figPx,0);
+          \begin{scope}[draw=none]
+            \fill[lecturegold!28,opacity=0.8] (P) -- (F) -- (O) -- cycle;
+          \end{scope}
+          \analysisfigbase
+          \draw (P) -- (F) -- (O) -- cycle;
+          \draw[densely dashed,lecturegold!70!black] (P) -- (Pfoot);
+          \node[below] at ($(F)!0.5!(O)$) {$1$};
+          \node[right=1pt] at ($(P)!0.6!(Pfoot)$) {$y_1$};
+          \foreach \X in {F,O,P}{\fill (\X) circle (1pt);}
+          \node[above=8pt,left=-5pt] at (F) {$F$};
+          \node[below right=-1pt] at (O) {$O$};
+          \node[above=9pt,right=-8pt] at (P) {$P$};
+        \end{tikzpicture}
+
+        \begin{tikzpicture}[line width=0.9pt,scale=0.9,line cap=round,line join=round]
+          \analysisfigsetup
+          \coordinate (H) at ($(P)!(R)!(Q)$);
+          \begin{scope}[draw=none]
+            \fill[lectureteal!16,opacity=0.9] (P) -- (Q) -- (R) -- cycle;
+          \end{scope}
+          \analysisfigbase
+          \draw (P) -- node[midway,above=0pt,sloped] {$\left|PQ\right|$} (Q) -- (R) -- cycle;
+          \draw[dash pattern=on 1.5pt off 2pt,lectureteal!70!black] (R) -- node[midway,above=0pt,sloped] {$d$} (H);
+          \pic[draw=lectureteal!70!black,line width=0.9pt,angle radius=3.5pt] {right angle=R--H--P};
+          \foreach \X in {P,Q,R}{\fill (\X) circle (1pt);}
+          \node[above=9pt,right=-8pt] at (P) {$P$};
+          \node[above=3pt,left=1pt] at (Q) {$Q$};
+          \node[below=8pt,left=-5pt] at (R) {$R$};
+        \end{tikzpicture}
+
+        \begin{tikzpicture}[line width=0.9pt,scale=1.15,line cap=round,line join=round]
+          \analysisfigsetup
+          \coordinate (HQ) at ($(P)!(Q)!(R)$);
+          \begin{scope}[draw=none]
+            \fill[lectureteal!14,opacity=0.9] (P) -- (Q) -- (R) -- cycle;
+            \fill[lecturegold!30,opacity=0.82] (P) -- (Q) -- (O) -- cycle;
+          \end{scope}
+          \draw[lectureline] (0,0) ellipse [x radius=\figEllipseA,y radius=\figEllipseB];
+          \draw (Q) -- (P) -- (R) -- cycle;
+          \draw[dash pattern=on 1.5pt off 2pt] (Q) -- (O);
+          \draw[lectureblue!70!black,line width=1.15pt] (P) -- (O) -- (R);
+          \draw[dash pattern=on 1.5pt off 2pt,lectureteal!70!black] (Q) -- node[pos=0.58,above=-1pt,sloped] {\small $h_Q$} (HQ);
+          \pic[draw=lectureteal!70!black,line width=0.75pt,angle radius=3.6pt] {right angle=Q--HQ--P};
+          \foreach \X in {P,Q,R,O}{\fill (\X) circle (1pt);}
+          \node[above=9pt,right=-8pt] at (P) {$P$};
+          \node[above=-3pt,left=0pt] at (Q) {$Q$};
+          \node[below=8pt,left=-5pt] at (R) {$R$};
+          \node[below right=-2pt] at (O) {$O$};
+        \end{tikzpicture}
+
+        \begin{tikzpicture}[line width=0.9pt,scale=1.15,line cap=round,line join=round]
+          \analysisfigsetup
+          \coordinate (HO) at ($(P)!(O)!(Q)$);
+          \begin{scope}[draw=none]
+            \fill[lectureteal!14,opacity=0.9] (P) -- (Q) -- (O) -- cycle;
+            \fill[lecturegold!30,opacity=0.88] (P) -- (F) -- (O) -- cycle;
+          \end{scope}
+          \draw[lectureline] (0,0) ellipse [x radius=\figEllipseA,y radius=\figEllipseB];
+          \draw (Q) -- (P);
+          \draw (P) -- (O) -- (Q);
+          \draw (F) -- (O);
+          \draw[dash pattern=on 1.5pt off 2pt] (Q) -- (O);
+          \draw[dash pattern=on 1.5pt off 2pt,lecturegold!75!black] (O) -- node[pos=0.58,above=0pt,sloped] {\small $d_O$} (HO);
+          \pic[draw=lecturegold!75!black,line width=0.75pt,angle radius=3.2pt] {right angle=O--HO--P};
+          \foreach \X in {P,Q,F,O}{\fill (\X) circle (1pt);}
+          \node[above=9pt,right=-8pt] at (P) {$P$};
+          \node[above=-3pt,left=0pt] at (Q) {$Q$};
+          \node[above=8pt,left=-5pt] at (F) {$F$};
+          \node[below right=-2pt] at (O) {$O$};
+        \end{tikzpicture}
+
+      \begin{tikzpicture}[line width=0.9pt,scale=1.3,line cap=round,line join=round]
+        \analysisfigsetup
+        \pgfmathsetmacro{\angleFigTikzScale}{1.3}
+        \pgfmathsetmacro{\angleFigScale}{1}
+        \pgfmathsetmacro{\angleFigPx}{(\figPx-\figQx)*\angleFigScale}
+        \pgfmathsetmacro{\angleFigPy}{(\figPy-\figQy)*\angleFigScale}
+        \pgfmathsetmacro{\angleFigRx}{(\figRx-\figQx)*\angleFigScale}
+        \pgfmathsetmacro{\angleFigRy}{(\figRy-\figQy)*\angleFigScale}
+        \pgfmathsetmacro{\angleFigFPos}{(\figFocusX-\figQx)/(\figPx-\figQx)}
+        \pgfmathsetlengthmacro{\angleFigQFRadius}{\angleFigTikzScale*\angleFigFPos*sqrt(\angleFigPx*\angleFigPx+\angleFigPy*\angleFigPy)*1cm}
+        \coordinate (Q) at (0,0);
+        \coordinate (P) at (\angleFigPx,\angleFigPy);
+        \coordinate (R) at (\angleFigRx,\angleFigRy);
+        \coordinate (F) at ($(Q)!\angleFigFPos!(P)$);
+        \coordinate (Qxdir) at ($(Q)+({0.52*\angleFigPx},0)$);
+          \coordinate (Qxleft) at ($(Q)+({-0.22*\angleFigPx},0)$);
+          \coordinate (Qxright) at ($(Q)+({1.22*\angleFigPx},0)$);
+          \coordinate (Rincl) at ($(Q)!-0.86!(R)$);
+          \coordinate (Rray) at ($(Q)!1.42!(R)$);
+          \draw[lectureline] (Qxleft) -- (Qxright) node[below right=-1pt] {\small $x$正方向};
+          \draw[lectureblue!80!black] (Q) -- ($(Q)!2!(F)$);
+          \draw[lecturegold!85!black] (Rincl) -- (Rray);
+          \node[font=\small,anchor=west] at ($(Q)!2!(F)$) {$QP:k_{QP}=\tan\alpha$};
+          \node[font=\small,anchor=west] at (Rray) {$QR:k_{QR}=\tan\beta$};
+          \pic[draw=lectureblue!70!black,line width=0.65pt,angle radius=10pt,angle eccentricity=1.7,"$\alpha$"] {angle=Qxdir--Q--P};
+          \pic[draw=lecturegold!80!black,line width=0.65pt,angle radius=26pt,angle eccentricity=1.35,"$\beta$"] {angle=Qxdir--Q--Rincl};
+          \pic[draw=lecturered!85!black,line width=0.8pt,angle radius=\angleFigQFRadius,angle eccentricity=1.2,"$\theta$"] {angle=R--Q--P};
+          \foreach \X in {F,Q,R}{\fill (\X) circle (1pt);}
+          \node[above=9pt,left=-8pt] at (F) {$F$};
+          \node[below=9pt,left=-3pt] at (Q) {$Q$};
+          \node[below=7pt,left=-3pt] at (R) {$R$};
+      \end{tikzpicture}
+
+      \begin{tikzpicture}[line width=0.9pt,scale=1.2,line cap=round,line join=round]
+        \analysisfigsetup
+        \begin{scope}[draw=none]
+          \fill[lectureredTitle!28!white] (P) -- (Q) -- (R) -- cycle;
+        \end{scope}
+        \draw[-{Stealth[length=1.7mm,width=1.3mm]}] (-2.42,0) -- (2.48,0) node[below] {$x$};
+        \draw[-{Stealth[length=1.7mm,width=1.3mm]}] (0,-2.05) -- (0,2.12) node[left] {$y$};
+        \draw (0,0) ellipse [x radius=\figEllipseA,y radius=\figEllipseB];
+        \draw[lecturered!72!black,dashed] (P) -- (R);
+        \draw[lectureblue!80!black] (Q) -- (P)
+        node[pos=0.55,above=0pt,sloped,font=\small] {$k_{QP}$};
+        \draw[lecturegold!85!black] (Q) -- (R)
+        node[pos=0.5,above=0pt,sloped,font=\small] {$k_{QR}$};
+        \foreach \X in {O,P,Q,R}{\fill (\X) circle (1pt);}
+        \node[below right=-1pt] at (O) {$O$};
+        \node[above=8pt,right=-5pt] at (P) {$P(x_1,y_1)$};
+        \node[above=0pt,left=1pt] at (Q) {$Q(x_2,y_2)$};
+        \node[below=8pt,left=-7pt] at (R) {$R(-x_1,-y_1)$};
+      \end{tikzpicture}
+
+      \begin{tikzpicture}[line width=0.9pt,scale=0.78,line cap=round,line join=round,trim right=2.55cm]
+        \pgfmathsetmacro{\sourceFigA}{2.35}
+        \pgfmathsetmacro{\sourceFigB}{1.55}
+        \pgfmathsetmacro{\sourceFigMx}{1.28}
+        \pgfmathsetmacro{\sourceFigMy}{\sourceFigB*sqrt(1-\sourceFigMx*\sourceFigMx/(\sourceFigA*\sourceFigA))}
+        \coordinate (O) at (0,0);
+        \coordinate (A) at (-\sourceFigA,0);
+        \coordinate (B) at (\sourceFigA,0);
+        \coordinate (M) at (\sourceFigMx,\sourceFigMy);
+        \draw[-{Stealth[length=1.8mm,width=1.35mm]}] (-2.95,0) -- (3.12,0) node[below] {$x$};
+        \draw[-{Stealth[length=1.8mm,width=1.35mm]}] (0,-1.9) -- (0,2.08) node[left] {$y$};
+        \draw[lectureblue!82!black,dash pattern=on 3pt off 2pt]
+        (O) ellipse [x radius=\sourceFigA,y radius=\sourceFigB];
+        \draw[lecturered!92!black]
+        ($(A)!-0.16!(M)$) -- ($(A)!1.22!(M)$);
+        \draw[lecturered!92!black]
+        ($(B)!-0.30!(M)$) -- ($(B)!1.18!(M)$);
+        \foreach \P in {A,B,O,M}{\fill (\P) circle (1pt);}
+        \node[above=8pt,left=-0.5pt] at (A) {$A$};
+        \node[above=8pt,right=-0.5pt] at (B) {$B$};
+        \node[below left=-1pt] at (O) {$O$};
+        \node[above=10pt,right=-4pt] at (M) {$M$};
+      \end{tikzpicture}
+
+        \begin{tikzpicture}[line width=0.85pt,scale=1.1,line cap=round,line join=round,baseline=(current bounding box.center)]
+          \coordinate (Op) at (0,0);
+          \coordinate (Pp) at (0.6,0.8);
+          \coordinate (Rp) at (-0.6,-0.8);
+          \coordinate (Qp) at (-0.8,0.6);
+          \draw[-{Stealth[length=1.5mm,width=1.2mm]},lectureline] (-1.28,0) -- (1.34,0) node[below] {$X$};
+          \draw[-{Stealth[length=1.5mm,width=1.2mm]},lectureline] (0,-1.3) -- (0,1.4) node[below=4pt,left=0pt] {$Y$};
+          \draw[lectureblue!78!black] (Op) circle (1);
+          \draw[lecturered!72!black,dashed] (Pp) -- (Rp);
+          \draw[lectureblue!82!black] (Qp) -- (Pp);
+          \draw[lecturegold!85!black] (Qp) -- (Rp);
+          \pic[draw=lecturered!85!black,line width=0.7pt,angle radius=6pt] {right angle=Pp--Qp--Rp};
+          \foreach \X in {Pp,Qp,Rp}{\fill (\X) circle (0.9pt);}
+          \node[above right=-1pt] at (Pp) {$P'$};
+          \node[above left=-1pt] at (Qp) {$Q'$};
+          \node[below left=-1.5pt] at (Rp) {$R'$};
+        \end{tikzpicture}
+
+          \begin{tikzpicture}[line width=0.85pt,scale=1,line cap=round,line join=round,baseline=(current bounding box.center)]
+            \draw[-{Stealth[length=1.7mm,width=1.25mm]},lecturered!78!black] (-1,0) -- (1,0);
+            \node[above] at (0,0.12) {$x=aX$};
+            \node[below] at (0,-0.12) {$y=bY$};
+          \end{tikzpicture}%
+
+        \begin{tikzpicture}[line width=0.85pt,scale=1.1,line cap=round,line join=round,baseline=(current bounding box.center)]
+          \pgfmathsetmacro{\affA}{1.72}
+          \pgfmathsetmacro{\affB}{1.05}
+          \coordinate (O) at (0,0);
+          \coordinate (P) at ({0.6*\affA},{0.8*\affB});
+          \coordinate (R) at ({-0.6*\affA},{-0.8*\affB});
+          \coordinate (Q) at ({-0.8*\affA},{0.6*\affB});
+          \draw[-{Stealth[length=1.5mm,width=1.2mm]},lectureline] (-2.08,0) -- (2.16,0) node[below] {$x$};
+          \draw[-{Stealth[length=1.5mm,width=1.2mm]},lectureline] (0,-1.3) -- (0,1.4) node[below=3pt,left=0pt] {$y$};
+          \draw[lectureblue!78!black] (O) ellipse [x radius=\affA,y radius=\affB];
+          \draw[lecturered!72!black,dashed] (P) -- (R);
+          \draw[lectureblue!82!black] (Q) -- (P);
+          \draw[lecturegold!85!black] (Q) -- (R);
+          \pic[draw=lecturered!85!black,line width=0.75pt,angle radius=12pt,angle eccentricity=1.32,"$\theta$"] {angle=R--Q--P};
+          \foreach \X in {P,Q,R}{\fill (\X) circle (0.9pt);}
+          \node[above right=-1pt] at (P) {$P$};
+          \node[above left=-1pt] at (Q) {$Q$};
+          \node[below left=-1pt] at (R) {$R$};
+        \end{tikzpicture}
+
+        \begin{tikzpicture}[line width=0.85pt,scale=1.5,line cap=round,line join=round]
+          \coordinate (A) at (0,0);
+          \coordinate (B) at (1.45,0.92);
+          \coordinate (C) at (1.45,0);
+          \draw[-{Stealth[length=1.5mm,width=1.2mm]},lectureline] (-0.2,0) -- (1.9,0) node[below] {$X$};
+          \draw[-{Stealth[length=1.5mm,width=1.2mm]},lectureline] (0,-0.2) -- (0,1.25) node[left] {$Y$};
+          \draw[lectureblue!82!black] (A) -- (B);
+          \draw[dash pattern=on 1.6pt off 1.7pt,lecturegold!85!black] (A) -- node[below] {$\Delta X$} (C);
+          \draw[dash pattern=on 1.6pt off 1.7pt,lecturegold!85!black] (C) -- node[right] {$\Delta Y$} (B);
+          \foreach \X in {A,B}{\fill (\X) circle (0.9pt);}
+          \node[below left=-1pt] at (A) {$A'$};
+          \node[above right=-1pt] at (B) {$B'$};
+          \node[above=9pt] at (0.67,0.52) {$K=\frac{\Delta Y}{\Delta X}$};
+        \end{tikzpicture}
+
+        \begin{tikzpicture}[line width=0.85pt,scale=1.5,line cap=round,line join=round]
+          \coordinate (A) at (0,0);
+          \coordinate (B) at (2.18,0.7);
+          \coordinate (C) at (2.18,0);
+          \draw[-{Stealth[length=1.5mm,width=1.2mm]},lectureline] (-0.2,0) -- (2.55,0) node[below] {$x$};
+          \draw[-{Stealth[length=1.5mm,width=1.2mm]},lectureline] (0,-0.2) -- (0,1.05) node[left] {$y$};
+          \draw[lectureblue!82!black] (A) -- (B);
+          \draw[dash pattern=on 1.6pt off 1.7pt,lecturegold!85!black] (A) -- node[below] {$\Delta x=a\Delta X$} (C);
+          \draw[dash pattern=on 1.6pt off 1.7pt,lecturegold!85!black] (C) -- node[right] {$\Delta y=b\Delta Y$} (B);
+          \foreach \X in {A,B}{\fill (\X) circle (0.9pt);}
+          \node[below left=-1pt] at (A) {$A$};
+          \node[above right=-1pt] at (B) {$B$};
+          \node[above=9pt] at (1.14,0.37) {$k=\frac{\Delta y}{\Delta x}=\frac baK$};
+        \end{tikzpicture}
+
+        \begin{tikzpicture}[line width=0.85pt,scale=1.1,line cap=round,line join=round]
+          \coordinate (Qp) at (0,0);
+          \coordinate (Up) at (1.1,1.1);
+          \coordinate (Dp) at (1.1,-1.1);
+          \draw[-{Stealth[length=1.5mm,width=1.2mm]},lectureline] (-1.05,0) -- (1.45,0) node[below] {$X$};
+          \draw[-{Stealth[length=1.5mm,width=1.2mm]},lectureline] (0,-1.28) -- (0,1.35) node[left] {$Y$};
+          \draw[lectureblue!82!black] ($(Qp)!-0.58!(Up)$) -- ($(Qp)!1.08!(Up)$);
+          \draw[lecturegold!85!black] ($(Qp)!-0.58!(Dp)$) -- ($(Qp)!1.08!(Dp)$);
+          \pic[draw=lecturered!85!black,line width=0.72pt,angle radius=8pt] {right angle=Up--Qp--Dp};
+          \fill (Qp) circle (0.9pt);
+          \node[below=0.5pt,left=1.5pt] at (Qp) {$Q'$};
+          \node[above=1pt,right=8pt] at (Up) {\small $K=1$};
+          \node[below=1pt,right=2pt] at (Dp) {\small $-\frac1K=-1$};
+        \end{tikzpicture}
+
+        \begin{tikzpicture}[line width=0.85pt,scale=1.1,line cap=round,line join=round]
+          \pgfmathsetmacro{\r}{0.72}
+          \coordinate (Q) at (0,0);
+          \coordinate (U) at (1.45,{1.45*\r});
+          \coordinate (D) at (1.45,{-1.45*\r});
+          \coordinate (Xdir) at (1.25,0);
+          \draw[-{Stealth[length=1.5mm,width=1.2mm]},lectureline] (-1.05,0) -- (1.9,0) node[below] {$x$};
+          \draw[-{Stealth[length=1.5mm,width=1.2mm]},lectureline] (0,-1.18) -- (0,1.25) node[left] {$y$};
+          \draw[lectureblue!82!black] ($(Q)!-0.62!(U)$) -- ($(Q)!1.04!(U)$);
+          \draw[lecturegold!85!black] ($(Q)!-0.62!(D)$) -- ($(Q)!1.04!(D)$);
+          \pic[draw=lectureblue!70!black,line width=0.62pt,angle radius=14pt,angle eccentricity=1.45,"$\varphi$"] {angle=Xdir--Q--U};
+          \pic[draw=lecturered!85!black,line width=0.72pt,angle radius=28pt,angle eccentricity=1.45,"$\theta_{\min}$"] {angle=D--Q--U};
+          \fill (Q) circle (0.9pt);
+          \node[below=1.5pt] at (Q) {$Q$};
+          \node[above=1pt,right=6pt] at (U) {\small $\frac ba$};
+          \node[below=1pt,right=2pt] at (D) {\small $-\frac ba$};
+        \end{tikzpicture}

@@ -1,0 +1,48 @@
+% 可嵌入现有文档的“易于原生 Manim 转换”示例。
+% 颜色、坐标、线段、填充、标签和角标都显式表达语义。
+
+\definecolor{lectureline}{HTML}{20242A}
+\definecolor{lectureblue}{HTML}{1B4F8A}
+\definecolor{lecturegold}{HTML}{B98A24}
+\definecolor{lecturered}{HTML}{A83B45}
+
+\begin{tikzpicture}[
+  scale=1.1,
+  line width=0.85pt,
+  line cap=round,
+  line join=round
+]
+  \coordinate (O) at (0,0);
+  \coordinate (A) at (0,0);
+  \coordinate (B) at (2.18,0.70);
+  \coordinate (C) at (2.18,0);
+
+  % 坐标轴：每条箭头和末端标签都是独立语义对象。
+  \draw[-{Stealth[length=1.5mm,width=1.2mm]},draw=lectureline]
+    (-0.2,0) -- (2.55,0) node[below] {$x$};
+  \draw[-{Stealth[length=1.5mm,width=1.2mm]},draw=lectureline]
+    (0,-0.2) -- (0,1.05) node[left] {$y$};
+
+  % 填充与轮廓分开，便于分别 FadeIn/Create。
+  \fill[fill=lectureblue!14,opacity=0.72]
+    (A) -- (B) -- (C) -- cycle;
+  \draw[draw=lectureblue!82!black] (A) -- (B);
+
+  % node 位于 -- 与终点之间：表示线段标签；显式 pos 消除歧义。
+  \draw[
+    draw=lecturegold!85!black,
+    dash pattern=on 1.6pt off 1.7pt
+  ]
+    (A) -- node[pos=0.5,below] {$\Delta x=a\Delta X$} (C);
+  \draw[
+    draw=lecturegold!85!black,
+    dash pattern=on 1.6pt off 1.7pt
+  ]
+    (C) -- node[pos=0.5,right] {$\Delta y=b\Delta Y$} (B);
+
+  \foreach \P in {A,B}{\fill[fill=lectureline] (\P) circle (0.9pt);}
+  \node[below left=-1pt] at (A) {$A$};
+  \node[above right=-1pt] at (B) {$B$};
+  \node[above=9pt] at (1.14,0.37)
+    {$k=\frac{\Delta y}{\Delta x}=\frac baK$};
+\end{tikzpicture}

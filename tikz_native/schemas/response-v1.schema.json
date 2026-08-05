@@ -1,0 +1,54 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:tikz-native:bridge:response:v1",
+  "title": "TikZ-native bridge response v1",
+  "type": "object",
+  "required": ["schema", "ok", "operation", "provider"],
+  "properties": {
+    "schema": {
+      "const": "tikz-native-bridge.response/v1"
+    },
+    "ok": {
+      "type": "boolean"
+    },
+    "operation": {
+      "enum": ["health", "compile_asset", "render_static", "unknown"]
+    },
+    "job_id": {
+      "type": "string"
+    },
+    "provider": {
+      "type": "object"
+    },
+    "asset": {
+      "$ref": "urn:tikz-native:asset:v1"
+    },
+    "files": {
+      "type": "object",
+      "additionalProperties": {"type": "string"}
+    },
+    "error": {
+      "type": "object",
+      "required": ["code", "phase", "message"],
+      "properties": {
+        "code": {"type": "string"},
+        "phase": {"type": "string"},
+        "message": {"type": "string"},
+        "details": {}
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {"ok": {"const": true}}
+      },
+      "then": {
+        "not": {"required": ["error"]}
+      },
+      "else": {
+        "required": ["error"]
+      }
+    }
+  ]
+}

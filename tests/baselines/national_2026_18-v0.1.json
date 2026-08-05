@@ -1,0 +1,228 @@
+{
+  "schema_version": 1,
+  "baseline_version": "0.1.0",
+  "frozen_on": "2026-08-02",
+  "scope": "2026 年全国一卷第 18 题的 TikZ 到原生 Manim 阶段性基线",
+  "source": {
+    "path": "tests/fixtures/national_2026_18_tikz.tex",
+    "sha256": "04663784601af0a3b6c09ea52922556c0471fd876e7b1a462c49618f06ea94f4"
+  },
+  "environment_reference": {
+    "python": "3.12.13",
+    "manim_community": "0.20.1",
+    "xetex": "3.141592653-2.6-0.999998 (TeX Live 2026)",
+    "ffmpeg": "8.1.2"
+  },
+  "semantic": {
+    "picture_count": 16,
+    "object_count": 262,
+    "object_kind_counts": {
+      "angle": 9,
+      "angle_label": 9,
+      "arrow": 23,
+      "circle": 1,
+      "dot": 45,
+      "ellipse": 8,
+      "label": 85,
+      "line": 58,
+      "path_label": 10,
+      "polygon": 9,
+      "right_angle": 5
+    },
+    "animation_layer_counts": {
+      "fills": 9,
+      "coordinate_frame": 32,
+      "solid_geometry": 44,
+      "auxiliary_geometry": 14,
+      "markers": 14,
+      "points": 45,
+      "labels": 104
+    },
+    "picture_object_fingerprints": [
+      {
+        "picture": 1,
+        "object_count": 26,
+        "ordered_object_ids_sha256": "b5c64f0d1de5f8b0cb27e3ae5170e522c7f26f8d3d2bfdb0fa756c84fc1fc73d"
+      },
+      {
+        "picture": 2,
+        "object_count": 17,
+        "ordered_object_ids_sha256": "9cc96abd4a6bd5a68ca1cc41f40c7276023223ab4c53166f0bf2e7d95abf8122"
+      },
+      {
+        "picture": 3,
+        "object_count": 20,
+        "ordered_object_ids_sha256": "d051b5445e0442a9381aaeeb9e3f2cc28ed81c7de119f066bb662069009591a2"
+      },
+      {
+        "picture": 4,
+        "object_count": 21,
+        "ordered_object_ids_sha256": "fa5f6033c3a8067b45b3467f4a4f6f0835a41acd4db679b335d4a348da216f10"
+      },
+      {
+        "picture": 5,
+        "object_count": 20,
+        "ordered_object_ids_sha256": "56681fe143ba443a6a6f579f47d200d20a622bd4d325e714b7128f7878deac6a"
+      },
+      {
+        "picture": 6,
+        "object_count": 19,
+        "ordered_object_ids_sha256": "b2a311e57e77c7f041b3679be190ae00678d213abff5d8c9307c1a47961bb254"
+      },
+      {
+        "picture": 7,
+        "object_count": 18,
+        "ordered_object_ids_sha256": "f9126b0c1bb6443d9d2f1a8ba3abad883099950cc0339127b43b1b78a4d8d139"
+      },
+      {
+        "picture": 8,
+        "object_count": 19,
+        "ordered_object_ids_sha256": "fb34210528a353877811fec55bd891d6bdaa1628bf545689165714abc211b431"
+      },
+      {
+        "picture": 9,
+        "object_count": 15,
+        "ordered_object_ids_sha256": "057f8db18bc2f572f0c7dfacb44d2113ab299a17c57ea536bff7665dbbabc9aa"
+      },
+      {
+        "picture": 10,
+        "object_count": 15,
+        "ordered_object_ids_sha256": "527196e2c713fe2c016e07c7e235efac331cea02315abda86ac76c3e722feaba"
+      },
+      {
+        "picture": 11,
+        "object_count": 3,
+        "ordered_object_ids_sha256": "7ca1933ce1fd7b6955f938f6fedaacc842022a68b57c0089902fcefb54454e92"
+      },
+      {
+        "picture": 12,
+        "object_count": 16,
+        "ordered_object_ids_sha256": "7b9b19f5eed23a7a66288819ed9678e37f6b4664d953e90aadf1c672164f9322"
+      },
+      {
+        "picture": 13,
+        "object_count": 14,
+        "ordered_object_ids_sha256": "02a3e1f042d6527b916567a49961edf0b9b211202f64ef450ec5adb811eda2e8"
+      },
+      {
+        "picture": 14,
+        "object_count": 14,
+        "ordered_object_ids_sha256": "6394849ecffcf287f6c9f1af9749d729e05de2b561cd73f5d32c1b909ac72fc9"
+      },
+      {
+        "picture": 15,
+        "object_count": 11,
+        "ordered_object_ids_sha256": "e8e136754d80cf9c556ac7b789c049d2d43539d36918283b5e4cb7df15e0c8dd"
+      },
+      {
+        "picture": 16,
+        "object_count": 14,
+        "ordered_object_ids_sha256": "5f30895ad8fc5a413de29c1ee5a30abf9a5dd7097a9d304bcd53d483e6b7610c"
+      }
+    ],
+    "coordinate_dependency_operation_counts": {
+      "interpolation": 9,
+      "intersection": 2,
+      "projection": 3,
+      "translation": 6
+    },
+    "named_path_intersections": [
+      {
+        "picture": 1,
+        "path_a": "analysisfigC",
+        "path_b": "analysisfigL",
+        "sort_by": "analysisfigL",
+        "coordinates": [
+          "Q",
+          "P"
+        ]
+      }
+    ],
+    "unsupported_count": 0,
+    "warning_count": 10
+  },
+  "native_audit_paths": [
+    "tikz_native/manim_renderer.py",
+    "tikz_native/animation.py",
+    "tikz_native/dynamic_geometry.py",
+    "scenes/national_2026_18_native.py"
+  ],
+  "policy": {
+    "generic_vmobject_fallback": false,
+    "svg_fallback": false,
+    "bitmap_fallback": false,
+    "unsupported_syntax": "report-and-stop",
+    "teaching_timeline": "explicit-stable-object-ids",
+    "active_motion_driver": "explicit-scene-choice"
+  },
+  "evidence_files": {
+    "manifest.json": {
+      "bytes": 329268,
+      "sha256": "61650031868ce0d0915e815771ee03035b8d455bbf7d6b08cb669d8f6c8b7208",
+      "purpose": "完整语义清单"
+    },
+    "animation_plan.json": {
+      "bytes": 11888,
+      "sha256": "5fd328a5327274041a6c062426a36278e16203e7227d2b483abd2be5010d7ab7",
+      "purpose": "稳定对象 ID 与基线播放顺序"
+    },
+    "report.json": {
+      "bytes": 4016,
+      "sha256": "7beb960cef95a390cc8cec73f66dcfd50d899bc5d7d7ff90d76e38b51bd7b9f0",
+      "purpose": "机器可读转换报告"
+    },
+    "report.md": {
+      "bytes": 3248,
+      "sha256": "d1f982968f66a50d5f25a12eb63205334fbacc2a5502fb380eeaec659ecdb498",
+      "purpose": "人工可读转换报告"
+    },
+    "artifacts/all_figures_true_scale_11pt.png": {
+      "bytes": 472786,
+      "sha256": "48e21bd49aaabc13f9a01fedd3fd1e0ea75d21e4fa056f6343bc196a664069b3",
+      "purpose": "16 图真实尺度静态纵览",
+      "media": "PNG 3200x1800"
+    },
+    "artifacts/representative_true_scale_11pt.png": {
+      "bytes": 321540,
+      "sha256": "d3ba6adeebf0086227be9e5300a3112470daa360da21d6067e07d49e7b520efe",
+      "purpose": "高风险代表图真实尺度纵览",
+      "media": "PNG 3200x1800"
+    },
+    "artifacts/figure01_native_intersections_driven_1080p.mp4": {
+      "bytes": 352356,
+      "sha256": "4cdf6847e160a71e226171ca3192e39fc11227b352a517ed38a721b80ef977c3",
+      "purpose": "有向交点身份驱动动画",
+      "media": "H.264 1920x1080 30fps 9.2s"
+    },
+    "artifacts/figure04_construction_1080p.mp4": {
+      "bytes": 264174,
+      "sha256": "82c33abe11c5e5e111a447315bd4ea79a37c016112b01cbdd79c2b7cd6191d10",
+      "purpose": "稳定对象 ID 教学构造动画",
+      "media": "H.264 1920x1080 30fps 9.466667s"
+    },
+    "artifacts/figure04_driven_motion_1080p.mp4": {
+      "bytes": 391459,
+      "sha256": "49d946e77a89bbdf73755e8c7b2de4d1ae1dc687ff7425f3cf6a2930a681a2b5",
+      "purpose": "动点到垂足、路径标签、直角记号依赖链",
+      "media": "H.264 1920x1080 30fps 9.2s"
+    },
+    "artifacts/figure13_to_14.mp4": {
+      "bytes": 37276,
+      "sha256": "f67b827f1e7639251c0af7afa6bd32f5dba79f3954cd137af7d2bcaae9045a8a",
+      "purpose": "对象级几何过渡与标签淡出淡入",
+      "media": "H.264 854x480 15fps 3.133s"
+    },
+    "artifacts/figure01_tex_vs_manim_same_scale.png": {
+      "bytes": 183742,
+      "sha256": "edd0d5d082fc652a6d130e66f76c1024d775308fe0e051652ceae8608388ce0c",
+      "purpose": "TeX 与 Manim 同尺度并排比较",
+      "media": "PNG 1352x640"
+    },
+    "artifacts/figure01_tex_vs_manim_overlay_aligned.png": {
+      "bytes": 477698,
+      "sha256": "3f07917bebb78200dbd4874bead2a16b6538962698e5d480b7a4bcec1107a4ee",
+      "purpose": "TeX 与 Manim 轮廓对齐叠加",
+      "media": "PNG 1000x960"
+    }
+  }
+}

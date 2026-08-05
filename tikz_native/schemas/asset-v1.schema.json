@@ -1,0 +1,87 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:tikz-native:asset:v1",
+  "title": "TikZ-native asset descriptor v1",
+  "type": "object",
+  "required": [
+    "schema",
+    "provider",
+    "source_sha256",
+    "picture_index",
+    "dimension",
+    "scene_unit_per_cm",
+    "view_mode",
+    "placement_mode",
+    "object_index",
+    "bounds",
+    "compatibility",
+    "files"
+  ],
+  "properties": {
+    "schema": {
+      "const": "tikz-native-asset/v1"
+    },
+    "provider": {
+      "type": "object"
+    },
+    "source_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "entry_macro": {
+      "type": ["string", "null"]
+    },
+    "picture_index": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "dimension": {
+      "enum": [2, 3]
+    },
+    "projection": {
+      "type": ["object", "null"]
+    },
+    "scene_unit_per_cm": {
+      "type": "number",
+      "exclusiveMinimum": 0
+    },
+    "view_mode": {
+      "const": "tikz_fixed"
+    },
+    "placement_mode": {
+      "const": "native_cm"
+    },
+    "object_index": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "kind", "z_index", "source_line"],
+        "properties": {
+          "id": {"type": "string"},
+          "kind": {"type": "string"},
+          "z_index": {"type": "integer"},
+          "source_line": {"type": "integer"},
+          "label": {"type": ["string", "null"]}
+        }
+      }
+    },
+    "bounds": {
+      "type": "object",
+      "required": ["width_scene", "height_scene", "center_scene"]
+    },
+    "compatibility": {
+      "type": "object"
+    },
+    "animation_plan": {
+      "type": "object"
+    },
+    "warnings": {
+      "type": "array",
+      "items": {"type": "string"}
+    },
+    "files": {
+      "type": "object",
+      "additionalProperties": {"type": "string"}
+    }
+  }
+}

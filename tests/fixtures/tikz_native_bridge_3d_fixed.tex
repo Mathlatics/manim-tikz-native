@@ -1,0 +1,18 @@
+\begin{tikzpicture}[3d view={40.4}{23.8}]
+  \coordinate (A) at (-1,-1,0);
+  \coordinate (B) at (1,-1,0);
+  \coordinate (C) at (1,1,0);
+  \coordinate (D) at (-1,1,0);
+  \coordinate (S) at (0,0,1.8);
+  \fill[blue!10] (A)--(B)--(S)--cycle;
+  \draw[line width=0.8pt] (A)--(B);
+  \draw[line width=0.8pt] (B)--(C);
+  \draw[densely dashed,line width=0.8pt] (C)--(D);
+  \draw[densely dashed,line width=0.8pt] (D)--(A);
+  \draw[line width=0.8pt] (A)--(S);
+  \draw[line width=0.8pt] (B)--(S);
+  \draw[line width=0.8pt] (C)--(S);
+  \draw[densely dashed,line width=0.8pt] (D)--(S);
+  \fill (S) circle (1.2pt);
+  \node[above=2pt] at (S) {$S$};
+\end{tikzpicture}
