@@ -8,6 +8,7 @@ from math import cos, sin, sqrt
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
+from unittest.mock import patch
 
 import numpy as np
 from manim import ValueTracker, tempconfig
@@ -19,6 +20,7 @@ from tikz_native.motion_runtime import (
     NativeMotionRuntime,
     ellipse_chord_metrics,
     load_motion_spec,
+    play_motion_on_native_shape,
 )
 from tikz_native.manim_renderer import NativeManimRenderer
 
@@ -231,6 +233,74 @@ class TikzNativeMotionTests(unittest.TestCase):
             np.testing.assert_allclose(
                 figure.objects["dot.P"].get_center(), original_p, atol=1e-9
             )
+
+    def test_shape_state_adapter_uses_existing_objects_and_restores_boundary(self) -> None:
+        with TemporaryDirectory() as directory, tempconfig({"media_dir": directory}):
+            renderer = NativeManimRenderer(scene_unit_per_cm=1.0)
+            figure = renderer.render(self.picture)
+            figure.group.scale(0.63).rotate(0.27).shift(np.array([1.2, -0.4, 0.0]))
+            figure.group._codex_tikz_native_objects = figure.objects
+            figure.group._codex_tikz_native_picture = figure.picture
+            object_identities = {key: id(value) for key, value in figure.objects.items()}
+            original_points = {
+                key: value.get_all_points().copy()
+                for key, value in figure.objects.items()
+            }
+            visited: dict[str, np.ndarray] = {}
+
+            def play_without_render(runtime, scene, tracker, **_kwargs):
+                tracker.set_value(runtime.spec.driver.maximum)
+                figure.group.update(0)
+                visited["P"] = figure.objects["dot.P"].get_center().copy()
+                tracker.set_value(runtime.spec.driver.initial)
+                figure.group.update(0)
+
+            scene = __import__("manim").Scene()
+            with patch.object(
+                NativeMotionRuntime,
+                "play_timeline",
+                autospec=True,
+                side_effect=play_without_render,
+            ):
+                result = play_motion_on_native_shape(
+                    scene,
+                    figure.group,
+                    json.loads(MOTION.read_text(encoding="utf-8")),
+                    "line.Lstart.Lend",
+                )
+
+            self.assertIs(result, figure.group)
+            self.assertIn("P", visited)
+            self.assertFalse(
+                np.allclose(visited["P"], figure.objects["dot.P"].get_center())
+            )
+            self.assertEqual(
+                {key: id(value) for key, value in figure.objects.items()},
+                object_identities,
+            )
+            for key, value in figure.objects.items():
+                np.testing.assert_allclose(
+                    value.get_all_points(), original_points[key], atol=1e-9
+                )
+                self.assertEqual(list(value.updaters), [])
+
+    def test_shape_state_adapter_rejects_nonreturning_timeline(self) -> None:
+        with TemporaryDirectory() as directory, tempconfig({"media_dir": directory}):
+            renderer = NativeManimRenderer(scene_unit_per_cm=1.0)
+            figure = renderer.render(self.picture)
+            figure.group._codex_tikz_native_objects = figure.objects
+            figure.group._codex_tikz_native_picture = figure.picture
+            payload = json.loads(MOTION.read_text(encoding="utf-8"))
+            payload["timeline"][-1]["to"] = payload["driver"]["range"][1]
+            with self.assertRaisesRegex(MotionConfigError, "return to driver.initial"):
+                play_motion_on_native_shape(
+                    __import__("manim").Scene(),
+                    figure.group,
+                    payload,
+                    "line.Lstart.Lend",
+                )
+            for value in figure.objects.values():
+                self.assertEqual(list(value.updaters), [])
 
     def test_invalid_object_and_out_of_range_parameter_fail_closed(self) -> None:
         bad_binding = replace(self.spec.bindings[0], object_id="missing.object")

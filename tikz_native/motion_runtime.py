@@ -602,3 +602,194 @@ class NativeMotionRuntime:
 
 def load_motion_spec(path: Path | str) -> MotionSpec:
     return MotionSpec.load(path)
+
+
+def _similarity_mapper_from_line(
+    source_start: Sequence[float],
+    source_end: Sequence[float],
+    scene_start: Sequence[float] | np.ndarray,
+    scene_end: Sequence[float] | np.ndarray,
+) -> tuple[ScenePointMapper, float]:
+    """Recover the ShapeState similarity transform from one oriented line.
+
+    TikZ coordinates live in the provider's logical 2D coordinate system while
+    the input mobject has already received the editor's placement, scale and
+    rotation.  One non-degenerate oriented line is sufficient to recover that
+    transform without rebuilding or recentring the figure.
+    """
+
+    logical_start = np.asarray(source_start, dtype=float)
+    logical_end = np.asarray(source_end, dtype=float)
+    current_start = _scene_point3(scene_start)
+    current_end = _scene_point3(scene_end)
+    if logical_start.shape != (2,) or logical_end.shape != (2,):
+        raise MotionConfigError("active line endpoints must be 2D TikZ coordinates")
+    source_vector = logical_end - logical_start
+    target_vector = current_end[:2] - current_start[:2]
+    denominator = float(np.dot(source_vector, source_vector))
+    if denominator <= 1e-18:
+        raise MotionConfigError("active TikZ line must not have zero length")
+    target_length = float(np.linalg.norm(target_vector))
+    if target_length <= 1e-12:
+        raise MotionConfigError("active ShapeState line must not have zero length")
+
+    # Complex-number division target/source, written as a real 2x2 matrix.
+    real = float(np.dot(target_vector, source_vector)) / denominator
+    imaginary = float(
+        target_vector[1] * source_vector[0]
+        - target_vector[0] * source_vector[1]
+    ) / denominator
+    matrix = np.array([[real, -imaginary], [imaginary, real]], dtype=float)
+    logical_scale = float(np.hypot(real, imaginary))
+
+    def map_point(value: Point2) -> np.ndarray:
+        point = np.asarray(value, dtype=float)
+        if point.shape != (2,):
+            raise MotionConfigError("motion/v1 only supports 2D coordinates")
+        mapped = current_start[:2] + matrix @ (point - logical_start)
+        return np.array([mapped[0], mapped[1], current_start[2]], dtype=float)
+
+    return map_point, logical_scale
+
+
+def _scene_point3(value: Sequence[float] | np.ndarray) -> np.ndarray:
+    point = np.asarray(value, dtype=float)
+    if point.shape == (2,):
+        return np.array([point[0], point[1], 0.0], dtype=float)
+    if point.shape != (3,):
+        raise MotionConfigError(f"expected a 2D or 3D scene point, got {point.shape}")
+    return point
+
+
+def _mobject_stroke_width(mobject: Mobject) -> float | None:
+    getter = getattr(mobject, "get_stroke_width", None)
+    if not callable(getter):
+        return None
+    values = np.asarray(getter(), dtype=float).reshape(-1)
+    finite = values[np.isfinite(values)]
+    positive = finite[finite > 0]
+    if positive.size == 0:
+        return None
+    return float(np.median(positive))
+
+
+def play_motion_on_native_shape(
+    scene: Scene,
+    shape: Mobject,
+    motion_spec_payload: object,
+    active_object_id: str,
+) -> Mobject:
+    """Play one declared motion on the existing TikZ ShapeState objects.
+
+    The helper deliberately works on ``shape`` in place.  It never compiles a
+    second TikZ figure and it accepts only a timeline whose final parameter is
+    the driver's initial value.  Restoring the exact initial native objects at
+    the end keeps the next ordinary ShapeState cold-rebuildable.
+    """
+
+    if not isinstance(scene, Scene):
+        raise MotionConfigError("scene must be a Manim Scene")
+    if not isinstance(shape, Mobject):
+        raise MotionConfigError("shape must be a Manim Mobject")
+    active_id = _string(active_object_id, "active_object_id")
+    spec = (
+        motion_spec_payload
+        if isinstance(motion_spec_payload, MotionSpec)
+        else MotionSpec.from_dict(motion_spec_payload)
+    )
+    if not spec.timeline:
+        raise MotionConfigError("Native Clip timeline must not be empty")
+    if not isclose(
+        spec.timeline[-1].to,
+        spec.driver.initial,
+        abs_tol=1e-9,
+        rel_tol=0.0,
+    ):
+        raise MotionConfigError(
+            "Native Clip timeline must return to driver.initial before producing "
+            "an ordinary ShapeState"
+        )
+
+    objects = getattr(shape, "_codex_tikz_native_objects", None)
+    picture = getattr(shape, "_codex_tikz_native_picture", None)
+    if not isinstance(objects, dict) or not isinstance(picture, PictureSpec):
+        raise MotionConfigError(
+            "input shape does not expose TikZ Native semantic objects"
+        )
+    spec.validate_picture(picture)
+    if active_id not in objects:
+        raise MotionConfigError(f"unknown active object id: {active_id!r}")
+    binding = next(
+        (item for item in spec.bindings if item.object_id == active_id),
+        None,
+    )
+    if binding is None or binding.type != "line":
+        raise MotionConfigError("active object must be a bound line in motion/v1")
+    active_mobject = objects[active_id]
+    if not callable(getattr(active_mobject, "get_start", None)) or not callable(
+        getattr(active_mobject, "get_end", None)
+    ):
+        raise MotionConfigError("active object does not expose line endpoints")
+    active_path = picture.named_paths[spec.driver.active_path]
+    start_name = str(active_path.geometry.get("start_name") or "")
+    end_name = str(active_path.geometry.get("end_name") or "")
+    if start_name not in picture.coordinates or end_name not in picture.coordinates:
+        raise MotionConfigError("active named line endpoints are unavailable")
+
+    to_scene_point, logical_scale = _similarity_mapper_from_line(
+        picture.coordinates[start_name],
+        picture.coordinates[end_name],
+        active_mobject.get_start(),
+        active_mobject.get_end(),
+    )
+    picture_scale = float(picture.scale)
+    if not isfinite(picture_scale) or picture_scale <= 0:
+        raise MotionConfigError("picture scale must be positive")
+    scene_unit_per_cm = logical_scale / picture_scale
+
+    object_specs = {item.id: item for item in picture.objects}
+    active_spec = object_specs.get(active_id)
+    stroke_width_per_pt = None
+    if active_spec is not None and active_spec.style.line_width_pt > 0:
+        current_stroke = _mobject_stroke_width(active_mobject)
+        if current_stroke is not None:
+            stroke_width_per_pt = current_stroke / active_spec.style.line_width_pt
+    renderer_arguments = {"scene_unit_per_cm": scene_unit_per_cm}
+    if stroke_width_per_pt is not None:
+        renderer_arguments["stroke_width_per_pt"] = stroke_width_per_pt
+    renderer = NativeManimRenderer(**renderer_arguments)
+    figure = NativeFigure(picture, objects, shape, [])
+    tracker = ValueTracker(spec.driver.initial)
+    runtime = NativeMotionRuntime(spec, picture, tracker.get_value)
+
+    bound_objects = [objects[item.object_id] for item in spec.bindings]
+    for item in bound_objects:
+        if list(getattr(item, "updaters", ())):
+            raise MotionConfigError(
+                "TikZ Native motion input already has active updaters"
+            )
+    originals = [(item, item.copy()) for item in bound_objects]
+    original_start = _scene_point3(active_mobject.get_start()).copy()
+    original_end = _scene_point3(active_mobject.get_end()).copy()
+    try:
+        runtime.bind(figure, renderer, to_scene_point)
+        for item in bound_objects:
+            item.update(0)
+        if not np.allclose(active_mobject.get_start(), original_start, atol=1e-7) or not np.allclose(
+            active_mobject.get_end(), original_end, atol=1e-7
+        ):
+            raise MotionConfigError(
+                "motion driver initial state does not align with the input ShapeState"
+            )
+        runtime.play_timeline(scene, tracker)
+    finally:
+        tracker.set_value(spec.driver.initial)
+        for item in bound_objects:
+            item.update(0)
+            item.clear_updaters()
+        # Use the original native geometry as the exact terminal boundary.  The
+        # objects retain their identity, so ctx.input references remain valid.
+        for item, original in originals:
+            item.become(original)
+            item.clear_updaters()
+    return shape

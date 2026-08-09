@@ -1,0 +1,89 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:tikz-native:geometry-rig-bridge:request:v1",
+  "title": "TikZ-native geometry rig bridge request v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "operation", "job_id", "input"],
+  "properties": {
+    "schema": {
+      "const": "tikz-native-geometry-rig-bridge.request/v1"
+    },
+    "operation": {
+      "const": "analyze_geometry_rig"
+    },
+    "job_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "input": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "source_path",
+        "source_sha256",
+        "picture_index",
+        "active_object_id",
+        "expected_asset_provider_revision"
+      ],
+      "properties": {
+        "source_path": {
+          "type": "string",
+          "minLength": 1
+        },
+        "source_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-fA-F]{64}$"
+        },
+        "entry_macro": {
+          "type": ["string", "null"]
+        },
+        "picture_index": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "active_object_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "expected_asset_provider_revision": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "selection": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "candidate_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "pivot": {
+          "type": "string",
+          "minLength": 1
+        },
+        "range": {
+          "type": "array",
+          "prefixItems": [
+            {"type": "number"},
+            {"type": "number"}
+          ],
+          "minItems": 2,
+          "maxItems": 2
+        },
+        "include_object_ids": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {"type": "string", "minLength": 1}
+        },
+        "exclude_object_ids": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {"type": "string", "minLength": 1}
+        }
+      }
+    }
+  }
+}

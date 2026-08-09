@@ -1,0 +1,394 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:tikz-native:geometry-rig:v1",
+  "title": "TikZ-native portable geometry rig draft v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "status",
+    "pictureIndex",
+    "sourceSha256",
+    "providerRevision",
+    "expectedAssetProviderRevision",
+    "revisionMatch",
+    "semanticModelHash",
+    "activeObjectId",
+    "activeObjectCandidates",
+    "driverCandidates",
+    "selectedDriver",
+    "coordinates",
+    "fixedCoordinateIds",
+    "intersections",
+    "bindings",
+    "fixedObjectIds",
+    "excludedObjectIds",
+    "diagnostics",
+    "motionSpecCore",
+    "rigDraft"
+  ],
+  "properties": {
+    "schema": {"const": "tikz-native-geometry-rig/v1"},
+    "status": {"enum": ["ready", "needs_selection", "blocked"]},
+    "pictureIndex": {"type": "integer", "minimum": 1},
+    "sourceSha256": {"$ref": "#/$defs/sha256"},
+    "providerRevision": {"type": "string", "minLength": 1},
+    "expectedAssetProviderRevision": {"type": "string", "minLength": 1},
+    "revisionMatch": {"type": "boolean"},
+    "semanticModelHash": {"$ref": "#/$defs/sha256"},
+    "activeObjectId": {"type": "string", "minLength": 1},
+    "activeObjectCandidates": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/activeObjectCandidate"}
+    },
+    "driverCandidates": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/driverCandidate"}
+    },
+    "selectedDriver": {
+      "oneOf": [
+        {"type": "null"},
+        {"$ref": "#/$defs/selectedDriver"}
+      ]
+    },
+    "coordinates": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/coordinate"}
+    },
+    "fixedCoordinateIds": {"$ref": "#/$defs/stringArray"},
+    "intersections": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/intersection"}
+    },
+    "bindings": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/dependency"}
+    },
+    "fixedObjectIds": {"$ref": "#/$defs/stringArray"},
+    "excludedObjectIds": {"$ref": "#/$defs/stringArray"},
+    "diagnostics": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/diagnostic"}
+    },
+    "motionSpecCore": {
+      "oneOf": [
+        {"type": "null"},
+        {"$ref": "#/$defs/motionSpecCore"}
+      ]
+    },
+    "rigDraft": {"$ref": "#/$defs/rigDraft"}
+  },
+  "$defs": {
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "stringArray": {
+      "type": "array",
+      "items": {"type": "string", "minLength": 1}
+    },
+    "point2": {
+      "type": "array",
+      "prefixItems": [{"type": "number"}, {"type": "number"}],
+      "minItems": 2,
+      "maxItems": 2
+    },
+    "activeObjectCandidate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "objectId", "type", "status", "driverTypes", "candidateIds", "reason"
+      ],
+      "properties": {
+        "objectId": {"type": "string", "minLength": 1},
+        "type": {"enum": ["line", "arrow"]},
+        "status": {"enum": ["available", "unsupported"]},
+        "driverTypes": {
+          "type": "array",
+          "items": {"const": "rotate_named_line"}
+        },
+        "candidateIds": {"$ref": "#/$defs/stringArray"},
+        "reason": {"type": "string", "minLength": 1}
+      }
+    },
+    "pivotCandidate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["coordinateId", "status", "reason"],
+      "properties": {
+        "coordinateId": {"type": "string", "minLength": 1},
+        "status": {"enum": ["recommended", "available"]},
+        "reason": {"type": "string", "minLength": 1}
+      }
+    },
+    "parameterValue": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["value", "unit"],
+      "properties": {
+        "value": {"type": "number"},
+        "unit": {"const": "radians"}
+      }
+    },
+    "suggestedRange": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["minimum", "maximum", "unit", "source"],
+      "properties": {
+        "minimum": {"type": "number"},
+        "maximum": {"type": "number"},
+        "unit": {"const": "radians"},
+        "source": {"const": "initial-window"}
+      }
+    },
+    "driverCandidate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "candidateId",
+        "status",
+        "driverType",
+        "activeObjectId",
+        "activePath",
+        "intersectionIndex",
+        "intersectionCoordinates",
+        "pivotCandidates",
+        "initial",
+        "suggestedRange"
+      ],
+      "properties": {
+        "candidateId": {"type": "string", "minLength": 1},
+        "status": {"enum": ["recommended", "available", "blocked"]},
+        "driverType": {"const": "rotate_named_line"},
+        "activeObjectId": {"type": "string", "minLength": 1},
+        "activePath": {"type": "string", "minLength": 1},
+        "intersectionIndex": {"type": "integer", "minimum": 0},
+        "intersectionCoordinates": {"$ref": "#/$defs/stringArray"},
+        "pivotCandidates": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/pivotCandidate"}
+        },
+        "initial": {"$ref": "#/$defs/parameterValue"},
+        "suggestedRange": {
+          "oneOf": [
+            {"type": "null"},
+            {"$ref": "#/$defs/suggestedRange"}
+          ]
+        }
+      }
+    },
+    "selectedDriver": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "candidateId",
+        "id",
+        "type",
+        "activeObjectId",
+        "activePath",
+        "pivot",
+        "intersectionIndex",
+        "initial",
+        "range",
+        "unit"
+      ],
+      "properties": {
+        "candidateId": {"type": "string", "minLength": 1},
+        "id": {"type": "string", "minLength": 1},
+        "type": {"const": "rotate_named_line"},
+        "activeObjectId": {"type": "string", "minLength": 1},
+        "activePath": {"type": "string", "minLength": 1},
+        "pivot": {"type": "string", "minLength": 1},
+        "intersectionIndex": {"type": "integer", "minimum": 0},
+        "initial": {"type": "number"},
+        "range": {
+          "type": "array",
+          "prefixItems": [{"type": "number"}, {"type": "number"}],
+          "minItems": 2,
+          "maxItems": 2
+        },
+        "unit": {"const": "radians"}
+      }
+    },
+    "dependencyExpression": {
+      "oneOf": [
+        {"type": "null"},
+        {
+          "type": "object",
+          "required": ["operation"],
+          "properties": {"operation": {"type": "string", "minLength": 1}},
+          "additionalProperties": true
+        }
+      ]
+    },
+    "coordinate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "coordinateId",
+        "value",
+        "classification",
+        "dependency",
+        "dependsOn",
+        "affectedByDriver"
+      ],
+      "properties": {
+        "coordinateId": {"type": "string", "minLength": 1},
+        "value": {"$ref": "#/$defs/point2"},
+        "classification": {
+          "enum": ["fixed", "driver_endpoint", "intersection", "derived"]
+        },
+        "dependency": {"$ref": "#/$defs/dependencyExpression"},
+        "dependsOn": {"$ref": "#/$defs/stringArray"},
+        "affectedByDriver": {"type": "boolean"}
+      }
+    },
+    "intersection": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "intersectionIndex", "pathA", "pathB", "sortBy", "coordinateIds", "status"
+      ],
+      "properties": {
+        "intersectionIndex": {"type": "integer", "minimum": 0},
+        "pathA": {"type": "string", "minLength": 1},
+        "pathB": {"type": "string", "minLength": 1},
+        "sortBy": {"type": "string", "minLength": 1},
+        "coordinateIds": {"$ref": "#/$defs/stringArray"},
+        "status": {"enum": ["driven", "fixed", "unsupported"]}
+      }
+    },
+    "dependency": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "objectId",
+        "objectKind",
+        "bindingType",
+        "type",
+        "points",
+        "enabled",
+        "status",
+        "reason",
+        "evidence"
+      ],
+      "properties": {
+        "objectId": {"type": "string", "minLength": 1},
+        "objectKind": {"type": "string", "minLength": 1},
+        "bindingType": {
+          "type": ["string", "null"]
+        },
+        "type": {"type": "string", "minLength": 1},
+        "points": {"$ref": "#/$defs/stringArray"},
+        "enabled": {"type": "boolean"},
+        "status": {"enum": ["included", "excluded", "fixed", "unsupported"]},
+        "reason": {"type": "string", "minLength": 1},
+        "evidence": {"$ref": "#/$defs/stringArray"}
+      }
+    },
+    "rigDependency": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["objectId", "type", "points", "enabled", "status", "evidence"],
+      "properties": {
+        "objectId": {"type": "string", "minLength": 1},
+        "type": {"type": "string", "minLength": 1},
+        "points": {"$ref": "#/$defs/stringArray"},
+        "enabled": {"type": "boolean"},
+        "status": {"enum": ["included", "excluded", "fixed", "unsupported"]},
+        "evidence": {"$ref": "#/$defs/stringArray"}
+      }
+    },
+    "diagnostic": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["severity", "code", "message"],
+      "properties": {
+        "severity": {"enum": ["info", "warning", "error"]},
+        "code": {"type": "string", "minLength": 1},
+        "message": {"type": "string", "minLength": 1},
+        "objectId": {"type": "string", "minLength": 1},
+        "coordinateId": {"type": "string", "minLength": 1}
+      }
+    },
+    "motionDriver": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id", "type", "active_path", "pivot", "intersection_index", "initial", "range", "unit"
+      ],
+      "properties": {
+        "id": {"type": "string", "minLength": 1},
+        "type": {"const": "rotate_named_line"},
+        "active_path": {"type": "string", "minLength": 1},
+        "pivot": {"type": "string", "minLength": 1},
+        "intersection_index": {"type": "integer", "minimum": 0},
+        "initial": {"type": "number"},
+        "range": {
+          "type": "array",
+          "prefixItems": [{"type": "number"}, {"type": "number"}],
+          "minItems": 2,
+          "maxItems": 2
+        },
+        "unit": {"const": "radians"}
+      }
+    },
+    "motionBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["object_id", "type", "points"],
+      "properties": {
+        "object_id": {"type": "string", "minLength": 1},
+        "type": {
+          "enum": [
+            "line", "dot", "polygon", "label", "path_label",
+            "angle", "angle_label", "right_angle"
+          ]
+        },
+        "points": {"$ref": "#/$defs/stringArray"}
+      }
+    },
+    "motionSpecCore": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["driver", "bindings"],
+      "properties": {
+        "driver": {"$ref": "#/$defs/motionDriver"},
+        "bindings": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"$ref": "#/$defs/motionBinding"}
+        }
+      }
+    },
+    "rigDraft": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["driver", "bindings", "dependencies", "coordinates", "intersections"],
+      "properties": {
+        "driver": {
+          "oneOf": [
+            {"type": "null"},
+            {"$ref": "#/$defs/selectedDriver"}
+          ]
+        },
+        "bindings": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/rigDependency"}
+        },
+        "dependencies": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/rigDependency"}
+        },
+        "coordinates": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/coordinate"}
+        },
+        "intersections": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/intersection"}
+        }
+      }
+    }
+  }
+}
