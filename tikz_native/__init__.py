@@ -28,6 +28,15 @@ from .provider import (
     provider_info,
     render_static_png,
 )
+from .motion_runtime import (
+    MOTION_SCHEMA,
+    EllipseChordMetrics,
+    MotionConfigError,
+    MotionSpec,
+    NativeMotionRuntime,
+    ellipse_chord_metrics,
+    load_motion_spec,
+)
 from .version import (
     ASSET_SCHEMA,
     PROTOCOL_VERSION,
@@ -48,6 +57,11 @@ __all__ = [
     "Projection3DSpec",
     "ASSET_SCHEMA",
     "CompiledAsset",
+    "EllipseChordMetrics",
+    "MOTION_SCHEMA",
+    "MotionConfigError",
+    "MotionSpec",
+    "NativeMotionRuntime",
     "PROTOCOL_VERSION",
     "REQUEST_SCHEMA",
     "RESPONSE_SCHEMA",
@@ -57,8 +71,10 @@ __all__ = [
     "audit_document_compatibility",
     "compile_asset",
     "compile_document",
+    "ellipse_chord_metrics",
     "instantiate_picture",
     "load_subset_spec",
+    "load_motion_spec",
     "provider_info",
     "provider_revision",
     "render_static_png",

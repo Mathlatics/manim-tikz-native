@@ -917,36 +917,80 @@ class NativeManimRenderer:
         label.rotate(display_angle, about_point=ORIGIN)
         return label.shift(target - rotated_anchor)
 
-    def _angle_values(
-        self, spec: ObjectSpec, picture: PictureSpec
-    ) -> tuple[np.ndarray, float, float, float]:
-        first = self.point(tuple(spec.geometry["first"]), picture)
-        vertex = self.point(tuple(spec.geometry["vertex"]), picture)
-        third = self.point(tuple(spec.geometry["third"]), picture)
+    @staticmethod
+    def _directed_angle_values(
+        first: np.ndarray,
+        vertex: np.ndarray,
+        third: np.ndarray,
+    ) -> tuple[float, float]:
         start = atan2((first - vertex)[1], (first - vertex)[0])
         end = atan2((third - vertex)[1], (third - vertex)[0])
         while end < start:
             end += TAU
-        return vertex, start, end, spec.geometry["radius_pt"] * self.pt
+        return start, end
 
     def _build_angle(self, spec: ObjectSpec, picture: PictureSpec) -> Arc:
-        vertex, start, end, radius = self._angle_values(spec, picture)
+        first = self.point(tuple(spec.geometry["first"]), picture)
+        vertex = self.point(tuple(spec.geometry["vertex"]), picture)
+        third = self.point(tuple(spec.geometry["third"]), picture)
+        return self.native_angle_from_points(
+            first,
+            vertex,
+            third,
+            radius=spec.geometry["radius_pt"] * self.pt,
+            style=spec.style,
+        )
+
+    def native_angle_from_points(
+        self,
+        first: np.ndarray,
+        vertex: np.ndarray,
+        third: np.ndarray,
+        *,
+        radius: float,
+        style: StyleSpec,
+    ) -> Arc:
+        """Build the authored directed angle from three scene-space points."""
+
+        start, end = self._directed_angle_values(first, vertex, third)
         return Arc(
             radius=radius,
             start_angle=start,
             angle=end - start,
             arc_center=vertex,
-            **self._line_kwargs(spec.style),
+            **self._line_kwargs(style),
         )
 
     def _build_angle_label(self, spec: ObjectSpec, picture: PictureSpec) -> Mobject:
         label = self._make_label(spec.label or "", spec.style)
-        vertex, start, end, radius = self._angle_values(spec, picture)
-        midpoint = 0.5 * (start + end)
-        target = vertex + spec.geometry["eccentricity"] * radius * (
-            cos(midpoint) * RIGHT + sin(midpoint) * UP
+        first = self.point(tuple(spec.geometry["first"]), picture)
+        vertex = self.point(tuple(spec.geometry["vertex"]), picture)
+        third = self.point(tuple(spec.geometry["third"]), picture)
+        target = self.native_angle_label_position(
+            first,
+            vertex,
+            third,
+            radius=spec.geometry["radius_pt"] * self.pt,
+            eccentricity=spec.geometry["eccentricity"],
         )
         return label.move_to(target)
+
+    def native_angle_label_position(
+        self,
+        first: np.ndarray,
+        vertex: np.ndarray,
+        third: np.ndarray,
+        *,
+        radius: float,
+        eccentricity: float,
+    ) -> np.ndarray:
+        """Return the authored angle-label center in scene coordinates."""
+
+        start, end = self._directed_angle_values(first, vertex, third)
+        midpoint = 0.5 * (start + end)
+        return vertex + eccentricity * radius * (
+            cos(midpoint) * RIGHT + sin(midpoint) * UP
+        )
 
     def _build_right_angle(self, spec: ObjectSpec, picture: PictureSpec) -> RightAngle:
         first = self.point(tuple(spec.geometry["first"]), picture)

@@ -1,0 +1,72 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "tikz-native-motion/v1",
+  "title": "TikZ Native declarative motion configuration v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "picture_index", "driver", "bindings", "timeline"],
+  "properties": {
+    "schema": {"const": "tikz-native-motion/v1"},
+    "picture_index": {"type": "integer", "minimum": 1},
+    "driver": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id", "type", "active_path", "pivot", "intersection_index",
+        "initial", "range", "unit"
+      ],
+      "properties": {
+        "id": {"type": "string", "minLength": 1},
+        "type": {"const": "rotate_named_line"},
+        "active_path": {"type": "string", "minLength": 1},
+        "pivot": {"type": "string", "minLength": 1},
+        "intersection_index": {"type": "integer", "minimum": 0},
+        "initial": {"type": "number"},
+        "range": {
+          "type": "array",
+          "prefixItems": [{"type": "number"}, {"type": "number"}],
+          "minItems": 2,
+          "maxItems": 2
+        },
+        "unit": {"const": "radians"}
+      }
+    },
+    "bindings": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["object_id", "type", "points"],
+        "properties": {
+          "object_id": {"type": "string", "minLength": 1},
+          "type": {
+            "enum": [
+              "line", "dot", "polygon", "label", "path_label",
+              "angle", "angle_label", "right_angle"
+            ]
+          },
+          "points": {
+            "type": "array",
+            "minItems": 1,
+            "items": {"type": "string", "minLength": 1}
+          }
+        }
+      }
+    },
+    "timeline": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["to", "duration"],
+        "properties": {
+          "to": {"type": "number"},
+          "duration": {"type": "number", "exclusiveMinimum": 0},
+          "hold": {"type": "number", "minimum": 0},
+          "cue": {"type": "string", "minLength": 1}
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,78 @@
+\definecolor{lectureteal}{HTML}{157A6E}
+\definecolor{lecturegold}{HTML}{B8860B}
+\definecolor{lecturered}{HTML}{A23E48}
+
+\begin{tikzpicture}[
+  line width=0.9pt,
+  scale=0.9,
+  line cap=round,
+  line join=round
+]
+  % 固定坐标
+  \coordinate (O) at (0,0);
+  \coordinate (F) at (-1,0);
+  \coordinate (Xmin) at (-2.45,0);
+  \coordinate (Xmax) at (2.5,0);
+  \coordinate (Ymin) at (0,-2.1);
+  \coordinate (Ymax) at (0,2.15);
+
+  % 初始斜率 k=3/4；Pguide 只用于确定初始方向。
+  \coordinate (Pguide) at (1,1.5);
+  \coordinate (Lstart) at ($(F)!-0.625!(Pguide)$);
+  \coordinate (Lend) at ($(F)!1.275!(Pguide)$);
+
+  % Lstart -> Lend 的方向稳定决定 Q、P 的交点身份。
+  \path[name path=Cpath]
+    (O) ellipse [x radius=2,y radius={sqrt(3)}];
+  \path[name path=Lpath]
+    (Lstart) -- (Lend);
+  \path[name intersections={
+    of=Cpath and Lpath,
+    sort by=Lpath,
+    by={Q,P}
+  }];
+
+  % R 是 P 关于 O 的中心对称点。
+  \coordinate (R) at ($(O)!-1!(P)$);
+
+  \fill[fill=lectureteal!14]
+    (P) -- (Q) -- (R) -- cycle;
+  \fill[fill=lecturegold!30,opacity=0.72]
+    (P) -- (F) -- (O) -- cycle;
+
+  \draw[-{Stealth[length=1.7mm,width=1.3mm]}]
+    (Xmin) -- (Xmax) node[below] {$x$};
+  \draw[-{Stealth[length=1.7mm,width=1.3mm]}]
+    (Ymin) -- (Ymax) node[left] {$y$};
+  \draw (O) ellipse [x radius=2,y radius={sqrt(3)}];
+
+  \draw[lecturered]
+    (Lstart) -- (Lend) node[right] {$l$};
+  \draw (P) -- (Q);
+  \draw (Q) -- (R);
+  \draw (R) -- (P);
+  \draw (P) -- (F);
+  \draw (F) -- (O);
+  \draw (O) -- (P);
+  \draw[dash pattern=on 3pt off 2pt] (Q) -- (O);
+
+  \pic[
+    draw=lecturered!85!black,
+    line width=0.8pt,
+    angle radius=18pt,
+    angle eccentricity=1.2,
+    "$\varphi$"
+  ] {angle=R--Q--P};
+
+  \fill (O) circle (1pt);
+  \fill (F) circle (1pt);
+  \fill (P) circle (1pt);
+  \fill (Q) circle (1pt);
+  \fill (R) circle (1pt);
+
+  \node[below right=-1pt] at (O) {$O$};
+  \node[above=8pt,left=-5pt] at (F) {$F$};
+  \node[above=9pt,right=-8pt] at (P) {$P$};
+  \node[above=3pt,left=1pt] at (Q) {$Q$};
+  \node[below=8pt,left=-5pt] at (R) {$R$};
+\end{tikzpicture}

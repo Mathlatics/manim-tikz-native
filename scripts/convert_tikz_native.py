@@ -281,6 +281,8 @@ def main() -> int:
         ROOT / "tikz_native" / "projection_3d.py",
         ROOT / "tikz_native" / "animation.py",
         ROOT / "tikz_native" / "dynamic_geometry.py",
+        ROOT / "tikz_native" / "motion_runtime.py",
+        ROOT / "examples" / "analytic_geometry_ellipse_demo" / "scene.py",
         ROOT / "scenes" / "national_2026_18_native.py",
         ROOT / "scenes" / "tikz_native_3d_demo.py",
         ROOT / "scenes" / "space_angle_part1_native.py",

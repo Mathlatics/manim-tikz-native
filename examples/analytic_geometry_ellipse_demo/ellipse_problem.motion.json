@@ -1,0 +1,43 @@
+{
+  "schema": "tikz-native-motion/v1",
+  "picture_index": 1,
+  "driver": {
+    "id": "theta",
+    "type": "rotate_named_line",
+    "active_path": "Lpath",
+    "pivot": "F",
+    "intersection_index": 0,
+    "initial": 0.6435011087932844,
+    "range": [0.3839724354387525, 0.9424777960769379],
+    "unit": "radians"
+  },
+  "bindings": [
+    {"object_id": "line.Lstart.Lend", "type": "line", "points": ["Lstart", "Lend"]},
+    {"object_id": "label.Lend.l", "type": "label", "points": ["Lend"]},
+    {"object_id": "fill.P.Q.R", "type": "polygon", "points": ["P", "Q", "R"]},
+    {"object_id": "fill.P.F.O", "type": "polygon", "points": ["P", "F", "O"]},
+    {"object_id": "line.P.Q", "type": "line", "points": ["P", "Q"]},
+    {"object_id": "line.Q.R", "type": "line", "points": ["Q", "R"]},
+    {"object_id": "line.R.P", "type": "line", "points": ["R", "P"]},
+    {"object_id": "line.P.F", "type": "line", "points": ["P", "F"]},
+    {"object_id": "line.O.P", "type": "line", "points": ["O", "P"]},
+    {"object_id": "line.Q.O", "type": "line", "points": ["Q", "O"]},
+    {"object_id": "angle.R.Q.P", "type": "angle", "points": ["R", "Q", "P"]},
+    {"object_id": "label_angle.R.Q.P.varphi", "type": "angle_label", "points": ["R", "Q", "P"]},
+    {"object_id": "dot.P", "type": "dot", "points": ["P"]},
+    {"object_id": "dot.Q", "type": "dot", "points": ["Q"]},
+    {"object_id": "dot.R", "type": "dot", "points": ["R"]},
+    {"object_id": "label.P.P", "type": "label", "points": ["P"]},
+    {"object_id": "label.Q.Q", "type": "label", "points": ["Q"]},
+    {"object_id": "label.R.R", "type": "label", "points": ["R"]}
+  ],
+  "timeline": [
+    {"to": 0.3839724354387525, "duration": 1.5, "hold": 0.25, "cue": "sweep_low"},
+    {"to": 0.9424777960769379, "duration": 2.6, "hold": 0.25, "cue": "sweep_high"},
+    {"to": 0.8410686705679303, "duration": 1.4, "hold": 0.8, "cue": "area_ratio_3"},
+    {"to": 0.7137243789447656, "duration": 1.3, "hold": 0.8, "cue": "tangent_min"},
+    {"to": 0.8028514559173916, "duration": 1.0, "hold": 0.15, "cue": "min_check"},
+    {"to": 0.7137243789447656, "duration": 1.0, "hold": 0.65, "cue": "tangent_min_return"},
+    {"to": 0.6435011087932844, "duration": 1.4, "hold": 0.5, "cue": "initial"}
+  ]
+}

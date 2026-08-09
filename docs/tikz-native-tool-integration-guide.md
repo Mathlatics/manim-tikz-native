@@ -688,6 +688,18 @@ binder.bind_dot("dot.Q", lambda: driver.state().q)
 
 这份 JSON 是推荐的工具层契约，不是当前编译器自动识别的 TikZ 语法。
 
+当前 Provider 已在 `motion_runtime.py` 实现第一版可执行契约
+`tikz-native-motion/v1`，并由 `schemas/motion-v1.schema.json` 记录字段边界。
+第一个驱动类型为 `rotate_named_line`：工具显式选择有向命名直线、
+旋转中心和交点关系，然后用对象 ID 与命名坐标表声明线、点、
+多边形、标签、角和直角的绑定。运行时会继续求值 TikZ 保留的
+`reference`、`interpolation`、`translation` 和 `projection` 依赖，
+不在 Scene 中重复写死从动点。
+
+完整可渲染示例位于
+`examples/analytic_geometry_ellipse_demo/`。该 Demo 仍通过 Provider 内部 Python API
+运行；Bridge v1 的 `compile_asset` / `render_static` 枚举没有改变。
+
 ## 13. 动态交点的身份
 
 推荐的 TikZ 写法是：

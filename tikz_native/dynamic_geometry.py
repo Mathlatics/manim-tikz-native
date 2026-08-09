@@ -82,9 +82,9 @@ class EllipseChordDriver:
         ellipse = picture.named_paths[ellipse_name]
         if ellipse.kind != "ellipse":
             raise ValueError("EllipseChordDriver requires one line and one ellipse")
-        if tuple(relation.coordinate_names) != ("Q", "P"):
+        if len(relation.coordinate_names) != 2:
             raise ValueError(
-                "EllipseChordDriver expects line-sorted intersection names ('Q', 'P')"
+                "EllipseChordDriver expects exactly two line-sorted intersections"
             )
         if pivot_name not in picture.coordinates:
             raise ValueError(f"Unknown pivot coordinate: {pivot_name}")
@@ -133,8 +133,9 @@ class EllipseChordDriver:
     def state(self) -> EllipseChordState:
         angle = self.angle()
         if self._cached_state is None or angle != self._cached_angle:
+            state = ellipse_chord_state(angle, **self.parameters)
+            self._cached_state = state
             self._cached_angle = angle
-            self._cached_state = ellipse_chord_state(angle, **self.parameters)
         return self._cached_state
 
 
@@ -388,6 +389,52 @@ class NativeMotionBinder:
             item.become(updated)
 
         mobject.add_updater(update_path_label)
+        return mobject
+
+    def bind_angle(
+        self,
+        object_id: str,
+        first: PointProvider,
+        vertex: PointProvider,
+        third: PointProvider,
+    ) -> Mobject:
+        spec, mobject = self._get(object_id, {"angle"})
+
+        def update_angle(item: Mobject) -> None:
+            updated = self.renderer.native_angle_from_points(
+                _point3(first()),
+                _point3(vertex()),
+                _point3(third()),
+                radius=spec.geometry["radius_pt"] * self.renderer.pt,
+                style=spec.style,
+            )
+            updated.set_z_index(spec.z_index)
+            item.become(updated)
+
+        mobject.add_updater(update_angle)
+        return mobject
+
+    def bind_angle_label(
+        self,
+        object_id: str,
+        first: PointProvider,
+        vertex: PointProvider,
+        third: PointProvider,
+    ) -> Mobject:
+        spec, mobject = self._get(object_id, {"angle_label"})
+
+        def update_angle_label(item: Mobject) -> None:
+            item.move_to(
+                self.renderer.native_angle_label_position(
+                    _point3(first()),
+                    _point3(vertex()),
+                    _point3(third()),
+                    radius=spec.geometry["radius_pt"] * self.renderer.pt,
+                    eccentricity=spec.geometry["eccentricity"],
+                )
+            )
+
+        mobject.add_updater(update_angle_label)
         return mobject
 
     def bind_right_angle(
