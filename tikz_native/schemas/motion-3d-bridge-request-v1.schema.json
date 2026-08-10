@@ -1,0 +1,111 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:tikz-native:motion-3d-bridge:request:v1",
+  "title": "TikZ-native 3D motion bridge request v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "operation",
+    "job_id",
+    "provider_revision",
+    "input",
+    "conversion",
+    "render",
+    "output_dir"
+  ],
+  "properties": {
+    "schema": {
+      "const": "tikz-native-motion-3d-bridge.request/v1"
+    },
+    "operation": {
+      "const": "render_motion_3d_preview"
+    },
+    "job_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "provider_revision": {
+      "type": "string",
+      "minLength": 1
+    },
+    "input": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "source_path",
+        "source_sha256",
+        "motion_path",
+        "motion_sha256",
+        "picture_index"
+      ],
+      "properties": {
+        "source_path": {
+          "type": "string",
+          "minLength": 1
+        },
+        "source_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-fA-F]{64}$"
+        },
+        "motion_path": {
+          "type": "string",
+          "minLength": 1
+        },
+        "motion_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-fA-F]{64}$"
+        },
+        "entry_macro": {
+          "type": ["string", "null"]
+        },
+        "picture_index": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "conversion": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "subset_version",
+        "scene_unit_per_cm",
+        "strict_native",
+        "view_mode"
+      ],
+      "properties": {
+        "subset_version": {
+          "const": "0.1.0"
+        },
+        "scene_unit_per_cm": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "strict_native": {
+          "const": true
+        },
+        "view_mode": {
+          "const": "world_3d"
+        }
+      }
+    },
+    "render": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["profile", "projection"],
+      "properties": {
+        "profile": {
+          "const": "preview_854x480_15fps"
+        },
+        "projection": {
+          "const": "parallel"
+        }
+      }
+    },
+    "output_dir": {
+      "type": "string",
+      "minLength": 1
+    }
+  }
+}

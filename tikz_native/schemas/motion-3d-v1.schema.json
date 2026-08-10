@@ -1,0 +1,161 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "tikz-native-motion-3d/v1",
+  "title": "TikZ Native declarative 3D motion configuration v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "picture_index",
+    "end_policy",
+    "driver",
+    "derived_coordinates",
+    "bindings",
+    "camera",
+    "timeline"
+  ],
+  "properties": {
+    "schema": {"const": "tikz-native-motion-3d/v1"},
+    "picture_index": {"type": "integer", "minimum": 1},
+    "end_policy": {"const": "restore_entry"},
+    "driver": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id", "type", "axis", "moving_points", "initial", "range", "unit"
+      ],
+      "properties": {
+        "id": {"type": "string", "minLength": 1},
+        "type": {"const": "hinge_fold"},
+        "axis": {
+          "type": "array",
+          "prefixItems": [
+            {"type": "string", "minLength": 1},
+            {"type": "string", "minLength": 1}
+          ],
+          "minItems": 2,
+          "maxItems": 2
+        },
+        "moving_points": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {"type": "string", "minLength": 1}
+        },
+        "initial": {"type": "number"},
+        "range": {
+          "type": "array",
+          "prefixItems": [{"type": "number"}, {"type": "number"}],
+          "minItems": 2,
+          "maxItems": 2
+        },
+        "unit": {"const": "radians"}
+      }
+    },
+    "derived_coordinates": {
+      "type": "array",
+      "items": {
+        "oneOf": [
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["name", "type", "start", "end", "parameter"],
+            "properties": {
+              "name": {"type": "string", "minLength": 1},
+              "type": {"const": "point_on_segment"},
+              "start": {"type": "string", "minLength": 1},
+              "end": {"type": "string", "minLength": 1},
+              "parameter": {"type": "number", "minimum": 0, "maximum": 1}
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["name", "type", "point", "line_start", "line_end"],
+            "properties": {
+              "name": {"type": "string", "minLength": 1},
+              "type": {"const": "project_point_to_line"},
+              "point": {"type": "string", "minLength": 1},
+              "line_start": {"type": "string", "minLength": 1},
+              "line_end": {"type": "string", "minLength": 1}
+            }
+          }
+        ]
+      }
+    },
+    "bindings": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["object_id", "type", "points"],
+        "properties": {
+          "object_id": {"type": "string", "minLength": 1},
+          "type": {
+            "enum": ["line", "dot", "polygon", "label", "path_label"]
+          },
+          "points": {
+            "type": "array",
+            "minItems": 1,
+            "items": {"type": "string", "minLength": 1}
+          }
+        }
+      }
+    },
+    "camera": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["entry_mode", "restore_transition", "restore_duration"],
+      "properties": {
+        "entry_mode": {"type": "string", "minLength": 1},
+        "restore_transition": {"enum": ["linear", "orbit"]},
+        "restore_duration": {"type": "number", "exclusiveMinimum": 0}
+      }
+    },
+    "timeline": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "oneOf": [
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["type", "to", "duration"],
+            "properties": {
+              "type": {"const": "driver"},
+              "to": {"type": "number"},
+              "duration": {"type": "number", "exclusiveMinimum": 0},
+              "hold": {"type": "number", "minimum": 0},
+              "cue": {"type": "string", "minLength": 1}
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["type", "mode", "transition", "duration"],
+            "properties": {
+              "type": {"const": "camera"},
+              "mode": {"type": "string", "minLength": 1},
+              "transition": {"enum": ["linear", "orbit"]},
+              "duration": {"type": "number", "exclusiveMinimum": 0},
+              "arc_height": {"type": "number"},
+              "hold": {"type": "number", "minimum": 0},
+              "cue": {"type": "string", "minLength": 1}
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["type", "duration"],
+            "properties": {
+              "type": {"const": "wait"},
+              "duration": {"type": "number", "exclusiveMinimum": 0},
+              "cue": {"type": "string", "minLength": 1}
+            }
+          }
+        ]
+      }
+    }
+  }
+}

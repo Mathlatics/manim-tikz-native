@@ -1,0 +1,61 @@
+% TikZ Native Provider semantic fixture; rendered by examples/.../scene.py.
+% The source intentionally keeps every animated point and face explicitly named.
+\begin{tikzpicture}[
+  3d view={40.4}{23.8},
+  scale=0.92,
+  line cap=round,
+  line join=round,
+  line width=0.9pt,
+  alphaFace/.style={fill=gray!12,fill opacity=0.64},
+  betaFace/.style={fill=cyan!16,fill opacity=0.48},
+  betaCovered/.style={fill=cyan!8,fill opacity=0.32},
+  alphaEdge/.style={black!78,line width=1pt},
+  alphaHidden/.style={black!45,densely dashed,thin},
+  betaEdge/.style={cyan!55!black,line width=1.05pt},
+  betaHidden/.style={cyan!42!gray,densely dashed,thin},
+  helper/.style={orange!80!black,line width=0.9pt},
+  probe/.style={purple!70!black,line width=1pt},
+  probeHidden/.style={purple!55!gray,densely dashed,thin}
+]
+  % Public hinge AB.  Alpha is fixed in z=0; beta starts at 58 degrees.
+  \coordinate (A) at (0,-1.8,0);
+  \coordinate (B) at (0,1.8,0);
+  \coordinate (Alpha0) at (3.4,-1.8,0);
+  \coordinate (Alpha1) at (3.4,1.8,0);
+  \coordinate (Beta0) at (1.8017254984,-1.8,2.8833635269);
+  \coordinate (Beta1) at (1.8017254984,1.8,2.8833635269);
+  \coordinate (S) at (-1,0,1.5);
+  \coordinate (E) at (4,0,1.5);
+
+  % M belongs to the folding face; N is M's perpendicular foot on hinge AB.
+  \coordinate (M) at ($(Beta0)!0.67!(Beta1)$);
+  \coordinate (N) at ($(A)!0.67!(B)$);
+
+  \fill[alphaFace] (A)--(B)--(Alpha1)--(Alpha0)--cycle;
+
+  % This semantic command records beta as a native face and each beta edge as a
+  % line/alpha-face occlusion relation.  The runtime updates those relations.
+  \DrawSpacePlaneInteraction
+    [betaFace][betaCovered][alphaEdge][alphaHidden][betaEdge][betaHidden]
+    {A/B/Alpha1/Alpha0}{A/B/Beta1/Beta0}
+
+  % A fixed probe line makes the moving line/face occlusion easy to inspect.
+  \DrawSpaceLineBehindParallelogramFace[probe][probeHidden]
+    {S}{E}{A}{B}{Beta1}{Beta0}
+
+  \draw[helper] (M)--(N);
+
+  \fill (A) circle (1.05pt);
+  \fill (B) circle (1.05pt);
+  \fill (M) circle (1.12pt);
+  \fill (N) circle (1.05pt);
+
+  \node[below left=2pt] at (A) {$A$};
+  \node[above left=2pt] at (B) {$B$};
+  \node[above right=2pt] at (M) {$M$};
+  \node[left=3pt] at (N) {$N$};
+  \node[right=5pt] at (Alpha1) {$\alpha$};
+  \node[above right=5pt] at (Beta0) {$\beta$};
+  \node[right=3pt] at (E) {$g$};
+  \node[left=6pt] at ($(A)!0.5!(B)$) {$l$};
+\end{tikzpicture}

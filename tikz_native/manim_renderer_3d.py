@@ -219,8 +219,16 @@ class NativeManim3DRenderer(NativeManimRenderer):
         spec: ObjectSpec,
         picture: PictureSpec,
         matrix: Matrix3,
+        coordinate_provider: Callable[[str], Sequence[float] | np.ndarray]
+        | None = None,
     ) -> np.ndarray:
-        target = self.point(tuple(spec.geometry["at"]), picture)
+        coordinate_name = spec.geometry.get("at_name")
+        coordinate = (
+            coordinate_provider(str(coordinate_name))
+            if coordinate_provider is not None and coordinate_name
+            else spec.geometry["at"]
+        )
+        target = self.point(tuple(float(value) for value in coordinate), picture)
         placement = spec.placement
         if placement is None:
             return target
@@ -402,12 +410,26 @@ class NativeManim3DRenderer(NativeManimRenderer):
         spec: ObjectSpec,
         picture: PictureSpec,
         matrix: Matrix3,
+        coordinate_provider: Callable[[str], Sequence[float] | np.ndarray]
+        | None = None,
     ) -> tuple[np.ndarray, float | None]:
         placement = spec.placement
         if placement is None:
             raise ValueError("path label placement missing")
-        start = self.point(tuple(spec.geometry["start"]), picture)
-        end = self.point(tuple(spec.geometry["end"]), picture)
+        start_name = spec.geometry.get("start_name")
+        end_name = spec.geometry.get("end_name")
+        start_value = (
+            coordinate_provider(str(start_name))
+            if coordinate_provider is not None and start_name
+            else spec.geometry["start"]
+        )
+        end_value = (
+            coordinate_provider(str(end_name))
+            if coordinate_provider is not None and end_name
+            else spec.geometry["end"]
+        )
+        start = self.point(tuple(float(value) for value in start_value), picture)
+        end = self.point(tuple(float(value) for value in end_value), picture)
         vector = end - start
         base = start + float(spec.geometry["pos"]) * vector
         projected_start = np.asarray(project_point(matrix, start), dtype=float)
@@ -470,8 +492,21 @@ class NativeManim3DRenderer(NativeManimRenderer):
             tuple(float(value) for value in row) for row in values
         )  # type: ignore[return-value]
 
-    def bind_labels_to_camera(self, figure: Native3DFigure, camera) -> None:
-        """Keep TikZ screen anchors stable while a 3D camera moves."""
+    def bind_labels_to_camera(
+        self,
+        figure: Native3DFigure,
+        camera,
+        *,
+        coordinate_provider: Callable[[str], Sequence[float] | np.ndarray]
+        | None = None,
+    ) -> None:
+        """Keep TikZ screen anchors stable while camera or coordinates move.
+
+        ``coordinate_provider`` is optional so the established fixed-geometry
+        behavior remains byte-for-byte equivalent at the API boundary.  A 3D
+        motion runtime can provide current logical TikZ coordinates without
+        mutating ``PictureSpec`` or rebuilding label objects.
+        """
 
         for spec in figure.picture.objects:
             if spec.kind not in {"label", "path_label", "angle_label"}:
@@ -496,6 +531,7 @@ class NativeManim3DRenderer(NativeManimRenderer):
                             object_spec,
                             figure.picture,
                             matrix,
+                            coordinate_provider,
                         )
                     )
 
@@ -507,6 +543,7 @@ class NativeManim3DRenderer(NativeManimRenderer):
                 spec,
                 figure.picture,
                 self._matrix_tuple(camera.get_projection_matrix()),
+                coordinate_provider,
             )
             previous_angle = [initial_state[1] or 0.0]
 
@@ -523,6 +560,7 @@ class NativeManim3DRenderer(NativeManimRenderer):
                     object_spec,
                     figure.picture,
                     matrix,
+                    coordinate_provider,
                 )
                 if angle is not None:
                     mobject.rotate(

@@ -1,0 +1,111 @@
+{
+  "schema": "tikz-native-motion-3d/v1",
+  "picture_index": 1,
+  "end_policy": "restore_entry",
+  "driver": {
+    "id": "fold_angle",
+    "type": "hinge_fold",
+    "axis": ["A", "B"],
+    "moving_points": ["Beta0", "Beta1"],
+    "initial": 1.0122909661567112,
+    "range": [0.3141592653589793, 1.9547687622336491],
+    "unit": "radians"
+  },
+  "derived_coordinates": [
+    {
+      "name": "M",
+      "type": "point_on_segment",
+      "start": "Beta0",
+      "end": "Beta1",
+      "parameter": 0.67
+    },
+    {
+      "name": "N",
+      "type": "project_point_to_line",
+      "point": "M",
+      "line_start": "A",
+      "line_end": "B"
+    }
+  ],
+  "bindings": [
+    {
+      "object_id": "plane_interaction_fill.A.B.Beta1.Beta0",
+      "type": "polygon",
+      "points": ["A", "B", "Beta1", "Beta0"]
+    },
+    {
+      "object_id": "line.M.N",
+      "type": "line",
+      "points": ["M", "N"]
+    },
+    {
+      "object_id": "dot.M",
+      "type": "dot",
+      "points": ["M"]
+    },
+    {
+      "object_id": "dot.N",
+      "type": "dot",
+      "points": ["N"]
+    },
+    {
+      "object_id": "label.M.M",
+      "type": "label",
+      "points": ["M"]
+    },
+    {
+      "object_id": "label.N.N",
+      "type": "label",
+      "points": ["N"]
+    },
+    {
+      "object_id": "label.Beta0.beta",
+      "type": "label",
+      "points": ["Beta0"]
+    }
+  ],
+  "camera": {
+    "entry_mode": "tikz",
+    "restore_transition": "orbit",
+    "restore_duration": 1.6
+  },
+  "timeline": [
+    {
+      "type": "wait",
+      "duration": 0.5,
+      "cue": "entry_state"
+    },
+    {
+      "type": "driver",
+      "to": 0.3141592653589793,
+      "duration": 1.8,
+      "hold": 0.3,
+      "cue": "fold_near_alpha"
+    },
+    {
+      "type": "camera",
+      "mode": "isometric",
+      "transition": "orbit",
+      "duration": 1.8,
+      "arc_height": 0.24,
+      "hold": 0.3,
+      "cue": "inspect_occlusion"
+    },
+    {
+      "type": "driver",
+      "to": 1.9547687622336491,
+      "duration": 2.5,
+      "hold": 0.4,
+      "cue": "fold_past_right_angle"
+    },
+    {
+      "type": "camera",
+      "mode": "side",
+      "transition": "orbit",
+      "duration": 1.7,
+      "arc_height": 0.2,
+      "hold": 0.35,
+      "cue": "verify_projection_foot"
+    }
+  ]
+}
