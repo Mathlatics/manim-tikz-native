@@ -137,6 +137,7 @@ def audit_picture_compatibility(
             _add(counts, feature_id)
 
     _add(counts, "relation.named_path", len(picture.named_paths))
+    _add(counts, "relation.hinge_3d", len(picture.hinge_relations))
     for relation in picture.intersections:
         kinds = {
             picture.named_paths[relation.path_a].kind,

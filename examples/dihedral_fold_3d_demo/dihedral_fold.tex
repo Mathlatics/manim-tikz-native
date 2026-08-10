@@ -29,7 +29,7 @@
 
   % M belongs to the folding face; N is M's perpendicular foot on hinge AB.
   \coordinate (M) at ($(Beta0)!0.67!(Beta1)$);
-  \coordinate (N) at ($(A)!0.67!(B)$);
+  \coordinate (N) at ($(A)!(M)!(B)$);
 
   \fill[alphaFace] (A)--(B)--(Alpha1)--(Alpha0)--cycle;
 
@@ -38,6 +38,11 @@
   \DrawSpacePlaneInteraction
     [betaFace][betaCovered][alphaEdge][alphaHidden][betaEdge][betaHidden]
     {A/B/Alpha1/Alpha0}{A/B/Beta1/Beta0}
+
+  % Non-drawing v1 authorship relation: beta is the moving face and A->B is
+  % the directed hinge.  Geometry Rig consumes this declaration directly.
+  \DeclareSpaceHinge
+    {fold-angle}{A/B}{A/B/Alpha1/Alpha0}{A/B/Beta1/Beta0}
 
   % A fixed probe line makes the moving line/face occlusion easy to inspect.
   \DrawSpaceLineBehindParallelogramFace[probe][probeHidden]

@@ -1,0 +1,469 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:tikz-native:geometry-rig-3d:v1",
+  "title": "TikZ-native explicit 3D Geometry Rig v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "dimension",
+    "status",
+    "pictureIndex",
+    "sourceSha256",
+    "providerRevision",
+    "expectedAssetProviderRevision",
+    "revisionMatch",
+    "semanticModelHash",
+    "motionCandidates",
+    "selectedMotionCandidate",
+    "semanticGroups",
+    "coordinateRoles",
+    "affectedCoordinateIds",
+    "fixedCoordinateIds",
+    "bindings",
+    "dynamicObjectIds",
+    "fixedObjectIds",
+    "excludedObjectIds",
+    "occlusionBindings",
+    "diagnostics",
+    "motionSpecCore"
+  ],
+  "properties": {
+    "schema": {"const": "tikz-native-geometry-rig-3d/v1"},
+    "dimension": {"const": 3},
+    "status": {"enum": ["ready", "needs_selection", "blocked"]},
+    "pictureIndex": {"type": "integer", "minimum": 1},
+    "sourceSha256": {"$ref": "#/$defs/sha256"},
+    "providerRevision": {"type": "string", "minLength": 1},
+    "expectedAssetProviderRevision": {"type": "string", "minLength": 1},
+    "revisionMatch": {"type": "boolean"},
+    "semanticModelHash": {"$ref": "#/$defs/sha256"},
+    "motionCandidates": {
+      "type": "array",
+      "items": {
+        "oneOf": [
+          {"$ref": "#/$defs/hingeCandidate"},
+          {"$ref": "#/$defs/derivedCandidate"},
+          {"$ref": "#/$defs/cameraCandidate"}
+        ]
+      }
+    },
+    "selectedMotionCandidate": {
+      "oneOf": [{"type": "null"}, {"$ref": "#/$defs/selectedCandidate"}]
+    },
+    "semanticGroups": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/semanticGroup"}
+    },
+    "coordinateRoles": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/coordinateRole"}
+    },
+    "affectedCoordinateIds": {"$ref": "#/$defs/stringArray"},
+    "fixedCoordinateIds": {"$ref": "#/$defs/stringArray"},
+    "bindings": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/binding"}
+    },
+    "dynamicObjectIds": {"$ref": "#/$defs/stringArray"},
+    "fixedObjectIds": {"$ref": "#/$defs/stringArray"},
+    "excludedObjectIds": {"$ref": "#/$defs/stringArray"},
+    "occlusionBindings": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/occlusionBinding"}
+    },
+    "diagnostics": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/diagnostic"}
+    },
+    "motionSpecCore": {
+      "oneOf": [{"type": "null"}, {"$ref": "#/$defs/motionSpecCore"}]
+    }
+  },
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "stringArray": {
+      "type": "array",
+      "items": {"type": "string", "minLength": 1}
+    },
+    "point3": {
+      "type": "array",
+      "prefixItems": [
+        {"type": "number"},
+        {"type": "number"},
+        {"type": "number"}
+      ],
+      "minItems": 3,
+      "maxItems": 3
+    },
+    "parameterValue": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["value", "unit"],
+      "properties": {
+        "value": {"type": "number"},
+        "unit": {"const": "radians"}
+      }
+    },
+    "suggestedRange": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["minimum", "maximum", "unit", "source"],
+      "properties": {
+        "minimum": {"type": "number"},
+        "maximum": {"type": "number"},
+        "unit": {"const": "radians"},
+        "source": {"const": "conservative-hinge-window"}
+      }
+    },
+    "hingeCandidate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "candidateId",
+        "candidateKind",
+        "driverType",
+        "status",
+        "relationId",
+        "activeObjectId",
+        "fixedObjectId",
+        "axis",
+        "fixedFace",
+        "movingFace",
+        "movingCoordinates",
+        "initial",
+        "suggestedRange",
+        "reason"
+      ],
+      "properties": {
+        "candidateId": {"type": "string", "minLength": 1},
+        "candidateKind": {"const": "geometry_driver"},
+        "driverType": {"const": "hinge_fold"},
+        "status": {"enum": ["recommended", "available", "blocked"]},
+        "relationId": {"type": "string", "minLength": 1},
+        "activeObjectId": {"type": ["string", "null"]},
+        "fixedObjectId": {"type": ["string", "null"]},
+        "axis": {"$ref": "#/$defs/stringArray"},
+        "fixedFace": {"$ref": "#/$defs/stringArray"},
+        "movingFace": {"$ref": "#/$defs/stringArray"},
+        "movingCoordinates": {"$ref": "#/$defs/stringArray"},
+        "initial": {"$ref": "#/$defs/parameterValue"},
+        "suggestedRange": {"$ref": "#/$defs/suggestedRange"},
+        "reason": {"type": "string", "minLength": 1}
+      }
+    },
+    "derivedRelation": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "start", "end", "parameter"],
+          "properties": {
+            "type": {"const": "point_on_segment"},
+            "start": {"type": "string", "minLength": 1},
+            "end": {"type": "string", "minLength": 1},
+            "parameter": {"type": "number"}
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "point", "line_start", "line_end"],
+          "properties": {
+            "type": {"const": "project_point_to_line"},
+            "point": {"type": "string", "minLength": 1},
+            "line_start": {"type": "string", "minLength": 1},
+            "line_end": {"type": "string", "minLength": 1}
+          }
+        }
+      ]
+    },
+    "derivedCandidate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "candidateId",
+        "candidateKind",
+        "relationType",
+        "status",
+        "coordinateId",
+        "dependsOn",
+        "affectedByDriver",
+        "relation",
+        "reason"
+      ],
+      "properties": {
+        "candidateId": {"type": "string", "minLength": 1},
+        "candidateKind": {"const": "derived_relation"},
+        "relationType": {
+          "enum": ["point_on_segment", "project_point_to_line"]
+        },
+        "status": {"enum": ["included", "fixed"]},
+        "coordinateId": {"type": "string", "minLength": 1},
+        "dependsOn": {"$ref": "#/$defs/stringArray"},
+        "affectedByDriver": {"type": "boolean"},
+        "relation": {"$ref": "#/$defs/derivedRelation"},
+        "reason": {"type": "string", "minLength": 1}
+      }
+    },
+    "cameraCandidate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "candidateId",
+        "candidateKind",
+        "operationType",
+        "status",
+        "mode",
+        "transitionTypes",
+        "restoresEntry",
+        "reason"
+      ],
+      "properties": {
+        "candidateId": {"type": "string", "minLength": 1},
+        "candidateKind": {"const": "camera_operation"},
+        "operationType": {"const": "camera"},
+        "status": {"const": "available"},
+        "mode": {"enum": ["front", "side", "top", "oblique", "isometric"]},
+        "transitionTypes": {
+          "type": "array",
+          "prefixItems": [{"const": "linear"}, {"const": "orbit"}],
+          "minItems": 2,
+          "maxItems": 2
+        },
+        "restoresEntry": {"const": true},
+        "reason": {"type": "string", "minLength": 1}
+      }
+    },
+    "selectedCandidate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "candidateId",
+        "candidateKind",
+        "driverType",
+        "relationId",
+        "activeObjectId",
+        "axis",
+        "movingCoordinates",
+        "initial",
+        "range",
+        "unit"
+      ],
+      "properties": {
+        "candidateId": {"type": "string", "minLength": 1},
+        "candidateKind": {"const": "geometry_driver"},
+        "driverType": {"const": "hinge_fold"},
+        "relationId": {"type": "string", "minLength": 1},
+        "activeObjectId": {"type": "string", "minLength": 1},
+        "axis": {"$ref": "#/$defs/stringArray"},
+        "movingCoordinates": {"$ref": "#/$defs/stringArray"},
+        "initial": {"type": "number"},
+        "range": {
+          "type": "array",
+          "prefixItems": [{"type": "number"}, {"type": "number"}],
+          "minItems": 2,
+          "maxItems": 2
+        },
+        "unit": {"const": "radians"}
+      }
+    },
+    "semanticGroup": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "groupId",
+        "label",
+        "roles",
+        "objectIds",
+        "coordinateIds",
+        "required"
+      ],
+      "properties": {
+        "groupId": {"type": "string", "minLength": 1},
+        "label": {"type": "string", "minLength": 1},
+        "roles": {"$ref": "#/$defs/stringArray"},
+        "objectIds": {"$ref": "#/$defs/stringArray"},
+        "coordinateIds": {"$ref": "#/$defs/stringArray"},
+        "required": {"type": "boolean"}
+      }
+    },
+    "dependency": {
+      "oneOf": [
+        {"type": "null"},
+        {"type": "object", "required": ["operation"], "additionalProperties": true}
+      ]
+    },
+    "coordinateRole": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "coordinateId",
+        "value",
+        "role",
+        "dependency",
+        "dependsOn",
+        "affectedByDriver"
+      ],
+      "properties": {
+        "coordinateId": {"type": "string", "minLength": 1},
+        "value": {"$ref": "#/$defs/point3"},
+        "role": {"enum": ["hinge_axis", "driver_coordinate", "derived", "fixed"]},
+        "dependency": {"$ref": "#/$defs/dependency"},
+        "dependsOn": {"$ref": "#/$defs/stringArray"},
+        "affectedByDriver": {"type": "boolean"}
+      }
+    },
+    "binding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "objectId",
+        "objectKind",
+        "bindingType",
+        "pointNames",
+        "role",
+        "enabled",
+        "reason",
+        "evidence"
+      ],
+      "properties": {
+        "objectId": {"type": "string", "minLength": 1},
+        "objectKind": {"type": "string", "minLength": 1},
+        "bindingType": {"type": ["string", "null"]},
+        "pointNames": {"$ref": "#/$defs/stringArray"},
+        "role": {"enum": ["active", "follower", "fixed", "excluded", "unsupported"]},
+        "enabled": {"type": "boolean"},
+        "reason": {"type": "string", "minLength": 1},
+        "evidence": {"$ref": "#/$defs/stringArray"}
+      }
+    },
+    "occlusionBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "relationId",
+        "linePointNames",
+        "facePointNames",
+        "objectIds",
+        "role",
+        "dynamicByGeometry",
+        "cameraSensitive",
+        "status",
+        "reason",
+        "evidence"
+      ],
+      "properties": {
+        "relationId": {"type": "string", "minLength": 1},
+        "linePointNames": {"$ref": "#/$defs/stringArray"},
+        "facePointNames": {"$ref": "#/$defs/stringArray"},
+        "objectIds": {"$ref": "#/$defs/stringArray"},
+        "role": {"enum": ["dynamic", "fixed"]},
+        "dynamicByGeometry": {"type": "boolean"},
+        "cameraSensitive": {"const": true},
+        "status": {"const": "included"},
+        "reason": {"type": "string", "minLength": 1},
+        "evidence": {"$ref": "#/$defs/stringArray"}
+      }
+    },
+    "diagnostic": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["severity", "code", "message"],
+      "properties": {
+        "severity": {"enum": ["info", "warning", "error"]},
+        "code": {"type": "string", "minLength": 1},
+        "message": {"type": "string", "minLength": 1},
+        "relationId": {"type": "string", "minLength": 1},
+        "objectId": {"type": "string", "minLength": 1},
+        "coordinateId": {"type": "string", "minLength": 1}
+      }
+    },
+    "motionDriver": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "type", "axis", "moving_points", "initial", "range", "unit"],
+      "properties": {
+        "id": {"type": "string", "minLength": 1},
+        "type": {"const": "hinge_fold"},
+        "axis": {"$ref": "#/$defs/stringArray"},
+        "moving_points": {"$ref": "#/$defs/stringArray"},
+        "initial": {"type": "number"},
+        "range": {
+          "type": "array",
+          "prefixItems": [{"type": "number"}, {"type": "number"}],
+          "minItems": 2,
+          "maxItems": 2
+        },
+        "unit": {"const": "radians"}
+      }
+    },
+    "derivedCoordinate": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["name", "type", "start", "end", "parameter"],
+          "properties": {
+            "name": {"type": "string", "minLength": 1},
+            "type": {"const": "point_on_segment"},
+            "start": {"type": "string", "minLength": 1},
+            "end": {"type": "string", "minLength": 1},
+            "parameter": {"type": "number"}
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["name", "type", "point", "line_start", "line_end"],
+          "properties": {
+            "name": {"type": "string", "minLength": 1},
+            "type": {"const": "project_point_to_line"},
+            "point": {"type": "string", "minLength": 1},
+            "line_start": {"type": "string", "minLength": 1},
+            "line_end": {"type": "string", "minLength": 1}
+          }
+        }
+      ]
+    },
+    "motionBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["object_id", "type", "points"],
+      "properties": {
+        "object_id": {"type": "string", "minLength": 1},
+        "type": {"enum": ["line", "dot", "polygon", "label", "path_label"]},
+        "points": {"$ref": "#/$defs/stringArray"}
+      }
+    },
+    "camera": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["entry_mode", "restore_transition", "restore_duration"],
+      "properties": {
+        "entry_mode": {"const": "tikz"},
+        "restore_transition": {"enum": ["linear", "orbit"]},
+        "restore_duration": {"type": "number", "exclusiveMinimum": 0}
+      }
+    },
+    "motionSpecCore": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["end_policy", "driver", "derived_coordinates", "bindings", "camera"],
+      "properties": {
+        "end_policy": {"const": "restore_entry"},
+        "driver": {"$ref": "#/$defs/motionDriver"},
+        "derived_coordinates": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/derivedCoordinate"}
+        },
+        "bindings": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"$ref": "#/$defs/motionBinding"}
+        },
+        "camera": {"$ref": "#/$defs/camera"}
+      }
+    }
+  }
+}

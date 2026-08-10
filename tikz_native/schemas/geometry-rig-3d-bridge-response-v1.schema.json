@@ -1,0 +1,94 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:tikz-native:geometry-rig-3d-bridge:response:v1",
+  "title": "TikZ-native Geometry Rig 3D bridge response v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "ok", "operation", "provider"],
+  "properties": {
+    "schema": {"const": "tikz-native-geometry-rig-3d-bridge.response/v1"},
+    "ok": {"type": "boolean"},
+    "operation": {"enum": ["health", "analyze_geometry_rig_3d", "unknown"]},
+    "job_id": {"type": "string", "minLength": 1},
+    "provider": {
+      "type": "object",
+      "required": [
+        "name",
+        "version",
+        "revision",
+        "capabilities",
+        "geometry_rig_3d_request_schema",
+        "geometry_rig_3d_response_schema",
+        "geometry_rig_3d_result_schema"
+      ],
+      "properties": {
+        "name": {"type": "string", "minLength": 1},
+        "version": {"type": "string", "minLength": 1},
+        "revision": {"type": "string", "minLength": 1},
+        "embeddedShapeRuntime3D": {
+          "const": "tikz-native-embedded-motion-3d/v1"
+        },
+        "capabilities": {
+          "type": "object",
+          "required": ["analyze_geometry_rig_3d"],
+          "properties": {
+            "analyze_geometry_rig_3d": {"const": true},
+            "embedded_motion_3d_runtime": {"const": true}
+          }
+        },
+        "geometry_rig_3d_request_schema": {
+          "const": "tikz-native-geometry-rig-3d-bridge.request/v1"
+        },
+        "geometry_rig_3d_response_schema": {
+          "const": "tikz-native-geometry-rig-3d-bridge.response/v1"
+        },
+        "geometry_rig_3d_result_schema": {
+          "const": "tikz-native-geometry-rig-3d/v1"
+        }
+      }
+    },
+    "result": {"$ref": "urn:tikz-native:geometry-rig-3d:v1"},
+    "error": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "phase", "message"],
+      "properties": {
+        "code": {"type": "string", "minLength": 1},
+        "phase": {"type": "string", "minLength": 1},
+        "message": {"type": "string", "minLength": 1},
+        "details": {}
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"ok": {"const": false}}, "required": ["ok"]},
+      "then": {"required": ["error"], "not": {"required": ["result"]}}
+    },
+    {
+      "if": {
+        "properties": {
+          "ok": {"const": true},
+          "operation": {"const": "analyze_geometry_rig_3d"}
+        },
+        "required": ["ok", "operation"]
+      },
+      "then": {
+        "required": ["job_id", "result"],
+        "not": {"required": ["error"]}
+      }
+    },
+    {
+      "if": {"properties": {"operation": {"const": "health"}}, "required": ["operation"]},
+      "then": {
+        "not": {
+          "anyOf": [
+            {"required": ["job_id"]},
+            {"required": ["result"]},
+            {"required": ["error"]}
+          ]
+        }
+      }
+    }
+  ]
+}

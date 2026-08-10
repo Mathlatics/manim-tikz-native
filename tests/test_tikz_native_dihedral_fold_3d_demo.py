@@ -53,6 +53,17 @@ class TikzNativeDihedralFold3DDemoTests(unittest.TestCase):
             },
             set(picture.coordinates),
         )
+        self.assertEqual(
+            picture.coordinate_dependencies["N"],
+            {
+                "operation": "projection",
+                "line_start": "A",
+                "point": "M",
+                "line_end": "B",
+            },
+        )
+        self.assertEqual(len(picture.hinge_relations), 1)
+        self.assertEqual(picture.hinge_relations[0].id, "fold-angle")
 
     def test_entry_geometry_matches_declared_hinge_angle(self) -> None:
         coordinates = self.picture.coordinates

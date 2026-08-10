@@ -21,6 +21,7 @@ from .occlusion_3d import parallel_occlusion_interval
 
 TEX_PT_PER_CM = 72.27 / 2.54
 MM_TO_PT = 72.27 / 25.4
+HINGE_RELATION_SCHEMA = "tikz-native-hinge-relation/v1"
 
 
 class TikzNativeError(RuntimeError):
@@ -100,6 +101,24 @@ class OcclusionRelationSpec:
 
 
 @dataclass
+class HingeRelationSpec:
+    """One explicit, non-drawing 3D hinge authorship relation.
+
+    The directed axis owns the sign of future rotations.  Fixed and moving
+    faces use coordinate identities rather than generated object IDs so the
+    relation survives harmless changes to drawable object naming.
+    """
+
+    id: str
+    axis_names: list[str]
+    fixed_face_names: list[str]
+    moving_face_names: list[str]
+    source_line: int
+    raw: str
+    schema: str = HINGE_RELATION_SCHEMA
+
+
+@dataclass
 class NamedPathSpec:
     name: str
     kind: str
@@ -151,6 +170,7 @@ class PictureSpec:
     intersections: list[IntersectionSpec] = field(default_factory=list)
     objects: list[ObjectSpec] = field(default_factory=list)
     occlusion_relations: list[OcclusionRelationSpec] = field(default_factory=list)
+    hinge_relations: list[HingeRelationSpec] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
     unsupported: list[str] = field(default_factory=list)
     animation_steps: list[dict[str, str]] = field(default_factory=list)
@@ -1071,6 +1091,7 @@ class TikzNativeCompiler:
             "DrawSpaceLineBehindTriFace": (2, 5),
             "DrawSpaceLineBehindParallelogramFace": (2, 6),
             "DrawSpacePlaneInteraction": (6, 2),
+            "DeclareSpaceHinge": (0, 4),
             "setSpaceOcclusionProjection": (0, 6),
         }
         for name, (optional_count, group_count) in signatures.items():
@@ -1150,6 +1171,7 @@ class TikzNativeCompiler:
             r"\\(coordinate|path|draw|filldraw|fill|node|pic|"
             r"DrawSpaceLineBehindHorizontalFace|DrawSpaceLineBehindTriFace|"
             r"DrawSpaceLineBehindParallelogramFace|DrawSpacePlaneInteraction|"
+            r"DeclareSpaceHinge|"
             r"setSpaceOcclusionProjection)\b",
             statement,
         )
@@ -1158,6 +1180,13 @@ class TikzNativeCompiler:
                 raise TikzNativeError("statement contains no supported TikZ command")
             return []
         command = command_match.group(1)
+        if command == "DeclareSpaceHinge":
+            self._compile_space_hinge_declaration(
+                statement,
+                picture,
+                source_line,
+            )
+            return []
         if command.startswith("DrawSpace"):
             return self._compile_space_semantic_command(
                 command,
@@ -1254,6 +1283,116 @@ class TikzNativeCompiler:
         if statement[cursor:].strip():
             raise TikzNativeError(f"unexpected tokens after {prefix}")
         return optional, required
+
+    def _compile_space_hinge_declaration(
+        self,
+        statement: str,
+        picture: PictureSpec,
+        source_line: int,
+    ) -> None:
+        """Record ``\\DeclareSpaceHinge`` without emitting visible geometry."""
+
+        _optional, required = self._parse_semantic_arguments(
+            statement,
+            "DeclareSpaceHinge",
+            [],
+            4,
+        )
+        relation_id = required[0].strip()
+        if not re.fullmatch(r"[A-Za-z][A-Za-z0-9_.:-]{0,127}", relation_id):
+            raise TikzNativeError(
+                "DeclareSpaceHinge relation ID must be a portable identifier"
+            )
+        if any(item.id == relation_id for item in picture.hinge_relations):
+            raise TikzNativeError(
+                f"duplicate DeclareSpaceHinge relation ID: {relation_id}"
+            )
+
+        def names(raw: str, field: str, minimum: int) -> list[str]:
+            values = [item.strip() for item in raw.split("/") if item.strip()]
+            if len(values) < minimum or len(values) != len(set(values)):
+                raise TikzNativeError(
+                    f"DeclareSpaceHinge {field} must contain at least {minimum} "
+                    "distinct named coordinates"
+                )
+            missing = [name for name in values if name not in picture.coordinates]
+            if missing:
+                raise TikzNativeError(
+                    f"DeclareSpaceHinge {field} uses unknown coordinates: "
+                    + ", ".join(missing)
+                )
+            if any(len(picture.coordinates[name]) != 3 for name in values):
+                raise TikzNativeError(
+                    f"DeclareSpaceHinge {field} requires three-dimensional coordinates"
+                )
+            return values
+
+        axis = names(required[1], "axis", 2)
+        if len(axis) != 2:
+            raise TikzNativeError(
+                "DeclareSpaceHinge axis must contain exactly two named coordinates"
+            )
+        fixed_face = names(required[2], "fixed face", 3)
+        moving_face = names(required[3], "moving face", 3)
+        if not set(axis).issubset(fixed_face) or not set(axis).issubset(moving_face):
+            raise TikzNativeError(
+                "DeclareSpaceHinge axis endpoints must belong to both faces"
+            )
+        if not (set(fixed_face) - set(axis)):
+            raise TikzNativeError(
+                "DeclareSpaceHinge fixed face needs a point outside the axis"
+            )
+        if not (set(moving_face) - set(axis)):
+            raise TikzNativeError(
+                "DeclareSpaceHinge moving face needs a point outside the axis"
+            )
+        axis_start = picture.coordinates[axis[0]]
+        axis_end = picture.coordinates[axis[1]]
+        if sum((axis_end[index] - axis_start[index]) ** 2 for index in range(3)) <= 1e-18:
+            raise TikzNativeError("DeclareSpaceHinge axis must not have zero length")
+
+        axis_vector = tuple(
+            axis_end[index] - axis_start[index] for index in range(3)
+        )
+        axis_norm_squared = sum(component * component for component in axis_vector)
+
+        def face_has_off_axis_point(face: list[str]) -> bool:
+            for name in face:
+                if name in axis:
+                    continue
+                relative = tuple(
+                    picture.coordinates[name][index] - axis_start[index]
+                    for index in range(3)
+                )
+                projection = sum(
+                    relative[index] * axis_vector[index] for index in range(3)
+                ) / axis_norm_squared
+                perpendicular = tuple(
+                    relative[index] - projection * axis_vector[index]
+                    for index in range(3)
+                )
+                if sum(component * component for component in perpendicular) > 1e-18:
+                    return True
+            return False
+
+        if not face_has_off_axis_point(fixed_face):
+            raise TikzNativeError(
+                "DeclareSpaceHinge fixed face needs a point outside the axis"
+            )
+        if not face_has_off_axis_point(moving_face):
+            raise TikzNativeError(
+                "DeclareSpaceHinge moving face needs a point outside the axis"
+            )
+        picture.hinge_relations.append(
+            HingeRelationSpec(
+                id=relation_id,
+                axis_names=axis,
+                fixed_face_names=fixed_face,
+                moving_face_names=moving_face,
+                source_line=source_line,
+                raw=re.sub(r"\s+", " ", statement).strip(),
+            )
+        )
 
     def _occlusion_interval(
         self,
@@ -1444,7 +1583,12 @@ class TikzNativeCompiler:
             self._object(
                 self._semantic_id("plane_interaction_fill", beta_names),
                 "polygon",
-                {"points": beta_points, "closed": True, "semantic": "beta_plane"},
+                {
+                    "points": beta_points,
+                    "point_names": list(beta_names),
+                    "closed": True,
+                    "semantic": "beta_plane",
+                },
                 beta_style,
                 z_index,
                 source_line,
@@ -2154,7 +2298,12 @@ class TikzNativeCompiler:
                 self._object(
                     self._semantic_id("ellipse", [center.name]),
                     "ellipse",
-                    {"center": center.xy, "rx": rx, "ry": ry},
+                    {
+                        "center": center.xy,
+                        "center_name": center.name,
+                        "rx": rx,
+                        "ry": ry,
+                    },
                     style,
                     z_index,
                     source_line,
@@ -2186,11 +2335,19 @@ class TikzNativeCompiler:
             if re.search(r"(?:pt|mm|cm)$", radius_raw):
                 radius_pt = self._parse_length(radius_raw, picture.symbols).pt
                 kind = "dot" if command == "fill" else "circle"
-                geometry = {"center": center.xy, "radius_pt": radius_pt}
+                geometry = {
+                    "center": center.xy,
+                    "center_name": center.name,
+                    "radius_pt": radius_pt,
+                }
             else:
                 radius = self._eval_expr(radius_raw, picture.symbols)
                 kind = "circle"
-                geometry = {"center": center.xy, "radius": radius}
+                geometry = {
+                    "center": center.xy,
+                    "center_name": center.name,
+                    "radius": radius,
+                }
             objects = [
                 self._object(
                     self._semantic_id(kind, [center.name]),
@@ -2250,7 +2407,11 @@ class TikzNativeCompiler:
                 self._object(
                     self._semantic_id("fill", [names[index] for index in indices]),
                     "polygon",
-                    {"points": [points[index] for index in indices], "closed": True},
+                    {
+                        "points": [points[index] for index in indices],
+                        "point_names": [names[index] for index in indices],
+                        "closed": True,
+                    },
                     style,
                     z_index,
                     source_line,
@@ -2515,7 +2676,11 @@ class TikzNativeCompiler:
             return self._object(
                 self._semantic_id("dot", [coordinate.name]),
                 "dot",
-                {"center": coordinate.xy, "radius_pt": inner_sep_pt},
+                {
+                    "center": coordinate.xy,
+                    "center_name": coordinate.name,
+                    "radius_pt": inner_sep_pt,
+                },
                 style,
                 z_index,
                 source_line,

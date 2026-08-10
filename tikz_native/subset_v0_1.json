@@ -66,6 +66,12 @@
       "requirement": "投影点和直线端点必须命名"
     },
     {
+      "id": "relation.hinge_3d",
+      "level": "A",
+      "description": "显式三维铰链、固定面与运动面关系",
+      "requirement": "铰链轴和两个面必须由三维命名坐标声明，正式运动前仍需确认角度范围"
+    },
+    {
       "id": "relation.named_path",
       "level": "A",
       "description": "原生 name path 关系",
