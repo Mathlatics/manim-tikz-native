@@ -1,13 +1,17 @@
 from __future__ import annotations
 
+import subprocess
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from unittest.mock import patch
 
 import numpy as np
+from PIL import Image
 from manim import Scene, tempconfig
 from manim.animation.animation import prepare_animation
 
+import tikz_native.motion_3d_runtime as motion_3d_runtime
 from tikz_native.compiler import compile_document
 from tikz_native.geometry_rig_3d import (
     analyze_geometry_rig_3d,
@@ -18,6 +22,7 @@ from tikz_native.motion_3d_runtime import (
     EmbeddedMotion3DError,
     play_motion_3d_on_native_shape,
 )
+from tikz_native.manim_renderer_3d import NativeManim3DRenderer
 from tikz_native.provider import instantiate_picture
 from tikz_native.version import provider_revision
 
@@ -328,6 +333,126 @@ class EmbeddedMotion3DRuntimeTests(unittest.TestCase):
 
         self.assert_restored(figure, shape, snapshot)
 
+    def test_entry_wait_calibrates_occlusion_strokes_from_real_leaf_lines(self) -> None:
+        figure, shape, motion, definition, manifest, revision = self.fixture(
+            timeline=[{"type": "wait", "duration": 0.4, "cue": "entry_state"}]
+        )
+        scene = _InstantScene()
+        scene.add(shape)
+
+        relation = self.picture.occlusion_relations[0]
+        relation_object = figure.objects[relation.object_ids[0]]
+        relation_spec = next(
+            item for item in self.picture.objects if item.id == relation.object_ids[0]
+        )
+        leaf_stroke_widths = []
+        for member in relation_object.get_family():
+            if not member.has_points():
+                continue
+            widths = np.asarray(member.get_stroke_width(), dtype=float).reshape(-1)
+            opacities = np.asarray(member.get_stroke_opacity(), dtype=float).reshape(-1)
+            if not np.any(np.isfinite(opacities) & (opacities > 0)):
+                continue
+            leaf_stroke_widths.extend(
+                float(value)
+                for value in widths
+                if np.isfinite(value) and value > 0
+            )
+        self.assertTrue(leaf_stroke_widths)
+        expected_stroke_width_per_pt = float(np.median(leaf_stroke_widths)) / float(
+            relation_spec.style.line_width_pt
+        )
+
+        observed_stroke_width_per_pt: list[float] = []
+        original_make_slots = NativeManim3DRenderer._make_occlusion_slots
+
+        def record_make_slots(renderer, *args, **kwargs):
+            observed_stroke_width_per_pt.append(renderer.stroke_width_per_pt)
+            return original_make_slots(renderer, *args, **kwargs)
+
+        with patch.object(
+            NativeManim3DRenderer,
+            "_make_occlusion_slots",
+            new=record_make_slots,
+        ):
+            play_motion_3d_on_native_shape(
+                scene,
+                shape,
+                motion,
+                definition=definition,
+                semantic_manifest=manifest,
+                expected_provider_revision=revision,
+            )
+
+        self.assertTrue(observed_stroke_width_per_pt)
+        for actual in observed_stroke_width_per_pt:
+            self.assertAlmostEqual(actual, expected_stroke_width_per_pt, places=9)
+
+    def test_stroke_calibration_is_not_controlled_by_the_first_drawable(self) -> None:
+        figure, shape, motion, definition, manifest, revision = self.fixture(
+            timeline=[{"type": "wait", "duration": 0.1}]
+        )
+        scene = _InstantScene()
+        scene.add(shape)
+
+        eligible = [
+            (object_id, object_spec)
+            for object_id, object_spec in (
+                (item.id, item) for item in self.picture.objects
+            )
+            if object_spec.kind in {"line", "arrow", "polygon"}
+            and object_spec.style.line_width_pt > 0
+        ]
+        self.assertGreaterEqual(len(eligible), 3)
+        first_object_id = eligible[0][0]
+        style_widths = {
+            object_id: object_spec.style.line_width_pt
+            for object_id, object_spec in eligible
+        }
+        object_ids_by_identity = {
+            id(figure.objects[object_id]): object_id
+            for object_id in style_widths
+        }
+
+        def synthetic_stroke_width(mobject):
+            object_id = object_ids_by_identity.get(id(mobject))
+            if object_id is None:
+                return None
+            ratio = 10.0 if object_id == first_object_id else 3.8
+            return style_widths[object_id] * ratio
+
+        observed_stroke_width_per_pt: list[float] = []
+        original_make_slots = NativeManim3DRenderer._make_occlusion_slots
+
+        def record_make_slots(renderer, *args, **kwargs):
+            observed_stroke_width_per_pt.append(renderer.stroke_width_per_pt)
+            return original_make_slots(renderer, *args, **kwargs)
+
+        with (
+            patch.object(
+                motion_3d_runtime,
+                "_mobject_stroke_width",
+                side_effect=synthetic_stroke_width,
+            ),
+            patch.object(
+                NativeManim3DRenderer,
+                "_make_occlusion_slots",
+                new=record_make_slots,
+            ),
+        ):
+            play_motion_3d_on_native_shape(
+                scene,
+                shape,
+                motion,
+                definition=definition,
+                semantic_manifest=manifest,
+                expected_provider_revision=revision,
+            )
+
+        self.assertTrue(observed_stroke_width_per_pt)
+        for actual in observed_stroke_width_per_pt:
+            self.assertAlmostEqual(actual, 3.8, places=9)
+
     def test_real_manim_render_accepts_the_host_default_timeline(self) -> None:
         lower, upper = self.analysis["motionSpecCore"]["driver"]["range"]
         timeline = [
@@ -389,6 +514,90 @@ class EmbeddedMotion3DRuntimeTests(unittest.TestCase):
             ]
             self.assertEqual(len(videos), 1)
             self.assertGreater(videos[0].stat().st_size, 0)
+
+    def test_real_manim_entry_wait_has_no_pixel_jump(self) -> None:
+        figure, shape, motion, definition, manifest, revision = self.fixture(
+            timeline=[{"type": "wait", "duration": 0.4, "cue": "entry_state"}]
+        )
+        snapshot = self.snapshot(figure, shape)
+        test_case = self
+
+        class EmbeddedEntryBoundaryPreview(Scene):
+            def construct(render_scene) -> None:
+                render_scene.camera.background_color = "#FFFFFF"
+                render_scene.add(shape)
+                # Record the untouched ShapeState, then enter the embedded
+                # runtime while its authored timeline still says to wait.  A
+                # temporary representation must not change the entry pixels.
+                render_scene.wait(0.4)
+                play_motion_3d_on_native_shape(
+                    render_scene,
+                    shape,
+                    motion,
+                    definition=definition,
+                    semantic_manifest=manifest,
+                    expected_provider_revision=revision,
+                )
+                test_case.assert_restored(figure, shape, snapshot)
+
+        with TemporaryDirectory() as directory, tempconfig(
+            {
+                "media_dir": directory,
+                "pixel_width": 640,
+                "pixel_height": 360,
+                "frame_rate": 10,
+                "disable_caching": True,
+                "write_to_movie": True,
+                "save_last_frame": False,
+                "format": "mp4",
+                "verbosity": "ERROR",
+            }
+        ):
+            EmbeddedEntryBoundaryPreview().render()
+            videos = [
+                path
+                for path in Path(directory).rglob(
+                    "EmbeddedEntryBoundaryPreview.mp4"
+                )
+                if "partial_movie_files" not in path.parts
+            ]
+            self.assertEqual(len(videos), 1)
+            frames = []
+            for name, timestamp in (("entry", "0.20"), ("activated", "0.60")):
+                frame = Path(directory) / f"{name}.png"
+                subprocess.run(
+                    [
+                        "ffmpeg",
+                        "-hide_banner",
+                        "-loglevel",
+                        "error",
+                        "-y",
+                        "-ss",
+                        timestamp,
+                        "-i",
+                        str(videos[0]),
+                        "-frames:v",
+                        "1",
+                        str(frame),
+                    ],
+                    check=True,
+                )
+                frames.append(
+                    np.asarray(Image.open(frame).convert("RGB"), dtype=np.float32)
+                )
+            difference = np.abs(frames[0] - frames[1])
+            changed_pixels = np.max(difference, axis=2) > 8
+            entry_ink = np.min(frames[0], axis=2) < 235
+            activated_ink = np.min(frames[1], axis=2) < 235
+            self.assertLess(float(difference.mean()), 0.1)
+            self.assertLessEqual(int(np.count_nonzero(changed_pixels)), 20)
+            self.assertLessEqual(
+                abs(
+                    int(np.count_nonzero(entry_ink))
+                    - int(np.count_nonzero(activated_ink))
+                ),
+                10,
+            )
 
     def test_excluded_binding_stays_fixed_during_driver_motion(self) -> None:
         excluded_analysis = analyze_geometry_rig_3d(

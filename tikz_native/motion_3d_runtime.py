@@ -73,13 +73,36 @@ def _scene_point3(value: Sequence[float] | np.ndarray) -> np.ndarray:
 
 
 def _mobject_stroke_width(mobject: Mobject) -> float | None:
-    getter = getattr(mobject, "get_stroke_width", None)
-    if not callable(getter):
-        return None
-    values = np.asarray(getter(), dtype=float).reshape(-1)
-    finite = values[np.isfinite(values)]
-    positive = finite[finite > 0]
-    return None if positive.size == 0 else float(np.median(positive))
+    """Return the physical stroke of the object's visible drawable leaves.
+
+    ``VGroup.get_stroke_width()`` reports the container's default style even
+    though the group has no points of its own.  TikZ dashed lines are VGroups
+    of native ``Line`` children, so using the container value makes the
+    temporary 3D occlusion slots jump to an unrelated stroke width as soon as
+    their first updater runs.  Calibrate only from point-bearing family
+    members whose stroke is actually visible in the input ShapeState.
+    """
+
+    widths: list[float] = []
+    for member in mobject.get_family():
+        has_points = getattr(member, "has_points", None)
+        if not callable(has_points) or not has_points():
+            continue
+        opacity_getter = getattr(member, "get_stroke_opacity", None)
+        if callable(opacity_getter):
+            opacities = np.asarray(opacity_getter(), dtype=float).reshape(-1)
+            if not np.any(np.isfinite(opacities) & (opacities > 0)):
+                continue
+        width_getter = getattr(member, "get_stroke_width", None)
+        if not callable(width_getter):
+            continue
+        values = np.asarray(width_getter(), dtype=float).reshape(-1)
+        widths.extend(
+            float(value)
+            for value in values
+            if np.isfinite(value) and value > 0
+        )
+    return None if not widths else float(np.median(widths))
 
 
 @dataclass
@@ -486,14 +509,23 @@ def play_motion_3d_on_native_shape(
         local = np.asarray(project_point(matrix, point - pivot), dtype=float)[:2]
         return map_screen(local + entry_pivot)
 
-    stroke_width_per_pt = None
+    stroke_width_ratios: list[float] = []
     for object_id, object_spec in object_specs.items():
-        if object_spec.style.line_width_pt <= 0:
+        if (
+            object_spec.kind not in {"line", "arrow", "polygon"}
+            or object_spec.style.line_width_pt <= 0
+        ):
             continue
         current = _mobject_stroke_width(objects[object_id])
         if current is not None:
-            stroke_width_per_pt = current / object_spec.style.line_width_pt
-            break
+            stroke_width_ratios.append(
+                current / object_spec.style.line_width_pt
+            )
+    stroke_width_per_pt = (
+        float(np.median(stroke_width_ratios))
+        if stroke_width_ratios
+        else None
+    )
     renderer_arguments: dict[str, float] = {
         "scene_unit_per_cm": scene_unit_per_cm,
     }
