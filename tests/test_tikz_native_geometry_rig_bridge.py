@@ -85,6 +85,9 @@ class TikzNativeGeometryRigBridgeTests(unittest.TestCase):
         self.assertTrue(
             response["provider"]["capabilities"]["native_rig_2d_authoring_v1"]
         )
+        self.assertTrue(
+            response["provider"]["capabilities"]["native_manim_source_2d_v1"]
+        )
 
     def test_analysis_response_is_portable_strict_and_motion_core_has_no_timeline(self) -> None:
         request = _request()
@@ -102,6 +105,13 @@ class TikzNativeGeometryRigBridgeTests(unittest.TestCase):
             {"driver", "bindings"},
         )
         self.assertEqual(len(result["rigDraft"]["bindings"]), 18)
+        native_source = result["nativeManimSource"]
+        self.assertEqual(
+            native_source["schema"],
+            "tikz-native-manim-source-2d/v1",
+        )
+        self.assertIn("def geometry_coordinates(theta):", native_source["sourceText"])
+        self.assertNotIn("NativeGeometryRig2D", native_source["sourceText"])
 
     def test_revision_mismatch_is_an_explicit_nonfatal_analysis_warning(self) -> None:
         response = execute_geometry_rig_request(

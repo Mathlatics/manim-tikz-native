@@ -25,6 +25,7 @@
     "excludedObjectIds",
     "diagnostics",
     "motionSpecCore",
+    "nativeManimSource",
     "rigDraft"
   ],
   "properties": {
@@ -74,6 +75,12 @@
       "oneOf": [
         {"type": "null"},
         {"$ref": "#/$defs/motionSpecCore"}
+      ]
+    },
+    "nativeManimSource": {
+      "oneOf": [
+        {"type": "null"},
+        {"$ref": "#/$defs/nativeManimSource"}
       ]
     },
     "rigDraft": {"$ref": "#/$defs/rigDraft"}
@@ -359,6 +366,16 @@
           "minItems": 1,
           "items": {"$ref": "#/$defs/motionBinding"}
         }
+      }
+    },
+    "nativeManimSource": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema", "sourceText", "sourceSha256"],
+      "properties": {
+        "schema": {"const": "tikz-native-manim-source-2d/v1"},
+        "sourceText": {"type": "string", "minLength": 1},
+        "sourceSha256": {"$ref": "#/$defs/sha256"}
       }
     },
     "rigDraft": {

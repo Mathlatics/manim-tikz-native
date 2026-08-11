@@ -7,6 +7,10 @@ from math import atan2, cos, isclose, isfinite, pi, sin, sqrt
 from typing import Any, Iterable, Mapping, Sequence
 
 from .compiler import ObjectSpec, PictureSpec
+from .native_manim_codegen_2d import (
+    NativeManimCodegen2DError,
+    generate_native_manim_source_2d,
+)
 
 
 GEOMETRY_RIG_SCHEMA = "tikz-native-geometry-rig/v1"
@@ -769,6 +773,7 @@ def analyze_geometry_rig(
         "excludedObjectIds": [],
         "diagnostics": diagnostics,
         "motionSpecCore": None,
+        "nativeManimSource": None,
         "rigDraft": {
             "driver": None,
             "bindings": [],
@@ -1081,6 +1086,22 @@ def analyze_geometry_rig(
         base["motionSpecCore"] = None
     else:
         base["status"] = RIG_STATUS_READY
+        try:
+            base["nativeManimSource"] = generate_native_manim_source_2d(
+                picture,
+                base,
+            )
+        except NativeManimCodegen2DError as exc:
+            base["status"] = RIG_STATUS_BLOCKED
+            base["motionSpecCore"] = None
+            diagnostics.append(
+                _diagnostic(
+                    "error",
+                    "NATIVE_MANIM_SOURCE_UNAVAILABLE",
+                    f"The selected relation cannot be expanded as native Manim source: {exc}",
+                )
+            )
+            return base
         diagnostics.insert(
             0,
             _diagnostic(
