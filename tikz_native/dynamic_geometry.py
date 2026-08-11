@@ -423,16 +423,25 @@ class NativeMotionBinder:
     ) -> Mobject:
         spec, mobject = self._get(object_id, {"angle_label"})
 
-        def update_angle_label(item: Mobject) -> None:
-            item.move_to(
-                self.renderer.native_angle_label_position(
-                    _point3(first()),
-                    _point3(vertex()),
-                    _point3(third()),
-                    radius=spec.geometry["radius_pt"] * self.renderer.pt,
-                    eccentricity=spec.geometry["eccentricity"],
-                )
+        def target_position() -> np.ndarray:
+            return self.renderer.native_angle_label_position(
+                _point3(first()),
+                _point3(vertex()),
+                _point3(third()),
+                radius=spec.geometry["radius_pt"] * self.renderer.pt,
+                eccentricity=spec.geometry["eccentricity"],
             )
+
+        # ``Mobject.get_center`` is the center of the current axis-aligned
+        # bounding box.  After a ShapeState rotation, an asymmetric MathTex
+        # glyph's bounding-box center is not the affine image of its authored
+        # angle-label anchor.  Preserve that real entry offset instead of
+        # snapping the rotated glyph to a freshly recomputed bbox center on the
+        # first updater tick.
+        entry_offset = mobject.get_center() - target_position()
+
+        def update_angle_label(item: Mobject) -> None:
+            item.move_to(target_position() + entry_offset)
 
         mobject.add_updater(update_angle_label)
         return mobject

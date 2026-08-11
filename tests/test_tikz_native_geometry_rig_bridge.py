@@ -82,6 +82,9 @@ class TikzNativeGeometryRigBridgeTests(unittest.TestCase):
         self.assertTrue(
             response["provider"]["capabilities"]["analyze_geometry_rig_2d"]
         )
+        self.assertTrue(
+            response["provider"]["capabilities"]["native_rig_2d_authoring_v1"]
+        )
 
     def test_analysis_response_is_portable_strict_and_motion_core_has_no_timeline(self) -> None:
         request = _request()

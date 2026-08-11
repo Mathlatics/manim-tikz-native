@@ -102,6 +102,7 @@ def provider_info() -> dict[str, Any]:
             "semantic_object_ids": True,
             "semantic_animation_layers": True,
             "render_static": True,
+            "native_rig_2d_authoring_v1": True,
             "dynamic_camera_in_fixed_view": False,
         },
     }

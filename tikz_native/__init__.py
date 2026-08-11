@@ -37,6 +37,11 @@ from .motion_runtime import (
     ellipse_chord_metrics,
     load_motion_spec,
 )
+from .native_rig_2d import (
+    NATIVE_RIG_2D_API_SCHEMA,
+    NativeGeometryRig2D,
+    NativeRig2D,
+)
 from .version import (
     ASSET_SCHEMA,
     PROTOCOL_VERSION,
@@ -61,7 +66,10 @@ __all__ = [
     "MOTION_SCHEMA",
     "MotionConfigError",
     "MotionSpec",
+    "NATIVE_RIG_2D_API_SCHEMA",
+    "NativeGeometryRig2D",
     "NativeMotionRuntime",
+    "NativeRig2D",
     "PROTOCOL_VERSION",
     "REQUEST_SCHEMA",
     "RESPONSE_SCHEMA",
