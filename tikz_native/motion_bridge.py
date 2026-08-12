@@ -26,14 +26,21 @@ from .provider import (
     ERROR_RENDER,
     TikzNativeProviderError,
     compile_asset,
-    provider_info,
     sha256_file,
 )
+from .provider_metadata import provider_info as _base_provider_info
+from .version import COMPONENT_MOTION_PREVIEW_2D
 
 
 MOTION_BRIDGE_REQUEST_SCHEMA = "tikz-native-motion-bridge.request/v1"
 MOTION_BRIDGE_RESPONSE_SCHEMA = "tikz-native-motion-bridge.response/v1"
 MOTION_BRIDGE_OPERATION = "render_motion_preview"
+
+
+def provider_info() -> dict[str, Any]:
+    """Return the compatibility identity for the 2D motion renderer."""
+
+    return _base_provider_info(revision_component=COMPONENT_MOTION_PREVIEW_2D)
 
 
 def _write_json_atomic(path: Path, payload: Mapping[str, Any]) -> None:

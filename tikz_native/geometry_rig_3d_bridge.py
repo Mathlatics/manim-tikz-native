@@ -20,9 +20,9 @@ from .motion_3d_bridge import (
     ERROR_INPUT,
     ERROR_PROVIDER,
     TikzNativeProviderError,
-    provider_info,
     sha256_file,
 )
+from .provider_metadata import provider_info
 
 
 GEOMETRY_RIG_3D_BRIDGE_REQUEST_SCHEMA = (

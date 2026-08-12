@@ -34,7 +34,13 @@ from .manim_renderer_3d import NativeManim3DRenderer
 from .motion_3d import Motion3DConfigError, Motion3DSpec, NativeMotion3DRuntime
 from .occlusion_3d import parallel_occlusion_interval, parallel_view_direction
 from .projection_3d import project_point
-from .version import provider_revision
+from .version import (
+    COMPONENT_ASSET_COMPILER,
+    COMPONENT_EMBEDDED_MOTION_3D,
+    COMPONENT_GEOMETRY_RIG_3D,
+    provider_component_revision,
+    provider_component_revision_matches,
+)
 
 
 EMBEDDED_MOTION_3D_RUNTIME_CONTRACT = "tikz-native-embedded-motion-3d/v1"
@@ -278,13 +284,23 @@ def _validate_frozen_context(
     definition: Mapping[str, Any],
     semantic_manifest: Mapping[str, Any],
     expected_provider_revision: str,
+    expected_runtime_revision: str | None,
     picture: PictureSpec,
 ) -> None:
-    expected = _text(expected_provider_revision, "expected_provider_revision")
-    current = provider_revision()
-    if current != expected:
+    expected_asset = _text(
+        expected_provider_revision,
+        "expected_provider_revision",
+    )
+    expected_runtime = _text(
+        expected_runtime_revision or expected_asset,
+        "expected_runtime_revision",
+    )
+    if not provider_component_revision_matches(
+        COMPONENT_EMBEDDED_MOTION_3D,
+        expected_runtime,
+    ):
         raise EmbeddedMotion3DError(
-            "embedded 3D runtime Provider revision differs from the frozen draft"
+            "embedded 3D runtime Provider revision component differs from the frozen draft"
         )
     if definition.get("dimension") != 3 or semantic_manifest.get("dimension") != 3:
         raise EmbeddedMotion3DError("frozen 3D definition and manifest must have dimension=3")
@@ -292,13 +308,75 @@ def _validate_frozen_context(
         raise EmbeddedMotion3DError("frozen 3D definition is not author-confirmed and ready")
     if definition.get("revisionMatch") is not True:
         raise EmbeddedMotion3DError("frozen 3D definition records a Provider mismatch")
-    for field, value in (
-        ("definition.currentRigProviderRevision", definition.get("currentRigProviderRevision")),
-        ("definition.expectedAssetProviderRevision", definition.get("expectedAssetProviderRevision")),
-        ("semantic_manifest.providerRevision", semantic_manifest.get("providerRevision")),
-    ):
-        if value != expected:
-            raise EmbeddedMotion3DError(f"{field} differs from expected_provider_revision")
+    asset_fields = (
+        (
+            "definition.expectedAssetProviderRevision",
+            definition.get("expectedAssetProviderRevision"),
+        ),
+        (
+            "semantic_manifest.providerRevision",
+            semantic_manifest.get("providerRevision"),
+        ),
+        (
+            "definition.currentRigProviderRevision",
+            definition.get("currentRigProviderRevision"),
+        ),
+    )
+    for field, value in asset_fields:
+        if not provider_component_revision_matches(COMPONENT_ASSET_COMPILER, value):
+            raise EmbeddedMotion3DError(
+                f"{field} differs from the current asset_compiler component"
+            )
+    recorded_runtime = definition.get("embeddedMotion3dRevision")
+    if recorded_runtime is not None and recorded_runtime != expected_runtime:
+        raise EmbeddedMotion3DError(
+            "definition.embeddedMotion3dRevision differs from expected_runtime_revision"
+        )
+    rig_fields = (
+        ("definition.geometryRig3dRevision", definition.get("geometryRig3dRevision")),
+        (
+            "semantic_manifest.geometryRig3dRevision",
+            semantic_manifest.get("geometryRig3dRevision"),
+        ),
+    )
+    if any(value is not None for _field, value in rig_fields):
+        if any(value is None for _field, value in rig_fields):
+            raise EmbeddedMotion3DError(
+                "frozen 3D definition and manifest disagree about geometry_rig_3d identity"
+            )
+        for field, value in rig_fields:
+            if not provider_component_revision_matches(
+                COMPONENT_GEOMETRY_RIG_3D,
+                value,
+            ):
+                raise EmbeddedMotion3DError(
+                    f"{field} differs from the current geometry_rig_3d component"
+                )
+    else:
+        # Legacy v1 stored one global Provider identity in these two fields.
+        # It remains valid only while that exact identity is also the reviewed
+        # geometry-rig component identity.
+        for field, value in (
+            (
+                "definition.currentRigProviderRevision",
+                definition.get("currentRigProviderRevision"),
+            ),
+            (
+                "semantic_manifest.providerRevision",
+                semantic_manifest.get("providerRevision"),
+            ),
+        ):
+            if not provider_component_revision_matches(
+                COMPONENT_GEOMETRY_RIG_3D,
+                value,
+            ):
+                raise EmbeddedMotion3DError(
+                    f"{field} differs from the current geometry_rig_3d component"
+                )
+    if expected_asset != provider_component_revision(COMPONENT_ASSET_COMPILER):
+        raise EmbeddedMotion3DError(
+            "expected_provider_revision differs from the current asset compiler component"
+        )
     manifest_picture = semantic_manifest.get("pictureIndex")
     if manifest_picture != picture.index:
         raise EmbeddedMotion3DError("semantic manifest selects a different TikZ picture")
@@ -369,6 +447,7 @@ def play_motion_3d_on_native_shape(
     definition: Mapping[str, Any],
     semantic_manifest: Mapping[str, Any],
     expected_provider_revision: str,
+    expected_runtime_revision: str | None = None,
     runtime_contract: str = EMBEDDED_MOTION_3D_RUNTIME_CONTRACT,
 ) -> Mobject:
     """Play true-coordinate 3D motion locally and restore the input exactly.
@@ -418,6 +497,7 @@ def play_motion_3d_on_native_shape(
         definition=frozen_definition,
         semantic_manifest=frozen_manifest,
         expected_provider_revision=expected_provider_revision,
+        expected_runtime_revision=expected_runtime_revision,
         picture=picture,
     )
     spec.validate_picture(picture)

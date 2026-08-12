@@ -16,8 +16,12 @@ import uuid
 
 from .compatibility import load_subset_spec
 from .version import (
+    COMPONENT_MOTION_PREVIEW_3D,
+    COMPONENT_REVISION_SCHEMA,
     PROTOCOL_VERSION,
     __version__,
+    provider_component_revision,
+    provider_component_revisions,
     provider_revision,
 )
 
@@ -86,7 +90,11 @@ def provider_info() -> dict[str, Any]:
         "response_schema": MOTION_3D_BRIDGE_RESPONSE_SCHEMA,
         "operation": MOTION_3D_BRIDGE_OPERATION,
         "asset_schema": MOTION_3D_ASSET_SCHEMA,
-        "revision": provider_revision(),
+        "revision": provider_component_revision(COMPONENT_MOTION_PREVIEW_3D),
+        "revision_component": COMPONENT_MOTION_PREVIEW_3D,
+        "build_revision": provider_revision(),
+        "component_revision_schema": COMPONENT_REVISION_SCHEMA,
+        "component_revisions": provider_component_revisions(),
         "python_version": platform.python_version(),
         "python_executable": sys.executable,
         "manim_version": manim_version,
@@ -100,6 +108,7 @@ def provider_info() -> dict[str, Any]:
             "dynamic_camera_in_fixed_view": False,
             "render_motion_3d_preview": True,
             "dynamic_camera_3d_parallel": True,
+            "provider_component_revisions_v1": True,
         },
     }
 

@@ -24,7 +24,12 @@ from tikz_native.motion_3d_runtime import (
 )
 from tikz_native.manim_renderer_3d import NativeManim3DRenderer
 from tikz_native.provider import instantiate_picture
-from tikz_native.version import provider_revision
+from tikz_native.version import (
+    COMPONENT_ASSET_COMPILER,
+    COMPONENT_EMBEDDED_MOTION_3D,
+    COMPONENT_GEOMETRY_RIG_3D,
+    provider_component_revision,
+)
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -84,7 +89,7 @@ class EmbeddedMotion3DRuntimeTests(unittest.TestCase):
 
     def fixture(self, *, analysis=None, timeline=None):
         selected_analysis = self.analysis if analysis is None else analysis
-        revision = provider_revision()
+        revision = provider_component_revision(COMPONENT_ASSET_COMPILER)
         semantic_hash = semantic_model_3d_hash(self.picture)
         figure = instantiate_picture(
             self.picture,
@@ -259,6 +264,74 @@ class EmbeddedMotion3DRuntimeTests(unittest.TestCase):
                 definition=definition,
                 semantic_manifest=manifest,
                 expected_provider_revision=wrong_revision,
+            )
+
+        self.assert_restored(figure, shape, snapshot)
+
+    def test_runtime_component_is_checked_separately_from_asset_revision(self) -> None:
+        figure, shape, motion, definition, manifest, revision = self.fixture()
+        scene = _InstantScene()
+        scene.add(shape)
+        snapshot = self.snapshot(figure, shape)
+        wrong_runtime_revision = "component-sha256:" + "1" * 64
+        definition["embeddedMotion3dRevision"] = wrong_runtime_revision
+
+        with self.assertRaisesRegex(
+            EmbeddedMotion3DError,
+            "runtime Provider revision component",
+        ):
+            play_motion_3d_on_native_shape(
+                scene,
+                shape,
+                motion,
+                definition=definition,
+                semantic_manifest=manifest,
+                expected_provider_revision=revision,
+                expected_runtime_revision=wrong_runtime_revision,
+            )
+
+        self.assert_restored(figure, shape, snapshot)
+
+    def test_new_frozen_context_accepts_complete_component_identities(self) -> None:
+        figure, shape, motion, definition, manifest, revision = self.fixture()
+        rig_revision = provider_component_revision(COMPONENT_GEOMETRY_RIG_3D)
+        runtime_revision = provider_component_revision(COMPONENT_EMBEDDED_MOTION_3D)
+        definition["geometryRig3dRevision"] = rig_revision
+        definition["embeddedMotion3dRevision"] = runtime_revision
+        manifest["geometryRig3dRevision"] = rig_revision
+        scene = _InstantScene()
+        scene.add(shape)
+        snapshot = self.snapshot(figure, shape)
+
+        play_motion_3d_on_native_shape(
+            scene,
+            shape,
+            motion,
+            definition=definition,
+            semantic_manifest=manifest,
+            expected_provider_revision=revision,
+            expected_runtime_revision=runtime_revision,
+        )
+
+        self.assert_restored(figure, shape, snapshot)
+
+    def test_partial_new_rig_component_identity_fails_closed(self) -> None:
+        figure, shape, motion, definition, manifest, revision = self.fixture()
+        definition["geometryRig3dRevision"] = provider_component_revision(
+            COMPONENT_GEOMETRY_RIG_3D
+        )
+        scene = _InstantScene()
+        scene.add(shape)
+        snapshot = self.snapshot(figure, shape)
+
+        with self.assertRaisesRegex(EmbeddedMotion3DError, "disagree"):
+            play_motion_3d_on_native_shape(
+                scene,
+                shape,
+                motion,
+                definition=definition,
+                semantic_manifest=manifest,
+                expected_provider_revision=revision,
             )
 
         self.assert_restored(figure, shape, snapshot)

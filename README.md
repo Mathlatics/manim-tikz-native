@@ -37,8 +37,13 @@ python3 -m venv .venv-manim
 .venv-manim/bin/python -m unittest discover -s tests -p 'test_tikz_native_*.py'
 ```
 
-修改 Provider 后必须确认 health 返回新的 `provider.revision`，并在 PPT 工作副本中
-显式重新转换受影响的 TikZ 资产。禁止用新版 Provider 静默重建旧资产。
+修改 Provider 后必须同时核对 health 的 `provider.build_revision`、
+`provider.revision_component`、`provider.revision` 和 `provider.component_revisions`。
+`build_revision` 是整个源码树的构建身份；`revision` 是当前 Bridge 的主兼容身份。
+Geometry Rig 以资产编译为主身份，关系/源码/runtime 身份从 `component_revisions` 另取。
+只有相关组件身份改变时，才需要在 PPT 工作副本中显式
+重新转换受影响的 TikZ 资产或重新生成 Clip。禁止用真正不兼容的新组件静默
+重建旧资产，也不得因无关组件变化就废弃已有资产。
 
 回归所需的全国一卷 TikZ 已提取为只包含颜色、公共绘图宏和 16 个 `tikzpicture` 的
 便携夹具；测试不再依赖 `/Users/.../讲评课` 中的个人讲义文件。

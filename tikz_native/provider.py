@@ -1,9 +1,7 @@
 from __future__ import annotations
 
 import hashlib
-import platform
 import shutil
-import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -15,18 +13,13 @@ from .animation import semantic_animation_layers
 from .compatibility import (
     DEFAULT_SUBSET_PATH,
     audit_document_compatibility,
-    load_subset_spec,
 )
 from .compiler import DocumentSpec, PictureSpec, compile_document
 from .fixed_view_renderer import NativeFixedViewRenderer
 from .manim_renderer import NativeFigure
+from .provider_metadata import provider_info
 from .version import (
     ASSET_SCHEMA,
-    PROTOCOL_VERSION,
-    REQUEST_SCHEMA,
-    RESPONSE_SCHEMA,
-    __version__,
-    provider_revision,
 )
 
 
@@ -80,33 +73,6 @@ def sha256_file(path: Path) -> str:
         for chunk in iter(lambda: stream.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
-
-
-def provider_info() -> dict[str, Any]:
-    subset = load_subset_spec()
-    return {
-        "name": "tikz-native-manim",
-        "version": __version__,
-        "protocol_version": PROTOCOL_VERSION,
-        "request_schema": REQUEST_SCHEMA,
-        "response_schema": RESPONSE_SCHEMA,
-        "asset_schema": ASSET_SCHEMA,
-        "revision": provider_revision(),
-        "python_version": platform.python_version(),
-        "python_executable": sys.executable,
-        "manim_version": manim.__version__,
-        "subset_versions": [subset["subset_version"]],
-        "capabilities": {
-            "compile_2d": True,
-            "compile_3d_fixed_view": True,
-            "semantic_object_ids": True,
-            "semantic_animation_layers": True,
-            "render_static": True,
-            "native_rig_2d_authoring_v1": True,
-            "native_manim_source_2d_v1": True,
-            "dynamic_camera_in_fixed_view": False,
-        },
-    }
 
 
 def _picture_by_report_index(

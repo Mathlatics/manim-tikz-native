@@ -1014,7 +1014,7 @@ source_sha256
 + entry_macro
 + picture_index
 + subset_version
-+ compiler/renderer code revision
++ operation component revision (`provider.revision` + `revision_component`)
 + Manim version
 + TexTemplate hash
 + font file fingerprints
@@ -1028,6 +1028,10 @@ source_sha256
 白色描边测量缓存还必须包含标签内容、字号、node 选项、字体模板和探针版本。
 
 不能只用源文件路径做缓存键。
+
+`provider.build_revision` 用于诊断完整 Provider 构建，不得直接使无关操作的
+缓存集体失效。静态资产、二维/三维 Motion 和 embedded runtime 必须分别使用
+`tikz-native-component-revisions/v1` 中属于自己的组件身份。
 
 ## 18. 预览、正式渲染和 PPT 写入边界
 
