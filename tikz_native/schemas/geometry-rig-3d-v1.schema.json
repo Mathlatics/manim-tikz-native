@@ -43,6 +43,7 @@
       "items": {
         "oneOf": [
           {"$ref": "#/$defs/hingeCandidate"},
+          {"$ref": "#/$defs/pointOnSegmentCandidate"},
           {"$ref": "#/$defs/derivedCandidate"},
           {"$ref": "#/$defs/cameraCandidate"}
         ]
@@ -78,6 +79,12 @@
     },
     "motionSpecCore": {
       "oneOf": [{"type": "null"}, {"$ref": "#/$defs/motionSpecCore"}]
+    },
+    "nativeManimSource": {
+      "oneOf": [{"type": "null"}, {"$ref": "#/$defs/nativeManimSource"}]
+    },
+    "nativeManimSourceV2": {
+      "oneOf": [{"type": "null"}, {"$ref": "#/$defs/nativeManimSourceV2"}]
     }
   },
   "$defs": {
@@ -116,6 +123,26 @@
         "source": {"const": "conservative-hinge-window"}
       }
     },
+    "pointParameterValue": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["value", "unit"],
+      "properties": {
+        "value": {"type": "number", "minimum": 0, "maximum": 1},
+        "unit": {"const": "ratio"}
+      }
+    },
+    "pointSuggestedRange": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["minimum", "maximum", "unit", "source"],
+      "properties": {
+        "minimum": {"const": 0},
+        "maximum": {"const": 1},
+        "unit": {"const": "ratio"},
+        "source": {"const": "explicit-segment-domain"}
+      }
+    },
     "hingeCandidate": {
       "type": "object",
       "additionalProperties": false,
@@ -137,6 +164,7 @@
       ],
       "properties": {
         "candidateId": {"type": "string", "minLength": 1},
+        "driverId": {"type": "string", "minLength": 1},
         "candidateKind": {"const": "geometry_driver"},
         "driverType": {"const": "hinge_fold"},
         "status": {"enum": ["recommended", "available", "blocked"]},
@@ -149,6 +177,44 @@
         "movingCoordinates": {"$ref": "#/$defs/stringArray"},
         "initial": {"$ref": "#/$defs/parameterValue"},
         "suggestedRange": {"$ref": "#/$defs/suggestedRange"},
+        "reason": {"type": "string", "minLength": 1}
+      }
+    },
+    "pointOnSegmentCandidate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "candidateId",
+        "driverId",
+        "candidateKind",
+        "driverType",
+        "status",
+        "coordinateId",
+        "segment",
+        "affectedCoordinates",
+        "initial",
+        "suggestedRange",
+        "reason"
+      ],
+      "properties": {
+        "candidateId": {"type": "string", "minLength": 1},
+        "driverId": {"type": "string", "minLength": 1},
+        "candidateKind": {"const": "geometry_driver"},
+        "driverType": {"const": "point_on_segment"},
+        "status": {"enum": ["available", "blocked"]},
+        "coordinateId": {"type": "string", "minLength": 1},
+        "segment": {
+          "type": "array",
+          "prefixItems": [
+            {"type": "string"},
+            {"type": "string"}
+          ],
+          "minItems": 2,
+          "maxItems": 2
+        },
+        "affectedCoordinates": {"$ref": "#/$defs/stringArray"},
+        "initial": {"$ref": "#/$defs/pointParameterValue"},
+        "suggestedRange": {"$ref": "#/$defs/pointSuggestedRange"},
         "reason": {"type": "string", "minLength": 1}
       }
     },
@@ -228,7 +294,7 @@
         "transitionTypes": {
           "type": "array",
           "prefixItems": [{"const": "linear"}, {"const": "orbit"}],
-          "minItems": 2,
+          "minItems": 1,
           "maxItems": 2
         },
         "restoresEntry": {"const": true},
@@ -252,6 +318,7 @@
       ],
       "properties": {
         "candidateId": {"type": "string", "minLength": 1},
+        "driverId": {"type": "string", "minLength": 1},
         "candidateKind": {"const": "geometry_driver"},
         "driverType": {"const": "hinge_fold"},
         "relationId": {"type": "string", "minLength": 1},
@@ -463,6 +530,147 @@
           "items": {"$ref": "#/$defs/motionBinding"}
         },
         "camera": {"$ref": "#/$defs/camera"}
+      }
+    },
+    "nativeManimSource": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema", "sourceText", "sourceSha256"],
+      "properties": {
+        "schema": {"const": "tikz-native-manim-source-3d/v1"},
+        "sourceText": {"type": "string", "minLength": 1},
+        "sourceSha256": {"$ref": "#/$defs/sha256"}
+      }
+    },
+    "numberRange": {
+      "type": "array",
+      "prefixItems": [{"type": "number"}, {"type": "number"}],
+      "minItems": 2,
+      "maxItems": 2
+    },
+    "hingeAuthoringDriver": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "driverId",
+        "candidateId",
+        "type",
+        "pythonName",
+        "initial",
+        "range",
+        "unit",
+        "axis"
+      ],
+      "properties": {
+        "driverId": {"type": "string", "minLength": 1},
+        "candidateId": {"type": "string", "minLength": 1},
+        "type": {"const": "hinge_fold"},
+        "pythonName": {"type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"},
+        "initial": {"type": "number"},
+        "range": {"$ref": "#/$defs/numberRange"},
+        "unit": {"const": "radians"},
+        "axis": {
+          "type": "array",
+          "prefixItems": [
+            {"type": "string", "minLength": 1},
+            {"type": "string", "minLength": 1}
+          ],
+          "minItems": 2,
+          "maxItems": 2
+        }
+      }
+    },
+    "pointAuthoringDriver": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "driverId",
+        "candidateId",
+        "type",
+        "pythonName",
+        "initial",
+        "range",
+        "unit",
+        "coordinateId",
+        "segment"
+      ],
+      "properties": {
+        "driverId": {"type": "string", "minLength": 1},
+        "candidateId": {"type": "string", "minLength": 1},
+        "type": {"const": "point_on_segment"},
+        "pythonName": {"type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"},
+        "initial": {"type": "number", "minimum": 0, "maximum": 1},
+        "range": {"$ref": "#/$defs/numberRange"},
+        "unit": {"const": "ratio"},
+        "coordinateId": {"type": "string", "minLength": 1},
+        "segment": {
+          "type": "array",
+          "prefixItems": [
+            {"type": "string", "minLength": 1},
+            {"type": "string", "minLength": 1}
+          ],
+          "minItems": 2,
+          "maxItems": 2
+        }
+      }
+    },
+    "authoringCamera": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode", "orthogonal"],
+      "properties": {
+        "mode": {"const": "tikz"},
+        "orthogonal": {"type": "boolean"}
+      }
+    },
+    "authoringCameraMode": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode", "transitionTypes", "orthogonal"],
+      "properties": {
+        "mode": {"enum": ["front", "side", "top", "oblique", "isometric"]},
+        "transitionTypes": {
+          "type": "array",
+          "prefixItems": [{"const": "linear"}, {"const": "orbit"}],
+          "minItems": 1,
+          "maxItems": 2
+        },
+        "orthogonal": {"type": "boolean"}
+      }
+    },
+    "nativeManimAuthoringSpecV2": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema", "drivers", "entryCamera", "cameraModes", "endPolicy"],
+      "properties": {
+        "schema": {"const": "tikz-native-manim-authoring-3d/v1"},
+        "drivers": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "oneOf": [
+              {"$ref": "#/$defs/hingeAuthoringDriver"},
+              {"$ref": "#/$defs/pointAuthoringDriver"}
+            ]
+          }
+        },
+        "entryCamera": {"$ref": "#/$defs/authoringCamera"},
+        "cameraModes": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/authoringCameraMode"}
+        },
+        "endPolicy": {"const": "restore_entry"}
+      }
+    },
+    "nativeManimSourceV2": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema", "sourceText", "sourceSha256", "authoringSpec"],
+      "properties": {
+        "schema": {"const": "tikz-native-manim-source-3d/v2"},
+        "sourceText": {"type": "string", "minLength": 1},
+        "sourceSha256": {"$ref": "#/$defs/sha256"},
+        "authoringSpec": {"$ref": "#/$defs/nativeManimAuthoringSpecV2"}
       }
     }
   }

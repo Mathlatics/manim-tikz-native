@@ -25,6 +25,8 @@ from tikz_native.version import (
     COMPONENT_MOTION_PREVIEW_2D,
     COMPONENT_MOTION_PREVIEW_3D,
     COMPONENT_NATIVE_MANIM_SOURCE_2D,
+    COMPONENT_NATIVE_MANIM_SOURCE_3D,
+    COMPONENT_NATIVE_MANIM_SOURCE_3D_V2,
     provider_component_files,
     provider_component_neutral_files,
     provider_component_revision_matches,
@@ -40,6 +42,12 @@ LEGACY_ASSET_REVISION = (
 )
 NATIVE_SOURCE_REVISION = (
     "source-sha256:01df91473770e47746d4f14de2d94297a2e846be7dcb250652b65168fcda30d6"
+)
+NATIVE_SOURCE_3D_REVISION = (
+    "source-sha256:270a1d6d04659bb16f1ce2b5239fda2c19315691e103c12491e4eed84b460a45"
+)
+NATIVE_SOURCE_3D_V2_REVISION = (
+    "source-sha256:26d702598f6300ece385972271346a571e9fb28b273732584ce14fca98445769"
 )
 
 
@@ -90,6 +98,18 @@ class TikzNativeComponentRevisionTests(unittest.TestCase):
         self.assertEqual(revisions[COMPONENT_EMBEDDED_MOTION_3D], LEGACY_ASSET_REVISION)
         self.assertEqual(
             revisions[COMPONENT_NATIVE_MANIM_SOURCE_2D], NATIVE_SOURCE_REVISION
+        )
+        self.assertEqual(
+            revisions[COMPONENT_NATIVE_MANIM_SOURCE_3D],
+            NATIVE_SOURCE_3D_REVISION,
+        )
+        self.assertEqual(
+            revisions[COMPONENT_NATIVE_MANIM_SOURCE_3D_V2],
+            NATIVE_SOURCE_3D_V2_REVISION,
+        )
+        self.assertNotIn(
+            revisions[COMPONENT_NATIVE_MANIM_SOURCE_3D_V2],
+            {LEGACY_ASSET_REVISION, NATIVE_SOURCE_3D_REVISION},
         )
 
     def test_unknown_legacy_revision_is_not_treated_as_compatible(self) -> None:
@@ -153,6 +173,41 @@ print(json.dumps({
             COMPONENT_EMBEDDED_MOTION_3D,
             COMPONENT_MOTION_PREVIEW_3D,
         ):
+            self.assertEqual(components[component], baseline[component])
+
+    def test_editing_v1_3d_codegen_changes_v1_and_its_v2_dependent_only(self) -> None:
+        baseline = provider_component_revisions()
+        mutated = self._probe_copy("native_manim_codegen_3d.py")
+        components = mutated["components"]
+        self.assertNotEqual(mutated["build"], provider_revision())
+        self.assertNotEqual(
+            components[COMPONENT_NATIVE_MANIM_SOURCE_3D],
+            baseline[COMPONENT_NATIVE_MANIM_SOURCE_3D],
+        )
+        self.assertNotEqual(
+            components[COMPONENT_NATIVE_MANIM_SOURCE_3D_V2],
+            baseline[COMPONENT_NATIVE_MANIM_SOURCE_3D_V2],
+        )
+        for component in baseline:
+            if component in {
+                COMPONENT_NATIVE_MANIM_SOURCE_3D,
+                COMPONENT_NATIVE_MANIM_SOURCE_3D_V2,
+            }:
+                continue
+            self.assertEqual(components[component], baseline[component])
+
+    def test_editing_v2_3d_codegen_changes_only_the_v2_source_component(self) -> None:
+        baseline = provider_component_revisions()
+        mutated = self._probe_copy("native_manim_codegen_3d_v2.py")
+        components = mutated["components"]
+        self.assertNotEqual(mutated["build"], provider_revision())
+        self.assertNotEqual(
+            components[COMPONENT_NATIVE_MANIM_SOURCE_3D_V2],
+            baseline[COMPONENT_NATIVE_MANIM_SOURCE_3D_V2],
+        )
+        for component in baseline:
+            if component == COMPONENT_NATIVE_MANIM_SOURCE_3D_V2:
+                continue
             self.assertEqual(components[component], baseline[component])
 
     def test_editing_compiler_invalidates_every_dependent_component(self) -> None:

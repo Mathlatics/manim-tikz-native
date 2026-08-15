@@ -85,6 +85,8 @@ class TikzNativeGeometryRig3DBridgeTests(unittest.TestCase):
         self.assertEqual(response["operation"], "health")
         provider = response["provider"]
         self.assertTrue(provider["capabilities"]["analyze_geometry_rig_3d"])
+        self.assertTrue(provider["capabilities"]["native_manim_source_3d_v1"])
+        self.assertTrue(provider["capabilities"]["native_manim_source_3d_v2"])
         self.assertEqual(provider["geometry_rig_3d_request_schema"], GEOMETRY_RIG_3D_BRIDGE_REQUEST_SCHEMA)
         self.assertEqual(provider["geometry_rig_3d_response_schema"], GEOMETRY_RIG_3D_BRIDGE_RESPONSE_SCHEMA)
 
@@ -130,6 +132,22 @@ class TikzNativeGeometryRig3DBridgeTests(unittest.TestCase):
         self.assertTrue(result["revisionMatch"])
         self.assertNotIn("source_path", json.dumps(result))
         self.assertEqual(result["sourceSha256"], request["input"]["source_sha256"])
+        native_source = result["nativeManimSource"]
+        self.assertEqual(
+            native_source["schema"],
+            "tikz-native-manim-source-3d/v1",
+        )
+        self.assertIn("def prepare_local_camera(", native_source["sourceText"])
+        self.assertNotIn("play_motion_3d_on_native_shape", native_source["sourceText"])
+        native_source_v2 = result["nativeManimSourceV2"]
+        self.assertEqual(
+            native_source_v2["schema"],
+            "tikz-native-manim-source-3d/v2",
+        )
+        self.assertEqual(
+            native_source_v2["authoringSpec"]["schema"],
+            "tikz-native-manim-authoring-3d/v1",
+        )
 
     def test_discovery_returns_semantic_groups_but_no_executable_motion(self) -> None:
         request = _request()
@@ -142,6 +160,8 @@ class TikzNativeGeometryRig3DBridgeTests(unittest.TestCase):
         self.assertTrue(result["semanticGroups"])
         self.assertIsNone(result["selectedMotionCandidate"])
         self.assertIsNone(result["motionSpecCore"])
+        self.assertIsNone(result["nativeManimSource"])
+        self.assertIsNotNone(result["nativeManimSourceV2"])
 
     def test_revision_mismatch_is_reviewable_but_fail_closed(self) -> None:
         response = execute_geometry_rig_3d_request(
@@ -153,6 +173,8 @@ class TikzNativeGeometryRig3DBridgeTests(unittest.TestCase):
         self.assertFalse(result["revisionMatch"])
         self.assertEqual(result["status"], "blocked")
         self.assertIsNone(result["motionSpecCore"])
+        self.assertIsNone(result["nativeManimSource"])
+        self.assertIsNone(result["nativeManimSourceV2"])
         self.assertTrue(result["motionCandidates"])
 
     def test_hash_mismatch_unknown_fields_and_2d_source_fail_closed(self) -> None:

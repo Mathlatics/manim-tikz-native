@@ -15,6 +15,15 @@ from math import acos, isfinite, pi, sqrt
 from typing import Any, Mapping, Sequence
 
 from .compiler import HINGE_RELATION_SCHEMA, HingeRelationSpec, ObjectSpec, PictureSpec
+from .native_manim_codegen_3d import (
+    NativeManimCodegen3DError,
+    generate_native_manim_source_3d,
+)
+from .native_manim_codegen_3d_v2 import (
+    NativeManimCodegen3DV2Error,
+    generate_native_manim_source_3d_v2,
+    point_on_segment_driver_candidates,
+)
 
 
 GEOMETRY_RIG_3D_SCHEMA = "tikz-native-geometry-rig-3d/v1"
@@ -27,6 +36,9 @@ RIG_STATUS_NEEDS_SELECTION = "needs_selection"
 RIG_STATUS_BLOCKED = "blocked"
 
 CAMERA_OPERATION_MODES = ("front", "side", "top", "oblique", "isometric")
+_ORTHOGONAL_CAMERA_OPERATION_MODES = frozenset(
+    {"front", "side", "top", "isometric"}
+)
 _MOTION_BINDING_TYPES = {
     "line": "line",
     "arrow": "line",
@@ -291,6 +303,7 @@ def _hinge_candidate(
     return (
         {
             "candidateId": f"{HINGE_FOLD_CANDIDATE_ID_PREFIX}{relation.id}",
+            "driverId": f"{HINGE_FOLD_CANDIDATE_ID_PREFIX}{relation.id}",
             "candidateKind": "geometry_driver",
             "driverType": "hinge_fold",
             "status": status,
@@ -403,7 +416,44 @@ def _derived_relation_candidate(
     }
 
 
-def _camera_candidates() -> list[dict[str, Any]]:
+def _is_right_handed_rotation_matrix(
+    matrix: Sequence[Sequence[object]],
+    *,
+    atol: float = 1e-7,
+) -> bool:
+    """Return whether ``matrix`` is a proper orthogonal 3D frame.
+
+    Geometry analysis intentionally keeps this small check independent from
+    the Manim camera implementation.  ``orbit`` is only a valid operation for
+    two proper rotation frames; TikZ oblique bases are general invertible
+    projections and must use linear matrix interpolation instead.
+    """
+
+    try:
+        rows = tuple(tuple(float(value) for value in row) for row in matrix)
+    except (TypeError, ValueError):
+        return False
+    if len(rows) != 3 or any(len(row) != 3 for row in rows):
+        return False
+    for first_index, first in enumerate(rows):
+        for second_index, second in enumerate(rows):
+            dot = sum(left * right for left, right in zip(first, second))
+            expected = 1.0 if first_index == second_index else 0.0
+            if abs(dot - expected) > atol:
+                return False
+    determinant = (
+        rows[0][0] * (rows[1][1] * rows[2][2] - rows[1][2] * rows[2][1])
+        - rows[0][1] * (rows[1][0] * rows[2][2] - rows[1][2] * rows[2][0])
+        + rows[0][2] * (rows[1][0] * rows[2][1] - rows[1][1] * rows[2][0])
+    )
+    return abs(determinant - 1.0) <= atol
+
+
+def _camera_candidates(picture: PictureSpec) -> list[dict[str, Any]]:
+    entry_is_rotation = bool(
+        picture.projection_3d is not None
+        and _is_right_handed_rotation_matrix(picture.projection_3d.matrix)
+    )
     return [
         {
             "candidateId": f"camera:{mode}",
@@ -411,9 +461,18 @@ def _camera_candidates() -> list[dict[str, Any]]:
             "operationType": "camera",
             "status": "available",
             "mode": mode,
-            "transitionTypes": ["linear", "orbit"],
+            "transitionTypes": (
+                ["linear", "orbit"]
+                if entry_is_rotation
+                and mode in _ORTHOGONAL_CAMERA_OPERATION_MODES
+                else ["linear"]
+            ),
             "restoresEntry": True,
-            "reason": "The Provider owns this parallel-projection camera preset.",
+            "reason": (
+                "The Provider owns this parallel-projection camera preset. "
+                "Orbit is offered only when both endpoints are right-handed "
+                "orthogonal frames."
+            ),
         }
         for mode in CAMERA_OPERATION_MODES
     ]
@@ -832,6 +891,28 @@ def _derived_motion_specs(
     return specs, diagnostics
 
 
+def _attach_native_manim_source_v2(
+    picture: PictureSpec,
+    base: dict[str, Any],
+    diagnostics: list[dict[str, Any]],
+) -> None:
+    try:
+        base["nativeManimSourceV2"] = generate_native_manim_source_3d_v2(
+            picture,
+            base,
+        )
+    except NativeManimCodegen3DV2Error as exc:
+        base["nativeManimSourceV2"] = None
+        diagnostics.append(
+            _diagnostic(
+                "warning",
+                "NATIVE_MANIM_SOURCE_V2_UNAVAILABLE",
+                "The legacy 3D rig and v1 source remain available, but the "
+                f"multi-driver authoring source is unavailable: {exc}",
+            )
+        )
+
+
 def analyze_geometry_rig_3d(
     picture: PictureSpec,
     *,
@@ -874,6 +955,8 @@ def analyze_geometry_rig_3d(
         "occlusionBindings": [],
         "diagnostics": diagnostics,
         "motionSpecCore": None,
+        "nativeManimSource": None,
+        "nativeManimSourceV2": None,
     }
     for finding in picture.unsupported:
         diagnostics.append(
@@ -932,20 +1015,28 @@ def analyze_geometry_rig_3d(
         if recommended is not None
         else set()
     )
+    point_driver_candidates = point_on_segment_driver_candidates(picture)
+    all_driver_affected = set(affected)
+    for candidate in point_driver_candidates:
+        if candidate["status"] != "blocked":
+            all_driver_affected.update(candidate["affectedCoordinates"])
     derived_candidates = [
         candidate
         for name, dependency in picture.coordinate_dependencies.items()
         if (
             candidate := _derived_relation_candidate(
-                name, dependency, affected=affected
+                name,
+                dependency,
+                affected=all_driver_affected,
             )
         )
         is not None
     ]
     base["motionCandidates"] = [
         *hinge_candidates,
+        *point_driver_candidates,
         *derived_candidates,
-        *_camera_candidates(),
+        *_camera_candidates(picture),
     ]
 
     requested_candidate = selection.get("candidate_id")
@@ -1064,10 +1155,12 @@ def analyze_geometry_rig_3d(
                     "Confirm the explicit hinge candidate and an angle range before preview or Native Clip generation.",
                 )
             )
+            _attach_native_manim_source_v2(picture, base, diagnostics)
         return base
 
     selected_record = {
         "candidateId": selected["candidateId"],
+        "driverId": selected["driverId"],
         "candidateKind": "geometry_driver",
         "driverType": "hinge_fold",
         "relationId": selected["relationId"],
@@ -1111,11 +1204,34 @@ def analyze_geometry_rig_3d(
         "bindings": motion_bindings,
         "camera": {
             "entry_mode": "tikz",
-            "restore_transition": "orbit",
+            # The last authored camera mode is not known yet.  It may be the
+            # non-orthogonal oblique preset, so restoration must use the one
+            # transition that is valid for every invertible projection.
+            "restore_transition": "linear",
             "restore_duration": 1.6,
         },
     }
     base["status"] = RIG_STATUS_READY
+    try:
+        base["nativeManimSource"] = generate_native_manim_source_3d(
+            picture,
+            base,
+        )
+    except NativeManimCodegen3DError as exc:
+        # Readable source is an additive authoring surface.  A source-generator
+        # boundary must not revoke the already validated legacy rig/runtime
+        # contract; Host can fail closed only for the new native-first draft.
+        base["nativeManimSource"] = None
+        diagnostics.append(
+            _diagnostic(
+                "warning",
+                "NATIVE_MANIM_SOURCE_UNAVAILABLE",
+                "The selected 3D relation remains available to the legacy "
+                "preview/runtime, but cannot be expanded as readable Manim "
+                f"source: {exc}",
+            )
+        )
+    _attach_native_manim_source_v2(picture, base, diagnostics)
     diagnostics.insert(
         0,
         _diagnostic(
@@ -1160,6 +1276,8 @@ def attach_geometry_rig_3d_identity(
     if not revision_match:
         result["status"] = RIG_STATUS_BLOCKED
         result["motionSpecCore"] = None
+        result["nativeManimSource"] = None
+        result["nativeManimSourceV2"] = None
         result.setdefault("diagnostics", []).insert(
             0,
             _diagnostic(

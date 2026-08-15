@@ -53,6 +53,8 @@ def _bridge_provider_info() -> dict[str, Any]:
     info = dict(provider_info())
     capabilities = dict(info.get("capabilities", {}))
     capabilities["analyze_geometry_rig_3d"] = True
+    capabilities["native_manim_source_3d_v1"] = True
+    capabilities["native_manim_source_3d_v2"] = True
     embedded = _embedded_runtime_contract()
     if embedded is not None:
         capabilities["embedded_motion_3d_runtime"] = True

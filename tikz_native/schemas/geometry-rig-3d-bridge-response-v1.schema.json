@@ -30,9 +30,15 @@
         },
         "capabilities": {
           "type": "object",
-          "required": ["analyze_geometry_rig_3d"],
+          "required": [
+            "analyze_geometry_rig_3d",
+            "native_manim_source_3d_v1",
+            "native_manim_source_3d_v2"
+          ],
           "properties": {
             "analyze_geometry_rig_3d": {"const": true},
+            "native_manim_source_3d_v1": {"const": true},
+            "native_manim_source_3d_v2": {"const": true},
             "embedded_motion_3d_runtime": {"const": true}
           }
         },

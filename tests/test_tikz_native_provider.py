@@ -32,6 +32,8 @@ class TikzNativeProviderTests(unittest.TestCase):
         self.assertTrue(info["capabilities"]["compile_3d_fixed_view"])
         self.assertTrue(info["capabilities"]["native_rig_2d_authoring_v1"])
         self.assertTrue(info["capabilities"]["native_manim_source_2d_v1"])
+        self.assertTrue(info["capabilities"]["native_manim_source_3d_v1"])
+        self.assertTrue(info["capabilities"]["native_manim_source_3d_v2"])
         self.assertFalse(info["capabilities"]["dynamic_camera_in_fixed_view"])
 
     def test_two_d_asset_uses_semantic_native_objects(self) -> None:

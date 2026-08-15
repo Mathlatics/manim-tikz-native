@@ -4,6 +4,7 @@ from copy import deepcopy
 import json
 from pathlib import Path
 import unittest
+from unittest.mock import patch
 
 from jsonschema import Draft202012Validator
 
@@ -18,6 +19,8 @@ from tikz_native.geometry_rig_3d import (
 )
 from tikz_native.motion_3d import Motion3DSpec
 from tikz_native.motion_3d_bridge import provider_info, sha256_file
+from tikz_native.native_manim_codegen_3d import NativeManimCodegen3DError
+from tikz_native.native_manim_codegen_3d_v2 import NativeManimCodegen3DV2Error
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -125,13 +128,21 @@ class TikzNativeGeometryRig3DTests(unittest.TestCase):
         self.assertEqual(rig["dimension"], 3)
         self.assertEqual(rig["status"], "needs_selection")
         self.assertIsNone(rig["motionSpecCore"])
+        self.assertIsNone(rig["nativeManimSource"])
+        self.assertEqual(
+            rig["nativeManimSourceV2"]["schema"],
+            "tikz-native-manim-source-3d/v2",
+        )
 
         candidates = rig["motionCandidates"]
         by_kind: dict[str, list[dict]] = {}
         for item in candidates:
             by_kind.setdefault(item["candidateKind"], []).append(item)
-        self.assertEqual(len(by_kind["geometry_driver"]), 1)
-        hinge = by_kind["geometry_driver"][0]
+        geometry_drivers = {
+            item["driverType"]: item for item in by_kind["geometry_driver"]
+        }
+        self.assertEqual(set(geometry_drivers), {"hinge_fold", "point_on_segment"})
+        hinge = geometry_drivers["hinge_fold"]
         self.assertEqual(hinge["driverType"], "hinge_fold")
         self.assertEqual(hinge["relationId"], "fold-angle")
         self.assertEqual(hinge["axis"], ["A", "B"])
@@ -143,6 +154,25 @@ class TikzNativeGeometryRig3DTests(unittest.TestCase):
         self.assertGreater(
             hinge["suggestedRange"]["maximum"], hinge["initial"]["value"]
         )
+        point = geometry_drivers["point_on_segment"]
+        self.assertEqual(point["driverId"], "point_on_segment:M")
+        self.assertEqual(point["coordinateId"], "M")
+        self.assertEqual(point["segment"], ["Beta0", "Beta1"])
+        self.assertEqual(point["initial"], {"value": 0.67, "unit": "ratio"})
+        cameras = {
+            item["mode"]: item
+            for item in by_kind["camera_operation"]
+        }
+        self.assertEqual(set(cameras), {"front", "side", "top", "oblique", "isometric"})
+        # This fixture's authored TikZ basis is a proper rotation frame.  Its
+        # orthogonal presets can orbit, while the general oblique projection
+        # must keep the legacy runtime on linear interpolation.
+        self.assertEqual(cameras["oblique"]["transitionTypes"], ["linear"])
+        for mode in ("front", "side", "top", "isometric"):
+            self.assertEqual(
+                cameras[mode]["transitionTypes"],
+                ["linear", "orbit"],
+            )
 
         derived = {
             item["coordinateId"]: item for item in by_kind["derived_relation"]
@@ -285,6 +315,7 @@ class TikzNativeGeometryRig3DTests(unittest.TestCase):
         self.assertEqual(core["end_policy"], "restore_entry")
         self.assertEqual(core["driver"]["type"], "hinge_fold")
         self.assertEqual(core["driver"]["moving_points"], ["Beta1", "Beta0"])
+        self.assertEqual(core["camera"]["restore_transition"], "linear")
         self.assertEqual(
             [item["name"] for item in core["derived_coordinates"]],
             ["M", "N"],
@@ -297,6 +328,73 @@ class TikzNativeGeometryRig3DTests(unittest.TestCase):
         }
         motion = Motion3DSpec.from_dict(payload)
         motion.validate_picture(self.picture)
+        source = rig["nativeManimSource"]
+        self.assertEqual(source["schema"], "tikz-native-manim-source-3d/v1")
+        self.assertIn("def install_geometry_3d_updaters(", source["sourceText"])
+        source_v2 = rig["nativeManimSourceV2"]
+        self.assertEqual(source_v2["schema"], "tikz-native-manim-source-3d/v2")
+        self.assertEqual(
+            source_v2["authoringSpec"]["endPolicy"],
+            "restore_entry",
+        )
+
+    def test_nonorthogonal_tikz_entry_advertises_no_orbit_transition(self) -> None:
+        picture = deepcopy(self.picture)
+        picture.projection_3d.matrix = (
+            (1.0, 0.25, 0.0),
+            (0.0, 1.0, 0.0),
+            (0.0, 0.0, 1.0),
+        )
+        rig = analyze_geometry_rig_3d(picture)
+        cameras = [
+            item
+            for item in rig["motionCandidates"]
+            if item["candidateKind"] == "camera_operation"
+        ]
+        self.assertEqual(len(cameras), 5)
+        for camera in cameras:
+            self.assertEqual(camera["transitionTypes"], ["linear"])
+
+    def test_codegen_gap_does_not_revoke_the_legacy_ready_rig(self) -> None:
+        with patch(
+            "tikz_native.geometry_rig_3d.generate_native_manim_source_3d",
+            side_effect=NativeManimCodegen3DError("unsupported readable source probe"),
+        ):
+            rig = analyze_geometry_rig_3d(
+                self.picture,
+                selection=self._selection(),
+            )
+        self.assertEqual(rig["status"], "ready")
+        self.assertIsNotNone(rig["motionSpecCore"])
+        self.assertIsNone(rig["nativeManimSource"])
+        diagnostic = next(
+            item
+            for item in rig["diagnostics"]
+            if item["code"] == "NATIVE_MANIM_SOURCE_UNAVAILABLE"
+        )
+        self.assertEqual(diagnostic["severity"], "warning")
+
+    def test_v2_codegen_gap_does_not_revoke_v1_or_the_legacy_ready_rig(self) -> None:
+        with patch(
+            "tikz_native.geometry_rig_3d.generate_native_manim_source_3d_v2",
+            side_effect=NativeManimCodegen3DV2Error(
+                "unsupported multi-driver source probe"
+            ),
+        ):
+            rig = analyze_geometry_rig_3d(
+                self.picture,
+                selection=self._selection(),
+            )
+        self.assertEqual(rig["status"], "ready")
+        self.assertIsNotNone(rig["motionSpecCore"])
+        self.assertIsNotNone(rig["nativeManimSource"])
+        self.assertIsNone(rig["nativeManimSourceV2"])
+        diagnostic = next(
+            item
+            for item in rig["diagnostics"]
+            if item["code"] == "NATIVE_MANIM_SOURCE_V2_UNAVAILABLE"
+        )
+        self.assertEqual(diagnostic["severity"], "warning")
 
     def test_analysis_never_recovers_polygon_points_from_object_id(self) -> None:
         picture = deepcopy(self.picture)
@@ -309,6 +407,8 @@ class TikzNativeGeometryRig3DTests(unittest.TestCase):
         rig = analyze_geometry_rig_3d(picture, selection=self._selection())
         self.assertEqual(rig["status"], "blocked")
         self.assertIsNone(rig["motionSpecCore"])
+        self.assertIsNone(rig["nativeManimSource"])
+        self.assertIsNone(rig["nativeManimSourceV2"])
         self.assertIn(
             "MOVING_FACE_OBJECT_NOT_FOUND",
             {item["code"] for item in rig["diagnostics"]},
@@ -346,6 +446,8 @@ class TikzNativeGeometryRig3DTests(unittest.TestCase):
         self.assertFalse(rig["revisionMatch"])
         self.assertEqual(rig["status"], "blocked")
         self.assertIsNone(rig["motionSpecCore"])
+        self.assertIsNone(rig["nativeManimSource"])
+        self.assertIsNone(rig["nativeManimSourceV2"])
         self.assertTrue(rig["motionCandidates"])
         self.assertEqual(
             rig["diagnostics"][0]["code"],
@@ -367,6 +469,7 @@ class TikzNativeGeometryRig3DTests(unittest.TestCase):
         self.assertEqual(rig["status"], "needs_selection")
         self.assertIsNone(rig["selectedMotionCandidate"])
         self.assertIsNone(rig["motionSpecCore"])
+        self.assertIsNotNone(rig["nativeManimSourceV2"])
         self.assertTrue(rig["semanticGroups"])
 
 
