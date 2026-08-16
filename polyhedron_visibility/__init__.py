@@ -18,6 +18,7 @@ from .parallel_solver import (
 )
 from .trace import (
     EdgeVisibility,
+    FaceToleranceTrace,
     RawOcclusionInterval,
     SkippedFace,
     VISIBILITY_TRACE_SCHEMA,
@@ -29,6 +30,7 @@ from .trace import (
 __all__ = [
     "ContractError",
     "EdgeVisibility",
+    "FaceToleranceTrace",
     "FaceSpec",
     "ParallelView",
     "RawOcclusionInterval",

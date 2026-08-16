@@ -75,6 +75,15 @@ class ParallelVisibilitySolverTests(unittest.TestCase):
         self.assertLess(interval[0], 0.3)
         self.assertGreater(interval[1], 0.7)
 
+    def test_parallel_view_direct_constructor_cannot_bypass_matrix_contract(self) -> None:
+        matrix = tuple(tuple(float(value) for value in row) for row in IDENTITY_VIEW)
+        with self.assertRaisesRegex(SolverError, "view direction"):
+            ParallelView(matrix, (0.0, 0.0, 0.0))
+        with self.assertRaisesRegex(SolverError, "view direction"):
+            ParallelView(matrix, (0.0, 0.0, -1.0))
+        with self.assertRaisesRegex(SolverError, "unit"):
+            ParallelView(matrix, (0.0, 0.0, 2.0))
+
     def test_public_face_solver_rejects_nonconvex_and_nonplanar_faces(self) -> None:
         view = ParallelView.from_matrix(IDENTITY_VIEW)
         with self.assertRaisesRegex(SolverError, "convex"):
@@ -91,6 +100,36 @@ class ParallelVisibilitySolverTests(unittest.TestCase):
                 [(-1, -1, 1), (1, -1, 1), (1, 1, 1.2), (-1, 1, 1)],
                 view,
             )
+
+    def test_tiny_face_still_occludes_a_very_long_semantic_stroke(self) -> None:
+        interval = segment_face_occlusion_interval(
+            (-5.0e7, 0, 0),
+            (5.0e7, 0, 0),
+            [(-0.5, -1, 1), (0.5, -1, 1), (0.5, 1, 1), (-0.5, 1, 1)],
+            ParallelView.from_matrix(IDENTITY_VIEW),
+        )
+        self.assertIsNotNone(interval)
+        assert interval is not None
+        self.assertGreater(interval[1] - interval[0], 5.0e-9)
+        self.assertAlmostEqual((interval[0] + interval[1]) / 2, 0.5, places=12)
+
+        model = VisibilityModel.from_dict({
+            "schema": "manim-convex-polyhedron-visibility/v1",
+            "visibilityGroupId": "mixed-scale-trace",
+            "vertices": [
+                {"vertexId": "L", "entryPosition": (-5.0e7, 0, 0)},
+                {"vertexId": "R", "entryPosition": (5.0e7, 0, 0)},
+                {"vertexId": "A", "entryPosition": (-0.5, -1, 1)},
+                {"vertexId": "B", "entryPosition": (0.5, -1, 1)},
+                {"vertexId": "C", "entryPosition": (0.5, 1, 1)},
+                {"vertexId": "D", "entryPosition": (-0.5, 1, 1)},
+            ],
+            "faces": [{"faceId": "small", "vertexIds": ["A", "B", "C", "D"]}],
+            "strokes": [{"sourceEdgeId": "long", "vertexIds": ["L", "R"]}],
+        })
+        edge = compute_frame_visibility(model, projection_matrix=IDENTITY_VIEW).edge_map["long"]
+        self.assertLess(edge.parameter_epsilon, 2.0e-9)
+        self.assertLess(edge.face_tolerances[0].world, 1.0e-7)
 
     def test_two_disjoint_faces_create_five_ordered_spans(self) -> None:
         frame = compute_frame_visibility(face_model(), projection_matrix=IDENTITY_VIEW)

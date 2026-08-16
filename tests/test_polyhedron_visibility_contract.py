@@ -101,6 +101,25 @@ class VisibilityContractTests(unittest.TestCase):
         with self.assertRaisesRegex(ContractError, "closed two-manifold"):
             model.validate(require_closed_convex_manifold=True)
 
+    def test_coplanar_adjacent_triangulation_must_be_merged_into_one_face(self) -> None:
+        payload = {
+            "schema": "manim-convex-polyhedron-visibility/v1",
+            "visibilityGroupId": "triangulated-square",
+            "vertices": [
+                {"vertexId": "A", "entryPosition": (-1, -1, 1)},
+                {"vertexId": "B", "entryPosition": (1, -1, 1)},
+                {"vertexId": "C", "entryPosition": (1, 1, 1)},
+                {"vertexId": "D", "entryPosition": (-1, 1, 1)},
+            ],
+            "faces": [
+                {"faceId": "ABC", "vertexIds": ["A", "B", "C"]},
+                {"faceId": "ACD", "vertexIds": ["A", "C", "D"]},
+            ],
+            "strokes": [],
+        }
+        with self.assertRaisesRegex(ContractError, "coplanar adjacent faces must be merged"):
+            VisibilityModel.from_dict(payload).validate()
+
     def test_rejects_nonplanar_nonconvex_and_nonfinite_faces(self) -> None:
         nonplanar = cube_payload()
         nonplanar["vertices"][6]["entryPosition"] = (1, 1, 1.2)
@@ -127,6 +146,24 @@ class VisibilityContractTests(unittest.TestCase):
         nonfinite["vertices"][0]["entryPosition"] = (float("nan"), 0, 0)
         with self.assertRaisesRegex(ContractError, "finite"):
             VisibilityModel.from_dict(nonfinite)
+
+    def test_far_free_stroke_does_not_relax_local_face_planarity(self) -> None:
+        payload = {
+            "schema": "manim-convex-polyhedron-visibility/v1",
+            "visibilityGroupId": "local-face-tolerance",
+            "vertices": [
+                {"vertexId": "A", "entryPosition": (-5, -5, 0)},
+                {"vertexId": "B", "entryPosition": (5, -5, 0)},
+                {"vertexId": "C", "entryPosition": (5, 5, 1)},
+                {"vertexId": "D", "entryPosition": (-5, 5, 0)},
+                {"vertexId": "X", "entryPosition": (-1e9, 0, 0)},
+                {"vertexId": "Y", "entryPosition": (1e9, 0, 0)},
+            ],
+            "faces": [{"faceId": "warped", "vertexIds": ["A", "B", "C", "D"]}],
+            "strokes": [{"sourceEdgeId": "far", "vertexIds": ["X", "Y"]}],
+        }
+        with self.assertRaisesRegex(ContractError, "not planar"):
+            VisibilityModel.from_dict(payload).validate()
 
     def test_rejects_self_intersecting_star_even_when_local_turns_match(self) -> None:
         angles = [0, 144, 288, 72, 216]
@@ -177,7 +214,8 @@ class VisibilityContractTests(unittest.TestCase):
             "strokes": [],
         }
         with self.assertRaisesRegex(
-            ContractError, "closed two-manifold|non-zero volume|duplicate surface"
+            ContractError,
+            "closed two-manifold|non-zero volume|duplicate surface|coplanar adjacent faces",
         ):
             VisibilityModel.from_dict(flat).validate(require_closed_convex_manifold=True)
 

@@ -30,6 +30,24 @@ class SkippedFace:
 
 
 @dataclass(frozen=True)
+class FaceToleranceTrace:
+    face_id: str
+    world: float
+    boundary: float
+    depth: float
+    angular: float
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "faceId": self.face_id,
+            "world": self.world,
+            "boundary": self.boundary,
+            "depth": self.depth,
+            "angular": self.angular,
+        }
+
+
+@dataclass(frozen=True)
 class VisibilitySpan:
     start: float
     end: float
@@ -53,6 +71,8 @@ class EdgeVisibility:
     raw_intervals: tuple[RawOcclusionInterval, ...]
     skipped_faces: tuple[SkippedFace, ...]
     spans: tuple[VisibilitySpan, ...]
+    parameter_epsilon: float
+    face_tolerances: tuple[FaceToleranceTrace, ...]
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -60,6 +80,8 @@ class EdgeVisibility:
             "rawIntervals": [item.to_dict() for item in self.raw_intervals],
             "skippedFaces": [item.to_dict() for item in self.skipped_faces],
             "spans": [item.to_dict() for item in self.spans],
+            "parameterEpsilon": self.parameter_epsilon,
+            "faceTolerances": [item.to_dict() for item in self.face_tolerances],
         }
 
 
@@ -84,7 +106,9 @@ class VisibilityFrame:
             "projectionMatrix": [list(row) for row in self.projection_matrix],
             "viewDirection": list(self.view_direction),
             "tolerance": self.tolerance.to_dict(),
-            "faceDrawOrder": list(self.face_draw_order),
+            # Centroid depth is useful diagnostics but is not a general painter
+            # order for intersecting or mutually crossing faces.
+            "advisoryFaceDrawOrder": list(self.face_draw_order),
             "edges": [item.to_dict() for item in self.edges],
         }
 
@@ -101,6 +125,7 @@ def canonical_trace_json(frame: VisibilityFrame) -> str:
 
 __all__ = [
     "EdgeVisibility",
+    "FaceToleranceTrace",
     "RawOcclusionInterval",
     "SkippedFace",
     "VISIBILITY_TRACE_SCHEMA",

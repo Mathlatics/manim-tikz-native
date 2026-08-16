@@ -15,6 +15,7 @@ from .contract import (
 )
 from .trace import (
     EdgeVisibility,
+    FaceToleranceTrace,
     RawOcclusionInterval,
     SkippedFace,
     VisibilityFrame,
@@ -30,6 +31,29 @@ class SolverError(ValueError):
 class ParallelView:
     projection_matrix: tuple[tuple[float, float, float], ...]
     view_direction: tuple[float, float, float]
+
+    def __post_init__(self) -> None:
+        matrix = np.asarray(self.projection_matrix, dtype=float)
+        direction = np.asarray(self.view_direction, dtype=float)
+        if matrix.shape != (3, 3) or not np.all(np.isfinite(matrix)):
+            raise SolverError("parallel projection matrix must be a finite 3x3 matrix")
+        if direction.shape != (3,) or not np.all(np.isfinite(direction)):
+            raise SolverError("parallel view direction must be a finite three-component vector")
+        direction_norm = float(np.linalg.norm(direction))
+        if direction_norm == 0.0:
+            raise SolverError("parallel view direction must be non-zero")
+        if abs(direction_norm - 1.0) > 1.0e-9:
+            raise SolverError("parallel view direction must be a unit vector")
+        expected = np.cross(matrix[0], matrix[1])
+        expected_norm = float(np.linalg.norm(expected))
+        depth_norm = float(np.linalg.norm(matrix[2]))
+        if expected_norm == 0.0 or depth_norm == 0.0:
+            raise SolverError("parallel projection matrix is singular")
+        expected /= expected_norm
+        if float(np.dot(expected, matrix[2])) < 0:
+            expected *= -1.0
+        if float(np.linalg.norm(expected - direction)) > 1.0e-9:
+            raise SolverError("parallel view direction disagrees with projection matrix")
 
     @classmethod
     def from_matrix(cls, matrix: Sequence[Sequence[float]]) -> "ParallelView":
@@ -103,18 +127,17 @@ def _segment_face_interval_result(
         raise SolverError("segment and face coordinates must be finite and non-degenerate")
     segment = end - start
     segment_length = float(np.linalg.norm(segment))
-    tolerance = tolerance_policy.resolve(
-        np.vstack((start[None, :], end[None, :], points)), edge_length=segment_length
-    )
-    if segment_length <= tolerance.world:
+    edge_tolerance = tolerance_policy.resolve((start, end), edge_length=segment_length)
+    face_tolerance = tolerance_policy.resolve(points)
+    if segment_length <= tolerance_policy.absolute_floor:
         raise SolverError("semantic stroke has zero length")
     try:
-        normal = _validate_convex_face_points(points, tolerance, "occluder")
+        normal = _validate_convex_face_points(points, face_tolerance, "occluder")
     except ContractError as exc:
         raise SolverError(str(exc)) from exc
     direction = np.asarray(view.view_direction, dtype=float)
     denominator = float(np.dot(direction, normal))
-    if abs(denominator) <= tolerance.angular:
+    if abs(denominator) <= face_tolerance.angular:
         return _IntervalResult(None, "face_edge_on")
 
     lambda_zero = float(np.dot(points[0] - start, normal) / denominator)
@@ -125,11 +148,14 @@ def _segment_face_interval_result(
         upper,
         lambda_zero,
         lambda_slope,
-        tolerance.depth,
-        tolerance.parameter,
+        face_tolerance.depth,
+        edge_tolerance.parameter,
     )
     if clipped is None:
-        if abs(lambda_zero) <= tolerance.depth and abs(lambda_slope) <= tolerance.depth:
+        if (
+            abs(lambda_zero) <= face_tolerance.depth
+            and abs(lambda_slope) <= face_tolerance.depth
+        ):
             return _IntervalResult(None, "coplanar_touch")
         return _IntervalResult(None, "face_not_in_front")
     lower, upper = clipped
@@ -144,8 +170,8 @@ def _segment_face_interval_result(
         # The half-plane expression has units of length squared.  Scale the
         # boundary clearance by this particular face-edge length so that a
         # geometrically identical model behaves identically at every scale.
-        boundary_threshold = tolerance.boundary * max(
-            float(np.linalg.norm(face_edge)), tolerance.world
+        boundary_threshold = face_tolerance.boundary * max(
+            float(np.linalg.norm(face_edge)), face_tolerance.world
         )
         clipped = _clip_greater_equal(
             lower,
@@ -153,14 +179,14 @@ def _segment_face_interval_result(
             value_zero,
             value_slope,
             boundary_threshold,
-            tolerance.parameter,
+            edge_tolerance.parameter,
         )
         if clipped is None:
             return _IntervalResult(None, "outside_face_or_boundary_touch")
         lower, upper = clipped
     lower = min(1.0, max(0.0, float(lower)))
     upper = min(1.0, max(0.0, float(upper)))
-    if upper - lower <= tolerance.parameter:
+    if upper - lower <= edge_tolerance.parameter:
         return _IntervalResult(None, "zero_length_touch")
     return _IntervalResult((lower, upper), None)
 
@@ -262,7 +288,13 @@ def compute_frame_visibility(
     policy = tolerance_policy or TolerancePolicy()
     view = ParallelView.from_matrix(projection_matrix)
     positions = _validated_positions(model, vertex_positions)
-    tolerance = policy.resolve(positions)
+    surface_vertex_ids = sorted({item for face in model.faces for item in face.vertex_ids})
+    tolerance_positions = (
+        {item: positions[item] for item in surface_vertex_ids}
+        if surface_vertex_ids
+        else positions
+    )
+    tolerance = policy.resolve(tolerance_positions)
     face_depths: list[tuple[float, str]] = []
     for face in model.faces:
         centroid = np.mean([positions[item] for item in face.vertex_ids], axis=0)
@@ -274,9 +306,21 @@ def compute_frame_visibility(
         start = positions[stroke.vertex_ids[0]]
         end = positions[stroke.vertex_ids[1]]
         length = float(np.linalg.norm(end - start))
-        edge_tolerance = policy.resolve(positions, edge_length=length)
+        edge_tolerance = policy.resolve((start, end), edge_length=length)
         raw_intervals: list[RawOcclusionInterval] = []
         skipped: list[SkippedFace] = []
+        face_tolerances = tuple(
+            FaceToleranceTrace(
+                face_id=face.face_id,
+                world=(resolved := policy.resolve(
+                    [positions[item] for item in face.vertex_ids]
+                )).world,
+                boundary=resolved.boundary,
+                depth=resolved.depth,
+                angular=resolved.angular,
+            )
+            for face in model.faces
+        )
         if stroke.visibility_mode == "always_visible":
             skipped.extend(SkippedFace(face.face_id, "stroke_always_visible") for face in model.faces)
         elif stroke.visibility_mode == "always_hidden":
@@ -310,6 +354,8 @@ def compute_frame_visibility(
                 raw_intervals=tuple(raw_intervals),
                 skipped_faces=tuple(skipped),
                 spans=_spans_from_intervals(raw_intervals, edge_tolerance.parameter),
+                parameter_epsilon=edge_tolerance.parameter,
+                face_tolerances=face_tolerances,
             )
         )
     return VisibilityFrame(

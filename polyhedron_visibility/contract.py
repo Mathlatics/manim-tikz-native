@@ -459,19 +459,57 @@ class VisibilityModel:
         self._validate_references()
         positions = self._validated_positions(vertex_positions)
         policy = tolerance_policy or TolerancePolicy()
-        tolerance = policy.resolve(positions)
         face_normals: dict[str, np.ndarray] = {}
+        face_tolerances: dict[str, ResolvedTolerance] = {}
         for face in self.faces:
             points = np.asarray([positions[item] for item in face.vertex_ids], dtype=float)
+            face_tolerance = policy.resolve(points)
+            face_tolerances[face.face_id] = face_tolerance
             face_normals[face.face_id] = _validate_convex_face_points(
-                points, tolerance, face.face_id
+                points, face_tolerance, face.face_id
             )
+
+        # V1 requires maximal convex polygons, not a triangle mesh.  Otherwise
+        # a semantic line projected exactly onto an internal triangulation seam
+        # would be classified as a boundary touch by both triangles and leak
+        # through.  TikZ/mesh adapters must merge such coplanar neighbours
+        # before constructing this contract.
+        boundary_owners: dict[tuple[str, str], list[str]] = {}
+        for face in self.faces:
+            for index, start in enumerate(face.vertex_ids):
+                end = face.vertex_ids[(index + 1) % len(face.vertex_ids)]
+                boundary_owners.setdefault(tuple(sorted((start, end))), []).append(face.face_id)
+        for owners in boundary_owners.values():
+            if len(owners) < 2:
+                continue
+            for first_index, first_id in enumerate(sorted(owners)):
+                first = self.face_map[first_id]
+                first_point = positions[first.vertex_ids[0]]
+                first_normal = face_normals[first_id]
+                for second_id in sorted(owners)[first_index + 1 :]:
+                    second = self.face_map[second_id]
+                    second_normal = face_normals[second_id]
+                    if abs(float(np.dot(first_normal, second_normal))) < 1.0 - policy.angular:
+                        continue
+                    second_points = np.asarray(
+                        [positions[item] for item in second.vertex_ids], dtype=float
+                    )
+                    tolerance = max(
+                        face_tolerances[first_id].boundary,
+                        face_tolerances[second_id].boundary,
+                    )
+                    if float(np.max(np.abs(np.dot(second_points - first_point, first_normal)))) <= tolerance:
+                        raise ContractError(
+                            f"coplanar adjacent faces must be merged: {first_id}, {second_id}"
+                        )
 
         if not require_closed_convex_manifold:
             return
         surface_vertex_ids = sorted({vertex_id for face in self.faces for vertex_id in face.vertex_ids})
         if len(self.faces) < 4 or len(surface_vertex_ids) < 4:
             raise ContractError("faces do not form a closed two-manifold")
+        surface_positions = {vertex_id: positions[vertex_id] for vertex_id in surface_vertex_ids}
+        tolerance = policy.resolve(surface_positions)
         seen_surfaces: dict[tuple[str, ...], str] = {}
         for face in self.faces:
             canonical = _canonical_cycle(face.vertex_ids)
