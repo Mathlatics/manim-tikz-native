@@ -63,6 +63,7 @@ class OcclusionScene3DAuthoringTests(unittest.TestCase):
         )
         self.assertIsInstance(controller, AutoOcclusion3D)
         self.assertEqual(controller.model.visibility_group_id, "tetrahedron")
+        self.assertTrue(controller.require_closed_convex_manifold)
 
     def test_open_face_system_requires_an_explicit_experimental_mode(self) -> None:
         strict = OcclusionScene3D("open")
@@ -79,6 +80,12 @@ class OcclusionScene3DAuthoringTests(unittest.TestCase):
             experimental.vertex(vertex_id, lambda point=point: point)
         experimental.face("ABC", ("A", "B", "C"))
         experimental.freeze()
+        controller = experimental.controller(
+            type("SceneProbe", (), {"mobjects": []})(),
+            projection=ParallelProjection.identity(),
+            style=OcclusionStyle(max_projected_length=4.0),
+        )
+        self.assertFalse(controller.require_closed_convex_manifold)
 
 
 if __name__ == "__main__":

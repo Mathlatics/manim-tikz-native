@@ -51,6 +51,7 @@ class TikzNativePolyhedronVisibility3DManimTests(unittest.TestCase):
             figure,
             style=OcclusionStyle(max_projected_length=8.0),
         )
+        self.assertTrue(binding.controller.require_closed_convex_manifold)
 
         binding.attach()
         self.assertEqual(

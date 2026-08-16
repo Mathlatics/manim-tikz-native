@@ -274,10 +274,15 @@ def _spans_from_intervals(
 def _validated_positions(
     model: VisibilityModel,
     vertex_positions: Mapping[str, Sequence[float]] | None,
+    *,
+    require_closed_convex_manifold: bool,
 ) -> dict[str, np.ndarray]:
     raw = model.entry_positions if vertex_positions is None else vertex_positions
     try:
-        model.validate(vertex_positions=raw)
+        model.validate(
+            vertex_positions=raw,
+            require_closed_convex_manifold=require_closed_convex_manifold,
+        )
     except ContractError as exc:
         raise SolverError(f"invalid visibility frame: {exc}") from exc
     return {key: np.asarray(raw[key], dtype=float) for key in sorted(raw)}
@@ -289,10 +294,15 @@ def compute_frame_visibility(
     projection_matrix: Sequence[Sequence[float]],
     vertex_positions: Mapping[str, Sequence[float]] | None = None,
     tolerance_policy: TolerancePolicy | None = None,
+    require_closed_convex_manifold: bool = False,
 ) -> VisibilityFrame:
     policy = tolerance_policy or TolerancePolicy()
     view = ParallelView.from_matrix(projection_matrix)
-    positions = _validated_positions(model, vertex_positions)
+    positions = _validated_positions(
+        model,
+        vertex_positions,
+        require_closed_convex_manifold=require_closed_convex_manifold,
+    )
     surface_vertex_ids = sorted({item for face in model.faces for item in face.vertex_ids})
     tolerance_positions = (
         {item: positions[item] for item in surface_vertex_ids}

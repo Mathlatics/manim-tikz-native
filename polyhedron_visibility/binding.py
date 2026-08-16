@@ -383,6 +383,7 @@ class ManimOcclusionBinding:
         display_point_provider: DisplayPointProvider | None,
         style: OcclusionStyle,
         tolerance_policy: TolerancePolicy | None = None,
+        require_closed_convex_manifold: bool = False,
     ) -> None:
         self.scene = scene
         self.model = model
@@ -394,6 +395,7 @@ class ManimOcclusionBinding:
         self.display_point_provider = display_point_provider
         self.style = style
         self.tolerance_policy = tolerance_policy or TolerancePolicy()
+        self.require_closed_convex_manifold = bool(require_closed_convex_manifold)
         self._attached = False
         self._source_snapshots: dict[str, tuple[_AttributeSnapshot, ...]] = {}
         self._resolved_styles: dict[str, ResolvedOcclusionStyle] = {}
@@ -456,6 +458,7 @@ class ManimOcclusionBinding:
             projection_matrix=projection,
             vertex_positions=positions,
             tolerance_policy=self.tolerance_policy,
+            require_closed_convex_manifold=self.require_closed_convex_manifold,
         )
         plans: dict[str, OverlayPlan] = {}
         for stroke in self.model.strokes:

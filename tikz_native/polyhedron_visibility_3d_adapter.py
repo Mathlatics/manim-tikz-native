@@ -1144,6 +1144,7 @@ def adapt_picture_visibility_3d(
         entry_trace = compute_frame_visibility(
             model,
             projection_matrix=projection,
+            require_closed_convex_manifold=require_closed,
         )
     except (ContractError, ValueError) as exc:
         raise TikzNativeVisibility3DAdapterError(

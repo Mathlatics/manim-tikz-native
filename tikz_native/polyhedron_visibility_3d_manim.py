@@ -259,6 +259,9 @@ def bind_picture_visibility_3d(
         projection=current_projection,
         display_point_provider=display_point_provider,
         style=style,
+        require_closed_convex_manifold=(
+            analysis.validation_mode == "closed_convex_polyhedron"
+        ),
     )
     return TikzNativeAutoOcclusion3D(analysis, controller)
 

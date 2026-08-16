@@ -60,6 +60,42 @@ def face_model(*, reverse_inputs: bool = False, scale: float = 1.0) -> Visibilit
     )
 
 
+def octahedron_model() -> VisibilityModel:
+    positions = {
+        "Xp": (1.0, 0.0, 0.0),
+        "Xn": (-1.0, 0.0, 0.0),
+        "Yp": (0.0, 1.0, 0.0),
+        "Yn": (0.0, -1.0, 0.0),
+        "T": (0.0, 0.0, 1.0),
+        "U": (0.0, 0.0, -1.0),
+    }
+    faces = (
+        ("T-Xp-Yp", ("T", "Xp", "Yp")),
+        ("T-Yp-Xn", ("T", "Yp", "Xn")),
+        ("T-Xn-Yn", ("T", "Xn", "Yn")),
+        ("T-Yn-Xp", ("T", "Yn", "Xp")),
+        ("U-Yp-Xp", ("U", "Yp", "Xp")),
+        ("U-Xp-Yn", ("U", "Xp", "Yn")),
+        ("U-Yn-Xn", ("U", "Yn", "Xn")),
+        ("U-Xn-Yp", ("U", "Xn", "Yp")),
+    )
+    return VisibilityModel.from_dict(
+        {
+            "schema": "manim-convex-polyhedron-visibility/v1",
+            "visibilityGroupId": "octahedron",
+            "vertices": [
+                {"vertexId": vertex_id, "entryPosition": point}
+                for vertex_id, point in positions.items()
+            ],
+            "faces": [
+                {"faceId": face_id, "vertexIds": vertex_ids}
+                for face_id, vertex_ids in faces
+            ],
+            "strokes": [],
+        }
+    )
+
+
 class ParallelVisibilitySolverTests(unittest.TestCase):
     def test_parallel_view_and_one_arbitrary_convex_face_interval(self) -> None:
         view = ParallelView.from_matrix(IDENTITY_VIEW)
@@ -268,6 +304,28 @@ class ParallelVisibilitySolverTests(unittest.TestCase):
                 for item in scaled.edge_map["probe"].spans
             ],
         )
+
+    def test_strict_closed_convex_mode_revalidates_every_dynamic_frame(self) -> None:
+        model = octahedron_model()
+        model.validate(require_closed_convex_manifold=True)
+        concave_positions = dict(model.entry_positions)
+        concave_positions["U"] = (0.0, 0.0, 0.5)
+
+        # Every face is still a valid triangle, so the generic finite-face
+        # solver can process this frame when an experimental open-face caller
+        # explicitly chooses that contract.
+        compute_frame_visibility(
+            model,
+            projection_matrix=IDENTITY_VIEW,
+            vertex_positions=concave_positions,
+        )
+        with self.assertRaisesRegex(SolverError, "not convex"):
+            compute_frame_visibility(
+                model,
+                projection_matrix=IDENTITY_VIEW,
+                vertex_positions=concave_positions,
+                require_closed_convex_manifold=True,
+            )
 
 
 if __name__ == "__main__":

@@ -250,6 +250,9 @@ class OcclusionScene3D:
             display_point_provider=display_point_provider,
             style=style,
             tolerance_policy=tolerance_policy,
+            require_closed_convex_manifold=(
+                self.topology_mode == "closed_convex_polyhedron"
+            ),
         )
 
 

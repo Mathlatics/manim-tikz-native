@@ -55,6 +55,7 @@ class AutoOcclusion3D(ManimOcclusionBinding):
         display_point_provider: DisplayPointProvider | None = None,
         style: OcclusionStyle,
         tolerance_policy: TolerancePolicy | None = None,
+        require_closed_convex_manifold: bool = False,
     ) -> None:
         self.projection = projection
         super().__init__(
@@ -66,6 +67,7 @@ class AutoOcclusion3D(ManimOcclusionBinding):
             display_point_provider=display_point_provider,
             style=style,
             tolerance_policy=tolerance_policy,
+            require_closed_convex_manifold=require_closed_convex_manifold,
         )
 
 
