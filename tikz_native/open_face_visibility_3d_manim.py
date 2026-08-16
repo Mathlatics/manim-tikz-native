@@ -607,8 +607,10 @@ def _geometry_rig_is_restored(state: Mapping[str, object] | None) -> bool:
     ):
         return False
     children = tuple(shape.submobjects)
-    return children == tuple(original) and all(
-        all(child is not group for child in children) for group in groups
+    return len(children) == len(original) and all(
+        child is entry for child, entry in zip(children, original)
+    ) and all(
+        child is not group for child in children for group in groups
     )
 
 
