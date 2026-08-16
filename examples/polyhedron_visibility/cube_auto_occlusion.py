@@ -25,14 +25,14 @@ from polyhedron_visibility import (
 class CubeAutoOcclusionDemo(Scene):
     def construct(self) -> None:
         coordinates = {
-            "A": (-1, -1, -1),
-            "B": (1, -1, -1),
-            "C": (1, 1, -1),
-            "D": (-1, 1, -1),
-            "E": (-1, -1, 1),
-            "F": (1, -1, 1),
-            "G": (1, 1, 1),
-            "H": (-1, 1, 1),
+            "A": (-1.0, -1.0, -1.0),
+            "B": (1.0, -1.0, -1.0),
+            "C": (1.0, 1.0, -1.0),
+            "D": (-1.0, 1.0, -1.0),
+            "E": (-1.0, -1.0, 1.0),
+            "F": (1.0, -1.0, 1.0),
+            "G": (1.0, 1.0, 1.0),
+            "H": (-1.0, 1.0, 1.0),
         }
         anchors = {
             name: VectorizedPoint(point) for name, point in coordinates.items()
@@ -70,7 +70,9 @@ class CubeAutoOcclusionDemo(Scene):
                 stroke_width=3,
                 z_index=10 + z_offset,
             )
-        geometry = VGroup(*anchors.values(), face_mobjects, *edges.values()).shift(RIGHT * 0.25)
+        geometry = VGroup(*anchors.values(), face_mobjects, *edges.values())
+        geometry.rotate(24 * DEGREES, axis=np.array((0.35, 1.0, 0.20)))
+        geometry.shift(RIGHT * 0.25)
         self.add(geometry)
 
         visibility = OcclusionScene3D("cube")
