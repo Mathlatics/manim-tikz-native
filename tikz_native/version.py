@@ -59,8 +59,8 @@ _NATIVE_SOURCE_3D_V2_26D7: Final = (
 _POLYHEDRON_VISIBILITY_2539: Final = (
     "source-sha256:253990a472d413381882594f9e8c18c3c3a70089208b6a63a5bf9e17aed6e3e3"
 )
-_TIKZ_POLYHEDRON_VISIBILITY_3D_0B34: Final = (
-    "source-sha256:0b34c367c08def70231d9131b439f765ae03d1d57df3358cf6f2c30f8e1009bc"
+_TIKZ_POLYHEDRON_VISIBILITY_3D_31BB: Final = (
+    "source-sha256:31bbb9ee12e0bddcb01c0a459d5ffab4ad791e8e118ad1a1d175eed5b5bd001e"
 )
 
 
@@ -175,7 +175,10 @@ _COMPONENT_DEFINITIONS: Final[dict[str, dict[str, tuple[str, ...]]]] = {
             COMPONENT_ASSET_COMPILER,
             COMPONENT_POLYHEDRON_VISIBILITY,
         ),
-        "files": ("polyhedron_visibility_3d_adapter.py",),
+        "files": (
+            "polyhedron_visibility_3d_adapter.py",
+            "polyhedron_visibility_3d_manim.py",
+        ),
     },
 }
 
@@ -193,7 +196,7 @@ _DECLARED_COMPONENT_REVISIONS: Final[dict[str, str]] = {
     COMPONENT_MOTION_PREVIEW_3D: _LEGACY_6920,
     COMPONENT_POLYHEDRON_VISIBILITY: _POLYHEDRON_VISIBILITY_2539,
     COMPONENT_TIKZ_POLYHEDRON_VISIBILITY_3D: (
-        _TIKZ_POLYHEDRON_VISIBILITY_3D_0B34
+        _TIKZ_POLYHEDRON_VISIBILITY_3D_31BB
     ),
 }
 
@@ -236,7 +239,7 @@ _DECLARED_IMPLEMENTATION_DIGESTS: Final[dict[str, str]] = {
         "253990a472d413381882594f9e8c18c3c3a70089208b6a63a5bf9e17aed6e3e3"
     ),
     COMPONENT_TIKZ_POLYHEDRON_VISIBILITY_3D: (
-        "0b34c367c08def70231d9131b439f765ae03d1d57df3358cf6f2c30f8e1009bc"
+        "31bbb9ee12e0bddcb01c0a459d5ffab4ad791e8e118ad1a1d175eed5b5bd001e"
     ),
 }
 
