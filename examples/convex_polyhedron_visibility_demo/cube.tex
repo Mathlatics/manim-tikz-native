@@ -1,0 +1,44 @@
+% Closed convex-polyhedron fixture for automatic hidden-line removal.
+% Every face and semantic edge is named explicitly; no per-edge occlusion
+% relation is authored.
+\begin{tikzpicture}[
+  3d view={42}{24},
+  scale=1.05,
+  line cap=round,
+  line join=round,
+  line width=0.9pt,
+  face/.style={fill=cyan!14,fill opacity=0.32},
+  edge/.style={black!82,line width=1pt}
+]
+  \coordinate (A) at (-1,-1,-1);
+  \coordinate (B) at ( 1,-1,-1);
+  \coordinate (C) at ( 1, 1,-1);
+  \coordinate (D) at (-1, 1,-1);
+  \coordinate (E) at (-1,-1, 1);
+  \coordinate (F) at ( 1,-1, 1);
+  \coordinate (G) at ( 1, 1, 1);
+  \coordinate (H) at (-1, 1, 1);
+
+  % Outward-oriented maximal convex faces.
+  \fill[face] (A)--(D)--(C)--(B)--cycle;
+  \fill[face] (E)--(F)--(G)--(H)--cycle;
+  \fill[face] (A)--(B)--(F)--(E)--cycle;
+  \fill[face] (B)--(C)--(G)--(F)--cycle;
+  \fill[face] (D)--(H)--(G)--(C)--cycle;
+  \fill[face] (A)--(E)--(H)--(D)--cycle;
+
+  % Twelve semantic source edges.  The visibility module decides which
+  % intervals are solid or dashed from all six faces at once.
+  \draw[edge] (A)--(B);
+  \draw[edge] (B)--(C);
+  \draw[edge] (C)--(D);
+  \draw[edge] (D)--(A);
+  \draw[edge] (E)--(F);
+  \draw[edge] (F)--(G);
+  \draw[edge] (G)--(H);
+  \draw[edge] (H)--(E);
+  \draw[edge] (A)--(E);
+  \draw[edge] (B)--(F);
+  \draw[edge] (C)--(G);
+  \draw[edge] (D)--(H);
+\end{tikzpicture}

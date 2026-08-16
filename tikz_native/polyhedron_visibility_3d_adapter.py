@@ -57,6 +57,8 @@ def _sha256(payload: object) -> str:
 
 
 def _canonical_cycle(values: Sequence[str]) -> tuple[str, ...]:
+    """Return an orientation-insensitive key for one polygon cycle."""
+
     cycle = tuple(values)
     if not cycle:
         return ()
@@ -66,6 +68,15 @@ def _canonical_cycle(values: Sequence[str]) -> tuple[str, ...]:
             current[index:] + current[:index] for index in range(len(current))
         )
     return min(candidates)
+
+
+def _canonical_oriented_cycle(values: Sequence[str]) -> tuple[str, ...]:
+    """Rotate a cycle to a stable start without reversing its winding."""
+
+    cycle = tuple(values)
+    if not cycle:
+        return ()
+    return min(cycle[index:] + cycle[:index] for index in range(len(cycle)))
 
 
 def _canonical_pair(first: str, second: str) -> tuple[str, str]:
@@ -350,7 +361,7 @@ def _named_cycle(
             "DEGENERATE_WELDED_FACE",
             f"{label} collapses after coincident coordinate aliases are welded",
         )
-    return _canonical_cycle(names)
+    return _canonical_oriented_cycle(names)
 
 
 def _fill_alpha(item: ObjectSpec) -> float:
@@ -390,7 +401,8 @@ def _polygon_faces(
             coordinates=coordinates,
             label=f"polygon {item.id}",
         )
-        candidate = by_cycle.setdefault(cycle, _FaceCandidate(cycle))
+        key = _canonical_cycle(cycle)
+        candidate = by_cycle.setdefault(key, _FaceCandidate(cycle))
         candidate.authored_cycles.add(raw_cycle)
         candidate.object_ids.add(item.id)
         candidate.fill_alphas.add(_fill_alpha(item))
@@ -408,7 +420,7 @@ def _face_evidence(
 ) -> None:
     by_cycle: dict[tuple[str, ...], _FaceCandidate] = {}
     for candidate in faces:
-        by_cycle[candidate.cycle] = candidate
+        by_cycle[_canonical_cycle(candidate.cycle)] = candidate
         # After coplanar mesh faces are merged, a legacy declaration can name
         # either the maximal surface or one of its authored source polygons.
         for authored in candidate.authored_cycles:
@@ -425,7 +437,7 @@ def _face_evidence(
             )
         except TikzNativeVisibility3DAdapterError:
             raise
-        candidate = by_cycle.get(cycle)
+        candidate = by_cycle.get(_canonical_cycle(cycle))
         if candidate is None:
             diagnostics.append(
                 AdapterDiagnostic(
@@ -580,6 +592,56 @@ def _merge_coplanar_faces(
         ]
         faces.append(combined)
         faces.sort(key=lambda item: item.cycle)
+
+
+def _orient_closed_faces_outward(
+    source: Sequence[_FaceCandidate],
+    positions: Mapping[str, tuple[float, float, float]],
+) -> list[_FaceCandidate]:
+    """Give a closed shell coherent outward winding without guessing draw order.
+
+    TikZ authors often list a polygon in whichever direction is convenient for
+    painting.  Visibility topology, however, needs one consistent orientation.
+    For a convex closed shell the model centroid is strictly inside every face,
+    so the sign of ``normal dot (face_center - model_center)`` is unambiguous.
+    """
+
+    vertex_ids = sorted({name for face in source for name in face.cycle})
+    if not vertex_ids:
+        return []
+    center = np.mean(
+        np.asarray([positions[name] for name in vertex_ids], dtype=float),
+        axis=0,
+    )
+    result: list[_FaceCandidate] = []
+    for face in source:
+        cycle = tuple(face.cycle)
+        points = np.asarray([positions[name] for name in cycle], dtype=float)
+        normal = _face_normal(cycle, positions)
+        orientation = float(np.dot(normal, np.mean(points, axis=0) - center))
+        extent = float(
+            np.linalg.norm(np.max(points, axis=0) - np.min(points, axis=0))
+        )
+        tolerance = max(1.0e-14, 8.0e-12 * max(extent, 1.0))
+        if abs(orientation) <= tolerance:
+            raise TikzNativeVisibility3DAdapterError(
+                "AMBIGUOUS_FACE_ORIENTATION",
+                f"closed face {cycle!r} cannot be oriented away from the model centroid",
+            )
+        if orientation < 0.0:
+            cycle = tuple(reversed(cycle))
+        cycle = _canonical_oriented_cycle(cycle)
+        result.append(
+            _FaceCandidate(
+                cycle=cycle,
+                authored_cycles=set(face.authored_cycles),
+                object_ids=set(face.object_ids),
+                relation_ids=set(face.relation_ids),
+                hinge_ids=set(face.hinge_ids),
+                fill_alphas=set(face.fill_alphas),
+            )
+        )
+    return sorted(result, key=lambda item: item.cycle)
 
 
 def _normalise_default_hidden_style(
@@ -888,6 +950,8 @@ def adapt_picture_visibility_3d(
         raise TikzNativeVisibility3DAdapterError(
             "INVALID_FACE_SYSTEM", str(exc), diagnostics=diagnostics
         ) from exc
+    if validation_mode == "closed_convex_polyhedron":
+        faces = _orient_closed_faces_outward(faces, canonical_positions)
     _face_evidence(
         picture,
         faces,
