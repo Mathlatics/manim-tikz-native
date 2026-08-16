@@ -75,6 +75,21 @@ def _model() -> VisibilityModel:
     )
 
 
+def _single_stroke_model(length: float) -> VisibilityModel:
+    return VisibilityModel.from_dict(
+        {
+            "schema": "manim-convex-polyhedron-visibility/v1",
+            "visibilityGroupId": f"single-stroke-{length}",
+            "vertices": [
+                {"vertexId": "a", "entryPosition": (0, 0, 0)},
+                {"vertexId": "b", "entryPosition": (length, 0, 0)},
+            ],
+            "faces": [],
+            "strokes": [{"sourceEdgeId": "probe", "vertexIds": ["a", "b"]}],
+        }
+    )
+
+
 class _Fixture:
     def __init__(
         self,
@@ -347,6 +362,38 @@ class AutoOcclusion3DManimTests(unittest.TestCase):
         self.assertAlmostEqual(float(fixture.source.get_stroke_opacity()), 0.0)
         controller.restore()
         self.assertAlmostEqual(float(fixture.source.get_stroke_opacity()), 0.63)
+
+    def test_source_endpoint_gate_is_scale_aware(self) -> None:
+        tiny_scene = _InstantScene()
+        tiny_source = Line((0, 0, 0), (1.0e-9, 0, 0), buff=0).set_z_index(41)
+        tiny_scene.add(tiny_source)
+        tiny = AutoOcclusion3D(
+            tiny_scene,
+            _single_stroke_model(1.0e-9),
+            position_provider=lambda: {"a": (0, 0, 0), "b": (1.0e-9, 0, 0)},
+            stroke_bindings={"probe": tiny_source},
+            projection=ParallelProjection.identity(),
+            style=OcclusionStyle(max_projected_length=1.0),
+        ).attach()
+        tiny.restore()
+
+        shifted_scene = _InstantScene()
+        shifted_source = Line(
+            (0, 5.0e-8, 0),
+            (1.0e-6, 5.0e-8, 0),
+            buff=0,
+        ).set_z_index(42)
+        shifted_scene.add(shifted_source)
+        shifted = AutoOcclusion3D(
+            shifted_scene,
+            _single_stroke_model(1.0e-6),
+            position_provider=lambda: {"a": (0, 0, 0), "b": (1.0e-6, 0, 0)},
+            stroke_bindings={"probe": shifted_source},
+            projection=ParallelProjection.identity(),
+            style=OcclusionStyle(max_projected_length=1.0),
+        )
+        with self.assertRaisesRegex(OcclusionBindingError, "registered straight segment"):
+            shifted.attach()
 
     def test_display_projection_moves_overlay_when_world_geometry_is_unchanged(self) -> None:
         fixture = _Fixture(_InstantScene(), project_display=True)

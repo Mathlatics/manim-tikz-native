@@ -527,11 +527,13 @@ class ManimOcclusionBinding:
             actual_end = _point3(source.get_end(), f"source stroke {edge_id} end")
             expected_start_array = np.asarray(expected_start, dtype=float)
             expected_end_array = np.asarray(expected_end, dtype=float)
-            scale = max(
-                1.0,
-                float(np.linalg.norm(expected_end_array - expected_start_array)),
+            expected_length = float(
+                np.linalg.norm(expected_end_array - expected_start_array)
             )
-            endpoint_tolerance = 1.0e-7 * scale
+            endpoint_tolerance = self.tolerance_policy.resolve(
+                (expected_start_array, expected_end_array),
+                edge_length=expected_length,
+            ).boundary
             endpoints_match = (
                 np.allclose(
                     actual_start,
