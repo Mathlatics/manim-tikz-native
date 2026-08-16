@@ -6,6 +6,11 @@ articulated hinges without weakening the closed-manifold validator.
 """
 
 from ..contract import ResolvedTolerance, TolerancePolicy
+from .authoring import (
+    OpenFaceAuthoringError,
+    OpenFaceScene3D,
+    OpenFaceVertexPositionProvider,
+)
 from .contract import (
     ARTICULATED_HINGE_POLICY,
     OPEN_FACE_MODEL_SCHEMA,
@@ -18,6 +23,12 @@ from .contract import (
     OpenFaceVisibilityModel,
 )
 from .solver import OpenFaceSolverError, compute_open_face_visibility
+from .manim import (
+    OPEN_FACE_BINDING_SCALE_LIMITS,
+    OpenFaceBindingScaleError,
+    OpenFaceBindingScaleLimits,
+    OpenFaceOcclusion3D,
+)
 from .trace import (
     OPEN_FACE_TRACE_SCHEMA,
     OpenFaceEdgeVisibility,
@@ -34,12 +45,18 @@ from .trace import (
 __all__ = [
     "ARTICULATED_HINGE_POLICY",
     "OPEN_FACE_MODEL_SCHEMA",
+    "OPEN_FACE_BINDING_SCALE_LIMITS",
     "OPEN_FACE_TOPOLOGY",
     "OPEN_FACE_TRACE_SCHEMA",
     "OpenFaceContractError",
+    "OpenFaceAuthoringError",
+    "OpenFaceBindingScaleError",
+    "OpenFaceBindingScaleLimits",
     "OpenFaceEdgeVisibility",
     "OpenFaceRawOcclusionInterval",
+    "OpenFaceOcclusion3D",
     "OpenFaceSeamSpec",
+    "OpenFaceScene3D",
     "OpenFaceSeamState",
     "OpenFaceSkippedOccluder",
     "OpenFaceSolverError",
@@ -47,6 +64,7 @@ __all__ = [
     "OpenFaceStrokeSpec",
     "OpenFaceToleranceTrace",
     "OpenFaceVertexSpec",
+    "OpenFaceVertexPositionProvider",
     "OpenFaceVisibilityFrame",
     "OpenFaceVisibilityModel",
     "OpenFaceVisibilitySpan",
