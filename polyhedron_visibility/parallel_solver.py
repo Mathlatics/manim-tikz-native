@@ -27,16 +27,43 @@ class SolverError(ValueError):
     """Raised when a frame cannot be solved without guessing."""
 
 
+def _validated_projection(
+    matrix: Sequence[Sequence[float]],
+) -> tuple[
+    tuple[tuple[float, float, float], ...],
+    tuple[float, float, float],
+]:
+    value = np.asarray(matrix, dtype=float)
+    if value.shape != (3, 3) or not np.all(np.isfinite(value)):
+        raise SolverError("parallel projection matrix must be a finite 3x3 matrix")
+    screen_x = value[0]
+    screen_y = value[1]
+    direction = np.cross(screen_x, screen_y)
+    length = float(np.linalg.norm(direction))
+    row_scale = max(
+        float(np.linalg.norm(screen_x) * np.linalg.norm(screen_y)), 1.0e-300
+    )
+    if length <= 1.0e-12 * row_scale:
+        raise SolverError("parallel projection screen axes are singular")
+    direction /= length
+    depth_norm = float(np.linalg.norm(value[2]))
+    depth_alignment = float(np.dot(direction, value[2]))
+    if depth_norm == 0.0 or abs(depth_alignment) <= 1.0e-12 * depth_norm:
+        raise SolverError("parallel projection has no usable depth direction")
+    if depth_alignment < 0:
+        direction *= -1.0
+    canonical = tuple(tuple(float(component) for component in row) for row in value)
+    return canonical, tuple(float(component) for component in direction)
+
+
 @dataclass(frozen=True)
 class ParallelView:
     projection_matrix: tuple[tuple[float, float, float], ...]
     view_direction: tuple[float, float, float]
 
     def __post_init__(self) -> None:
-        matrix = np.asarray(self.projection_matrix, dtype=float)
+        canonical_matrix, expected_direction = _validated_projection(self.projection_matrix)
         direction = np.asarray(self.view_direction, dtype=float)
-        if matrix.shape != (3, 3) or not np.all(np.isfinite(matrix)):
-            raise SolverError("parallel projection matrix must be a finite 3x3 matrix")
         if direction.shape != (3,) or not np.all(np.isfinite(direction)):
             raise SolverError("parallel view direction must be a finite three-component vector")
         direction_norm = float(np.linalg.norm(direction))
@@ -44,38 +71,16 @@ class ParallelView:
             raise SolverError("parallel view direction must be non-zero")
         if abs(direction_norm - 1.0) > 1.0e-9:
             raise SolverError("parallel view direction must be a unit vector")
-        expected = np.cross(matrix[0], matrix[1])
-        expected_norm = float(np.linalg.norm(expected))
-        depth_norm = float(np.linalg.norm(matrix[2]))
-        if expected_norm == 0.0 or depth_norm == 0.0:
-            raise SolverError("parallel projection matrix is singular")
-        expected /= expected_norm
-        if float(np.dot(expected, matrix[2])) < 0:
-            expected *= -1.0
+        expected = np.asarray(expected_direction, dtype=float)
         if float(np.linalg.norm(expected - direction)) > 1.0e-9:
             raise SolverError("parallel view direction disagrees with projection matrix")
+        object.__setattr__(self, "projection_matrix", canonical_matrix)
+        object.__setattr__(self, "view_direction", expected_direction)
 
     @classmethod
     def from_matrix(cls, matrix: Sequence[Sequence[float]]) -> "ParallelView":
-        value = np.asarray(matrix, dtype=float)
-        if value.shape != (3, 3) or not np.all(np.isfinite(value)):
-            raise SolverError("parallel projection matrix must be a finite 3x3 matrix")
-        screen_x = value[0]
-        screen_y = value[1]
-        direction = np.cross(screen_x, screen_y)
-        length = float(np.linalg.norm(direction))
-        row_scale = max(float(np.linalg.norm(screen_x) * np.linalg.norm(screen_y)), 1.0e-300)
-        if length <= 1.0e-12 * row_scale:
-            raise SolverError("parallel projection screen axes are singular")
-        direction /= length
-        depth_norm = float(np.linalg.norm(value[2]))
-        depth_alignment = float(np.dot(direction, value[2]))
-        if depth_norm == 0.0 or abs(depth_alignment) <= 1.0e-12 * depth_norm:
-            raise SolverError("parallel projection has no usable depth direction")
-        if depth_alignment < 0:
-            direction *= -1.0
-        canonical = tuple(tuple(float(component) for component in row) for row in value)
-        return cls(canonical, tuple(float(component) for component in direction))
+        canonical, direction = _validated_projection(matrix)
+        return cls(canonical, direction)
 
     @property
     def matrix(self) -> np.ndarray:
@@ -319,7 +324,7 @@ def compute_frame_visibility(
                 depth=resolved.depth,
                 angular=resolved.angular,
             )
-            for face in model.faces
+            for face in sorted(model.faces, key=lambda item: item.face_id)
         )
         if stroke.visibility_mode == "always_visible":
             skipped.extend(SkippedFace(face.face_id, "stroke_always_visible") for face in model.faces)

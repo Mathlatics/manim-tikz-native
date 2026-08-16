@@ -230,6 +230,14 @@ class VisibilityContractTests(unittest.TestCase):
         with self.assertRaisesRegex(ContractError, "duplicate faceId"):
             VisibilityModel.from_dict(duplicate)
 
+        unwelded = cube_payload()
+        unwelded["vertices"].append({
+            "vertexId": "A-copy",
+            "entryPosition": unwelded["vertices"][0]["entryPosition"],
+        })
+        with self.assertRaisesRegex(ContractError, "duplicate geometric vertex"):
+            VisibilityModel.from_dict(unwelded).validate()
+
     def test_direct_dataclass_construction_is_revalidated(self) -> None:
         model = VisibilityModel(
             visibility_group_id="direct",

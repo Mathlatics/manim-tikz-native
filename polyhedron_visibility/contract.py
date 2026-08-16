@@ -409,6 +409,16 @@ class VisibilityModel:
             if not isinstance(vertex.vertex_id, str) or not vertex.vertex_id.strip():
                 raise ContractError("vertexId must be a non-empty string")
             _point3(vertex.entry_position, f"vertex {vertex.vertex_id}")
+        positions_seen: dict[tuple[float, float, float], str] = {}
+        for vertex in self.vertices:
+            canonical_position = tuple(float(value) for value in vertex.entry_position)
+            previous = positions_seen.get(canonical_position)
+            if previous is not None:
+                raise ContractError(
+                    "duplicate geometric vertex must reuse one vertexId: "
+                    f"{previous}, {vertex.vertex_id}"
+                )
+            positions_seen[canonical_position] = vertex.vertex_id
         for face in self.faces:
             if not isinstance(face.face_id, str) or not face.face_id.strip():
                 raise ContractError("faceId must be a non-empty string")

@@ -83,6 +83,11 @@ class ParallelVisibilitySolverTests(unittest.TestCase):
             ParallelView(matrix, (0.0, 0.0, -1.0))
         with self.assertRaisesRegex(SolverError, "unit"):
             ParallelView(matrix, (0.0, 0.0, 2.0))
+        with self.assertRaisesRegex(SolverError, "projection"):
+            ParallelView(
+                ((1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (1.0, 0.0, 0.0)),
+                (0.0, 0.0, 1.0),
+            )
 
     def test_public_face_solver_rejects_nonconvex_and_nonplanar_faces(self) -> None:
         view = ParallelView.from_matrix(IDENTITY_VIEW)
@@ -225,6 +230,21 @@ class ParallelVisibilitySolverTests(unittest.TestCase):
         )
         self.assertEqual(canonical_trace_json(first), canonical_trace_json(second))
         json.loads(canonical_trace_json(first))
+
+        direct_payload = face_model().to_dict()
+        direct = VisibilityModel.from_dict(direct_payload)
+        reversed_direct = VisibilityModel(
+            visibility_group_id=direct.visibility_group_id,
+            vertices=direct.vertices,
+            faces=tuple(reversed(direct.faces)),
+            strokes=direct.strokes,
+        )
+        self.assertEqual(
+            canonical_trace_json(compute_frame_visibility(direct, projection_matrix=IDENTITY_VIEW)),
+            canonical_trace_json(
+                compute_frame_visibility(reversed_direct, projection_matrix=IDENTITY_VIEW)
+            ),
+        )
 
     def test_singular_projection_fails_closed(self) -> None:
         with self.assertRaisesRegex(SolverError, "projection"):
