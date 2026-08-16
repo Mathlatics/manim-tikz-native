@@ -75,6 +75,23 @@ class ParallelVisibilitySolverTests(unittest.TestCase):
         self.assertLess(interval[0], 0.3)
         self.assertGreater(interval[1], 0.7)
 
+    def test_public_face_solver_rejects_nonconvex_and_nonplanar_faces(self) -> None:
+        view = ParallelView.from_matrix(IDENTITY_VIEW)
+        with self.assertRaisesRegex(SolverError, "convex"):
+            segment_face_occlusion_interval(
+                (-2, 0, 0),
+                (2, 0, 0),
+                [(-1, -1, 1), (1, -1, 1), (0, -0.2, 1), (1, 1, 1), (-1, 1, 1)],
+                view,
+            )
+        with self.assertRaisesRegex(SolverError, "planar"):
+            segment_face_occlusion_interval(
+                (-2, 0, 0),
+                (2, 0, 0),
+                [(-1, -1, 1), (1, -1, 1), (1, 1, 1.2), (-1, 1, 1)],
+                view,
+            )
+
     def test_two_disjoint_faces_create_five_ordered_spans(self) -> None:
         frame = compute_frame_visibility(face_model(), projection_matrix=IDENTITY_VIEW)
         edge = frame.edge_map["probe"]
@@ -176,6 +193,22 @@ class ParallelVisibilitySolverTests(unittest.TestCase):
                 face_model(),
                 projection_matrix=((1, 0, 0), (2, 0, 0), (0, 0, 1)),
             )
+
+    def test_equivalent_uniformly_scaled_projection_is_accepted(self) -> None:
+        expected = compute_frame_visibility(face_model(), projection_matrix=IDENTITY_VIEW)
+        scaled = compute_frame_visibility(
+            face_model(), projection_matrix=np.eye(3) * 1.0e-15
+        )
+        self.assertEqual(
+            [
+                (round(item.start, 8), round(item.end, 8), item.kind)
+                for item in expected.edge_map["probe"].spans
+            ],
+            [
+                (round(item.start, 8), round(item.end, 8), item.kind)
+                for item in scaled.edge_map["probe"].spans
+            ],
+        )
 
 
 if __name__ == "__main__":

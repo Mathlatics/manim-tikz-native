@@ -150,27 +150,22 @@ class FaceSpec:
     face_id: str
     vertex_ids: tuple[str, ...]
     occludes_strokes: bool = True
-    logical_surface_id: str | None = None
 
     @classmethod
     def from_dict(cls, payload: Mapping[str, object]) -> "FaceSpec":
         _strict_keys(
             payload,
-            {"faceId", "vertexIds", "occludesStrokes", "logicalSurfaceId"},
+            {"faceId", "vertexIds", "occludesStrokes"},
             "face",
         )
         face_id = _required_text(payload, "faceId", "face")
         occludes = payload.get("occludesStrokes", True)
         if not isinstance(occludes, bool):
             raise ContractError(f"face {face_id}.occludesStrokes must be boolean")
-        logical = payload.get("logicalSurfaceId")
-        if logical is not None and (not isinstance(logical, str) or not logical.strip()):
-            raise ContractError(f"face {face_id}.logicalSurfaceId must be a non-empty string")
         return cls(
             face_id=face_id,
             vertex_ids=_text_tuple(payload.get("vertexIds"), f"face {face_id}.vertexIds", minimum=3),
             occludes_strokes=occludes,
-            logical_surface_id=logical.strip() if isinstance(logical, str) else None,
         )
 
     def to_dict(self) -> dict[str, object]:
@@ -179,8 +174,6 @@ class FaceSpec:
             "vertexIds": list(self.vertex_ids),
             "occludesStrokes": self.occludes_strokes,
         }
-        if self.logical_surface_id is not None:
-            result["logicalSurfaceId"] = self.logical_surface_id
         return result
 
 
@@ -257,6 +250,59 @@ def _face_normal(points: np.ndarray, world_epsilon: float, label: str) -> np.nda
         if length > world_epsilon * world_epsilon:
             return normal / length
     raise ContractError(f"face {label} is degenerate")
+
+
+def _validate_convex_face_points(
+    points: np.ndarray,
+    tolerance: ResolvedTolerance,
+    label: str,
+) -> np.ndarray:
+    if points.ndim != 2 or points.shape[1:] != (3,) or len(points) < 3:
+        raise ContractError(f"face {label} must contain at least three 3D points")
+    if not np.all(np.isfinite(points)):
+        raise ContractError(f"face {label} points must be finite")
+    normal = _face_normal(points, tolerance.world, label)
+    distances = np.dot(points - points[0], normal)
+    if float(np.max(np.abs(distances))) > tolerance.boundary:
+        raise ContractError(f"face {label} is not planar")
+
+    turns: list[float] = []
+    for index in range(len(points)):
+        before = points[index - 1]
+        current = points[index]
+        after = points[(index + 1) % len(points)]
+        signed = float(np.dot(np.cross(current - before, after - current), normal))
+        if abs(signed) <= tolerance.world * tolerance.world:
+            raise ContractError(f"face {label} is not strictly convex")
+        turns.append(signed)
+    if min(turns) < 0 < max(turns):
+        raise ContractError(f"face {label} is not strictly convex")
+    orientation = 1.0 if turns[0] > 0 else -1.0
+
+    # A star polygon can have locally consistent turns while still crossing
+    # itself.  Strict convexity additionally requires every other vertex to
+    # lie in the same open half-plane of every directed boundary edge.
+    for index, edge_start in enumerate(points):
+        next_index = (index + 1) % len(points)
+        edge_end = points[next_index]
+        edge = edge_end - edge_start
+        threshold = tolerance.boundary * max(float(np.linalg.norm(edge)), tolerance.world)
+        for point_index, point in enumerate(points):
+            if point_index in {index, next_index}:
+                continue
+            signed = orientation * float(np.dot(np.cross(edge, point - edge_start), normal))
+            if signed <= threshold:
+                raise ContractError(f"face {label} is not strictly convex")
+    return normal
+
+
+def _canonical_cycle(values: Sequence[str]) -> tuple[str, ...]:
+    sequence = tuple(values)
+    reversed_sequence = tuple(reversed(sequence))
+    candidates = []
+    for current in (sequence, reversed_sequence):
+        candidates.extend(current[index:] + current[:index] for index in range(len(current)))
+    return min(candidates)
 
 
 @dataclass(frozen=True)
@@ -351,6 +397,37 @@ class VisibilityModel:
                         f"incident face {face_id} does not contain both endpoints of stroke {stroke.source_edge_id}"
                     )
 
+    def _validate_structure(self) -> None:
+        if self.schema != VISIBILITY_MODEL_SCHEMA:
+            raise ContractError(f"visibility model schema must be {VISIBILITY_MODEL_SCHEMA}")
+        if not isinstance(self.visibility_group_id, str) or not self.visibility_group_id.strip():
+            raise ContractError("visibilityGroupId must be a non-empty string")
+        _unique(self.vertices, "vertex_id", "vertexId")
+        _unique(self.faces, "face_id", "faceId")
+        _unique(self.strokes, "source_edge_id", "sourceEdgeId")
+        for vertex in self.vertices:
+            if not isinstance(vertex.vertex_id, str) or not vertex.vertex_id.strip():
+                raise ContractError("vertexId must be a non-empty string")
+            _point3(vertex.entry_position, f"vertex {vertex.vertex_id}")
+        for face in self.faces:
+            if not isinstance(face.face_id, str) or not face.face_id.strip():
+                raise ContractError("faceId must be a non-empty string")
+            if len(face.vertex_ids) < 3 or len(set(face.vertex_ids)) != len(face.vertex_ids):
+                raise ContractError(f"face {face.face_id}.vertexIds must contain unique vertices")
+            if not isinstance(face.occludes_strokes, bool):
+                raise ContractError(f"face {face.face_id}.occludesStrokes must be boolean")
+        for stroke in self.strokes:
+            if not isinstance(stroke.source_edge_id, str) or not stroke.source_edge_id.strip():
+                raise ContractError("sourceEdgeId must be a non-empty string")
+            if len(stroke.vertex_ids) != 2 or stroke.vertex_ids[0] == stroke.vertex_ids[1]:
+                raise ContractError(
+                    f"stroke {stroke.source_edge_id}.vertexIds must contain two distinct vertices"
+                )
+            if len(set(stroke.incident_face_ids)) != len(stroke.incident_face_ids):
+                raise ContractError(f"stroke {stroke.source_edge_id}.incidentFaceIds contains duplicates")
+            if stroke.visibility_mode not in {"auto", "always_visible", "always_hidden"}:
+                raise ContractError(f"stroke {stroke.source_edge_id}.visibilityMode is unsupported")
+
     def _validated_positions(
         self, vertex_positions: Mapping[str, Sequence[float]] | None
     ) -> dict[str, np.ndarray]:
@@ -378,6 +455,7 @@ class VisibilityModel:
         require_closed_convex_manifold: bool = False,
         tolerance_policy: TolerancePolicy | None = None,
     ) -> None:
+        self._validate_structure()
         self._validate_references()
         positions = self._validated_positions(vertex_positions)
         policy = tolerance_policy or TolerancePolicy()
@@ -385,25 +463,24 @@ class VisibilityModel:
         face_normals: dict[str, np.ndarray] = {}
         for face in self.faces:
             points = np.asarray([positions[item] for item in face.vertex_ids], dtype=float)
-            normal = _face_normal(points, tolerance.world, face.face_id)
-            distances = np.dot(points - points[0], normal)
-            if float(np.max(np.abs(distances))) > tolerance.boundary:
-                raise ContractError(f"face {face.face_id} is not planar")
-            turn_signs: list[float] = []
-            for index in range(len(points)):
-                before = points[index - 1]
-                current = points[index]
-                after = points[(index + 1) % len(points)]
-                signed = float(np.dot(np.cross(current - before, after - current), normal))
-                if abs(signed) <= tolerance.world * tolerance.world:
-                    raise ContractError(f"face {face.face_id} is not strictly convex")
-                turn_signs.append(signed)
-            if min(turn_signs) < 0 < max(turn_signs):
-                raise ContractError(f"face {face.face_id} is not strictly convex")
-            face_normals[face.face_id] = normal
+            face_normals[face.face_id] = _validate_convex_face_points(
+                points, tolerance, face.face_id
+            )
 
         if not require_closed_convex_manifold:
             return
+        surface_vertex_ids = sorted({vertex_id for face in self.faces for vertex_id in face.vertex_ids})
+        if len(self.faces) < 4 or len(surface_vertex_ids) < 4:
+            raise ContractError("faces do not form a closed two-manifold")
+        seen_surfaces: dict[tuple[str, ...], str] = {}
+        for face in self.faces:
+            canonical = _canonical_cycle(face.vertex_ids)
+            previous = seen_surfaces.get(canonical)
+            if previous is not None:
+                raise ContractError(
+                    f"closed two-manifold has duplicate surface {previous}/{face.face_id}"
+                )
+            seen_surfaces[canonical] = face.face_id
         edge_occurrences: dict[tuple[str, str], list[tuple[str, str, str]]] = {}
         for face in self.faces:
             for index, start in enumerate(face.vertex_ids):
@@ -419,7 +496,28 @@ class VisibilityModel:
                 raise ContractError(
                     f"closed two-manifold edge {key[0]}-{key[1]} has inconsistent winding"
                 )
-        all_points = np.asarray([positions[item.vertex_id] for item in self.vertices])
+
+        adjacency: dict[str, set[str]] = {face.face_id: set() for face in self.faces}
+        for occurrences in edge_occurrences.values():
+            first, second = occurrences
+            adjacency[first[0]].add(second[0])
+            adjacency[second[0]].add(first[0])
+        visited: set[str] = set()
+        pending = [self.faces[0].face_id]
+        while pending:
+            face_id = pending.pop()
+            if face_id in visited:
+                continue
+            visited.add(face_id)
+            pending.extend(sorted(adjacency[face_id] - visited))
+        if visited != set(adjacency):
+            raise ContractError("faces do not form one connected closed two-manifold")
+
+        all_points = np.asarray([positions[vertex_id] for vertex_id in surface_vertex_ids])
+        centered = all_points - np.mean(all_points, axis=0)
+        singular_values = np.linalg.svd(centered, compute_uv=False)
+        if len(singular_values) < 3 or float(singular_values[-1]) <= tolerance.world:
+            raise ContractError("closed two-manifold must enclose non-zero volume")
         for face in self.faces:
             point = positions[face.vertex_ids[0]]
             normal = face_normals[face.face_id]

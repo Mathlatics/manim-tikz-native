@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+import math
 import unittest
 
 from polyhedron_visibility import (
     ContractError,
+    FaceSpec,
+    StrokeSpec,
+    VertexSpec,
     VisibilityModel,
 )
 
@@ -73,6 +77,20 @@ class VisibilityContractTests(unittest.TestCase):
         model = VisibilityModel.from_dict(cube_payload())
         model.validate(require_closed_convex_manifold=True)
 
+    def test_closed_convex_validation_ignores_free_stroke_only_vertices(self) -> None:
+        payload = cube_payload()
+        payload["vertices"].extend([
+            {"vertexId": "X", "entryPosition": (-4, 0, 0)},
+            {"vertexId": "Y", "entryPosition": (4, 0, 0)},
+        ])
+        payload["strokes"].append({
+            "sourceEdgeId": "outside-probe",
+            "vertexIds": ["X", "Y"],
+            "incidentFaceIds": [],
+        })
+
+        VisibilityModel.from_dict(payload).validate(require_closed_convex_manifold=True)
+
     def test_open_face_system_is_valid_unless_closed_topology_is_requested(self) -> None:
         payload = cube_payload()
         payload["faces"] = payload["faces"][:2]
@@ -110,6 +128,59 @@ class VisibilityContractTests(unittest.TestCase):
         with self.assertRaisesRegex(ContractError, "finite"):
             VisibilityModel.from_dict(nonfinite)
 
+    def test_rejects_self_intersecting_star_even_when_local_turns_match(self) -> None:
+        angles = [0, 144, 288, 72, 216]
+        payload = {
+            "schema": "manim-convex-polyhedron-visibility/v1",
+            "visibilityGroupId": "star",
+            "vertices": [
+                {
+                    "vertexId": f"P{index}",
+                    "entryPosition": (
+                        math.cos(math.radians(angle)),
+                        math.sin(math.radians(angle)),
+                        0,
+                    ),
+                }
+                for index, angle in enumerate(angles)
+            ],
+            "faces": [{"faceId": "star", "vertexIds": [f"P{i}" for i in range(5)]}],
+            "strokes": [],
+        }
+        with self.assertRaisesRegex(ContractError, "not strictly convex"):
+            VisibilityModel.from_dict(payload).validate()
+
+    def test_closed_validation_rejects_empty_flat_and_duplicate_shells(self) -> None:
+        empty = VisibilityModel.from_dict({
+            "schema": "manim-convex-polyhedron-visibility/v1",
+            "visibilityGroupId": "empty",
+            "vertices": [],
+            "faces": [],
+            "strokes": [],
+        })
+        with self.assertRaisesRegex(ContractError, "closed two-manifold"):
+            empty.validate(require_closed_convex_manifold=True)
+
+        flat = {
+            "schema": "manim-convex-polyhedron-visibility/v1",
+            "visibilityGroupId": "flat",
+            "vertices": [
+                {"vertexId": "A", "entryPosition": (-1, -1, 0)},
+                {"vertexId": "B", "entryPosition": (1, -1, 0)},
+                {"vertexId": "C", "entryPosition": (1, 1, 0)},
+                {"vertexId": "D", "entryPosition": (-1, 1, 0)},
+            ],
+            "faces": [
+                {"faceId": "front", "vertexIds": ["A", "B", "C", "D"]},
+                {"faceId": "back", "vertexIds": ["D", "C", "B", "A"]},
+            ],
+            "strokes": [],
+        }
+        with self.assertRaisesRegex(
+            ContractError, "closed two-manifold|non-zero volume|duplicate surface"
+        ):
+            VisibilityModel.from_dict(flat).validate(require_closed_convex_manifold=True)
+
     def test_rejects_invalid_incidence_and_duplicate_identity(self) -> None:
         invalid = cube_payload()
         invalid["strokes"][0]["incidentFaceIds"] = ["front"]
@@ -120,6 +191,24 @@ class VisibilityContractTests(unittest.TestCase):
         duplicate["faces"].append(dict(duplicate["faces"][0]))
         with self.assertRaisesRegex(ContractError, "duplicate faceId"):
             VisibilityModel.from_dict(duplicate)
+
+    def test_direct_dataclass_construction_is_revalidated(self) -> None:
+        model = VisibilityModel(
+            visibility_group_id="direct",
+            vertices=(
+                VertexSpec("A", (0, 0, 0)),
+                VertexSpec("B", (1, 0, 0)),
+                VertexSpec("C", (0, 1, 0)),
+            ),
+            faces=(
+                FaceSpec("same", ("A", "B", "C")),
+                FaceSpec("same", ("A", "B", "C")),
+            ),
+            strokes=(StrokeSpec("edge", ("A", "B"), visibility_mode="mystery"),),
+            schema="wrong-schema",
+        )
+        with self.assertRaisesRegex(ContractError, "schema|duplicate|unsupported"):
+            model.validate()
 
 
 if __name__ == "__main__":

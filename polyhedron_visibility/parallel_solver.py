@@ -6,7 +6,13 @@ from typing import Mapping, Sequence
 
 import numpy as np
 
-from .contract import ContractError, ResolvedTolerance, TolerancePolicy, VisibilityModel
+from .contract import (
+    ContractError,
+    ResolvedTolerance,
+    TolerancePolicy,
+    VisibilityModel,
+    _validate_convex_face_points,
+)
 from .trace import (
     EdgeVisibility,
     RawOcclusionInterval,
@@ -38,8 +44,9 @@ class ParallelView:
         if length <= 1.0e-12 * row_scale:
             raise SolverError("parallel projection screen axes are singular")
         direction /= length
+        depth_norm = float(np.linalg.norm(value[2]))
         depth_alignment = float(np.dot(direction, value[2]))
-        if abs(depth_alignment) <= 1.0e-12 * max(float(np.linalg.norm(value[2])), 1.0):
+        if depth_norm == 0.0 or abs(depth_alignment) <= 1.0e-12 * depth_norm:
             raise SolverError("parallel projection has no usable depth direction")
         if depth_alignment < 0:
             direction *= -1.0
@@ -55,16 +62,6 @@ class ParallelView:
 class _IntervalResult:
     interval: tuple[float, float] | None
     reason: str | None = None
-
-
-def _normal_for_convex_face(points: np.ndarray, tolerance: ResolvedTolerance) -> np.ndarray:
-    origin = points[0]
-    for index in range(1, len(points) - 1):
-        normal = np.cross(points[index] - origin, points[index + 1] - origin)
-        length = float(np.linalg.norm(normal))
-        if length > tolerance.world * tolerance.world:
-            return normal / length
-    raise SolverError("occluder face is degenerate")
 
 
 def _clip_greater_equal(
@@ -111,7 +108,10 @@ def _segment_face_interval_result(
     )
     if segment_length <= tolerance.world:
         raise SolverError("semantic stroke has zero length")
-    normal = _normal_for_convex_face(points, tolerance)
+    try:
+        normal = _validate_convex_face_points(points, tolerance, "occluder")
+    except ContractError as exc:
+        raise SolverError(str(exc)) from exc
     direction = np.asarray(view.view_direction, dtype=float)
     denominator = float(np.dot(direction, normal))
     if abs(denominator) <= tolerance.angular:
