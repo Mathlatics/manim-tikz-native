@@ -36,7 +36,13 @@ class ParallelProjection:
 
 
 class AutoOcclusion3D(ManimOcclusionBinding):
-    """Public Manim API for fixed-topology convex-face hidden-line removal."""
+    """Public Manim API for fixed-topology convex-face hidden-line removal.
+
+    With no ``display_point_provider``, overlay points stay in world space and
+    use the Scene camera exactly like their sources.  A custom provider must
+    return final camera-frame Scene coordinates; on a ThreeDCamera the overlay
+    is then registered as fixed-in-frame to avoid a second projection.
+    """
 
     def __init__(
         self,

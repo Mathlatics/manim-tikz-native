@@ -6,7 +6,7 @@ from math import ceil
 from typing import Callable, Iterator, Mapping, Sequence
 
 import numpy as np
-from manim import Line, Mobject, RendererType, VGroup, config
+from manim import Line, Mobject, RendererType, ThreeDCamera, VGroup, config
 
 from .contract import StrokeSpec, TolerancePolicy, VisibilityModel
 from .parallel_solver import compute_frame_visibility
@@ -267,11 +267,11 @@ class _StrokeSlots:
             for _ in range(capacity.hidden_slots)
         ]
         for line in self.visible:
-            line.set_stroke(opacity=0)
+            self._hide_line(line)
         hidden_groups: list[VGroup] = []
         for dashes in self.hidden:
             for line in dashes:
-                line.set_stroke(opacity=0)
+                self._hide_line(line)
             hidden_groups.append(VGroup(*dashes))
         self.hidden_groups = hidden_groups
         self.root = VGroup(*self.visible, *hidden_groups)
@@ -293,11 +293,22 @@ class _StrokeSlots:
                 line.set_cap_style(style.cap_style)
             if style.joint_type is not None:
                 line.joint_type = style.joint_type
+            line.set_stroke(
+                color=style.background_color,
+                width=style.background_width,
+                opacity=0,
+                background=True,
+            )
+
+    @staticmethod
+    def _hide_line(line: Line) -> None:
+        line.set_stroke(opacity=0)
+        line.set_stroke(opacity=0, background=True)
 
     def apply(self, plan: OverlayPlan, style: ResolvedOcclusionStyle) -> None:
         for index, line in enumerate(self.visible):
             if index >= len(plan.visible_segments):
-                line.set_stroke(opacity=0)
+                self._hide_line(line)
                 continue
             segment = plan.visible_segments[index]
             line.put_start_and_end_on(segment.start, segment.end)
@@ -305,6 +316,12 @@ class _StrokeSlots:
                 color=style.visible_color,
                 width=style.visible_width,
                 opacity=style.visible_opacity,
+            )
+            line.set_stroke(
+                color=style.background_color,
+                width=style.background_width,
+                opacity=style.background_opacity,
+                background=True,
             )
         for slot_index, dash_slot in enumerate(self.hidden):
             dashes = (
@@ -314,7 +331,7 @@ class _StrokeSlots:
             )
             for dash_index, line in enumerate(dash_slot):
                 if dash_index >= len(dashes):
-                    line.set_stroke(opacity=0)
+                    self._hide_line(line)
                     continue
                 dash = dashes[dash_index]
                 line.put_start_and_end_on(dash.start, dash.end)
@@ -323,11 +340,33 @@ class _StrokeSlots:
                     width=style.hidden_width,
                     opacity=style.hidden_opacity,
                 )
+                line.set_stroke(
+                    color=style.background_color,
+                    width=style.background_width,
+                    opacity=style.background_opacity,
+                    background=True,
+                )
 
 
 PositionProvider = Callable[[], Mapping[str, Sequence[float]]]
 ProjectionProvider = Callable[[object], Sequence[Sequence[float]]]
 DisplayPointProvider = Callable[[Sequence[float]], Sequence[float]]
+
+
+def _drawable_member(mobject: object) -> bool:
+    points = np.asarray(getattr(mobject, "points", np.empty((0, 3))))
+    if points.size == 0:
+        return False
+    rgba_found = False
+    for attribute in ("fill_rgbas", "stroke_rgbas", "background_stroke_rgbas"):
+        if not hasattr(mobject, attribute):
+            continue
+        rgba_found = True
+        rgba = np.asarray(getattr(mobject, attribute), dtype=float)
+        if rgba.ndim >= 1 and rgba.shape[-1] >= 4 and np.any(rgba[..., 3] > 0):
+            return True
+    # Unknown point-bearing Mobjects fail conservatively as drawable.
+    return not rgba_found
 
 
 class ManimOcclusionBinding:
@@ -349,13 +388,17 @@ class ManimOcclusionBinding:
         self.model = model
         self.position_provider = position_provider
         self.projection_provider = projection_provider
-        self.display_point_provider = display_point_provider or (lambda point: point)
+        # None means world-space overlay coordinates: ThreeDCamera projects the
+        # overlay exactly as it projects the source.  A callable must return
+        # final camera-frame Scene coordinates and is fixed in frame on attach.
+        self.display_point_provider = display_point_provider
         self.style = style
         self.tolerance_policy = tolerance_policy or TolerancePolicy()
         self._attached = False
         self._source_snapshots: dict[str, tuple[_AttributeSnapshot, ...]] = {}
         self._resolved_styles: dict[str, ResolvedOcclusionStyle] = {}
         self.last_frame: VisibilityFrame | None = None
+        self._fixed_frame_camera: ThreeDCamera | None = None
 
         expected = {stroke.source_edge_id for stroke in model.strokes}
         if set(stroke_bindings) != expected:
@@ -416,8 +459,16 @@ class ManimOcclusionBinding:
         )
         plans: dict[str, OverlayPlan] = {}
         for stroke in self.model.strokes:
-            display_start = self.display_point_provider(positions[stroke.vertex_ids[0]])
-            display_end = self.display_point_provider(positions[stroke.vertex_ids[1]])
+            if self.display_point_provider is None:
+                display_start = positions[stroke.vertex_ids[0]]
+                display_end = positions[stroke.vertex_ids[1]]
+            else:
+                display_start = self.display_point_provider(
+                    positions[stroke.vertex_ids[0]]
+                )
+                display_end = self.display_point_provider(
+                    positions[stroke.vertex_ids[1]]
+                )
             plans[stroke.source_edge_id] = build_overlay_plan(
                 frame.edge_map[stroke.source_edge_id],
                 display_start=display_start,
@@ -436,6 +487,72 @@ class ManimOcclusionBinding:
             self._slots[edge_id].apply(plans[edge_id], self._resolved_styles[edge_id])
         self.last_frame = frame
 
+    def _validate_unique_source_z_indices(self) -> dict[str, float]:
+        source_families = {
+            edge_id: tuple(source.get_family())
+            for edge_id, source in self.stroke_bindings.items()
+        }
+        source_family_ids = {
+            edge_id: {id(item) for item in family}
+            for edge_id, family in source_families.items()
+        }
+        result: dict[str, float] = {}
+        for edge_id, family in source_families.items():
+            drawable = [item for item in family if _drawable_member(item)]
+            if not drawable:
+                raise OcclusionBindingError(
+                    f"source stroke {edge_id} has no visible drawable family member"
+                )
+            values = {float(item.z_index) for item in drawable}
+            if len(values) != 1 or not all(np.isfinite(item) for item in values):
+                raise OcclusionBindingError(
+                    f"source stroke {edge_id} has ambiguous z_index within its family"
+                )
+            result[edge_id] = next(iter(values))
+
+        inverse: dict[float, str] = {}
+        for edge_id in sorted(result):
+            value = result[edge_id]
+            if value in inverse:
+                raise OcclusionBindingError(
+                    f"registered source strokes {inverse[value]} and {edge_id} share z_index {value}"
+                )
+            inverse[value] = edge_id
+
+        scene_family: list[object] = []
+        seen: set[int] = set()
+        for container in self._scene_containers():
+            for root in container:
+                for member in root.get_family():
+                    if id(member) not in seen:
+                        seen.add(id(member))
+                        scene_family.append(member)
+        for edge_id, value in result.items():
+            owned = source_family_ids[edge_id]
+            for member in scene_family:
+                if id(member) in owned or not _drawable_member(member):
+                    continue
+                if float(member.z_index) == value:
+                    raise OcclusionBindingError(
+                        f"source stroke {edge_id} z_index {value} is shared by another visible drawable"
+                    )
+        return result
+
+    def _register_fixed_frame_overlay(self) -> None:
+        if self.display_point_provider is None:
+            return
+        camera = getattr(self.scene, "camera", None)
+        if isinstance(camera, ThreeDCamera):
+            self._fixed_frame_camera = camera
+            camera.add_fixed_in_frame_mobjects(self.overlay_root)
+
+    def _remove_fixed_frame_overlay(self) -> None:
+        if self._fixed_frame_camera is not None:
+            self._fixed_frame_camera.remove_fixed_in_frame_mobjects(
+                self.overlay_root
+            )
+            self._fixed_frame_camera = None
+
     def attach(self) -> "ManimOcclusionBinding":
         if self._attached:
             return self
@@ -450,6 +567,7 @@ class ManimOcclusionBinding:
         # All fallible numerical and capacity work happens before sources are
         # hidden or Scene ownership changes.
         frame, plans = self._prepare_frame()
+        source_z_indices = self._validate_unique_source_z_indices()
         snapshots = {
             edge_id: _capture_family_style(source)
             for edge_id, source in self.stroke_bindings.items()
@@ -462,7 +580,9 @@ class ManimOcclusionBinding:
         self._resolved_styles = resolved
         try:
             for edge_id, source in self.stroke_bindings.items():
-                self._slots[edge_id].root.set_z_index(source.z_index, family=True)
+                self._slots[edge_id].root.set_z_index(
+                    source_z_indices[edge_id], family=True
+                )
                 self._slots[edge_id].apply_static_style(resolved[edge_id])
             self._apply_frame(frame, plans)
             for edge_id in sorted(snapshots):
@@ -472,11 +592,13 @@ class ManimOcclusionBinding:
             # Do not call Scene.add(): it can restructure root ownership.  The
             # overlay is an intentionally independent final Cairo root.
             self.scene.mobjects.append(self.overlay_root)
+            self._register_fixed_frame_overlay()
             self._invalidate_cairo_static_image()
         except Exception:
             self._attached = False
             for item in snapshots.values():
                 _restore_snapshots(item)
+            self._remove_fixed_frame_overlay()
             self._remove_overlay_identity()
             self._invalidate_cairo_static_image()
             self._source_snapshots = {}
@@ -503,8 +625,11 @@ class ManimOcclusionBinding:
         return tuple(result)
 
     def _remove_overlay_identity(self) -> None:
+        overlay_family_ids = {id(item) for item in self.overlay_root.get_family()}
         for container in self._scene_containers():
-            container[:] = [item for item in container if item is not self.overlay_root]
+            container[:] = [
+                item for item in container if id(item) not in overlay_family_ids
+            ]
 
     def _invalidate_cairo_static_image(self) -> None:
         renderer = getattr(self.scene, "renderer", None)
@@ -513,9 +638,11 @@ class ManimOcclusionBinding:
 
     def restore(self) -> "ManimOcclusionBinding":
         if not self._attached and not self._source_snapshots:
+            self._remove_fixed_frame_overlay()
             self._remove_overlay_identity()
             return self
         self._attached = False
+        self._remove_fixed_frame_overlay()
         self._remove_overlay_identity()
         for edge_id in sorted(self._source_snapshots):
             _restore_snapshots(self._source_snapshots[edge_id])

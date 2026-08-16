@@ -4,6 +4,8 @@ from dataclasses import dataclass
 from math import isfinite
 from typing import Any
 
+import numpy as np
+
 
 class OcclusionStyleError(ValueError):
     """Raised when a render style cannot provide stable fixed-capacity slots."""
@@ -31,6 +33,9 @@ class ResolvedOcclusionStyle:
     hidden_width: float
     visible_opacity: float
     hidden_opacity: float
+    background_color: Any
+    background_width: float
+    background_opacity: float
     cap_style: Any | None
     joint_type: Any | None
 
@@ -39,9 +44,11 @@ class ResolvedOcclusionStyle:
 class OcclusionStyle:
     """Static Cairo styling plus an explicit allocation bound.
 
-    ``max_projected_length`` is deliberately required.  The binding allocates
-    every dashed Line before animation starts, so it must know a safe upper
-    bound instead of growing a VGroup from inside an updater.
+    ``max_projected_length`` is deliberately required and is measured in the
+    chosen overlay coordinate space: world-space when no display provider is
+    supplied, or final camera-frame Scene coordinates for a custom provider.
+    The binding allocates every dashed Line before animation starts, so it must
+    know a safe upper bound instead of growing a VGroup inside an updater.
     """
 
     max_projected_length: float
@@ -69,6 +76,21 @@ class OcclusionStyle:
 
     def resolve_for(self, source: object) -> ResolvedOcclusionStyle:
         family = getattr(source, "get_family", lambda: [source])()
+        for member in family:
+            for attribute in ("stroke_rgbas", "background_stroke_rgbas"):
+                if not hasattr(member, attribute):
+                    continue
+                colors = np.asarray(getattr(member, attribute), dtype=float)
+                if colors.ndim != 2 or colors.shape[1:] != (4,) or len(colors) < 1:
+                    raise OcclusionStyleError(
+                        f"source stroke {attribute} has an unsupported color layout"
+                    )
+                if len(colors) > 1 and not np.allclose(
+                    colors, colors[0], rtol=0.0, atol=1.0e-12
+                ):
+                    raise OcclusionStyleError(
+                        f"source stroke gradient in {attribute} is unsupported"
+                    )
         vector = next(
             (
                 item
@@ -82,7 +104,12 @@ class OcclusionStyle:
             raise OcclusionStyleError("source stroke has no Manim vector stroke style")
         width = float(vector.get_stroke_width())
         opacity = float(vector.get_stroke_opacity())
-        if not isfinite(width) or width < 0 or not isfinite(opacity) or opacity < 0:
+        background_width = float(vector.get_stroke_width(background=True))
+        background_opacity = float(vector.get_stroke_opacity(background=True))
+        if not all(
+            isfinite(item) and item >= 0
+            for item in (width, opacity, background_width, background_opacity)
+        ):
             raise OcclusionStyleError("source stroke style must be finite and non-negative")
         source_color = vector.get_stroke_color()
         return ResolvedOcclusionStyle(
@@ -92,6 +119,9 @@ class OcclusionStyle:
             hidden_width=width * self.hidden_width_scale,
             visible_opacity=min(1.0, opacity * self.visible_opacity_scale),
             hidden_opacity=min(1.0, opacity * self.hidden_opacity_scale),
+            background_color=vector.get_stroke_color(background=True),
+            background_width=background_width,
+            background_opacity=min(1.0, background_opacity),
             cap_style=getattr(vector, "cap_style", None),
             joint_type=getattr(vector, "joint_type", None),
         )
