@@ -38,6 +38,12 @@ class TikzNativeProviderTests(unittest.TestCase):
         self.assertTrue(
             info["capabilities"]["tikz_polyhedron_visibility_3d_v1"]
         )
+        self.assertTrue(
+            info["capabilities"]["open_convex_face_visibility_parallel_v1"]
+        )
+        self.assertTrue(
+            info["capabilities"]["tikz_open_face_visibility_3d_v1"]
+        )
         self.assertFalse(info["capabilities"]["dynamic_camera_in_fixed_view"])
 
     def test_two_d_asset_uses_semantic_native_objects(self) -> None:

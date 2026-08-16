@@ -25,7 +25,9 @@ COMPONENT_NATIVE_MANIM_SOURCE_3D_V2 = "native_manim_source_3d_v2"
 COMPONENT_EMBEDDED_MOTION_3D = "embedded_motion_3d"
 COMPONENT_MOTION_PREVIEW_3D = "motion_preview_3d"
 COMPONENT_POLYHEDRON_VISIBILITY = "polyhedron_visibility"
+COMPONENT_OPEN_FACE_VISIBILITY = "open_face_visibility"
 COMPONENT_TIKZ_POLYHEDRON_VISIBILITY_3D = "tikz_polyhedron_visibility_3d"
+COMPONENT_TIKZ_OPEN_FACE_VISIBILITY_3D = "tikz_open_face_visibility_3d"
 
 
 # Existing manifests are relative to ``tikz_native/``.  New independent
@@ -61,6 +63,12 @@ _POLYHEDRON_VISIBILITY_AA45: Final = (
 )
 _TIKZ_POLYHEDRON_VISIBILITY_3D_F0E4: Final = (
     "source-sha256:f0e495883f71691f8b1ca3728ab78953ab8132b3e316a7a911a6e345f74fcd3c"
+)
+_OPEN_FACE_VISIBILITY_REVISION: Final = (
+    "source-sha256:8af538cfe89b38936ee374c7c71932398986bdc17732de45f59b33f6719d71a8"
+)
+_TIKZ_OPEN_FACE_VISIBILITY_3D_REVISION: Final = (
+    "source-sha256:b5f2568c2b26a176cae99e4a17fe9d695a6ae0011cd889f9e7634b46f32d6abe"
 )
 
 
@@ -170,6 +178,17 @@ _COMPONENT_DEFINITIONS: Final[dict[str, dict[str, tuple[str, ...]]]] = {
             "@tool/polyhedron_visibility/trace.py",
         ),
     },
+    COMPONENT_OPEN_FACE_VISIBILITY: {
+        "dependencies": (COMPONENT_POLYHEDRON_VISIBILITY,),
+        "files": (
+            "@tool/polyhedron_visibility/open_faces/__init__.py",
+            "@tool/polyhedron_visibility/open_faces/authoring.py",
+            "@tool/polyhedron_visibility/open_faces/contract.py",
+            "@tool/polyhedron_visibility/open_faces/manim.py",
+            "@tool/polyhedron_visibility/open_faces/solver.py",
+            "@tool/polyhedron_visibility/open_faces/trace.py",
+        ),
+    },
     COMPONENT_TIKZ_POLYHEDRON_VISIBILITY_3D: {
         "dependencies": (
             COMPONENT_ASSET_COMPILER,
@@ -178,6 +197,17 @@ _COMPONENT_DEFINITIONS: Final[dict[str, dict[str, tuple[str, ...]]]] = {
         "files": (
             "polyhedron_visibility_3d_adapter.py",
             "polyhedron_visibility_3d_manim.py",
+        ),
+    },
+    COMPONENT_TIKZ_OPEN_FACE_VISIBILITY_3D: {
+        "dependencies": (
+            COMPONENT_ASSET_COMPILER,
+            COMPONENT_OPEN_FACE_VISIBILITY,
+            COMPONENT_TIKZ_POLYHEDRON_VISIBILITY_3D,
+        ),
+        "files": (
+            "open_face_visibility_3d_adapter.py",
+            "open_face_visibility_3d_manim.py",
         ),
     },
 }
@@ -195,8 +225,12 @@ _DECLARED_COMPONENT_REVISIONS: Final[dict[str, str]] = {
     COMPONENT_EMBEDDED_MOTION_3D: _LEGACY_6920,
     COMPONENT_MOTION_PREVIEW_3D: _LEGACY_6920,
     COMPONENT_POLYHEDRON_VISIBILITY: _POLYHEDRON_VISIBILITY_AA45,
+    COMPONENT_OPEN_FACE_VISIBILITY: _OPEN_FACE_VISIBILITY_REVISION,
     COMPONENT_TIKZ_POLYHEDRON_VISIBILITY_3D: (
         _TIKZ_POLYHEDRON_VISIBILITY_3D_F0E4
+    ),
+    COMPONENT_TIKZ_OPEN_FACE_VISIBILITY_3D: (
+        _TIKZ_OPEN_FACE_VISIBILITY_3D_REVISION
     ),
 }
 
@@ -238,8 +272,14 @@ _DECLARED_IMPLEMENTATION_DIGESTS: Final[dict[str, str]] = {
     COMPONENT_POLYHEDRON_VISIBILITY: (
         "aa45310ff3c70ac1922ddf61b457cafeb789f9011ec67069b70c23d63fb3a8ae"
     ),
+    COMPONENT_OPEN_FACE_VISIBILITY: (
+        "8af538cfe89b38936ee374c7c71932398986bdc17732de45f59b33f6719d71a8"
+    ),
     COMPONENT_TIKZ_POLYHEDRON_VISIBILITY_3D: (
         "f0e495883f71691f8b1ca3728ab78953ab8132b3e316a7a911a6e345f74fcd3c"
+    ),
+    COMPONENT_TIKZ_OPEN_FACE_VISIBILITY_3D: (
+        "b5f2568c2b26a176cae99e4a17fe9d695a6ae0011cd889f9e7634b46f32d6abe"
     ),
 }
 
@@ -414,8 +454,10 @@ __all__ = [
     "COMPONENT_NATIVE_MANIM_SOURCE_3D",
     "COMPONENT_NATIVE_MANIM_SOURCE_3D_V2",
     "COMPONENT_NATIVE_RIG_2D",
+    "COMPONENT_OPEN_FACE_VISIBILITY",
     "COMPONENT_POLYHEDRON_VISIBILITY",
     "COMPONENT_REVISION_SCHEMA",
+    "COMPONENT_TIKZ_OPEN_FACE_VISIBILITY_3D",
     "COMPONENT_TIKZ_POLYHEDRON_VISIBILITY_3D",
     "PROTOCOL_VERSION",
     "REQUEST_SCHEMA",

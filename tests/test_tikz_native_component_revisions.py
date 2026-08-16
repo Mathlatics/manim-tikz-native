@@ -28,7 +28,9 @@ from tikz_native.version import (
     COMPONENT_NATIVE_MANIM_SOURCE_3D,
     COMPONENT_NATIVE_MANIM_SOURCE_3D_V2,
     COMPONENT_NATIVE_RIG_2D,
+    COMPONENT_OPEN_FACE_VISIBILITY,
     COMPONENT_POLYHEDRON_VISIBILITY,
+    COMPONENT_TIKZ_OPEN_FACE_VISIBILITY_3D,
     COMPONENT_TIKZ_POLYHEDRON_VISIBILITY_3D,
     provider_component_files,
     provider_component_neutral_files,
@@ -58,6 +60,12 @@ POLYHEDRON_VISIBILITY_REVISION = (
 )
 TIKZ_POLYHEDRON_VISIBILITY_3D_REVISION = (
     "source-sha256:f0e495883f71691f8b1ca3728ab78953ab8132b3e316a7a911a6e345f74fcd3c"
+)
+OPEN_FACE_VISIBILITY_REVISION = (
+    "source-sha256:8af538cfe89b38936ee374c7c71932398986bdc17732de45f59b33f6719d71a8"
+)
+TIKZ_OPEN_FACE_VISIBILITY_3D_REVISION = (
+    "source-sha256:b5f2568c2b26a176cae99e4a17fe9d695a6ae0011cd889f9e7634b46f32d6abe"
 )
 
 
@@ -142,20 +150,23 @@ class TikzNativeComponentRevisionTests(unittest.TestCase):
             {LEGACY_ASSET_REVISION, NATIVE_SOURCE_3D_REVISION},
         )
 
-    def test_new_visibility_components_have_independent_frozen_identities(self) -> None:
+    def test_visibility_components_have_independent_frozen_identities(self) -> None:
         revisions = provider_component_revisions()
+        expected = {
+            COMPONENT_POLYHEDRON_VISIBILITY: POLYHEDRON_VISIBILITY_REVISION,
+            COMPONENT_TIKZ_POLYHEDRON_VISIBILITY_3D: (
+                TIKZ_POLYHEDRON_VISIBILITY_3D_REVISION
+            ),
+            COMPONENT_OPEN_FACE_VISIBILITY: OPEN_FACE_VISIBILITY_REVISION,
+            COMPONENT_TIKZ_OPEN_FACE_VISIBILITY_3D: (
+                TIKZ_OPEN_FACE_VISIBILITY_3D_REVISION
+            ),
+        }
         self.assertEqual(
-            revisions[COMPONENT_POLYHEDRON_VISIBILITY],
-            POLYHEDRON_VISIBILITY_REVISION,
+            {component: revisions[component] for component in expected},
+            expected,
         )
-        self.assertEqual(
-            revisions[COMPONENT_TIKZ_POLYHEDRON_VISIBILITY_3D],
-            TIKZ_POLYHEDRON_VISIBILITY_3D_REVISION,
-        )
-        self.assertNotEqual(
-            revisions[COMPONENT_POLYHEDRON_VISIBILITY],
-            revisions[COMPONENT_TIKZ_POLYHEDRON_VISIBILITY_3D],
-        )
+        self.assertEqual(len(set(expected.values())), len(expected))
 
     def test_unknown_legacy_revision_is_not_treated_as_compatible(self) -> None:
         self.assertFalse(
@@ -258,7 +269,7 @@ print(json.dumps({
                 continue
             self.assertEqual(components[component], baseline[component])
 
-    def test_editing_visibility_core_changes_only_core_and_adapter(self) -> None:
+    def test_editing_visibility_core_changes_only_its_recursive_dependents(self) -> None:
         baseline = provider_component_revisions()
         mutated = self._probe_copy(
             "@tool/polyhedron_visibility/parallel_solver.py"
@@ -273,15 +284,45 @@ print(json.dumps({
             components[COMPONENT_TIKZ_POLYHEDRON_VISIBILITY_3D],
             baseline[COMPONENT_TIKZ_POLYHEDRON_VISIBILITY_3D],
         )
+        self.assertNotEqual(
+            components[COMPONENT_OPEN_FACE_VISIBILITY],
+            baseline[COMPONENT_OPEN_FACE_VISIBILITY],
+        )
+        self.assertNotEqual(
+            components[COMPONENT_TIKZ_OPEN_FACE_VISIBILITY_3D],
+            baseline[COMPONENT_TIKZ_OPEN_FACE_VISIBILITY_3D],
+        )
         for component in baseline:
             if component in {
                 COMPONENT_POLYHEDRON_VISIBILITY,
                 COMPONENT_TIKZ_POLYHEDRON_VISIBILITY_3D,
+                COMPONENT_OPEN_FACE_VISIBILITY,
+                COMPONENT_TIKZ_OPEN_FACE_VISIBILITY_3D,
             }:
                 continue
             self.assertEqual(components[component], baseline[component])
 
-    def test_editing_tikz_visibility_adapter_changes_only_its_component(self) -> None:
+    def test_editing_open_face_core_changes_only_it_and_tikz_open_face(self) -> None:
+        baseline = provider_component_revisions()
+        mutated = self._probe_copy(
+            "@tool/polyhedron_visibility/open_faces/solver.py"
+        )
+        components = mutated["components"]
+        self.assertNotEqual(mutated["build"], provider_revision())
+        for component in (
+            COMPONENT_OPEN_FACE_VISIBILITY,
+            COMPONENT_TIKZ_OPEN_FACE_VISIBILITY_3D,
+        ):
+            self.assertNotEqual(components[component], baseline[component])
+        for component in baseline:
+            if component in {
+                COMPONENT_OPEN_FACE_VISIBILITY,
+                COMPONENT_TIKZ_OPEN_FACE_VISIBILITY_3D,
+            }:
+                continue
+            self.assertEqual(components[component], baseline[component])
+
+    def test_editing_tikz_visibility_adapter_changes_it_and_tikz_open_face(self) -> None:
         baseline = provider_component_revisions()
         mutated = self._probe_copy("polyhedron_visibility_3d_adapter.py")
         components = mutated["components"]
@@ -290,8 +331,29 @@ print(json.dumps({
             components[COMPONENT_TIKZ_POLYHEDRON_VISIBILITY_3D],
             baseline[COMPONENT_TIKZ_POLYHEDRON_VISIBILITY_3D],
         )
+        self.assertNotEqual(
+            components[COMPONENT_TIKZ_OPEN_FACE_VISIBILITY_3D],
+            baseline[COMPONENT_TIKZ_OPEN_FACE_VISIBILITY_3D],
+        )
         for component in baseline:
-            if component == COMPONENT_TIKZ_POLYHEDRON_VISIBILITY_3D:
+            if component in {
+                COMPONENT_TIKZ_POLYHEDRON_VISIBILITY_3D,
+                COMPONENT_TIKZ_OPEN_FACE_VISIBILITY_3D,
+            }:
+                continue
+            self.assertEqual(components[component], baseline[component])
+
+    def test_editing_tikz_open_face_adapter_changes_only_its_component(self) -> None:
+        baseline = provider_component_revisions()
+        mutated = self._probe_copy("open_face_visibility_3d_adapter.py")
+        components = mutated["components"]
+        self.assertNotEqual(mutated["build"], provider_revision())
+        self.assertNotEqual(
+            components[COMPONENT_TIKZ_OPEN_FACE_VISIBILITY_3D],
+            baseline[COMPONENT_TIKZ_OPEN_FACE_VISIBILITY_3D],
+        )
+        for component in baseline:
+            if component == COMPONENT_TIKZ_OPEN_FACE_VISIBILITY_3D:
                 continue
             self.assertEqual(components[component], baseline[component])
 
@@ -302,7 +364,10 @@ print(json.dumps({
         self.assertNotEqual(mutated["build"], provider_revision())
         self.assertEqual(set(components), set(baseline))
         for component in baseline:
-            if component == COMPONENT_POLYHEDRON_VISIBILITY:
+            if component in {
+                COMPONENT_POLYHEDRON_VISIBILITY,
+                COMPONENT_OPEN_FACE_VISIBILITY,
+            }:
                 self.assertEqual(components[component], baseline[component])
             else:
                 self.assertNotEqual(components[component], baseline[component])
