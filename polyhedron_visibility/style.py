@@ -76,7 +76,16 @@ class OcclusionStyle:
 
     def resolve_for(self, source: object) -> ResolvedOcclusionStyle:
         family = getattr(source, "get_family", lambda: [source])()
-        for member in family:
+        drawable = [
+            member
+            for member in family
+            if np.asarray(getattr(member, "points", ()), dtype=float).size > 0
+            and callable(getattr(member, "get_stroke_width", None))
+            and callable(getattr(member, "get_stroke_opacity", None))
+        ]
+        if not drawable:
+            raise OcclusionStyleError("source stroke has no Manim vector stroke style")
+        for member in drawable:
             for attribute in ("stroke_rgbas", "background_stroke_rgbas"):
                 if not hasattr(member, attribute):
                     continue
@@ -91,17 +100,36 @@ class OcclusionStyle:
                     raise OcclusionStyleError(
                         f"source stroke gradient in {attribute} is unsupported"
                     )
-        vector = next(
-            (
-                item
-                for item in family
-                if callable(getattr(item, "get_stroke_width", None))
-                and callable(getattr(item, "get_stroke_opacity", None))
-            ),
-            None,
+        vector = drawable[0]
+        reference = (
+            np.asarray(vector.stroke_rgbas[0], dtype=float),
+            np.asarray(vector.background_stroke_rgbas[0], dtype=float),
+            float(vector.get_stroke_width()),
+            float(vector.get_stroke_opacity()),
+            float(vector.get_stroke_width(background=True)),
+            float(vector.get_stroke_opacity(background=True)),
+            getattr(vector, "cap_style", None),
+            getattr(vector, "joint_type", None),
         )
-        if vector is None:
-            raise OcclusionStyleError("source stroke has no Manim vector stroke style")
+        for member in drawable[1:]:
+            candidate = (
+                np.asarray(member.stroke_rgbas[0], dtype=float),
+                np.asarray(member.background_stroke_rgbas[0], dtype=float),
+                float(member.get_stroke_width()),
+                float(member.get_stroke_opacity()),
+                float(member.get_stroke_width(background=True)),
+                float(member.get_stroke_opacity(background=True)),
+                getattr(member, "cap_style", None),
+                getattr(member, "joint_type", None),
+            )
+            same_numeric = all(
+                np.allclose(left, right, rtol=0.0, atol=1.0e-12)
+                for left, right in zip(reference[:6], candidate[:6])
+            )
+            if not same_numeric or reference[6:] != candidate[6:]:
+                raise OcclusionStyleError(
+                    "source stroke drawable family members must share one style"
+                )
         width = float(vector.get_stroke_width())
         opacity = float(vector.get_stroke_opacity())
         background_width = float(vector.get_stroke_width(background=True))

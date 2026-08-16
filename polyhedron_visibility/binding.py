@@ -3,7 +3,7 @@ from __future__ import annotations
 from contextlib import contextmanager
 from dataclasses import dataclass
 from math import ceil
-from typing import Callable, Iterator, Mapping, Sequence
+from typing import Callable, Iterator, Literal, Mapping, Sequence
 
 import numpy as np
 from manim import Line, Mobject, RendererType, ThreeDCamera, VGroup, config
@@ -384,6 +384,7 @@ class ManimOcclusionBinding:
         style: OcclusionStyle,
         tolerance_policy: TolerancePolicy | None = None,
         require_closed_convex_manifold: bool = False,
+        source_coordinate_mode: Literal["world", "display"] = "world",
     ) -> None:
         self.scene = scene
         self.model = model
@@ -396,6 +397,11 @@ class ManimOcclusionBinding:
         self.style = style
         self.tolerance_policy = tolerance_policy or TolerancePolicy()
         self.require_closed_convex_manifold = bool(require_closed_convex_manifold)
+        if source_coordinate_mode not in {"world", "display"}:
+            raise OcclusionBindingError(
+                "source_coordinate_mode must be 'world' or 'display'"
+            )
+        self.source_coordinate_mode = source_coordinate_mode
         self._attached = False
         self._source_snapshots: dict[str, tuple[_AttributeSnapshot, ...]] = {}
         self._resolved_styles: dict[str, ResolvedOcclusionStyle] = {}
@@ -412,6 +418,16 @@ class ManimOcclusionBinding:
                 + (f"; extra={extra}" if extra else "")
             )
         self.stroke_bindings = dict(stroke_bindings)
+        for edge_id, source in self.stroke_bindings.items():
+            drawable = [
+                member
+                for member in source.get_family()
+                if np.asarray(getattr(member, "points", ()), dtype=float).size > 0
+            ]
+            if not isinstance(source, Line) or drawable != [source]:
+                raise OcclusionBindingError(
+                    f"source stroke {edge_id} must be one complete straight Manim Line"
+                )
         self.capacities = {
             stroke.source_edge_id: OverlayCapacity.for_stroke(stroke, model, style)
             for stroke in model.strokes
@@ -451,7 +467,7 @@ class ManimOcclusionBinding:
 
     def _prepare_frame(
         self,
-    ) -> tuple[VisibilityFrame, dict[str, OverlayPlan]]:
+    ) -> tuple[VisibilityFrame, dict[str, OverlayPlan], dict[str, np.ndarray]]:
         positions, projection = self._current_inputs()
         frame = compute_frame_visibility(
             self.model,
@@ -479,7 +495,84 @@ class ManimOcclusionBinding:
                 capacity=self.capacities[stroke.source_edge_id],
                 style=self.style,
             )
-        return frame, plans
+        return frame, plans, positions
+
+    def _validate_source_geometry(
+        self,
+        plans: Mapping[str, OverlayPlan],
+        positions: Mapping[str, np.ndarray],
+    ) -> None:
+        for stroke in self.model.strokes:
+            edge_id = stroke.source_edge_id
+            source = self.stroke_bindings[edge_id]
+            if self.source_coordinate_mode == "world":
+                expected_start = positions[stroke.vertex_ids[0]]
+                expected_end = positions[stroke.vertex_ids[1]]
+            else:
+                segments = (
+                    *plans[edge_id].visible_segments,
+                    *plans[edge_id].hidden_segments,
+                )
+                if not segments:
+                    raise OcclusionBindingError(
+                        f"source stroke {edge_id} has no visibility span"
+                    )
+                expected_start = min(
+                    segments, key=lambda item: item.start_parameter
+                ).start
+                expected_end = max(
+                    segments, key=lambda item: item.end_parameter
+                ).end
+            actual_start = _point3(source.get_start(), f"source stroke {edge_id} start")
+            actual_end = _point3(source.get_end(), f"source stroke {edge_id} end")
+            expected_start_array = np.asarray(expected_start, dtype=float)
+            expected_end_array = np.asarray(expected_end, dtype=float)
+            scale = max(
+                1.0,
+                float(np.linalg.norm(expected_end_array - expected_start_array)),
+            )
+            endpoint_tolerance = 1.0e-7 * scale
+            endpoints_match = (
+                np.allclose(
+                    actual_start,
+                    expected_start_array,
+                    rtol=0.0,
+                    atol=endpoint_tolerance,
+                )
+                and np.allclose(
+                    actual_end,
+                    expected_end_array,
+                    rtol=0.0,
+                    atol=endpoint_tolerance,
+                )
+            ) or (
+                np.allclose(
+                    actual_start,
+                    expected_end_array,
+                    rtol=0.0,
+                    atol=endpoint_tolerance,
+                )
+                and np.allclose(
+                    actual_end,
+                    expected_start_array,
+                    rtol=0.0,
+                    atol=endpoint_tolerance,
+                )
+            )
+            chord = actual_end - actual_start
+            chord_length = float(np.linalg.norm(chord))
+            points = np.asarray(source.points, dtype=float)
+            if chord_length <= endpoint_tolerance or points.ndim != 2 or points.shape[1] != 3:
+                endpoints_match = False
+            else:
+                offsets = points - actual_start
+                distance = np.linalg.norm(np.cross(offsets, chord), axis=1) / chord_length
+                if float(np.max(distance, initial=0.0)) > endpoint_tolerance:
+                    endpoints_match = False
+            if not endpoints_match:
+                raise OcclusionBindingError(
+                    f"source stroke {edge_id} must match its registered straight segment"
+                )
 
     def _apply_frame(
         self,
@@ -530,6 +623,11 @@ class ManimOcclusionBinding:
                     if id(member) not in seen:
                         seen.add(id(member))
                         scene_family.append(member)
+        for edge_id, source in self.stroke_bindings.items():
+            if id(source) not in seen:
+                raise OcclusionBindingError(
+                    f"source stroke {edge_id} is not owned by the current Scene"
+                )
         for edge_id, value in result.items():
             owned = source_family_ids[edge_id]
             for member in scene_family:
@@ -569,7 +667,8 @@ class ManimOcclusionBinding:
 
         # All fallible numerical and capacity work happens before sources are
         # hidden or Scene ownership changes.
-        frame, plans = self._prepare_frame()
+        frame, plans, positions = self._prepare_frame()
+        self._validate_source_geometry(plans, positions)
         source_z_indices = self._validate_unique_source_z_indices()
         snapshots = {
             edge_id: _capture_family_style(source)
@@ -615,7 +714,8 @@ class ManimOcclusionBinding:
             raise OcclusionBindingError("occlusion binding is not attached")
         # Prepare every edge first.  A solver/capacity failure therefore leaves
         # every overlay slot at the last-good frame.
-        frame, plans = self._prepare_frame()
+        frame, plans, positions = self._prepare_frame()
+        self._validate_source_geometry(plans, positions)
         self._apply_frame(frame, plans)
         return self
 

@@ -327,6 +327,52 @@ class ParallelVisibilitySolverTests(unittest.TestCase):
                 require_closed_convex_manifold=True,
             )
 
+    def test_frame_validation_uses_the_callers_tolerance_policy(self) -> None:
+        model = face_model()
+        warped = dict(model.entry_positions)
+        warped["A2"] = (-0.5, 1.0, 1.0001)
+
+        with self.assertRaisesRegex(SolverError, "not planar"):
+            compute_frame_visibility(
+                model,
+                projection_matrix=IDENTITY_VIEW,
+                vertex_positions=warped,
+            )
+        compute_frame_visibility(
+            model,
+            projection_matrix=IDENTITY_VIEW,
+            vertex_positions=warped,
+            tolerance_policy=TolerancePolicy(relative=1.0e-3),
+        )
+
+    def test_zero_length_semantic_stroke_fails_for_every_visibility_mode(self) -> None:
+        for mode in ("auto", "always_visible", "always_hidden"):
+            with self.subTest(mode=mode):
+                model = VisibilityModel.from_dict(
+                    {
+                        "schema": "manim-convex-polyhedron-visibility/v1",
+                        "visibilityGroupId": f"zero-{mode}",
+                        "vertices": [
+                            {"vertexId": "A", "entryPosition": (0, 0, 0)},
+                            {"vertexId": "B", "entryPosition": (1, 0, 0)},
+                        ],
+                        "faces": [],
+                        "strokes": [
+                            {
+                                "sourceEdgeId": "AB",
+                                "vertexIds": ["A", "B"],
+                                "visibilityMode": mode,
+                            }
+                        ],
+                    }
+                )
+                with self.assertRaisesRegex(SolverError, "zero length"):
+                    compute_frame_visibility(
+                        model,
+                        projection_matrix=IDENTITY_VIEW,
+                        vertex_positions={"A": (0, 0, 0), "B": (0, 0, 0)},
+                    )
+
 
 if __name__ == "__main__":
     unittest.main()

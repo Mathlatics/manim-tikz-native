@@ -12,12 +12,13 @@ from dataclasses import dataclass
 from typing import Callable, ContextManager, Literal, Mapping, Sequence
 
 import numpy as np
-from manim import Mobject
+from manim import Line, Mobject
 
 from polyhedron_visibility import (
     AutoOcclusion3D,
     OcclusionStyle,
     ParallelProjection,
+    TolerancePolicy,
 )
 from polyhedron_visibility.binding import DisplayPointProvider
 from polyhedron_visibility.trace import VisibilityFrame
@@ -60,6 +61,7 @@ def _canonical_position_provider(
     aliases: dict[str, list[str]] = {}
     for authored, canonical in result.coordinate_vertex_ids:
         aliases.setdefault(canonical, []).append(authored)
+    tolerance_policy = TolerancePolicy()
 
     def current() -> dict[str, np.ndarray]:
         raw = provider()
@@ -67,20 +69,35 @@ def _canonical_position_provider(
             raise TikzNativeVisibility3DManimError(
                 "coordinate_provider must return a mapping"
             )
+        relevant_names = {
+            name
+            for vertex in result.model.vertices
+            for name in (vertex.vertex_id, *aliases.get(vertex.vertex_id, ()))
+        }
+        parsed = {
+            name: _point3(raw[name], f"coordinate {name}")
+            for name in sorted(relevant_names)
+            if name in raw
+        }
+        if not parsed:
+            raise TikzNativeVisibility3DManimError(
+                "coordinate_provider omitted all visibility coordinates"
+            )
+        alias_tolerance = tolerance_policy.resolve(tuple(parsed.values())).world
         positions: dict[str, np.ndarray] = {}
         for vertex in result.model.vertices:
             names = [vertex.vertex_id, *aliases.get(vertex.vertex_id, ())]
             values = [
-                _point3(raw[name], f"coordinate {name}")
+                parsed[name]
                 for name in dict.fromkeys(names)
-                if name in raw
+                if name in parsed
             ]
             if not values:
                 raise TikzNativeVisibility3DManimError(
                     f"coordinate_provider omitted {vertex.vertex_id}"
                 )
             if any(
-                not np.allclose(values[0], value, atol=1.0e-10, rtol=0.0)
+                float(np.linalg.norm(values[0] - value)) > alias_tolerance
                 for value in values[1:]
             ):
                 raise TikzNativeVisibility3DManimError(
@@ -108,6 +125,16 @@ def _single_object_stroke_bindings(
         if source is None:
             raise TikzNativeVisibility3DManimError(
                 f"NativeFigure omitted source object {object_id}"
+            )
+        drawable = [
+            member
+            for member in source.get_family()
+            if np.asarray(getattr(member, "points", ()), dtype=float).size > 0
+        ]
+        if not isinstance(source, Line) or drawable != [source]:
+            raise TikzNativeVisibility3DManimError(
+                "automatic Manim binding v1 requires one continuous straight Line "
+                f"per semantic stroke; {stroke.source_edge_id} is compound or dashed"
             )
         bindings[stroke.source_edge_id] = source
     return bindings
@@ -262,6 +289,7 @@ def bind_picture_visibility_3d(
         require_closed_convex_manifold=(
             analysis.validation_mode == "closed_convex_polyhedron"
         ),
+        source_coordinate_mode="display",
     )
     return TikzNativeAutoOcclusion3D(analysis, controller)
 

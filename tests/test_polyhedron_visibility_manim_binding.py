@@ -26,7 +26,7 @@ from manim.animation.animation import prepare_animation
 
 from polyhedron_visibility import VisibilityModel
 from polyhedron_visibility.api import AutoOcclusion3D, ParallelProjection
-from polyhedron_visibility.binding import OcclusionCapacityError
+from polyhedron_visibility.binding import OcclusionBindingError, OcclusionCapacityError
 from polyhedron_visibility.style import OcclusionStyle
 from polyhedron_visibility.style import OcclusionStyleError
 
@@ -231,6 +231,123 @@ class AutoOcclusion3DManimTests(unittest.TestCase):
                 )
                 self.assertFalse(fixture.controller.attached)
 
+    def test_group_style_uses_drawable_members_and_rejects_mixed_styles(self) -> None:
+        first = Line((-1, 0, 0), (0, 0, 0), color=RED, stroke_width=9)
+        second = Line((0, 0, 0), (1, 0, 0), color=RED, stroke_width=9)
+        first.set_stroke(opacity=0.37)
+        second.set_stroke(opacity=0.37)
+        style = OcclusionStyle(max_projected_length=4.0)
+
+        resolved = style.resolve_for(VGroup(first, second))
+        self.assertAlmostEqual(resolved.visible_width, 9.0)
+        self.assertAlmostEqual(resolved.visible_opacity, 0.37)
+        np.testing.assert_allclose(resolved.visible_color.to_rgb(), RED.to_rgb())
+
+        second.set_stroke(color=BLUE)
+        with self.assertRaisesRegex(OcclusionStyleError, "share one style"):
+            style.resolve_for(VGroup(first, second))
+
+    def test_compound_or_non_line_source_fails_before_scene_mutation(self) -> None:
+        fixture = _Fixture(_InstantScene())
+        roots = tuple(fixture.scene.mobjects)
+        with self.assertRaisesRegex(OcclusionBindingError, "complete straight Manim Line"):
+            AutoOcclusion3D(
+                fixture.scene,
+                _model(),
+                position_provider=lambda: {
+                    "a": (-2, 0, 0),
+                    "b": (2, 0, 0),
+                    "p0": (-1, -1, 1),
+                    "p1": (1, -1, 1),
+                    "p2": (1, 1, 1),
+                    "p3": (-1, 1, 1),
+                },
+                stroke_bindings={
+                    "probe": Polygon((-2, 0, 0), (2, 0, 0), (0, -0.5, 0))
+                },
+                projection=ParallelProjection.identity(),
+                style=OcclusionStyle(max_projected_length=6.0),
+            )
+        self.assertEqual(tuple(fixture.scene.mobjects), roots)
+
+    def test_detached_source_line_cannot_create_new_scene_content(self) -> None:
+        fixture = _Fixture(_InstantScene())
+        detached = Line((-2, 0, 0), (2, 0, 0)).set_z_index(31)
+        controller = AutoOcclusion3D(
+            fixture.scene,
+            _model(),
+            position_provider=lambda: {
+                "a": (-2, 0, 0),
+                "b": (2, 0, 0),
+                "p0": (-1, -1, 1),
+                "p1": (1, -1, 1),
+                "p2": (1, 1, 1),
+                "p3": (-1, 1, 1),
+            },
+            stroke_bindings={"probe": detached},
+            projection=ParallelProjection.identity(),
+            style=OcclusionStyle(max_projected_length=6.0),
+        )
+        roots = tuple(fixture.scene.mobjects)
+        with self.assertRaisesRegex(OcclusionBindingError, "not owned"):
+            controller.attach()
+        self.assertEqual(tuple(fixture.scene.mobjects), roots)
+        self.assertFalse(controller.attached)
+
+    def test_source_line_must_match_the_registered_entry_segment(self) -> None:
+        fixture = _Fixture(_InstantScene())
+        wrong = Line((-2, 0.4, 0), (2, 0.4, 0)).set_z_index(31)
+        fixture.scene.add(wrong)
+        controller = AutoOcclusion3D(
+            fixture.scene,
+            _model(),
+            position_provider=lambda: {
+                "a": (-2, 0, 0),
+                "b": (2, 0, 0),
+                "p0": (-1, -1, 1),
+                "p1": (1, -1, 1),
+                "p2": (1, 1, 1),
+                "p3": (-1, 1, 1),
+            },
+            stroke_bindings={"probe": wrong},
+            projection=ParallelProjection.identity(),
+            style=OcclusionStyle(max_projected_length=6.0),
+        )
+        roots = tuple(fixture.scene.mobjects)
+        with self.assertRaisesRegex(OcclusionBindingError, "registered straight segment"):
+            controller.attach()
+        self.assertEqual(tuple(fixture.scene.mobjects), roots)
+        self.assertAlmostEqual(float(wrong.get_stroke_opacity()), 1.0)
+
+    def test_dynamic_source_mismatch_preserves_the_last_good_overlay(self) -> None:
+        fixture = _Fixture(_InstantScene())
+        fixed_positions = {
+            "a": (-2, 0, 0),
+            "b": (2, 0, 0),
+            "p0": (-1, -1, 1),
+            "p1": (1, -1, 1),
+            "p2": (1, 1, 1),
+            "p3": (-1, 1, 1),
+        }
+        controller = AutoOcclusion3D(
+            fixture.scene,
+            _model(),
+            position_provider=lambda: fixed_positions,
+            stroke_bindings={"probe": fixture.source},
+            projection=ParallelProjection.identity(),
+            style=OcclusionStyle(max_projected_length=6.0),
+        ).attach()
+        last_good = controller.slot_snapshot()
+        fixture.source.shift((0, 0.4, 0))
+
+        with self.assertRaisesRegex(OcclusionBindingError, "registered straight segment"):
+            controller.update()
+
+        self.assertEqual(controller.slot_snapshot(), last_good)
+        self.assertAlmostEqual(float(fixture.source.get_stroke_opacity()), 0.0)
+        controller.restore()
+        self.assertAlmostEqual(float(fixture.source.get_stroke_opacity()), 0.63)
+
     def test_display_projection_moves_overlay_when_world_geometry_is_unchanged(self) -> None:
         fixture = _Fixture(_InstantScene(), project_display=True)
         fixture.controller.attach()
@@ -385,14 +502,13 @@ class AutoOcclusion3DManimTests(unittest.TestCase):
     def test_source_fill_is_never_hidden_and_slots_inherit_source_z_index(self) -> None:
         scene = _InstantScene()
         fixture = _Fixture(scene)
-        filled_source = Polygon(
+        filled_source = Line(
             (-2, 0, 0),
             (2, 0, 0),
-            (0, -0.5, 0),
-            fill_opacity=0.47,
             stroke_opacity=0.63,
             stroke_width=7,
         )
+        filled_source.set_fill(opacity=0.47)
         scene.remove(fixture.geometry)
         fixture.geometry = VGroup(fixture.face, filled_source)
         fixture.source = filled_source
@@ -401,10 +517,9 @@ class AutoOcclusion3DManimTests(unittest.TestCase):
 
         def positions():
             vertices = fixture.face.get_vertices()
-            source_vertices = filled_source.get_vertices()
             return {
-                "a": source_vertices[0],
-                "b": source_vertices[1],
+                "a": filled_source.get_start(),
+                "b": filled_source.get_end(),
                 "p0": vertices[0],
                 "p1": vertices[1],
                 "p2": vertices[2],

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Callable, Mapping, Sequence
+from typing import Callable, Literal, Mapping, Sequence
 
 import numpy as np
 from manim import Mobject
@@ -56,6 +56,7 @@ class AutoOcclusion3D(ManimOcclusionBinding):
         style: OcclusionStyle,
         tolerance_policy: TolerancePolicy | None = None,
         require_closed_convex_manifold: bool = False,
+        source_coordinate_mode: Literal["world", "display"] = "world",
     ) -> None:
         self.projection = projection
         super().__init__(
@@ -68,6 +69,7 @@ class AutoOcclusion3D(ManimOcclusionBinding):
             style=style,
             tolerance_policy=tolerance_policy,
             require_closed_convex_manifold=require_closed_convex_manifold,
+            source_coordinate_mode=source_coordinate_mode,
         )
 
 

@@ -275,12 +275,14 @@ def _validated_positions(
     model: VisibilityModel,
     vertex_positions: Mapping[str, Sequence[float]] | None,
     *,
+    tolerance_policy: TolerancePolicy,
     require_closed_convex_manifold: bool,
 ) -> dict[str, np.ndarray]:
     raw = model.entry_positions if vertex_positions is None else vertex_positions
     try:
         model.validate(
             vertex_positions=raw,
+            tolerance_policy=tolerance_policy,
             require_closed_convex_manifold=require_closed_convex_manifold,
         )
     except ContractError as exc:
@@ -301,6 +303,7 @@ def compute_frame_visibility(
     positions = _validated_positions(
         model,
         vertex_positions,
+        tolerance_policy=policy,
         require_closed_convex_manifold=require_closed_convex_manifold,
     )
     surface_vertex_ids = sorted({item for face in model.faces for item in face.vertex_ids})
@@ -322,6 +325,10 @@ def compute_frame_visibility(
         end = positions[stroke.vertex_ids[1]]
         length = float(np.linalg.norm(end - start))
         edge_tolerance = policy.resolve((start, end), edge_length=length)
+        if length <= edge_tolerance.world:
+            raise SolverError(
+                f"semantic stroke {stroke.source_edge_id} has zero length"
+            )
         raw_intervals: list[RawOcclusionInterval] = []
         skipped: list[SkippedFace] = []
         face_tolerances = tuple(
