@@ -1,5 +1,8 @@
 """Projection-aware hidden-line removal for registered convex face systems."""
 
+from .api import AutoOcclusion3D, ParallelProjection
+from .authoring import OcclusionAuthoringError, OcclusionScene3D
+from .binding import OcclusionBindingError, OcclusionCapacityError
 from .contract import (
     ContractError,
     FaceSpec,
@@ -26,13 +29,22 @@ from .trace import (
     VisibilitySpan,
     canonical_trace_json,
 )
+from .style import OcclusionStyle, OcclusionStyleError
 
 __all__ = [
+    "AutoOcclusion3D",
     "ContractError",
     "EdgeVisibility",
     "FaceToleranceTrace",
     "FaceSpec",
+    "OcclusionAuthoringError",
+    "OcclusionBindingError",
+    "OcclusionCapacityError",
+    "OcclusionScene3D",
+    "OcclusionStyle",
+    "OcclusionStyleError",
     "ParallelView",
+    "ParallelProjection",
     "RawOcclusionInterval",
     "ResolvedTolerance",
     "SkippedFace",
