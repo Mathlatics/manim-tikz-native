@@ -12,6 +12,9 @@ import unittest
 from tikz_native.geometry_rig_3d_bridge import (
     _bridge_provider_info as geometry_rig_3d_provider_info,
 )
+from tikz_native.geometry_rig_3d_source_v3_bridge import (
+    _bridge_provider_info as geometry_rig_3d_source_v3_provider_info,
+)
 from tikz_native.geometry_rig_bridge import (
     _bridge_provider_info as geometry_rig_2d_provider_info,
 )
@@ -27,6 +30,7 @@ from tikz_native.version import (
     COMPONENT_NATIVE_MANIM_SOURCE_2D,
     COMPONENT_NATIVE_MANIM_SOURCE_3D,
     COMPONENT_NATIVE_MANIM_SOURCE_3D_V2,
+    COMPONENT_NATIVE_MANIM_SOURCE_3D_V3,
     COMPONENT_NATIVE_RIG_2D,
     COMPONENT_OPEN_FACE_VISIBILITY,
     COMPONENT_POLYHEDRON_VISIBILITY,
@@ -54,6 +58,9 @@ NATIVE_SOURCE_3D_REVISION = (
 )
 NATIVE_SOURCE_3D_V2_REVISION = (
     "source-sha256:26d702598f6300ece385972271346a571e9fb28b273732584ce14fca98445769"
+)
+NATIVE_SOURCE_3D_V3_REVISION = (
+    "source-sha256:3039e2f6cccafb93b9d906737ad22158391893fe1298ed555ea054db0a4a1f7d"
 )
 POLYHEDRON_VISIBILITY_REVISION = (
     "source-sha256:aa45310ff3c70ac1922ddf61b457cafeb789f9011ec67069b70c23d63fb3a8ae"
@@ -103,6 +110,7 @@ class TikzNativeComponentRevisionTests(unittest.TestCase):
         geometry_3d = geometry_rig_3d_provider_info()
         motion_2d = motion_2d_provider_info()
         motion_3d = motion_3d_provider_info()
+        source_v3 = geometry_rig_3d_source_v3_provider_info()
 
         self.assertEqual(asset["revision"], revisions[COMPONENT_ASSET_COMPILER])
         self.assertEqual(asset["revision_component"], COMPONENT_ASSET_COMPILER)
@@ -112,13 +120,28 @@ class TikzNativeComponentRevisionTests(unittest.TestCase):
         self.assertEqual(
             motion_3d["revision"], revisions[COMPONENT_MOTION_PREVIEW_3D]
         )
+        self.assertEqual(
+            source_v3["revision"],
+            revisions[COMPONENT_NATIVE_MANIM_SOURCE_3D_V3],
+        )
+        self.assertEqual(
+            source_v3["revision_component"],
+            COMPONENT_NATIVE_MANIM_SOURCE_3D_V3,
+        )
         # Geometry analysis first validates an existing ShapeAsset, so its
         # primary revision stays asset-facing; the distinct rig identity is
         # read from the component map by Host and frozen definitions.
         for record in (geometry_2d, geometry_3d):
             self.assertEqual(record["revision"], revisions[COMPONENT_ASSET_COMPILER])
             self.assertEqual(record["revision_component"], COMPONENT_ASSET_COMPILER)
-        for record in (asset, geometry_2d, geometry_3d, motion_2d, motion_3d):
+        for record in (
+            asset,
+            geometry_2d,
+            geometry_3d,
+            motion_2d,
+            motion_3d,
+            source_v3,
+        ):
             self.assertEqual(record["build_revision"], provider_revision())
             self.assertEqual(record["component_revisions"], revisions)
 
@@ -145,9 +168,20 @@ class TikzNativeComponentRevisionTests(unittest.TestCase):
             revisions[COMPONENT_NATIVE_MANIM_SOURCE_3D_V2],
             NATIVE_SOURCE_3D_V2_REVISION,
         )
-        self.assertNotIn(
-            revisions[COMPONENT_NATIVE_MANIM_SOURCE_3D_V2],
-            {LEGACY_ASSET_REVISION, NATIVE_SOURCE_3D_REVISION},
+        self.assertEqual(
+            revisions[COMPONENT_NATIVE_MANIM_SOURCE_3D_V3],
+            NATIVE_SOURCE_3D_V3_REVISION,
+        )
+        self.assertEqual(
+            len(
+                {
+                    LEGACY_ASSET_REVISION,
+                    NATIVE_SOURCE_3D_REVISION,
+                    NATIVE_SOURCE_3D_V2_REVISION,
+                    NATIVE_SOURCE_3D_V3_REVISION,
+                }
+            ),
+            4,
         )
 
     def test_visibility_components_have_independent_frozen_identities(self) -> None:
@@ -234,7 +268,7 @@ print(json.dumps({
         ):
             self.assertEqual(components[component], baseline[component])
 
-    def test_editing_v1_3d_codegen_changes_v1_and_its_v2_dependent_only(self) -> None:
+    def test_editing_v1_3d_codegen_changes_v1_and_recursive_source_dependents(self) -> None:
         baseline = provider_component_revisions()
         mutated = self._probe_copy("native_manim_codegen_3d.py")
         components = mutated["components"]
@@ -247,15 +281,20 @@ print(json.dumps({
             components[COMPONENT_NATIVE_MANIM_SOURCE_3D_V2],
             baseline[COMPONENT_NATIVE_MANIM_SOURCE_3D_V2],
         )
+        self.assertNotEqual(
+            components[COMPONENT_NATIVE_MANIM_SOURCE_3D_V3],
+            baseline[COMPONENT_NATIVE_MANIM_SOURCE_3D_V3],
+        )
         for component in baseline:
             if component in {
                 COMPONENT_NATIVE_MANIM_SOURCE_3D,
                 COMPONENT_NATIVE_MANIM_SOURCE_3D_V2,
+                COMPONENT_NATIVE_MANIM_SOURCE_3D_V3,
             }:
                 continue
             self.assertEqual(components[component], baseline[component])
 
-    def test_editing_v2_3d_codegen_changes_only_the_v2_source_component(self) -> None:
+    def test_editing_v2_3d_codegen_changes_v2_and_v3_source_components(self) -> None:
         baseline = provider_component_revisions()
         mutated = self._probe_copy("native_manim_codegen_3d_v2.py")
         components = mutated["components"]
@@ -264,8 +303,29 @@ print(json.dumps({
             components[COMPONENT_NATIVE_MANIM_SOURCE_3D_V2],
             baseline[COMPONENT_NATIVE_MANIM_SOURCE_3D_V2],
         )
+        self.assertNotEqual(
+            components[COMPONENT_NATIVE_MANIM_SOURCE_3D_V3],
+            baseline[COMPONENT_NATIVE_MANIM_SOURCE_3D_V3],
+        )
         for component in baseline:
-            if component == COMPONENT_NATIVE_MANIM_SOURCE_3D_V2:
+            if component in {
+                COMPONENT_NATIVE_MANIM_SOURCE_3D_V2,
+                COMPONENT_NATIVE_MANIM_SOURCE_3D_V3,
+            }:
+                continue
+            self.assertEqual(components[component], baseline[component])
+
+    def test_editing_v3_3d_codegen_changes_only_the_v3_source_component(self) -> None:
+        baseline = provider_component_revisions()
+        mutated = self._probe_copy("native_manim_codegen_3d_v3.py")
+        components = mutated["components"]
+        self.assertNotEqual(mutated["build"], provider_revision())
+        self.assertNotEqual(
+            components[COMPONENT_NATIVE_MANIM_SOURCE_3D_V3],
+            baseline[COMPONENT_NATIVE_MANIM_SOURCE_3D_V3],
+        )
+        for component in baseline:
+            if component == COMPONENT_NATIVE_MANIM_SOURCE_3D_V3:
                 continue
             self.assertEqual(components[component], baseline[component])
 
@@ -298,6 +358,7 @@ print(json.dumps({
                 COMPONENT_TIKZ_POLYHEDRON_VISIBILITY_3D,
                 COMPONENT_OPEN_FACE_VISIBILITY,
                 COMPONENT_TIKZ_OPEN_FACE_VISIBILITY_3D,
+                COMPONENT_NATIVE_MANIM_SOURCE_3D_V3,
             }:
                 continue
             self.assertEqual(components[component], baseline[component])
@@ -312,12 +373,14 @@ print(json.dumps({
         for component in (
             COMPONENT_OPEN_FACE_VISIBILITY,
             COMPONENT_TIKZ_OPEN_FACE_VISIBILITY_3D,
+            COMPONENT_NATIVE_MANIM_SOURCE_3D_V3,
         ):
             self.assertNotEqual(components[component], baseline[component])
         for component in baseline:
             if component in {
                 COMPONENT_OPEN_FACE_VISIBILITY,
                 COMPONENT_TIKZ_OPEN_FACE_VISIBILITY_3D,
+                COMPONENT_NATIVE_MANIM_SOURCE_3D_V3,
             }:
                 continue
             self.assertEqual(components[component], baseline[component])
@@ -337,13 +400,14 @@ print(json.dumps({
         )
         for component in baseline:
             if component in {
-                COMPONENT_TIKZ_POLYHEDRON_VISIBILITY_3D,
-                COMPONENT_TIKZ_OPEN_FACE_VISIBILITY_3D,
+            COMPONENT_TIKZ_POLYHEDRON_VISIBILITY_3D,
+            COMPONENT_TIKZ_OPEN_FACE_VISIBILITY_3D,
+            COMPONENT_NATIVE_MANIM_SOURCE_3D_V3,
             }:
                 continue
             self.assertEqual(components[component], baseline[component])
 
-    def test_editing_tikz_open_face_adapter_changes_only_its_component(self) -> None:
+    def test_editing_tikz_open_face_adapter_changes_it_and_v3_source(self) -> None:
         baseline = provider_component_revisions()
         mutated = self._probe_copy("open_face_visibility_3d_adapter.py")
         components = mutated["components"]
@@ -352,8 +416,15 @@ print(json.dumps({
             components[COMPONENT_TIKZ_OPEN_FACE_VISIBILITY_3D],
             baseline[COMPONENT_TIKZ_OPEN_FACE_VISIBILITY_3D],
         )
+        self.assertNotEqual(
+            components[COMPONENT_NATIVE_MANIM_SOURCE_3D_V3],
+            baseline[COMPONENT_NATIVE_MANIM_SOURCE_3D_V3],
+        )
         for component in baseline:
-            if component == COMPONENT_TIKZ_OPEN_FACE_VISIBILITY_3D:
+            if component in {
+                COMPONENT_TIKZ_OPEN_FACE_VISIBILITY_3D,
+                COMPONENT_NATIVE_MANIM_SOURCE_3D_V3,
+            }:
                 continue
             self.assertEqual(components[component], baseline[component])
 

@@ -1,0 +1,101 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:tikz-native:geometry-rig-3d-source-v3:v1",
+  "title": "TikZ-native Geometry Rig 3D source v3 result",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "dimension",
+    "pictureIndex",
+    "sourceSha256",
+    "semanticModelHash",
+    "status",
+    "expectedAssetProviderRevision",
+    "assetProviderRevision",
+    "revisionMatch",
+    "nativeManimSourceV3"
+  ],
+  "properties": {
+    "schema": {"const": "tikz-native-geometry-rig-3d-source-v3/v1"},
+    "dimension": {"const": 3},
+    "pictureIndex": {"type": "integer", "minimum": 1},
+    "sourceSha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "semanticModelHash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "status": {"enum": ["ready", "needs_selection"]},
+    "expectedAssetProviderRevision": {"type": "string", "minLength": 1},
+    "assetProviderRevision": {"type": "string", "minLength": 1},
+    "revisionMatch": {"type": "boolean"},
+    "nativeManimSourceV3": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema",
+        "sourceText",
+        "sourceSha256",
+        "authoringSpec",
+        "visibilitySpec"
+      ],
+      "properties": {
+        "schema": {"const": "tikz-native-manim-source-3d/v3"},
+        "sourceText": {"type": "string", "minLength": 1},
+        "sourceSha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "authoringSpec": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "schema",
+            "drivers",
+            "entryCamera",
+            "cameraModes",
+            "endPolicy",
+            "visibility"
+          ],
+          "properties": {
+            "schema": {"const": "tikz-native-manim-authoring-3d/v2"},
+            "drivers": {"type": "array", "minItems": 1, "items": {"type": "object"}},
+            "entryCamera": {"type": "object"},
+            "cameraModes": {"type": "array", "items": {"type": "object"}},
+            "endPolicy": {"const": "restore_entry"},
+            "visibility": {"$ref": "#/$defs/visibilitySpec"}
+          }
+        },
+        "visibilitySpec": {"$ref": "#/$defs/visibilitySpec"}
+      }
+    }
+  },
+  "$defs": {
+    "visibilitySpec": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema",
+        "adapterSchema",
+        "modelSchema",
+        "traceSchema",
+        "topology",
+        "modelSha256",
+        "entryTraceSha256",
+        "adapterResultSha256",
+        "faceCount",
+        "strokeCount",
+        "seamCount",
+        "requiresExplicitStaticAssetRecompile"
+      ],
+      "properties": {
+        "schema": {"const": "tikz-native-manim-open-face-visibility-3d/v1"},
+        "adapterSchema": {"const": "tikz-native-open-face-visibility-3d-adapter/v1"},
+        "modelSchema": {"const": "manim-open-convex-face-visibility/v1"},
+        "traceSchema": {"const": "manim-open-convex-face-visibility-trace/v1"},
+        "topology": {"const": "finite_independent_convex_faces"},
+        "modelSha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "entryTraceSha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "adapterResultSha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "faceCount": {"type": "integer", "minimum": 1, "maximum": 64},
+        "strokeCount": {"type": "integer", "minimum": 1, "maximum": 128},
+        "seamCount": {"type": "integer", "minimum": 0, "maximum": 64},
+        "requiresExplicitStaticAssetRecompile": {"const": true}
+      }
+    }
+  }
+}

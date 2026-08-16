@@ -64,6 +64,7 @@ def provider_info(
             "native_manim_source_2d_v1": True,
             "native_manim_source_3d_v1": True,
             "native_manim_source_3d_v2": True,
+            "native_manim_source_3d_v3": True,
             "polyhedron_visibility_parallel_v1": True,
             "tikz_polyhedron_visibility_3d_v1": True,
             "open_convex_face_visibility_parallel_v1": True,

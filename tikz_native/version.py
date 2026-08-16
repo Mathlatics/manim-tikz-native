@@ -22,6 +22,7 @@ COMPONENT_MOTION_PREVIEW_2D = "motion_preview_2d"
 COMPONENT_GEOMETRY_RIG_3D = "geometry_rig_3d"
 COMPONENT_NATIVE_MANIM_SOURCE_3D = "native_manim_source_3d"
 COMPONENT_NATIVE_MANIM_SOURCE_3D_V2 = "native_manim_source_3d_v2"
+COMPONENT_NATIVE_MANIM_SOURCE_3D_V3 = "native_manim_source_3d_v3"
 COMPONENT_EMBEDDED_MOTION_3D = "embedded_motion_3d"
 COMPONENT_MOTION_PREVIEW_3D = "motion_preview_3d"
 COMPONENT_POLYHEDRON_VISIBILITY = "polyhedron_visibility"
@@ -57,6 +58,9 @@ _NATIVE_SOURCE_3D_270A: Final = (
 )
 _NATIVE_SOURCE_3D_V2_26D7: Final = (
     "source-sha256:26d702598f6300ece385972271346a571e9fb28b273732584ce14fca98445769"
+)
+_NATIVE_SOURCE_3D_V3_3039: Final = (
+    "source-sha256:3039e2f6cccafb93b9d906737ad22158391893fe1298ed555ea054db0a4a1f7d"
 )
 _POLYHEDRON_VISIBILITY_AA45: Final = (
     "source-sha256:aa45310ff3c70ac1922ddf61b457cafeb789f9011ec67069b70c23d63fb3a8ae"
@@ -142,6 +146,20 @@ _COMPONENT_DEFINITIONS: Final[dict[str, dict[str, tuple[str, ...]]]] = {
         "dependencies": (COMPONENT_NATIVE_MANIM_SOURCE_3D,),
         "files": ("native_manim_codegen_3d_v2.py",),
     },
+    COMPONENT_NATIVE_MANIM_SOURCE_3D_V3: {
+        "dependencies": (
+            COMPONENT_NATIVE_MANIM_SOURCE_3D_V2,
+            COMPONENT_OPEN_FACE_VISIBILITY,
+            COMPONENT_TIKZ_OPEN_FACE_VISIBILITY_3D,
+        ),
+        "files": (
+            "geometry_rig_3d_source_v3_bridge.py",
+            "native_manim_codegen_3d_v3.py",
+            "schemas/geometry-rig-3d-source-v3-bridge-request-v1.schema.json",
+            "schemas/geometry-rig-3d-source-v3-bridge-response-v1.schema.json",
+            "schemas/geometry-rig-3d-source-v3-v1.schema.json",
+        ),
+    },
     COMPONENT_EMBEDDED_MOTION_3D: {
         "dependencies": (
             COMPONENT_ASSET_COMPILER,
@@ -222,6 +240,7 @@ _DECLARED_COMPONENT_REVISIONS: Final[dict[str, str]] = {
     COMPONENT_GEOMETRY_RIG_3D: _LEGACY_6920,
     COMPONENT_NATIVE_MANIM_SOURCE_3D: _NATIVE_SOURCE_3D_270A,
     COMPONENT_NATIVE_MANIM_SOURCE_3D_V2: _NATIVE_SOURCE_3D_V2_26D7,
+    COMPONENT_NATIVE_MANIM_SOURCE_3D_V3: _NATIVE_SOURCE_3D_V3_3039,
     COMPONENT_EMBEDDED_MOTION_3D: _LEGACY_6920,
     COMPONENT_MOTION_PREVIEW_3D: _LEGACY_6920,
     COMPONENT_POLYHEDRON_VISIBILITY: _POLYHEDRON_VISIBILITY_AA45,
@@ -262,6 +281,9 @@ _DECLARED_IMPLEMENTATION_DIGESTS: Final[dict[str, str]] = {
     ),
     COMPONENT_NATIVE_MANIM_SOURCE_3D_V2: (
         "26d702598f6300ece385972271346a571e9fb28b273732584ce14fca98445769"
+    ),
+    COMPONENT_NATIVE_MANIM_SOURCE_3D_V3: (
+        "3039e2f6cccafb93b9d906737ad22158391893fe1298ed555ea054db0a4a1f7d"
     ),
     COMPONENT_EMBEDDED_MOTION_3D: (
         "f47e6a693fdf4dd19f9487b7762a637bcec3ec981b8381a1eb14913e42e5fbcd"
@@ -453,6 +475,7 @@ __all__ = [
     "COMPONENT_NATIVE_MANIM_SOURCE_2D",
     "COMPONENT_NATIVE_MANIM_SOURCE_3D",
     "COMPONENT_NATIVE_MANIM_SOURCE_3D_V2",
+    "COMPONENT_NATIVE_MANIM_SOURCE_3D_V3",
     "COMPONENT_NATIVE_RIG_2D",
     "COMPONENT_OPEN_FACE_VISIBILITY",
     "COMPONENT_POLYHEDRON_VISIBILITY",
