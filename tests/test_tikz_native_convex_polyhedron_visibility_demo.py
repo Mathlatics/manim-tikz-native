@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from copy import deepcopy
 from pathlib import Path
 import unittest
 
@@ -51,6 +52,24 @@ class TikzNativeConvexPolyhedronVisibilityDemoTests(unittest.TestCase):
         again = adapt_picture_visibility_3d(self.picture)
         self.assertEqual(again.result_sha256, self.result.result_sha256)
         self.assertEqual(again.entry_trace_sha256, self.result.entry_trace_sha256)
+
+    def test_closed_face_orientation_accepts_the_supported_scale_range(self) -> None:
+        expected_faces = {
+            frozenset(face.vertex_ids) for face in self.result.model.faces
+        }
+        for factor in (1.0e-6, 1.0e6):
+            with self.subTest(factor=factor):
+                picture = deepcopy(self.picture)
+                picture.coordinates = {
+                    name: tuple(float(value) * factor for value in point)
+                    for name, point in picture.coordinates.items()
+                }
+                result = adapt_picture_visibility_3d(picture)
+                self.assertEqual(
+                    {frozenset(face.vertex_ids) for face in result.model.faces},
+                    expected_faces,
+                )
+                result.model.validate(require_closed_convex_manifold=True)
 
 
 if __name__ == "__main__":

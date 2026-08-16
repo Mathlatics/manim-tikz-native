@@ -609,9 +609,10 @@ def _orient_closed_faces_outward(
     vertex_ids = sorted({name for face in source for name in face.cycle})
     if not vertex_ids:
         return []
-    center = np.mean(
-        np.asarray([positions[name] for name in vertex_ids], dtype=float),
-        axis=0,
+    model_points = np.asarray([positions[name] for name in vertex_ids], dtype=float)
+    center = np.mean(model_points, axis=0)
+    model_extent = float(
+        np.linalg.norm(np.max(model_points, axis=0) - np.min(model_points, axis=0))
     )
     result: list[_FaceCandidate] = []
     for face in source:
@@ -622,7 +623,11 @@ def _orient_closed_faces_outward(
         extent = float(
             np.linalg.norm(np.max(points, axis=0) - np.min(points, axis=0))
         )
-        tolerance = max(1.0e-14, 8.0e-12 * max(extent, 1.0))
+        tolerance = (
+            256.0
+            * np.finfo(float).eps
+            * max(model_extent, extent, np.finfo(float).tiny)
+        )
         if abs(orientation) <= tolerance:
             raise TikzNativeVisibility3DAdapterError(
                 "AMBIGUOUS_FACE_ORIENTATION",
