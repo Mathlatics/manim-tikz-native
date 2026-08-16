@@ -64,6 +64,8 @@ def provider_info(
             "native_manim_source_2d_v1": True,
             "native_manim_source_3d_v1": True,
             "native_manim_source_3d_v2": True,
+            "polyhedron_visibility_parallel_v1": True,
+            "tikz_polyhedron_visibility_3d_v1": True,
             "provider_component_revisions_v1": True,
             "dynamic_camera_in_fixed_view": False,
         },

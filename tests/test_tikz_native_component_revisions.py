@@ -27,6 +27,9 @@ from tikz_native.version import (
     COMPONENT_NATIVE_MANIM_SOURCE_2D,
     COMPONENT_NATIVE_MANIM_SOURCE_3D,
     COMPONENT_NATIVE_MANIM_SOURCE_3D_V2,
+    COMPONENT_NATIVE_RIG_2D,
+    COMPONENT_POLYHEDRON_VISIBILITY,
+    COMPONENT_TIKZ_POLYHEDRON_VISIBILITY_3D,
     provider_component_files,
     provider_component_neutral_files,
     provider_component_revision_matches,
@@ -37,6 +40,7 @@ from tikz_native.version import (
 
 ROOT = Path(__file__).resolve().parents[1]
 PACKAGE_ROOT = ROOT / "tikz_native"
+VISIBILITY_ROOT = ROOT / "polyhedron_visibility"
 LEGACY_ASSET_REVISION = (
     "source-sha256:6920c63acf10ec22c3f94a1eeb9374799f5ce467419cb610a447675e9678c0ab"
 )
@@ -49,18 +53,37 @@ NATIVE_SOURCE_3D_REVISION = (
 NATIVE_SOURCE_3D_V2_REVISION = (
     "source-sha256:26d702598f6300ece385972271346a571e9fb28b273732584ce14fca98445769"
 )
+POLYHEDRON_VISIBILITY_REVISION = (
+    "source-sha256:57be8e1fc47070bbfc84e6d8c31ec7b518f1667d3e6194866d6e5d89825ccd4b"
+)
+TIKZ_POLYHEDRON_VISIBILITY_3D_REVISION = (
+    "source-sha256:a28c2c3ff17f6fdcd778605586f2199924624a46e14ce579941cbe999ed7d478"
+)
+
+
+def _owned_tool_path(relative: str) -> str:
+    if relative.startswith("@tool/"):
+        return relative.removeprefix("@tool/")
+    return f"tikz_native/{relative}"
 
 
 class TikzNativeComponentRevisionTests(unittest.TestCase):
     def test_every_provider_source_or_schema_has_an_explicit_component_owner(self) -> None:
         declared = {
-            relative
+            _owned_tool_path(relative)
             for files in provider_component_files().values()
             for relative in files
-        } | set(provider_component_neutral_files())
+        } | {
+            f"tikz_native/{relative}"
+            for relative in provider_component_neutral_files()
+        }
         actual = {
-            path.relative_to(PACKAGE_ROOT).as_posix()
+            path.relative_to(ROOT).as_posix()
             for path in PACKAGE_ROOT.rglob("*")
+            if path.is_file() and path.suffix in {".py", ".json"}
+        } | {
+            path.relative_to(ROOT).as_posix()
+            for path in VISIBILITY_ROOT.rglob("*")
             if path.is_file() and path.suffix in {".py", ".json"}
         }
         self.assertEqual(actual, declared)
@@ -94,8 +117,15 @@ class TikzNativeComponentRevisionTests(unittest.TestCase):
     def test_verified_page8_and_page9_components_keep_their_frozen_identity(self) -> None:
         revisions = provider_component_revisions()
         self.assertEqual(revisions[COMPONENT_ASSET_COMPILER], LEGACY_ASSET_REVISION)
+        self.assertEqual(revisions[COMPONENT_NATIVE_RIG_2D], LEGACY_ASSET_REVISION)
+        self.assertEqual(
+            revisions[COMPONENT_MOTION_PREVIEW_2D], LEGACY_ASSET_REVISION
+        )
         self.assertEqual(revisions[COMPONENT_GEOMETRY_RIG_3D], LEGACY_ASSET_REVISION)
         self.assertEqual(revisions[COMPONENT_EMBEDDED_MOTION_3D], LEGACY_ASSET_REVISION)
+        self.assertEqual(
+            revisions[COMPONENT_MOTION_PREVIEW_3D], LEGACY_ASSET_REVISION
+        )
         self.assertEqual(
             revisions[COMPONENT_NATIVE_MANIM_SOURCE_2D], NATIVE_SOURCE_REVISION
         )
@@ -110,6 +140,21 @@ class TikzNativeComponentRevisionTests(unittest.TestCase):
         self.assertNotIn(
             revisions[COMPONENT_NATIVE_MANIM_SOURCE_3D_V2],
             {LEGACY_ASSET_REVISION, NATIVE_SOURCE_3D_REVISION},
+        )
+
+    def test_new_visibility_components_have_independent_frozen_identities(self) -> None:
+        revisions = provider_component_revisions()
+        self.assertEqual(
+            revisions[COMPONENT_POLYHEDRON_VISIBILITY],
+            POLYHEDRON_VISIBILITY_REVISION,
+        )
+        self.assertEqual(
+            revisions[COMPONENT_TIKZ_POLYHEDRON_VISIBILITY_3D],
+            TIKZ_POLYHEDRON_VISIBILITY_3D_REVISION,
+        )
+        self.assertNotEqual(
+            revisions[COMPONENT_POLYHEDRON_VISIBILITY],
+            revisions[COMPONENT_TIKZ_POLYHEDRON_VISIBILITY_3D],
         )
 
     def test_unknown_legacy_revision_is_not_treated_as_compatible(self) -> None:
@@ -130,7 +175,10 @@ class TikzNativeComponentRevisionTests(unittest.TestCase):
         with TemporaryDirectory(prefix="tikz-component-revision-") as temporary:
             copied_root = Path(temporary) / "provider"
             shutil.copytree(ROOT, copied_root)
-            target = copied_root / "tikz_native" / mutation_path
+            if mutation_path.startswith("@tool/"):
+                target = copied_root / mutation_path.removeprefix("@tool/")
+            else:
+                target = copied_root / "tikz_native" / mutation_path
             target.write_text(
                 target.read_text(encoding="utf-8")
                 + "\n# component revision isolation probe\n",
@@ -210,6 +258,43 @@ print(json.dumps({
                 continue
             self.assertEqual(components[component], baseline[component])
 
+    def test_editing_visibility_core_changes_only_core_and_adapter(self) -> None:
+        baseline = provider_component_revisions()
+        mutated = self._probe_copy(
+            "@tool/polyhedron_visibility/parallel_solver.py"
+        )
+        components = mutated["components"]
+        self.assertNotEqual(mutated["build"], provider_revision())
+        self.assertNotEqual(
+            components[COMPONENT_POLYHEDRON_VISIBILITY],
+            baseline[COMPONENT_POLYHEDRON_VISIBILITY],
+        )
+        self.assertNotEqual(
+            components[COMPONENT_TIKZ_POLYHEDRON_VISIBILITY_3D],
+            baseline[COMPONENT_TIKZ_POLYHEDRON_VISIBILITY_3D],
+        )
+        for component in baseline:
+            if component in {
+                COMPONENT_POLYHEDRON_VISIBILITY,
+                COMPONENT_TIKZ_POLYHEDRON_VISIBILITY_3D,
+            }:
+                continue
+            self.assertEqual(components[component], baseline[component])
+
+    def test_editing_tikz_visibility_adapter_changes_only_its_component(self) -> None:
+        baseline = provider_component_revisions()
+        mutated = self._probe_copy("polyhedron_visibility_3d_adapter.py")
+        components = mutated["components"]
+        self.assertNotEqual(mutated["build"], provider_revision())
+        self.assertNotEqual(
+            components[COMPONENT_TIKZ_POLYHEDRON_VISIBILITY_3D],
+            baseline[COMPONENT_TIKZ_POLYHEDRON_VISIBILITY_3D],
+        )
+        for component in baseline:
+            if component == COMPONENT_TIKZ_POLYHEDRON_VISIBILITY_3D:
+                continue
+            self.assertEqual(components[component], baseline[component])
+
     def test_editing_compiler_invalidates_every_dependent_component(self) -> None:
         baseline = provider_component_revisions()
         mutated = self._probe_copy("compiler.py")
@@ -217,7 +302,10 @@ print(json.dumps({
         self.assertNotEqual(mutated["build"], provider_revision())
         self.assertEqual(set(components), set(baseline))
         for component in baseline:
-            self.assertNotEqual(components[component], baseline[component])
+            if component == COMPONENT_POLYHEDRON_VISIBILITY:
+                self.assertEqual(components[component], baseline[component])
+            else:
+                self.assertNotEqual(components[component], baseline[component])
 
 
 if __name__ == "__main__":

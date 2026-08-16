@@ -24,6 +24,14 @@ COMPONENT_NATIVE_MANIM_SOURCE_3D = "native_manim_source_3d"
 COMPONENT_NATIVE_MANIM_SOURCE_3D_V2 = "native_manim_source_3d_v2"
 COMPONENT_EMBEDDED_MOTION_3D = "embedded_motion_3d"
 COMPONENT_MOTION_PREVIEW_3D = "motion_preview_3d"
+COMPONENT_POLYHEDRON_VISIBILITY = "polyhedron_visibility"
+COMPONENT_TIKZ_POLYHEDRON_VISIBILITY_3D = "tikz_polyhedron_visibility_3d"
+
+
+# Existing manifests are relative to ``tikz_native/``.  New independent
+# runtime packages can opt into Provider-tool-root addressing without changing
+# the bytes that define any already frozen component digest.
+_TOOL_ROOT_FILE_PREFIX: Final = "@tool/"
 
 
 # A component revision is the build identity at which that compatibility
@@ -47,6 +55,12 @@ _NATIVE_SOURCE_3D_270A: Final = (
 )
 _NATIVE_SOURCE_3D_V2_26D7: Final = (
     "source-sha256:26d702598f6300ece385972271346a571e9fb28b273732584ce14fca98445769"
+)
+_POLYHEDRON_VISIBILITY_57BE: Final = (
+    "source-sha256:57be8e1fc47070bbfc84e6d8c31ec7b518f1667d3e6194866d6e5d89825ccd4b"
+)
+_TIKZ_POLYHEDRON_VISIBILITY_3D_A28C: Final = (
+    "source-sha256:a28c2c3ff17f6fdcd778605586f2199924624a46e14ce579941cbe999ed7d478"
 )
 
 
@@ -143,6 +157,26 @@ _COMPONENT_DEFINITIONS: Final[dict[str, dict[str, tuple[str, ...]]]] = {
             "schemas/motion-3d-bridge-response-v1.schema.json",
         ),
     },
+    COMPONENT_POLYHEDRON_VISIBILITY: {
+        "dependencies": (),
+        "files": (
+            "@tool/polyhedron_visibility/__init__.py",
+            "@tool/polyhedron_visibility/api.py",
+            "@tool/polyhedron_visibility/authoring.py",
+            "@tool/polyhedron_visibility/binding.py",
+            "@tool/polyhedron_visibility/contract.py",
+            "@tool/polyhedron_visibility/parallel_solver.py",
+            "@tool/polyhedron_visibility/style.py",
+            "@tool/polyhedron_visibility/trace.py",
+        ),
+    },
+    COMPONENT_TIKZ_POLYHEDRON_VISIBILITY_3D: {
+        "dependencies": (
+            COMPONENT_ASSET_COMPILER,
+            COMPONENT_POLYHEDRON_VISIBILITY,
+        ),
+        "files": ("polyhedron_visibility_3d_adapter.py",),
+    },
 }
 
 
@@ -157,6 +191,10 @@ _DECLARED_COMPONENT_REVISIONS: Final[dict[str, str]] = {
     COMPONENT_NATIVE_MANIM_SOURCE_3D_V2: _NATIVE_SOURCE_3D_V2_26D7,
     COMPONENT_EMBEDDED_MOTION_3D: _LEGACY_6920,
     COMPONENT_MOTION_PREVIEW_3D: _LEGACY_6920,
+    COMPONENT_POLYHEDRON_VISIBILITY: _POLYHEDRON_VISIBILITY_57BE,
+    COMPONENT_TIKZ_POLYHEDRON_VISIBILITY_3D: (
+        _TIKZ_POLYHEDRON_VISIBILITY_3D_A28C
+    ),
 }
 
 
@@ -194,6 +232,12 @@ _DECLARED_IMPLEMENTATION_DIGESTS: Final[dict[str, str]] = {
     COMPONENT_MOTION_PREVIEW_3D: (
         "ad0ae4862e87fd7fcee52d2dce6cf87d5fb69c35babb2d2f457628b1f1d715b2"
     ),
+    COMPONENT_POLYHEDRON_VISIBILITY: (
+        "57be8e1fc47070bbfc84e6d8c31ec7b518f1667d3e6194866d6e5d89825ccd4b"
+    ),
+    COMPONENT_TIKZ_POLYHEDRON_VISIBILITY_3D: (
+        "a28c2c3ff17f6fdcd778605586f2199924624a46e14ce579941cbe999ed7d478"
+    ),
 }
 
 
@@ -223,25 +267,49 @@ def provider_revision() -> str:
         return explicit
 
     package_root = Path(__file__).resolve().parent
-    candidates = sorted(
+    tool_root = package_root.parent
+    candidates = [
+        (path.relative_to(package_root).as_posix(), path)
+        for path in package_root.rglob("*")
+        if path.is_file()
+        and "__pycache__" not in path.parts
+        and path.suffix in {".py", ".json"}
+    ]
+    visibility_root = tool_root / "polyhedron_visibility"
+    candidates.extend(
         (
-            path
-            for path in package_root.rglob("*")
-            if path.is_file()
-            and "__pycache__" not in path.parts
-            and path.suffix in {".py", ".json"}
-        ),
-        key=lambda path: path.relative_to(package_root).as_posix(),
+            _TOOL_ROOT_FILE_PREFIX + path.relative_to(tool_root).as_posix(),
+            path,
+        )
+        for path in visibility_root.rglob("*")
+        if path.is_file()
+        and "__pycache__" not in path.parts
+        and path.suffix in {".py", ".json"}
     )
     digest = hashlib.sha256()
-    for path in candidates:
-        relative = path.relative_to(package_root).as_posix().encode("utf-8")
+    for relative_text, path in sorted(candidates, key=lambda item: item[0]):
+        relative = relative_text.encode("utf-8")
         digest.update(len(relative).to_bytes(4, "big"))
         digest.update(relative)
         payload = path.read_bytes()
         digest.update(len(payload).to_bytes(8, "big"))
         digest.update(payload)
     return f"source-sha256:{digest.hexdigest()}"
+
+
+def _component_file_path(relative_text: str) -> Path:
+    package_root = Path(__file__).resolve().parent
+    if relative_text.startswith(_TOOL_ROOT_FILE_PREFIX):
+        tool_relative = relative_text.removeprefix(_TOOL_ROOT_FILE_PREFIX)
+        relative = Path(tool_relative)
+        if not tool_relative or relative.is_absolute() or ".." in relative.parts:
+            raise RuntimeError(
+                f"invalid TikZ Native tool-root component path: {relative_text!r}"
+            )
+        path = package_root.parent / relative
+    else:
+        path = package_root / relative_text
+    return path
 
 
 def _component_implementation_digest(
@@ -264,15 +332,13 @@ def _component_implementation_digest(
         )
         digest.update(dependency.encode("utf-8"))
         digest.update(bytes.fromhex(dependency_digest))
-    package_root = Path(__file__).resolve().parent
     for relative_text in sorted(definition["files"]):
-        relative = Path(relative_text)
-        path = package_root / relative
+        path = _component_file_path(relative_text)
         if not path.is_file():
             raise RuntimeError(
                 f"TikZ Native component {component!r} is missing {relative_text!r}"
             )
-        relative_bytes = relative.as_posix().encode("utf-8")
+        relative_bytes = relative_text.encode("utf-8")
         payload = path.read_bytes()
         digest.update(len(relative_bytes).to_bytes(4, "big"))
         digest.update(relative_bytes)
@@ -345,7 +411,9 @@ __all__ = [
     "COMPONENT_NATIVE_MANIM_SOURCE_3D",
     "COMPONENT_NATIVE_MANIM_SOURCE_3D_V2",
     "COMPONENT_NATIVE_RIG_2D",
+    "COMPONENT_POLYHEDRON_VISIBILITY",
     "COMPONENT_REVISION_SCHEMA",
+    "COMPONENT_TIKZ_POLYHEDRON_VISIBILITY_3D",
     "PROTOCOL_VERSION",
     "REQUEST_SCHEMA",
     "RESPONSE_SCHEMA",
