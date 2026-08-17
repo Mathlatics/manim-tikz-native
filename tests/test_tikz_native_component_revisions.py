@@ -34,8 +34,11 @@ from tikz_native.version import (
     COMPONENT_NATIVE_RIG_2D,
     COMPONENT_OPEN_FACE_VISIBILITY,
     COMPONENT_POLYHEDRON_VISIBILITY,
+    COMPONENT_TIKZ_OPEN_FACE_STATIC_ASSET_3D,
     COMPONENT_TIKZ_OPEN_FACE_VISIBILITY_3D,
     COMPONENT_TIKZ_POLYHEDRON_VISIBILITY_3D,
+    COMPONENT_CONTRACT_REVISION_SCHEMA,
+    provider_component_contract_revisions,
     provider_component_files,
     provider_component_neutral_files,
     provider_component_revision_matches,
@@ -60,7 +63,7 @@ NATIVE_SOURCE_3D_V2_REVISION = (
     "source-sha256:26d702598f6300ece385972271346a571e9fb28b273732584ce14fca98445769"
 )
 NATIVE_SOURCE_3D_V3_REVISION = (
-    "source-sha256:3039e2f6cccafb93b9d906737ad22158391893fe1298ed555ea054db0a4a1f7d"
+    "source-sha256:7c368f4d7681ebe716d4cf2e0a73d64822ec5a49cdd64b7e67b9f5bf4689a8ca"
 )
 POLYHEDRON_VISIBILITY_REVISION = (
     "source-sha256:aa45310ff3c70ac1922ddf61b457cafeb789f9011ec67069b70c23d63fb3a8ae"
@@ -73,6 +76,9 @@ OPEN_FACE_VISIBILITY_REVISION = (
 )
 TIKZ_OPEN_FACE_VISIBILITY_3D_REVISION = (
     "source-sha256:e5854f0f7bcd83f2a86cbbf53ab8237ad07471c84668ee3f13af695c367d4a29"
+)
+TIKZ_OPEN_FACE_STATIC_ASSET_3D_REVISION = (
+    "source-sha256:e46f69d6a2167da0c3aa0dd8e66f9762865a4627f4acd987ff9c58489ce5eea2"
 )
 
 
@@ -105,6 +111,7 @@ class TikzNativeComponentRevisionTests(unittest.TestCase):
 
     def test_bridge_health_uses_the_component_that_owns_its_operation(self) -> None:
         revisions = provider_component_revisions()
+        contracts = provider_component_contract_revisions()
         asset = asset_provider_info()
         geometry_2d = geometry_rig_2d_provider_info()
         geometry_3d = geometry_rig_3d_provider_info()
@@ -144,6 +151,22 @@ class TikzNativeComponentRevisionTests(unittest.TestCase):
         ):
             self.assertEqual(record["build_revision"], provider_revision())
             self.assertEqual(record["component_revisions"], revisions)
+            # The legacy 3D motion bridge intentionally avoids importing the
+            # full Provider metadata module.  Primary asset/analysis/source
+            # health records expose both new maps; its frozen response stays
+            # byte-compatible until that bridge gets a separately versioned
+            # metadata envelope.
+            if record is not motion_3d:
+                self.assertEqual(
+                    record["component_render_revisions"], revisions
+                )
+                self.assertEqual(
+                    record["component_contract_revision_schema"],
+                    COMPONENT_CONTRACT_REVISION_SCHEMA,
+                )
+                self.assertEqual(
+                    record["component_contract_revisions"], contracts
+                )
 
     def test_verified_page8_and_page9_components_keep_their_frozen_identity(self) -> None:
         revisions = provider_component_revisions()
@@ -194,6 +217,9 @@ class TikzNativeComponentRevisionTests(unittest.TestCase):
             COMPONENT_OPEN_FACE_VISIBILITY: OPEN_FACE_VISIBILITY_REVISION,
             COMPONENT_TIKZ_OPEN_FACE_VISIBILITY_3D: (
                 TIKZ_OPEN_FACE_VISIBILITY_3D_REVISION
+            ),
+            COMPONENT_TIKZ_OPEN_FACE_STATIC_ASSET_3D: (
+                TIKZ_OPEN_FACE_STATIC_ASSET_3D_REVISION
             ),
         }
         self.assertEqual(
@@ -358,6 +384,7 @@ print(json.dumps({
                 COMPONENT_TIKZ_POLYHEDRON_VISIBILITY_3D,
                 COMPONENT_OPEN_FACE_VISIBILITY,
                 COMPONENT_TIKZ_OPEN_FACE_VISIBILITY_3D,
+                COMPONENT_TIKZ_OPEN_FACE_STATIC_ASSET_3D,
                 COMPONENT_NATIVE_MANIM_SOURCE_3D_V3,
             }:
                 continue
@@ -373,6 +400,7 @@ print(json.dumps({
         for component in (
             COMPONENT_OPEN_FACE_VISIBILITY,
             COMPONENT_TIKZ_OPEN_FACE_VISIBILITY_3D,
+            COMPONENT_TIKZ_OPEN_FACE_STATIC_ASSET_3D,
             COMPONENT_NATIVE_MANIM_SOURCE_3D_V3,
         ):
             self.assertNotEqual(components[component], baseline[component])
@@ -380,6 +408,7 @@ print(json.dumps({
             if component in {
                 COMPONENT_OPEN_FACE_VISIBILITY,
                 COMPONENT_TIKZ_OPEN_FACE_VISIBILITY_3D,
+                COMPONENT_TIKZ_OPEN_FACE_STATIC_ASSET_3D,
                 COMPONENT_NATIVE_MANIM_SOURCE_3D_V3,
             }:
                 continue
@@ -400,9 +429,10 @@ print(json.dumps({
         )
         for component in baseline:
             if component in {
-            COMPONENT_TIKZ_POLYHEDRON_VISIBILITY_3D,
-            COMPONENT_TIKZ_OPEN_FACE_VISIBILITY_3D,
-            COMPONENT_NATIVE_MANIM_SOURCE_3D_V3,
+                COMPONENT_TIKZ_POLYHEDRON_VISIBILITY_3D,
+                COMPONENT_TIKZ_OPEN_FACE_VISIBILITY_3D,
+                COMPONENT_TIKZ_OPEN_FACE_STATIC_ASSET_3D,
+                COMPONENT_NATIVE_MANIM_SOURCE_3D_V3,
             }:
                 continue
             self.assertEqual(components[component], baseline[component])
@@ -420,11 +450,30 @@ print(json.dumps({
             components[COMPONENT_NATIVE_MANIM_SOURCE_3D_V3],
             baseline[COMPONENT_NATIVE_MANIM_SOURCE_3D_V3],
         )
+        self.assertNotEqual(
+            components[COMPONENT_TIKZ_OPEN_FACE_STATIC_ASSET_3D],
+            baseline[COMPONENT_TIKZ_OPEN_FACE_STATIC_ASSET_3D],
+        )
         for component in baseline:
             if component in {
                 COMPONENT_TIKZ_OPEN_FACE_VISIBILITY_3D,
+                COMPONENT_TIKZ_OPEN_FACE_STATIC_ASSET_3D,
                 COMPONENT_NATIVE_MANIM_SOURCE_3D_V3,
             }:
+                continue
+            self.assertEqual(components[component], baseline[component])
+
+    def test_editing_static_open_face_baker_changes_only_its_component(self) -> None:
+        baseline = provider_component_revisions()
+        mutated = self._probe_copy("open_face_static_asset_3d.py")
+        components = mutated["components"]
+        self.assertNotEqual(mutated["build"], provider_revision())
+        self.assertNotEqual(
+            components[COMPONENT_TIKZ_OPEN_FACE_STATIC_ASSET_3D],
+            baseline[COMPONENT_TIKZ_OPEN_FACE_STATIC_ASSET_3D],
+        )
+        for component in baseline:
+            if component == COMPONENT_TIKZ_OPEN_FACE_STATIC_ASSET_3D:
                 continue
             self.assertEqual(components[component], baseline[component])
 

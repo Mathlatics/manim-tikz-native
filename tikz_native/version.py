@@ -14,6 +14,9 @@ RESPONSE_SCHEMA = "tikz-native-bridge.response/v1"
 ASSET_SCHEMA = "tikz-native-asset/v1"
 
 COMPONENT_REVISION_SCHEMA = "tikz-native-component-revisions/v1"
+COMPONENT_CONTRACT_REVISION_SCHEMA = (
+    "tikz-native-component-contract-revisions/v1"
+)
 COMPONENT_ASSET_COMPILER = "asset_compiler"
 COMPONENT_GEOMETRY_RIG_2D = "geometry_rig_2d"
 COMPONENT_NATIVE_MANIM_SOURCE_2D = "native_manim_source_2d"
@@ -29,6 +32,7 @@ COMPONENT_POLYHEDRON_VISIBILITY = "polyhedron_visibility"
 COMPONENT_OPEN_FACE_VISIBILITY = "open_face_visibility"
 COMPONENT_TIKZ_POLYHEDRON_VISIBILITY_3D = "tikz_polyhedron_visibility_3d"
 COMPONENT_TIKZ_OPEN_FACE_VISIBILITY_3D = "tikz_open_face_visibility_3d"
+COMPONENT_TIKZ_OPEN_FACE_STATIC_ASSET_3D = "tikz_open_face_static_asset_3d"
 
 
 # Existing manifests are relative to ``tikz_native/``.  New independent
@@ -59,8 +63,8 @@ _NATIVE_SOURCE_3D_270A: Final = (
 _NATIVE_SOURCE_3D_V2_26D7: Final = (
     "source-sha256:26d702598f6300ece385972271346a571e9fb28b273732584ce14fca98445769"
 )
-_NATIVE_SOURCE_3D_V3_3039: Final = (
-    "source-sha256:3039e2f6cccafb93b9d906737ad22158391893fe1298ed555ea054db0a4a1f7d"
+_NATIVE_SOURCE_3D_V3_4960: Final = (
+    "source-sha256:7c368f4d7681ebe716d4cf2e0a73d64822ec5a49cdd64b7e67b9f5bf4689a8ca"
 )
 _POLYHEDRON_VISIBILITY_AA45: Final = (
     "source-sha256:aa45310ff3c70ac1922ddf61b457cafeb789f9011ec67069b70c23d63fb3a8ae"
@@ -73,6 +77,9 @@ _OPEN_FACE_VISIBILITY_REVISION: Final = (
 )
 _TIKZ_OPEN_FACE_VISIBILITY_3D_REVISION: Final = (
     "source-sha256:e5854f0f7bcd83f2a86cbbf53ab8237ad07471c84668ee3f13af695c367d4a29"
+)
+_TIKZ_OPEN_FACE_STATIC_ASSET_3D_REVISION: Final = (
+    "source-sha256:e46f69d6a2167da0c3aa0dd8e66f9762865a4627f4acd987ff9c58489ce5eea2"
 )
 
 
@@ -228,6 +235,14 @@ _COMPONENT_DEFINITIONS: Final[dict[str, dict[str, tuple[str, ...]]]] = {
             "open_face_visibility_3d_manim.py",
         ),
     },
+    COMPONENT_TIKZ_OPEN_FACE_STATIC_ASSET_3D: {
+        "dependencies": (
+            COMPONENT_ASSET_COMPILER,
+            COMPONENT_OPEN_FACE_VISIBILITY,
+            COMPONENT_TIKZ_OPEN_FACE_VISIBILITY_3D,
+        ),
+        "files": ("open_face_static_asset_3d.py",),
+    },
 }
 
 
@@ -240,7 +255,7 @@ _DECLARED_COMPONENT_REVISIONS: Final[dict[str, str]] = {
     COMPONENT_GEOMETRY_RIG_3D: _LEGACY_6920,
     COMPONENT_NATIVE_MANIM_SOURCE_3D: _NATIVE_SOURCE_3D_270A,
     COMPONENT_NATIVE_MANIM_SOURCE_3D_V2: _NATIVE_SOURCE_3D_V2_26D7,
-    COMPONENT_NATIVE_MANIM_SOURCE_3D_V3: _NATIVE_SOURCE_3D_V3_3039,
+    COMPONENT_NATIVE_MANIM_SOURCE_3D_V3: _NATIVE_SOURCE_3D_V3_4960,
     COMPONENT_EMBEDDED_MOTION_3D: _LEGACY_6920,
     COMPONENT_MOTION_PREVIEW_3D: _LEGACY_6920,
     COMPONENT_POLYHEDRON_VISIBILITY: _POLYHEDRON_VISIBILITY_AA45,
@@ -251,6 +266,19 @@ _DECLARED_COMPONENT_REVISIONS: Final[dict[str, str]] = {
     COMPONENT_TIKZ_OPEN_FACE_VISIBILITY_3D: (
         _TIKZ_OPEN_FACE_VISIBILITY_3D_REVISION
     ),
+    COMPONENT_TIKZ_OPEN_FACE_STATIC_ASSET_3D: (
+        _TIKZ_OPEN_FACE_STATIC_ASSET_3D_REVISION
+    ),
+}
+
+
+# Contract revisions describe the persisted author-data ABI, not the bytes of
+# the current implementation.  They must change only when an already-saved
+# asset or Native Clip can no longer be read safely.  In contrast,
+# ``provider_component_revisions()`` remains the render/cache identity and may
+# change whenever implementation bytes change.
+_DECLARED_COMPONENT_CONTRACT_VERSIONS: Final[dict[str, int]] = {
+    component: 1 for component in _COMPONENT_DEFINITIONS
 }
 
 
@@ -283,7 +311,7 @@ _DECLARED_IMPLEMENTATION_DIGESTS: Final[dict[str, str]] = {
         "26d702598f6300ece385972271346a571e9fb28b273732584ce14fca98445769"
     ),
     COMPONENT_NATIVE_MANIM_SOURCE_3D_V3: (
-        "3039e2f6cccafb93b9d906737ad22158391893fe1298ed555ea054db0a4a1f7d"
+        "7c368f4d7681ebe716d4cf2e0a73d64822ec5a49cdd64b7e67b9f5bf4689a8ca"
     ),
     COMPONENT_EMBEDDED_MOTION_3D: (
         "f47e6a693fdf4dd19f9487b7762a637bcec3ec981b8381a1eb14913e42e5fbcd"
@@ -302,6 +330,9 @@ _DECLARED_IMPLEMENTATION_DIGESTS: Final[dict[str, str]] = {
     ),
     COMPONENT_TIKZ_OPEN_FACE_VISIBILITY_3D: (
         "e5854f0f7bcd83f2a86cbbf53ab8237ad07471c84668ee3f13af695c367d4a29"
+    ),
+    COMPONENT_TIKZ_OPEN_FACE_STATIC_ASSET_3D: (
+        "e46f69d6a2167da0c3aa0dd8e66f9762865a4627f4acd987ff9c58489ce5eea2"
     ),
 }
 
@@ -446,6 +477,30 @@ def provider_component_revision(component: str) -> str:
         raise ValueError(f"unknown TikZ Native component: {component!r}") from exc
 
 
+@lru_cache(maxsize=1)
+def provider_component_contract_revisions() -> dict[str, str]:
+    return {
+        component: f"tikz-native-contract:{component}/v{version}"
+        for component, version in _DECLARED_COMPONENT_CONTRACT_VERSIONS.items()
+    }
+
+
+def provider_component_contract_revision(component: str) -> str:
+    try:
+        return provider_component_contract_revisions()[component]
+    except KeyError as exc:
+        raise ValueError(f"unknown TikZ Native component: {component!r}") from exc
+
+
+def provider_component_contract_revision_matches(
+    component: str, recorded: object
+) -> bool:
+    value = str(recorded or "").strip()
+    if not value:
+        return False
+    return value == provider_component_contract_revision(component)
+
+
 def provider_component_files() -> dict[str, tuple[str, ...]]:
     return {
         component: tuple(definition["files"])
@@ -467,6 +522,7 @@ def provider_component_revision_matches(component: str, recorded: object) -> boo
 __all__ = [
     "ASSET_SCHEMA",
     "COMPONENT_ASSET_COMPILER",
+    "COMPONENT_CONTRACT_REVISION_SCHEMA",
     "COMPONENT_EMBEDDED_MOTION_3D",
     "COMPONENT_GEOMETRY_RIG_2D",
     "COMPONENT_GEOMETRY_RIG_3D",
@@ -481,12 +537,16 @@ __all__ = [
     "COMPONENT_POLYHEDRON_VISIBILITY",
     "COMPONENT_REVISION_SCHEMA",
     "COMPONENT_TIKZ_OPEN_FACE_VISIBILITY_3D",
+    "COMPONENT_TIKZ_OPEN_FACE_STATIC_ASSET_3D",
     "COMPONENT_TIKZ_POLYHEDRON_VISIBILITY_3D",
     "PROTOCOL_VERSION",
     "REQUEST_SCHEMA",
     "RESPONSE_SCHEMA",
     "__version__",
     "provider_component_files",
+    "provider_component_contract_revision",
+    "provider_component_contract_revision_matches",
+    "provider_component_contract_revisions",
     "provider_component_implementation_revisions",
     "provider_component_neutral_files",
     "provider_component_revision",

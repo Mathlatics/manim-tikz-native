@@ -400,6 +400,75 @@ def _open_face_restore_sources(snapshots):
             setattr(member, name, value.copy() if isinstance(value, np.ndarray) else value)
 
 
+def _open_face_static_entry_record(shape):
+    record = getattr(shape, "_mathppt_open_face_static_entry", None)
+    if record is None:
+        # Unbound preview deliberately remains available before the author
+        # explicitly recompiles the persisted ShapeAsset.
+        return None
+    expected_fields = {
+        "schema",
+        "contractSchema",
+        "sourceSha256",
+        "modelSha256",
+        "entryTraceSha256",
+        "adapterResultSha256",
+        "strokeWidthPerPt",
+        "overlayRoot",
+    }
+    if not isinstance(record, dict) or set(record) != expected_fields:
+        raise RuntimeError("baked open-face static entry has an invalid contract")
+    if (
+        record["schema"] != "tikz-native-open-face-static-entry-3d/v2"
+        or record["contractSchema"]
+        not in {
+            "latex-ppt-tikz-native-open-face-static-asset/v1",
+            "latex-ppt-tikz-native-open-face-static-asset/v2",
+        }
+        or record["modelSha256"] != OPEN_FACE_MODEL_SHA256
+        or record["entryTraceSha256"] != OPEN_FACE_ENTRY_TRACE_SHA256
+        or record["adapterResultSha256"] != OPEN_FACE_ADAPTER_RESULT_SHA256
+    ):
+        raise RuntimeError("baked open-face static entry is stale")
+    width_scale = float(record["strokeWidthPerPt"])
+    if not np.isfinite(width_scale) or width_scale <= 0.0:
+        raise RuntimeError("baked open-face static entry lost its stroke-width scale")
+    return record
+
+
+def _open_face_static_stroke_width_per_pt(shape):
+    record = _open_face_static_entry_record(shape)
+    return None if record is None else float(record["strokeWidthPerPt"])
+
+
+def _open_face_detach_static_entry(shape):
+    """Temporarily remove the baked entry overlay before dynamic slots attach."""
+    record = _open_face_static_entry_record(shape)
+    if record is None:
+        return None
+    overlay = record["overlayRoot"]
+    if not isinstance(overlay, Mobject):
+        raise RuntimeError("baked open-face static entry lost its overlay root")
+    indices = [
+        index for index, child in enumerate(shape.submobjects) if child is overlay
+    ]
+    if len(indices) != 1:
+        raise RuntimeError("baked open-face static entry is not one ShapeState child")
+    index = indices[0]
+    shape.remove(overlay)
+    return {"record": record, "overlayRoot": overlay, "childIndex": index}
+
+
+def _open_face_restore_static_entry(shape, detached):
+    if detached is None:
+        return
+    overlay = detached["overlayRoot"]
+    if any(child is overlay for child in shape.submobjects):
+        return
+    index = max(0, min(int(detached["childIndex"]), len(shape.submobjects)))
+    shape.submobjects.insert(index, overlay)
+
+
 def _open_face_sources(objects, geometry_state):
     groups = tuple(geometry_state.get("temporary_groups", ()))
     relation_index = {
@@ -598,6 +667,7 @@ def install_open_face_visibility_3d(scene, shape, objects, geometry_state):
         "overlay_root": overlay_root,
         "attached": False,
         "last_spans": None,
+        "baked_static_entry": None,
     }
 
     def update_overlay(mobject, dt):
@@ -612,6 +682,8 @@ def install_open_face_visibility_3d(scene, shape, objects, geometry_state):
 
     overlay_root.add_updater(update_overlay)
     try:
+        baked_static_entry = _open_face_detach_static_entry(shape)
+        state["baked_static_entry"] = baked_static_entry
         spans, plans = _open_face_prepare_frame(state)
         _open_face_assert_entry(spans)
         _open_face_apply_frame(state, spans, plans)
@@ -623,6 +695,9 @@ def install_open_face_visibility_3d(scene, shape, objects, geometry_state):
     except Exception:
         state["attached"] = False
         _open_face_restore_sources(snapshots)
+        _open_face_restore_static_entry(
+            shape, state.get("baked_static_entry")
+        )
         _open_face_remove_overlay(state)
         if getattr(shape, "_mathppt_open_face_visibility_owner", None) is state:
             delattr(shape, "_mathppt_open_face_visibility_owner")
@@ -640,6 +715,10 @@ def restore_open_face_visibility_3d(state):
     _open_face_remove_overlay(state)
     _open_face_restore_sources(state.get("source_snapshots", ()))
     shape = state.get("shape")
+    if shape is not None:
+        _open_face_restore_static_entry(
+            shape, state.get("baked_static_entry")
+        )
     if shape is not None and getattr(shape, "_mathppt_open_face_visibility_owner", None) is state:
         delattr(shape, "_mathppt_open_face_visibility_owner")
 '''
@@ -674,6 +753,54 @@ def generate_native_manim_source_3d_v3(
         raise NativeManimCodegen3DV3Error(str(exc)) from exc
 
     source = str(v2["sourceText"])
+    width_fallback_patch = (
+        "    width_scale = (\n"
+        "        scene_unit_per_cm / TEX_POINTS_PER_CM\n"
+        "        if stroke_width_per_pt is None\n"
+        "        else stroke_width_per_pt\n"
+        "    )\n"
+    )
+    width_fallback_replacement = (
+        "    if (\n"
+        "        stroke_width_per_pt is None\n"
+        "        or not np.isfinite(stroke_width_per_pt)\n"
+        "        or stroke_width_per_pt <= 0.0\n"
+        "    ):\n"
+        "        raise RuntimeError(\n"
+        "            'open-face visibility requires one frozen Manim stroke-width scale'\n"
+        "        )\n"
+        "    width_scale = float(stroke_width_per_pt)\n"
+    )
+    if source.count(width_fallback_patch) != 1:
+        raise NativeManimCodegen3DV3Error(
+            "v2 source template drifted at the stroke-width fallback"
+        )
+    source = source.replace(
+        width_fallback_patch, width_fallback_replacement, 1
+    )
+    measured_width_patch = (
+        "    stroke_width_per_pt = None if not stroke_ratios else float(np.median(stroke_ratios))\n"
+    )
+    measured_width_replacement = measured_width_patch + (
+        "    baked_stroke_width_per_pt = _open_face_static_stroke_width_per_pt(shape)\n"
+        "    if baked_stroke_width_per_pt is not None:\n"
+        "        stroke_width_per_pt = baked_stroke_width_per_pt\n"
+        "    if (\n"
+        "        stroke_width_per_pt is None\n"
+        "        or not np.isfinite(stroke_width_per_pt)\n"
+        "        or stroke_width_per_pt <= 0.0\n"
+        "    ):\n"
+        "        raise RuntimeError(\n"
+        "            'TikZ ShapeState does not expose a usable Manim stroke-width scale'\n"
+        "        )\n"
+    )
+    if source.count(measured_width_patch) != 1:
+        raise NativeManimCodegen3DV3Error(
+            "v2 source template drifted at the measured stroke-width scale"
+        )
+    source = source.replace(
+        measured_width_patch, measured_width_replacement, 1
+    )
     orientation_by_axis = _signed_hinge_orientation(picture)
     authoring_v1 = dict(v2["authoringSpec"])
     orientation_by_driver = {

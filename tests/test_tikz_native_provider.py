@@ -34,6 +34,16 @@ class TikzNativeProviderTests(unittest.TestCase):
         self.assertTrue(info["capabilities"]["native_manim_source_2d_v1"])
         self.assertTrue(info["capabilities"]["native_manim_source_3d_v1"])
         self.assertTrue(info["capabilities"]["native_manim_source_3d_v2"])
+        self.assertTrue(
+            info["capabilities"]["provider_component_contract_revisions_v1"]
+        )
+        self.assertEqual(
+            info["component_render_revisions"], info["component_revisions"]
+        )
+        self.assertIn(
+            "native_manim_source_3d_v3",
+            info["component_contract_revisions"],
+        )
         self.assertTrue(info["capabilities"]["polyhedron_visibility_parallel_v1"])
         self.assertTrue(
             info["capabilities"]["tikz_polyhedron_visibility_3d_v1"]

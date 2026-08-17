@@ -18,11 +18,13 @@ from .compatibility import load_subset_spec
 from .version import (
     ASSET_SCHEMA,
     COMPONENT_ASSET_COMPILER,
+    COMPONENT_CONTRACT_REVISION_SCHEMA,
     COMPONENT_REVISION_SCHEMA,
     PROTOCOL_VERSION,
     REQUEST_SCHEMA,
     RESPONSE_SCHEMA,
     __version__,
+    provider_component_contract_revisions,
     provider_component_revision,
     provider_component_revisions,
     provider_revision,
@@ -35,6 +37,7 @@ def provider_info(
 ) -> dict[str, Any]:
     subset = load_subset_spec()
     component_revisions = provider_component_revisions()
+    component_contract_revisions = provider_component_contract_revisions()
     return {
         "name": "tikz-native-manim",
         "version": __version__,
@@ -48,8 +51,16 @@ def provider_info(
         "revision": provider_component_revision(revision_component),
         "revision_component": revision_component,
         "build_revision": provider_revision(),
+        "component_contract_revision_schema": (
+            COMPONENT_CONTRACT_REVISION_SCHEMA
+        ),
+        "component_contract_revisions": component_contract_revisions,
         "component_revision_schema": COMPONENT_REVISION_SCHEMA,
         "component_revisions": component_revisions,
+        # Explicit aliases make the new semantics clear while the original
+        # names stay available to old Host versions.
+        "component_render_revision_schema": COMPONENT_REVISION_SCHEMA,
+        "component_render_revisions": component_revisions,
         "python_version": platform.python_version(),
         "python_executable": sys.executable,
         "manim_version": manim.__version__,
@@ -69,7 +80,9 @@ def provider_info(
             "tikz_polyhedron_visibility_3d_v1": True,
             "open_convex_face_visibility_parallel_v1": True,
             "tikz_open_face_visibility_3d_v1": True,
+            "tikz_open_face_static_asset_3d_v1": True,
             "provider_component_revisions_v1": True,
+            "provider_component_contract_revisions_v1": True,
             "dynamic_camera_in_fixed_view": False,
         },
     }
