@@ -5,7 +5,7 @@ from pathlib import Path
 import unittest
 
 import numpy as np
-from manim import Scene, ValueTracker
+from manim import Dot, Scene, ValueTracker
 from manim.animation.animation import prepare_animation
 
 from tikz_native.compiler import compile_document
@@ -79,6 +79,7 @@ class TikzNativeReadableManim3DV3Tests(unittest.TestCase):
         ):
             self.assertNotIn(forbidden, payload["sourceText"])
         self.assertIn("def compute_open_face_visibility_3d", payload["sourceText"])
+        self.assertIn("def compute_open_face_fill_order_3d", payload["sourceText"])
         self.assertIn("def install_open_face_visibility_3d", payload["sourceText"])
         self.assertIn("def restore_open_face_visibility_3d", payload["sourceText"])
         self.assertEqual(
@@ -130,6 +131,13 @@ class TikzNativeReadableManim3DV3Tests(unittest.TestCase):
             for object_id, item in figure.objects.items()
         }
         entry_children = tuple(id(item) for item in shape.submobjects)
+        face_object_ids = tuple(
+            item["object_id"] for item in namespace["OPEN_FACE_FACE_BINDINGS"]
+        )
+        entry_fill_opacities = {
+            object_id: figure.objects[object_id].get_fill_opacity()
+            for object_id in face_object_ids
+        }
         entry_roots = None
         trackers = {
             driver_id: ValueTracker(initial)
@@ -150,8 +158,25 @@ class TikzNativeReadableManim3DV3Tests(unittest.TestCase):
             tuple(item[2] for item in visibility["last_spans"][probe_id]),
             ("visible", "hidden", "visible"),
         )
+        self.assertEqual(
+            {
+                object_id: figure.objects[object_id].get_fill_opacity()
+                for object_id in face_object_ids
+            },
+            {object_id: 0.0 for object_id in face_object_ids},
+        )
+        self.assertEqual(
+            [
+                float(visibility["face_proxies"][face_id].z_index)
+                for face_id in visibility["last_face_order"]
+            ],
+            list(visibility["face_z_slots"]),
+        )
         slot_ids = tuple(
             id(item) for item in visibility["overlay_root"].get_family()
+        )
+        face_proxy_ids = tuple(
+            id(item) for item in visibility["face_proxies"].values()
         )
 
         scene.play(
@@ -176,11 +201,22 @@ class TikzNativeReadableManim3DV3Tests(unittest.TestCase):
             slot_ids,
             tuple(id(item) for item in visibility["overlay_root"].get_family()),
         )
+        self.assertEqual(
+            face_proxy_ids,
+            tuple(id(item) for item in visibility["face_proxies"].values()),
+        )
 
         namespace["restore_open_face_visibility_3d"](visibility)
         namespace["restore_geometry_3d_objects"](geometry)
         self.assertEqual(entry_roots, tuple(id(item) for item in scene.mobjects))
         self.assertEqual(entry_children, tuple(id(item) for item in shape.submobjects))
+        self.assertEqual(
+            {
+                object_id: figure.objects[object_id].get_fill_opacity()
+                for object_id in face_object_ids
+            },
+            entry_fill_opacities,
+        )
         for object_id, points in entry_points.items():
             np.testing.assert_allclose(
                 figure.objects[object_id].get_all_points(),
@@ -220,6 +256,34 @@ class TikzNativeReadableManim3DV3Tests(unittest.TestCase):
             scene, figure.group, figure.objects, geometry
         )
         namespace["restore_open_face_visibility_3d"](visibility)
+        namespace["restore_geometry_3d_objects"](geometry)
+
+    def test_unmanaged_drawable_inside_face_z_band_fails_transactionally(self) -> None:
+        namespace = self._namespace()
+        figure = self._figure()
+        scene = _InstantScene()
+        scene.add(figure.group, Dot().set_z_index(11.5))
+        trackers = {
+            driver_id: ValueTracker(initial)
+            for driver_id, initial in namespace["DRIVER_INITIAL_VALUES"].items()
+        }
+        geometry = namespace["install_geometry_3d_updaters"](
+            figure.group,
+            figure.objects,
+            trackers,
+            ValueTracker(namespace["CAMERA_PROGRESS_INITIAL"]),
+        )
+        roots = tuple(id(item) for item in scene.mobjects)
+
+        with self.assertRaisesRegex(RuntimeError, "face fill z band"):
+            namespace["install_open_face_visibility_3d"](
+                scene, figure.group, figure.objects, geometry
+            )
+
+        self.assertEqual(roots, tuple(id(item) for item in scene.mobjects))
+        self.assertFalse(
+            hasattr(figure.group, "_mathppt_open_face_visibility_owner")
+        )
         namespace["restore_geometry_3d_objects"](geometry)
 
 

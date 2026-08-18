@@ -301,6 +301,194 @@ def _open_face_spans(hidden, parameter_eps):
     return tuple(spans)
 
 
+def _open_face_cross2(first, second):
+    return float(first[0] * second[1] - first[1] * second[0])
+
+
+def _open_face_signed_area(points):
+    if len(points) < 3:
+        return 0.0
+    return 0.5 * sum(
+        _open_face_cross2(points[index], points[(index + 1) % len(points)])
+        for index in range(len(points))
+    )
+
+
+def _open_face_ccw(points, epsilon):
+    result = []
+    for raw in points:
+        point = np.asarray(raw, dtype=float)
+        if result and float(np.linalg.norm(point - result[-1])) <= epsilon:
+            continue
+        result.append(point)
+    if len(result) > 1 and float(np.linalg.norm(result[0] - result[-1])) <= epsilon:
+        result.pop()
+    if len(result) < 3:
+        return ()
+    if _open_face_signed_area(result) < 0.0:
+        result.reverse()
+    return tuple(result)
+
+
+def _open_face_polygon_intersection(subject, clip, epsilon):
+    output = list(subject)
+    for edge_index, clip_start in enumerate(clip):
+        if not output:
+            break
+        clip_end = clip[(edge_index + 1) % len(clip)]
+        clip_edge = clip_end - clip_start
+        input_points = output
+        output = []
+        previous = input_points[-1]
+        previous_value = _open_face_cross2(clip_edge, previous - clip_start)
+        previous_inside = previous_value >= -epsilon
+        for current in input_points:
+            current_value = _open_face_cross2(clip_edge, current - clip_start)
+            current_inside = current_value >= -epsilon
+            if current_inside != previous_inside:
+                denominator = previous_value - current_value
+                if abs(denominator) > 1.0e-300:
+                    output.append(
+                        previous
+                        + (previous_value / denominator) * (current - previous)
+                    )
+            if current_inside:
+                output.append(current)
+            previous = current
+            previous_value = current_value
+            previous_inside = current_inside
+        canonical = []
+        for point in output:
+            if not canonical or float(np.linalg.norm(point - canonical[-1])) > epsilon:
+                canonical.append(point)
+        if len(canonical) > 1 and float(np.linalg.norm(canonical[0] - canonical[-1])) <= epsilon:
+            canonical.pop()
+        output = canonical
+    return tuple(output)
+
+
+def _open_face_normal(face, positions):
+    points = np.asarray([positions[name] for name in face["vertex_ids"]], dtype=float)
+    tolerance = _open_face_resolved_tolerance(points)
+    origin = points[0]
+    for index in range(1, len(points) - 1):
+        candidate = np.cross(points[index] - origin, points[index + 1] - origin)
+        length = float(np.linalg.norm(candidate))
+        if length > tolerance["world"] * tolerance["world"]:
+            return candidate / length
+    raise ValueError(f"open-face fill {face['face_id']!r} is degenerate")
+
+
+def _open_face_depth_at_screen(point, face, positions, normal, projection, view):
+    anchor = positions[face["vertex_ids"][0]]
+    system = np.asarray((projection[0], projection[1], normal), dtype=float)
+    target = np.asarray((point[0], point[1], float(np.dot(normal, anchor))), dtype=float)
+    try:
+        world = np.linalg.solve(system, target)
+    except np.linalg.LinAlgError as exc:
+        raise ValueError("open-face fill has no stable parallel depth function") from exc
+    if not np.all(np.isfinite(world)):
+        raise ValueError("open-face fill depth is not finite")
+    return float(np.dot(world, view))
+
+
+def compute_open_face_fill_order_3d(geometry_state):
+    positions = {
+        name: _open_face_point3(value, f"open-face vertex {name!r}")
+        for name, value in geometry_state["coordinates"]().items()
+        if name in OPEN_FACE_VERTEX_IDS
+    }
+    if set(positions) != set(OPEN_FACE_VERTEX_IDS):
+        raise ValueError("open-face runtime coordinate identity changed")
+    projection = np.asarray(local_camera_matrix(geometry_state), dtype=float)
+    view = np.asarray(parallel_view_direction(projection), dtype=float)
+    faces = sorted(OPEN_FACE_FACES, key=lambda item: item["face_id"])
+    projected = {
+        face["face_id"]: tuple(
+            np.asarray((projection @ positions[name])[:2], dtype=float)
+            for name in face["vertex_ids"]
+        )
+        for face in faces
+    }
+    all_points = np.asarray(
+        [point for values in projected.values() for point in values], dtype=float
+    )
+    extent = np.max(all_points, axis=0) - np.min(all_points, axis=0)
+    scale = max(float(np.linalg.norm(extent)), 1.0e-14)
+    boundary_epsilon = 8.0 * max(1.0e-14, 1.0e-9 * scale)
+    area_epsilon = boundary_epsilon * scale
+    normals = {face["face_id"]: _open_face_normal(face, positions) for face in faces}
+    adjacency = {face["face_id"]: set() for face in faces}
+    indegree = {face["face_id"]: 0 for face in faces}
+    for first_index, first in enumerate(faces):
+        first_polygon = _open_face_ccw(projected[first["face_id"]], boundary_epsilon)
+        if not first_polygon or abs(_open_face_signed_area(first_polygon)) <= area_epsilon:
+            continue
+        for second in faces[first_index + 1:]:
+            second_polygon = _open_face_ccw(projected[second["face_id"]], boundary_epsilon)
+            if not second_polygon or abs(_open_face_signed_area(second_polygon)) <= area_epsilon:
+                continue
+            overlap = _open_face_polygon_intersection(
+                first_polygon, second_polygon, boundary_epsilon
+            )
+            if len(overlap) < 3 or abs(_open_face_signed_area(overlap)) <= area_epsilon:
+                continue
+            pair_points = tuple(
+                positions[name]
+                for face in (first, second)
+                for name in face["vertex_ids"]
+            )
+            depth_epsilon = _open_face_resolved_tolerance(pair_points)["depth"]
+            differences = tuple(
+                _open_face_depth_at_screen(
+                    point,
+                    first,
+                    positions,
+                    normals[first["face_id"]],
+                    projection,
+                    view,
+                )
+                - _open_face_depth_at_screen(
+                    point,
+                    second,
+                    positions,
+                    normals[second["face_id"]],
+                    projection,
+                    view,
+                )
+                for point in overlap
+            )
+            minimum = min(differences)
+            maximum = max(differences)
+            if minimum < -depth_epsilon and maximum > depth_epsilon:
+                raise ValueError(
+                    f"open-face fills {first['face_id']!r} and {second['face_id']!r} "
+                    "require geometric splitting"
+                )
+            if maximum <= depth_epsilon and minimum < -depth_epsilon:
+                far_id, near_id = first["face_id"], second["face_id"]
+            elif minimum >= -depth_epsilon and maximum > depth_epsilon:
+                far_id, near_id = second["face_id"], first["face_id"]
+            else:
+                far_id, near_id = sorted((first["face_id"], second["face_id"]))
+            if near_id not in adjacency[far_id]:
+                adjacency[far_id].add(near_id)
+                indegree[near_id] += 1
+    order = []
+    ready = sorted(face_id for face_id, count in indegree.items() if count == 0)
+    while ready:
+        face_id = ready.pop(0)
+        order.append(face_id)
+        for near_id in sorted(adjacency[face_id]):
+            indegree[near_id] -= 1
+            if indegree[near_id] == 0:
+                ready.append(near_id)
+                ready.sort()
+    if len(order) != len(faces):
+        raise ValueError("open-face fill painter order contains a cycle")
+    return tuple(order)
+
+
 def compute_open_face_visibility_3d(geometry_state):
     positions = {
         name: _open_face_point3(value, f"open-face vertex {name!r}")
@@ -349,7 +537,7 @@ def compute_open_face_visibility_3d(geometry_state):
     return spans_by_edge
 
 
-def _open_face_assert_entry(spans_by_edge):
+def _open_face_assert_entry(spans_by_edge, face_order):
     if set(spans_by_edge) != set(OPEN_FACE_ENTRY_SPANS):
         raise RuntimeError("open-face entry trace changed semantic stroke identity")
     for edge_id, expected in OPEN_FACE_ENTRY_SPANS.items():
@@ -359,6 +547,8 @@ def _open_face_assert_entry(spans_by_edge):
         for left, right in zip(actual, expected):
             if left[2] != right[2] or not np.allclose(left[:2], right[:2], atol=1.0e-7, rtol=0.0):
                 raise RuntimeError(f"open-face entry trace changed spans for {edge_id!r}")
+    if tuple(face_order) != tuple(OPEN_FACE_ENTRY_FACE_ORDER):
+        raise RuntimeError("open-face entry trace changed authoritative face order")
     return True
 
 
@@ -414,12 +604,14 @@ def _open_face_static_entry_record(shape):
         "entryTraceSha256",
         "adapterResultSha256",
         "strokeWidthPerPt",
+        "strokeZIndices",
+        "faceFillStyles",
         "overlayRoot",
     }
     if not isinstance(record, dict) or set(record) != expected_fields:
         raise RuntimeError("baked open-face static entry has an invalid contract")
     if (
-        record["schema"] != "tikz-native-open-face-static-entry-3d/v2"
+        record["schema"] != "tikz-native-open-face-static-entry-3d/v3"
         or record["contractSchema"]
         not in {
             "latex-ppt-tikz-native-open-face-static-asset/v1",
@@ -469,6 +661,154 @@ def _open_face_restore_static_entry(shape, detached):
     shape.submobjects.insert(index, overlay)
 
 
+def _open_face_face_sources(objects):
+    result = {}
+    for binding in OPEN_FACE_FACE_BINDINGS:
+        object_id = binding["object_id"]
+        source = objects.get(object_id)
+        if not isinstance(source, Polygon) or tuple(source.get_family()) != (source,):
+            raise RuntimeError(
+                f"open-face fill {binding['face_id']!r} lost its native Polygon"
+            )
+        result[binding["face_id"]] = source
+    if set(result) != {item["face_id"] for item in OPEN_FACE_FACES}:
+        raise RuntimeError("open-face fill bindings do not cover every face")
+    return result
+
+
+def _open_face_face_fill_styles(shape, sources):
+    record = _open_face_static_entry_record(shape)
+    if record is not None:
+        values = record["faceFillStyles"]
+        if not isinstance(values, dict) or set(values) != set(sources):
+            raise RuntimeError("baked open-face entry lost its face fill styles")
+        return values
+    result = {}
+    for face_id, source in sources.items():
+        rgba = np.asarray(source.fill_rgbas, dtype=float)
+        if (
+            rgba.ndim != 2
+            or rgba.shape != (1, 4)
+            or not np.all(np.isfinite(rgba))
+        ):
+            raise RuntimeError(
+                f"open-face fill {face_id!r} must use one solid RGBA color"
+            )
+        z_index = float(source.z_index)
+        if not np.isfinite(z_index):
+            raise RuntimeError(f"open-face fill {face_id!r} has no finite z_index")
+        result[face_id] = {
+            "fillRgba": [float(item) for item in rgba[0]],
+            "zIndex": z_index,
+        }
+    return result
+
+
+def _open_face_stroke_z_indices(shape):
+    record = _open_face_static_entry_record(shape)
+    expected = {item["source_edge_id"] for item in OPEN_FACE_STROKES}
+    if record is not None:
+        values = record["strokeZIndices"]
+        if not isinstance(values, dict) or set(values) != expected:
+            raise RuntimeError("baked open-face entry lost its stroke z layers")
+        result = {edge_id: float(values[edge_id]) for edge_id in sorted(values)}
+        if not all(np.isfinite(value) for value in result.values()):
+            raise RuntimeError("baked open-face entry has a non-finite stroke z layer")
+        return result
+    return {
+        stroke["source_edge_id"]: float(
+            next(
+                binding["z_index"]
+                for binding in OPEN_FACE_BINDINGS
+                if binding["source_edge_id"] == stroke["source_edge_id"]
+            )
+        )
+        + (ordinal + 1) * 1.0e-6
+        for ordinal, stroke in enumerate(OPEN_FACE_STROKES)
+    }
+
+
+def _open_face_capture_face_fills(sources):
+    return tuple(
+        (
+            source,
+            np.asarray(source.fill_rgbas, dtype=float).copy(),
+            getattr(source, "fill_opacity", None),
+        )
+        for _face_id, source in sorted(sources.items())
+    )
+
+
+def _open_face_hide_face_fills(snapshots):
+    for source, rgba, _opacity in snapshots:
+        hidden = rgba.copy()
+        hidden[..., 3] = 0.0
+        source.fill_rgbas = hidden
+        if hasattr(source, "fill_opacity"):
+            source.fill_opacity = 0.0
+
+
+def _open_face_restore_face_fills(snapshots):
+    for source, rgba, opacity in snapshots:
+        source.fill_rgbas = rgba.copy()
+        if opacity is not None and hasattr(source, "fill_opacity"):
+            source.fill_opacity = opacity
+
+
+def _open_face_validate_face_z_band(scene, shape, sources, z_slots):
+    ignored = {
+        id(member)
+        for source in sources.values()
+        for member in source.get_family()
+    }
+    record = _open_face_static_entry_record(shape)
+    if record is not None:
+        ignored.update(id(member) for member in record["overlayRoot"].get_family())
+    low, high = min(z_slots), max(z_slots)
+    slot_set = set(z_slots)
+    for root in scene.mobjects:
+        for member in root.get_family():
+            if id(member) in ignored or not member.has_points():
+                continue
+            z_index = float(member.z_index)
+            if z_index in slot_set:
+                raise RuntimeError(
+                    "an unrelated Scene drawable shares a managed face fill z layer"
+                )
+            if low < z_index < high:
+                raise RuntimeError(
+                    "an unrelated Scene drawable sits inside the managed face fill z band"
+                )
+
+
+def _open_face_allocate_face_proxies(scene, shape, objects, geometry_state):
+    sources = _open_face_face_sources(objects)
+    styles = _open_face_face_fill_styles(shape, sources)
+    z_slots = sorted(float(value["zIndex"]) for value in styles.values())
+    if len(set(z_slots)) != len(z_slots):
+        raise RuntimeError("open-face fill z_index slots must be distinct")
+    _open_face_validate_face_z_band(scene, shape, sources, z_slots)
+    coordinates = geometry_state["coordinates"]()
+    project_scene = geometry_state["project_scene"]
+    face_map = {item["face_id"]: item for item in OPEN_FACE_FACES}
+    proxies = {}
+    for face_id in sorted(face_map):
+        points = [
+            _open_face_point3(project_scene(coordinates[name]))
+            for name in face_map[face_id]["vertex_ids"]
+        ]
+        proxy = Polygon(*points)
+        proxy.set_stroke(opacity=0.0)
+        rgba = np.asarray([styles[face_id]["fillRgba"]], dtype=float)
+        if rgba.shape != (1, 4) or not np.all(np.isfinite(rgba)):
+            raise RuntimeError(f"open-face fill {face_id!r} has an invalid RGBA style")
+        proxy.fill_rgbas = rgba
+        if hasattr(proxy, "fill_opacity"):
+            proxy.fill_opacity = float(rgba[0, 3])
+        proxies[face_id] = proxy
+    return sources, proxies, tuple(z_slots)
+
+
 def _open_face_sources(objects, geometry_state):
     groups = tuple(geometry_state.get("temporary_groups", ()))
     relation_index = {
@@ -503,7 +843,7 @@ def _open_face_safe_length(stroke, geometry_state):
     )
 
 
-def _open_face_allocate_slots(stroke, binding, geometry_state, ordinal):
+def _open_face_allocate_slots(stroke, binding, geometry_state, z_index):
     ignored = set(stroke["incident_face_ids"]) | set(stroke["excluded_face_ids"])
     candidate_count = sum(
         1
@@ -514,7 +854,7 @@ def _open_face_allocate_slots(stroke, binding, geometry_state, ordinal):
     safe_length = _open_face_safe_length(stroke, geometry_state)
     allocation_start = np.array((0.0, 0.0, 0.0), dtype=float)
     allocation_end = np.array((safe_length, 0.0, 0.0), dtype=float)
-    z_index = float(binding["z_index"]) + (ordinal + 1) * 1.0e-6
+    z_index = float(z_index)
     visible = tuple(
         _make_stroke_slot(
             allocation_start,
@@ -580,8 +920,16 @@ def _open_face_hidden_dash_plan(slot, full_start, full_end, start_t, end_t):
 
 def _open_face_prepare_frame(state):
     spans = compute_open_face_visibility_3d(state["geometry_state"])
+    face_order = compute_open_face_fill_order_3d(state["geometry_state"])
     coordinates = state["geometry_state"]["coordinates"]()
     project_scene = state["geometry_state"]["project_scene"]
+    face_plans = {
+        face["face_id"]: tuple(
+            _open_face_point3(project_scene(coordinates[name]))
+            for name in face["vertex_ids"]
+        )
+        for face in OPEN_FACE_FACES
+    }
     plans = {}
     for stroke in OPEN_FACE_STROKES:
         edge_id = stroke["source_edge_id"]
@@ -602,10 +950,20 @@ def _open_face_prepare_frame(state):
             for index, (start_t, end_t) in enumerate(hidden)
         )
         plans[edge_id] = {"visible": tuple(visible), "hidden": hidden_dashes}
-    return spans, plans
+    return spans, face_order, face_plans, plans
 
 
-def _open_face_apply_frame(state, spans, plans):
+def _open_face_apply_frame(state, spans, face_order, face_plans, plans):
+    if set(face_order) != set(state["face_proxies"]):
+        raise RuntimeError("open-face draw order lost a managed fill")
+    for rank, face_id in enumerate(face_order):
+        points = face_plans[face_id]
+        state["face_proxies"][face_id].set_points_as_corners(
+            [*points, points[0]]
+        )
+        state["face_proxies"][face_id].set_z_index(
+            state["face_z_slots"][rank], family=True
+        )
     for edge_id in sorted(state["slots"]):
         slots = state["slots"][edge_id]
         plan = plans[edge_id]
@@ -627,6 +985,7 @@ def _open_face_apply_frame(state, spans, plans):
                 else:
                     line.set_stroke(opacity=0.0)
     state["last_spans"] = spans
+    state["last_face_order"] = tuple(face_order)
 
 
 def _open_face_remove_overlay(state):
@@ -644,18 +1003,30 @@ def install_open_face_visibility_3d(scene, shape, objects, geometry_state):
     if getattr(shape, "_mathppt_open_face_visibility_owner", None) is not None:
         raise RuntimeError("TikZ ShapeState already has an open-face visibility owner")
     sources = _open_face_sources(objects, geometry_state)
+    face_sources, face_proxies, face_z_slots = _open_face_allocate_face_proxies(
+        scene, shape, objects, geometry_state
+    )
+    stroke_z_indices = _open_face_stroke_z_indices(shape)
     snapshots = _open_face_capture_sources(
         tuple(source for edge_id in sorted(sources) for source in sources[edge_id])
     )
+    face_snapshots = _open_face_capture_face_fills(face_sources)
     stroke_map = {item["source_edge_id"]: item for item in OPEN_FACE_STROKES}
     binding_map = {item["source_edge_id"]: item for item in OPEN_FACE_BINDINGS}
     slots = {
         edge_id: _open_face_allocate_slots(
-            stroke_map[edge_id], binding_map[edge_id], geometry_state, ordinal
+            stroke_map[edge_id],
+            binding_map[edge_id],
+            geometry_state,
+            stroke_z_indices[edge_id],
         )
-        for ordinal, edge_id in enumerate(sorted(stroke_map))
+        for edge_id in sorted(stroke_map)
     }
-    overlay_root = VGroup(*(slots[edge_id]["root"] for edge_id in sorted(slots)))
+    face_root = VGroup(*(face_proxies[face_id] for face_id in sorted(face_proxies)))
+    overlay_root = VGroup(
+        face_root,
+        *(slots[edge_id]["root"] for edge_id in sorted(slots)),
+    )
     state = {
         "scene": scene,
         "shape": shape,
@@ -663,10 +1034,15 @@ def install_open_face_visibility_3d(scene, shape, objects, geometry_state):
         "geometry_state": geometry_state,
         "sources": sources,
         "source_snapshots": snapshots,
+        "face_sources": face_sources,
+        "face_snapshots": face_snapshots,
+        "face_proxies": face_proxies,
+        "face_z_slots": face_z_slots,
         "slots": slots,
         "overlay_root": overlay_root,
         "attached": False,
         "last_spans": None,
+        "last_face_order": None,
         "baked_static_entry": None,
     }
 
@@ -675,19 +1051,23 @@ def install_open_face_visibility_3d(scene, shape, objects, geometry_state):
         if not state["attached"]:
             return
         try:
-            spans, plans = _open_face_prepare_frame(state)
-            _open_face_apply_frame(state, spans, plans)
+            spans, face_order, face_plans, plans = _open_face_prepare_frame(state)
+            _open_face_apply_frame(
+                state, spans, face_order, face_plans, plans
+            )
         finally:
             _open_face_hide_sources(state["source_snapshots"])
+            _open_face_hide_face_fills(state["face_snapshots"])
 
     overlay_root.add_updater(update_overlay)
     try:
         baked_static_entry = _open_face_detach_static_entry(shape)
         state["baked_static_entry"] = baked_static_entry
-        spans, plans = _open_face_prepare_frame(state)
-        _open_face_assert_entry(spans)
-        _open_face_apply_frame(state, spans, plans)
+        spans, face_order, face_plans, plans = _open_face_prepare_frame(state)
+        _open_face_assert_entry(spans, face_order)
+        _open_face_apply_frame(state, spans, face_order, face_plans, plans)
         _open_face_hide_sources(snapshots)
+        _open_face_hide_face_fills(face_snapshots)
         state["attached"] = True
         shape._mathppt_open_face_visibility_owner = state
         scene.mobjects.append(overlay_root)
@@ -695,6 +1075,7 @@ def install_open_face_visibility_3d(scene, shape, objects, geometry_state):
     except Exception:
         state["attached"] = False
         _open_face_restore_sources(snapshots)
+        _open_face_restore_face_fills(face_snapshots)
         _open_face_restore_static_entry(
             shape, state.get("baked_static_entry")
         )
@@ -714,6 +1095,7 @@ def restore_open_face_visibility_3d(state):
         root.clear_updaters()
     _open_face_remove_overlay(state)
     _open_face_restore_sources(state.get("source_snapshots", ()))
+    _open_face_restore_face_fills(state.get("face_snapshots", ()))
     shape = state.get("shape")
     if shape is not None:
         _open_face_restore_static_entry(
@@ -889,6 +1271,18 @@ def generate_native_manim_source_3d_v3(
         }
         for item in model.faces
     )
+    face_binding_payload = tuple(
+        {
+            "face_id": item.face_id,
+            "object_id": item.object_ids[0],
+        }
+        for item in analysis.face_bindings
+        if len(item.object_ids) == 1
+    )
+    if len(face_binding_payload) != len(model.faces):
+        raise NativeManimCodegen3DV3Error(
+            "open-face source requires one native fill Polygon per face"
+        )
     binding_payload = tuple(
         {
             "source_edge_id": item.source_edge_id,
@@ -907,10 +1301,13 @@ def generate_native_manim_source_3d_v3(
             "",
             f"OPEN_FACE_VERTEX_IDS = {_literal(tuple(sorted(model.vertex_map)))}",
             f"OPEN_FACE_FACES = {_literal(face_payload)}",
+            f"OPEN_FACE_FACE_BINDINGS = {_literal(face_binding_payload)}",
             f"OPEN_FACE_INCLUSIVE_EDGES = {_literal(inclusive_edges)}",
             f"OPEN_FACE_STROKES = {_literal(stroke_payload)}",
             f"OPEN_FACE_BINDINGS = {_literal(binding_payload)}",
             f"OPEN_FACE_ENTRY_SPANS = {_literal(_entry_spans(analysis))}",
+            "OPEN_FACE_ENTRY_FACE_ORDER = "
+            f"{_literal(tuple(analysis.entry_trace.advisory_face_draw_order))}",
             f"OPEN_FACE_ENTRY_TRACE_SHA256 = {analysis.entry_trace_sha256!r}",
             f"OPEN_FACE_MODEL_SHA256 = {analysis.model_sha256!r}",
             f"OPEN_FACE_ADAPTER_RESULT_SHA256 = {analysis.result_sha256!r}",

@@ -45,7 +45,7 @@ OPEN_FACE_STATIC_ASSET_3D_SCHEMA = (
 OPEN_FACE_STATIC_ASSET_3D_COMPATIBILITY_SCHEMA = (
     "tikz-native-artifact-compatibility/v1"
 )
-OPEN_FACE_STATIC_ENTRY_3D_SCHEMA = "tikz-native-open-face-static-entry-3d/v2"
+OPEN_FACE_STATIC_ENTRY_3D_SCHEMA = "tikz-native-open-face-static-entry-3d/v3"
 OPEN_FACE_STATIC_ASSET_3D_COMPONENT = "tikz_open_face_static_asset_3d"
 OPEN_FACE_STATIC_ASSET_3D_CAPABILITY = "tikz_open_face_static_asset_3d_v1"
 OPEN_FACE_STATIC_ASSET_3D_MODE = "open_convex_faces_parallel"
@@ -339,6 +339,65 @@ def _binding_stroke_width_per_pt(binding: object) -> float:
     return reference
 
 
+def _binding_face_fill_styles(binding: object) -> dict[str, dict[str, object]]:
+    controller = getattr(binding, "controller", None)
+    layer = getattr(controller, "_face_fill_layer", None)
+    proxies = getattr(layer, "proxies", None)
+    sources = getattr(layer, "sources", None)
+    if not isinstance(proxies, Mapping) or not isinstance(sources, Mapping):
+        raise TikzNativeOpenFaceStaticAsset3DError(
+            "static open-face binding did not expose its managed face fills"
+        )
+    result: dict[str, dict[str, object]] = {}
+    for face_id in sorted(proxies):
+        proxy = proxies[face_id]
+        source = sources.get(face_id)
+        rgba = getattr(proxy, "fill_rgbas", None)
+        if source is None or rgba is None:
+            raise TikzNativeOpenFaceStaticAsset3DError(
+                f"static open-face fill {face_id!r} lost its style"
+            )
+        values = getattr(rgba, "tolist", lambda: None)()
+        if (
+            not isinstance(values, list)
+            or len(values) != 1
+            or not isinstance(values[0], list)
+            or len(values[0]) != 4
+        ):
+            raise TikzNativeOpenFaceStaticAsset3DError(
+                f"static open-face fill {face_id!r} must use one RGBA color"
+            )
+        z_index = float(getattr(source, "z_index", float("nan")))
+        if not isfinite(z_index):
+            raise TikzNativeOpenFaceStaticAsset3DError(
+                f"static open-face fill {face_id!r} has no finite z_index"
+            )
+        result[str(face_id)] = {
+            "fillRgba": [float(item) for item in values[0]],
+            "zIndex": z_index,
+        }
+    return result
+
+
+def _binding_stroke_z_indices(binding: object) -> dict[str, float]:
+    controller = getattr(binding, "controller", None)
+    slots = getattr(controller, "_slots", None)
+    if not isinstance(slots, Mapping):
+        raise TikzNativeOpenFaceStaticAsset3DError(
+            "static open-face binding did not expose its managed stroke slots"
+        )
+    result: dict[str, float] = {}
+    for edge_id in sorted(slots):
+        root = getattr(slots[edge_id], "root", None)
+        z_index = float(getattr(root, "z_index", float("nan")))
+        if not isfinite(z_index):
+            raise TikzNativeOpenFaceStaticAsset3DError(
+                f"static open-face stroke {edge_id!r} has no finite z_index"
+            )
+        result[str(edge_id)] = z_index
+    return result
+
+
 def bake_open_face_static_entry_3d(
     figure: NativeFigure,
     contract: object,
@@ -382,9 +441,11 @@ def bake_open_face_static_entry_3d(
             style=OcclusionStyle(max_projected_length=max_length + 1.0e-6),
         )
         stroke_width_per_pt = _binding_stroke_width_per_pt(binding)
+        face_fill_styles = _binding_face_fill_styles(binding)
         overlay_root = binding.controller.overlay_root
         try:
             binding.attach()
+            stroke_z_indices = _binding_stroke_z_indices(binding)
             analysis = binding.analysis
             frame = binding.last_frame
             if frame is None:
@@ -432,9 +493,12 @@ def bake_open_face_static_entry_3d(
                 "entryTraceSha256": normalized["entryTraceSha256"],
                 "adapterResultSha256": normalized["adapterResultSha256"],
                 "strokeWidthPerPt": stroke_width_per_pt,
+                "strokeZIndices": stroke_z_indices,
+                "faceFillStyles": face_fill_styles,
                 "overlayRoot": overlay_root,
             }
             controller._snapshots = {}
+            controller._face_fill_layer._snapshots = {}
             if controller._owner_claimed:
                 _release_figure_owner(controller)
         except Exception:

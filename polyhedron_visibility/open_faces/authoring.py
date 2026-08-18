@@ -32,6 +32,7 @@ class _AuthoredOpenFace:
     logical_surface_id: str
     vertex_ids: tuple[str, ...]
     occludes_strokes: bool
+    source_mobject: Mobject | None
 
 
 @dataclass(frozen=True)
@@ -130,6 +131,7 @@ class OpenFaceScene3D:
         *,
         logical_surface_id: str,
         occludes_strokes: bool = True,
+        source_mobject: Mobject | None = None,
     ) -> "OpenFaceScene3D":
         self._require_mutable()
         identity = self._identity(face_id, "face_id")
@@ -145,11 +147,16 @@ class OpenFaceScene3D:
             raise OpenFaceAuthoringError(
                 f"face {identity} occludes_strokes must be boolean"
             )
+        if source_mobject is not None and not isinstance(source_mobject, Mobject):
+            raise OpenFaceAuthoringError(
+                f"face {identity} source_mobject must be a Manim Mobject"
+            )
         self._faces[identity] = _AuthoredOpenFace(
             identity,
             surface,
             vertices,
             occludes_strokes,
+            source_mobject,
         )
         return self
 
@@ -348,6 +355,21 @@ class OpenFaceScene3D:
             for edge_id in sorted(self._strokes)
         }
 
+    @property
+    def face_fill_bindings(self) -> Mapping[str, Mobject] | None:
+        values = {
+            face_id: face.source_mobject
+            for face_id, face in self._faces.items()
+            if face.source_mobject is not None
+        }
+        if not values:
+            return None
+        if len(values) != len(self._faces):
+            raise OpenFaceAuthoringError(
+                "automatic face fill ordering requires a source_mobject for every face"
+            )
+        return {face_id: values[face_id] for face_id in sorted(values)}  # type: ignore[return-value]
+
     def controller(
         self,
         scene: object,
@@ -364,6 +386,7 @@ class OpenFaceScene3D:
             model,
             position_provider=self.current_positions,
             stroke_bindings=self.stroke_bindings,
+            face_fill_bindings=self.face_fill_bindings,
             projection=projection,
             display_point_provider=display_point_provider,
             style=style,

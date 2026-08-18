@@ -4,6 +4,7 @@ import hashlib
 from pathlib import Path
 import unittest
 
+import numpy as np
 from manim import Scene, ValueTracker, tempconfig
 
 from tikz_native.compiler import compile_document
@@ -142,6 +143,15 @@ class TikzNativeOpenFaceStaticAsset3DTests(unittest.TestCase):
         record = figure.group._mathppt_open_face_static_entry
         self.assertEqual(record["schema"], OPEN_FACE_STATIC_ENTRY_3D_SCHEMA)
         self.assertGreater(record["strokeWidthPerPt"], 1.0)
+        self.assertEqual(
+            len(record["strokeZIndices"]),
+            self.source_v3["visibilitySpec"]["strokeCount"],
+        )
+        self.assertEqual(
+            len(set(record["strokeZIndices"].values())),
+            len(record["strokeZIndices"]),
+        )
+        self.assertEqual(len(record["faceFillStyles"]), 2)
         self.assertIs(record["overlayRoot"], figure.group.submobjects[-1])
         self.assertEqual(record["entryTraceSha256"], self._contract()["entryTraceSha256"])
         element_objects = figure.group._codex_tikz_native_element_objects
@@ -248,6 +258,9 @@ class TikzNativeOpenFaceStaticAsset3DTests(unittest.TestCase):
         baked_overlay = shape._mathppt_open_face_static_entry["overlayRoot"]
         scene = Scene()
         scene.add(shape)
+        scene.camera.reset()
+        scene.camera.capture_mobjects(scene.mobjects)
+        baked_entry_pixels = scene.camera.pixel_array.copy()
         trackers = {
             driver_id: ValueTracker(initial)
             for driver_id, initial in namespace["DRIVER_INITIAL_VALUES"].items()
@@ -268,6 +281,9 @@ class TikzNativeOpenFaceStaticAsset3DTests(unittest.TestCase):
         )
         self.assertNotIn(baked_overlay, shape.submobjects)
         self.assertIn(visibility["overlay_root"], scene.mobjects)
+        scene.camera.reset()
+        scene.camera.capture_mobjects(scene.mobjects)
+        np.testing.assert_array_equal(scene.camera.pixel_array, baked_entry_pixels)
         active_widths = [
             float(line.get_stroke_width())
             for line in visibility["overlay_root"].get_family()

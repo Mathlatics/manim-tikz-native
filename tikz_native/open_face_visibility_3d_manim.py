@@ -45,6 +45,7 @@ from polyhedron_visibility.open_faces import (
     OpenFaceVisibilityFrame,
     compute_open_face_visibility,
 )
+from polyhedron_visibility.open_faces.manim import _OpenFaceFillLayer
 
 from .compiler import ObjectSpec, PictureSpec, TEX_PT_PER_CM
 from .manim_renderer import NativeFigure
@@ -533,6 +534,30 @@ def _managed_sources(
                 f"NativeFigure omitted managed source {object_id}"
             )
         sources[object_id] = source
+    return sources
+
+
+def _managed_face_fills(
+    figure: NativeFigure,
+    result: TikzNativeOpenFaceVisibility3DAdapterResult,
+) -> dict[str, Polygon]:
+    sources: dict[str, Polygon] = {}
+    for binding in result.face_bindings:
+        if len(binding.object_ids) != 1:
+            raise TikzNativeOpenFaceVisibility3DManimError(
+                f"face {binding.face_id} must own one native fill Polygon"
+            )
+        object_id = binding.object_ids[0]
+        source = figure.objects.get(object_id)
+        if not isinstance(source, Polygon):
+            raise TikzNativeOpenFaceVisibility3DManimError(
+                f"face {binding.face_id} lost its native fill Polygon {object_id}"
+            )
+        sources[binding.face_id] = source
+    if set(sources) != set(result.model.face_map):
+        raise TikzNativeOpenFaceVisibility3DManimError(
+            "TikZ face fill bindings do not cover every open-face surface"
+        )
     return sources
 
 
@@ -1200,6 +1225,14 @@ class OpenFaceManimBinding3D:
             self._mapper,
             tolerance_policy=tolerance_policy,
         )
+        self.face_fill_sources = _managed_face_fills(figure, analysis)
+        self._face_fill_layer = _OpenFaceFillLayer(
+            self.model,
+            self.face_fill_sources,
+            tolerance_policy=tolerance_policy,
+            source_coordinate_mode="display",
+        )
+        self._prepared_face_plans: dict[str, np.ndarray] = {}
         width_scale = _stroke_width_per_pt(picture, figure, analysis)
         binding_map = {item.source_edge_id: item for item in analysis.stroke_bindings}
         self.styles = {
@@ -1236,7 +1269,8 @@ class OpenFaceManimBinding3D:
             for edge_id in sorted(self.capacities)
         }
         self.overlay_root = VGroup(
-            *(self._slots[edge_id].root for edge_id in sorted(self._slots))
+            self._face_fill_layer.root,
+            *(self._slots[edge_id].root for edge_id in sorted(self._slots)),
         )
 
         def update_overlay(mobject: Mobject, dt: float) -> None:
@@ -1387,10 +1421,14 @@ class OpenFaceManimBinding3D:
         dict[str, tuple[np.ndarray, np.ndarray]],
     ]:
         positions, projection = self._current_inputs()
+        display_positions = {
+            vertex_id: self._display_point(point, projection)
+            for vertex_id, point in positions.items()
+        }
         endpoints: dict[str, tuple[np.ndarray, np.ndarray]] = {}
         for stroke in self.model.strokes:
-            start = self._display_point(positions[stroke.vertex_ids[0]], projection)
-            end = self._display_point(positions[stroke.vertex_ids[1]], projection)
+            start = display_positions[stroke.vertex_ids[0]]
+            end = display_positions[stroke.vertex_ids[1]]
             endpoints[stroke.source_edge_id] = (start, end)
         self._validate_live_sources(endpoints)
         frame = compute_open_face_visibility(
@@ -1413,6 +1451,12 @@ class OpenFaceManimBinding3D:
             raise TikzNativeOpenFaceVisibility3DManimError(
                 "open-face trace draw order does not cover every managed face"
             )
+        self._prepared_face_plans = self._face_fill_layer.prepare(
+            frame,
+            world_points=positions,
+            display_points=display_positions,
+            containers=_scene_containers(self.scene),
+        )
         return frame, plans, endpoints
 
     def _apply_frame(
@@ -1421,6 +1465,7 @@ class OpenFaceManimBinding3D:
         plans: Mapping[str, OverlayPlan],
         endpoints: Mapping[str, tuple[np.ndarray, np.ndarray]],
     ) -> None:
+        self._face_fill_layer.apply(frame, self._prepared_face_plans)
         for edge_id in sorted(self._slots):
             start, end = endpoints[edge_id]
             # ``Mobject.put_start_and_end_on`` cannot expand a Line whose
@@ -1490,6 +1535,7 @@ class OpenFaceManimBinding3D:
                 self._slots[edge_id].root.set_z_index(z_indices[edge_id], family=True)
                 self._slots[edge_id].apply_static_style(self.resolved_styles[edge_id])
             self._apply_frame(frame, plans, endpoints)
+            self._face_fill_layer.capture_and_hide()
             for object_id in sorted(snapshots):
                 _hide_snapshots(snapshots[object_id])
             self._snapshots = snapshots  # type: ignore[assignment]
@@ -1502,6 +1548,7 @@ class OpenFaceManimBinding3D:
                 self._attached = False
                 for values in snapshots.values():
                     _restore_snapshots(values)
+                self._face_fill_layer.restore()
                 self._remove_fixed_frame()
                 self._remove_overlay_identity()
                 self._snapshots = {}
@@ -1527,6 +1574,7 @@ class OpenFaceManimBinding3D:
             # intentionally remains at its last-good frame.
             for object_id in sorted(self._snapshots):
                 _hide_snapshots(self._snapshots[object_id])
+            self._face_fill_layer.hide()
         return self
 
     def restore(self) -> "OpenFaceManimBinding3D":
@@ -1543,6 +1591,9 @@ class OpenFaceManimBinding3D:
             if not _geometry_rig_is_restored(self._geometry_rig_state):
                 for object_id in sorted(self._snapshots):
                     _restore_snapshots(self._snapshots[object_id])
+                self._face_fill_layer.restore()
+            else:
+                self._face_fill_layer._snapshots = {}
             self._snapshots = {}
             self._invalidate_static_image()
         finally:

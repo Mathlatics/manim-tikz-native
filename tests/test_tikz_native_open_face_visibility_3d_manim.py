@@ -7,7 +7,7 @@ import unittest
 from unittest.mock import patch
 
 import numpy as np
-from manim import Arc, Line, Scene, ValueTracker, tempconfig
+from manim import Arc, Line, Polygon, Scene, ValueTracker, tempconfig
 
 from polyhedron_visibility import OcclusionStyle
 from tikz_native.compiler import compile_document
@@ -98,11 +98,35 @@ class TikzNativeOpenFaceVisibility3DManimTests(unittest.TestCase):
         managed = binding.analysis.suppressed_object_ids
         before_style = _family_style_snapshot(figure, managed)
         before_slots = binding.controller.slot_identities()
+        face_fill_opacities = {
+            face_id: source.get_fill_opacity()
+            for face_id, source in binding.controller.face_fill_sources.items()
+        }
+        face_proxy_ids = binding.controller._face_fill_layer.identities()
 
         binding.attach()
         self.assertEqual(before_slots, binding.controller.slot_identities())
         self.assertTrue(all(isinstance(item, Line) for item in binding.controller.proxies.values()))
         self.assertEqual(len(binding.controller.proxies), 9)
+        self.assertEqual(
+            binding.controller._face_fill_layer.identities(),
+            face_proxy_ids,
+        )
+        self.assertEqual(
+            {
+                face_id: float(source.get_fill_opacity())
+                for face_id, source in binding.controller.face_fill_sources.items()
+            },
+            {face_id: 0.0 for face_id in face_fill_opacities},
+        )
+        z_slots = sorted(float(source.z_index) for source in binding.controller.face_fill_sources.values())
+        self.assertEqual(
+            [
+                float(binding.controller._face_fill_layer.proxies[face_id].z_index)
+                for face_id in binding.last_frame.advisory_face_draw_order
+            ],
+            z_slots,
+        )
         for object_id in managed:
             drawable = [
                 item
@@ -132,6 +156,13 @@ class TikzNativeOpenFaceVisibility3DManimTests(unittest.TestCase):
 
         binding.restore()
         self.assertEqual(_family_style_snapshot(figure, managed), before_style)
+        self.assertEqual(
+            {
+                face_id: source.get_fill_opacity()
+                for face_id, source in binding.controller.face_fill_sources.items()
+            },
+            face_fill_opacities,
+        )
         self.assertNotIn(binding.controller.overlay_root, scene.mobjects)
 
     def test_normal_and_exception_restore_are_pixel_exact_in_real_cairo_scene(self) -> None:
@@ -587,6 +618,18 @@ class TikzNativeOpenFaceVisibility3DManimTests(unittest.TestCase):
             current = coordinates()
             projection = binding.analysis.entry_projection
             mapper = binding.controller._mapper
+            for face_binding in binding.analysis.face_bindings:
+                source = figure.objects[face_binding.object_ids[0]]
+                points = [
+                    mapper.map_point(
+                        current[vertex_id],
+                        projection,
+                    )
+                    for vertex_id in face_binding.authored_cycles[0]
+                ]
+                replacement = Polygon(*points).match_style(source)
+                replacement.set_z_index(source.z_index, family=True)
+                source.become(replacement)
             figure.objects["line.S.E"].put_start_and_end_on(
                 mapper.map_point(current["S"], projection),
                 mapper.map_point(current["E"], projection),

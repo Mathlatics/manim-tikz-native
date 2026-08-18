@@ -2,10 +2,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from math import ceil
-from typing import Literal, Mapping
+from typing import Literal, Mapping, Sequence
 
 import numpy as np
-from manim import Mobject
+from manim import Mobject, Polygon, VGroup
 
 from ..api import ParallelProjection
 from ..binding import (
@@ -39,6 +39,234 @@ class OpenFaceBindingScaleLimits:
 
 
 OPEN_FACE_BINDING_SCALE_LIMITS = OpenFaceBindingScaleLimits()
+
+
+@dataclass(frozen=True)
+class _FaceFillSnapshot:
+    source: Polygon
+    fill_rgbas: np.ndarray
+    fill_opacity: object
+
+
+def _face_points_match(
+    actual: np.ndarray,
+    expected: np.ndarray,
+    tolerance: float,
+) -> bool:
+    if actual.shape != expected.shape or len(actual) < 3:
+        return False
+    for candidate in (expected, expected[::-1]):
+        for offset in range(len(candidate)):
+            rotated = np.roll(candidate, -offset, axis=0)
+            if float(np.max(np.linalg.norm(actual - rotated, axis=1))) <= tolerance:
+                return True
+    return False
+
+
+class _OpenFaceFillLayer:
+    """Stable fill-only Polygon proxies ordered by one solved frame trace."""
+
+    def __init__(
+        self,
+        model: OpenFaceVisibilityModel,
+        face_bindings: Mapping[str, Mobject],
+        *,
+        tolerance_policy: TolerancePolicy,
+        source_coordinate_mode: Literal["world", "display"],
+    ) -> None:
+        expected = set(model.face_map)
+        if set(face_bindings) != expected:
+            missing = sorted(expected - set(face_bindings))
+            extra = sorted(set(face_bindings) - expected)
+            raise OcclusionBindingError(
+                "face fill binding identity mismatch"
+                + (f"; missing={missing}" if missing else "")
+                + (f"; extra={extra}" if extra else "")
+            )
+        if source_coordinate_mode not in {"world", "display"}:
+            raise OcclusionBindingError(
+                "face fill source_coordinate_mode must be 'world' or 'display'"
+            )
+        self.model = model
+        self.tolerance_policy = tolerance_policy
+        self.source_coordinate_mode = source_coordinate_mode
+        self.sources: dict[str, Polygon] = {}
+        self.proxies: dict[str, Polygon] = {}
+        for face in sorted(model.faces, key=lambda item: item.face_id):
+            source = face_bindings[face.face_id]
+            if not isinstance(source, Polygon) or tuple(source.get_family()) != (source,):
+                raise OcclusionBindingError(
+                    f"face fill source {face.face_id} must be one native Manim Polygon"
+                )
+            raw_fill = np.asarray(getattr(source, "fill_rgbas", ()), dtype=float)
+            if (
+                raw_fill.ndim != 2
+                or raw_fill.shape[1:] != (4,)
+                or not len(raw_fill)
+                or not np.all(np.isfinite(raw_fill))
+                or any(
+                    not np.allclose(row, raw_fill[0], rtol=0.0, atol=1.0e-12)
+                    for row in raw_fill[1:]
+                )
+            ):
+                raise OcclusionBindingError(
+                    f"face fill source {face.face_id} must use one solid non-gradient fill"
+                )
+            points = [
+                np.asarray(model.vertex_map[vertex_id].entry_position, dtype=float)
+                for vertex_id in face.vertex_ids
+            ]
+            proxy = Polygon(*points)
+            proxy.set_stroke(opacity=0.0)
+            proxy.fill_rgbas = raw_fill.copy()
+            if hasattr(source, "fill_opacity"):
+                proxy.fill_opacity = getattr(source, "fill_opacity")
+            self.sources[face.face_id] = source
+            self.proxies[face.face_id] = proxy
+        self.root = VGroup(
+            *(self.proxies[face_id] for face_id in sorted(self.proxies))
+        )
+        self._snapshots: dict[str, _FaceFillSnapshot] = {}
+        self._z_slots: tuple[float, ...] = ()
+        self._source_z: dict[str, float] = {}
+
+    def _scene_family(self, containers: Sequence[list[object]]) -> tuple[object, ...]:
+        result: list[object] = []
+        seen: set[int] = set()
+        for container in containers:
+            for root in container:
+                for member in root.get_family():
+                    if id(member) not in seen:
+                        seen.add(id(member))
+                        result.append(member)
+        return tuple(result)
+
+    def configure_z_slots(self, containers: Sequence[list[object]]) -> None:
+        scene_family = self._scene_family(containers)
+        scene_ids = {id(item) for item in scene_family}
+        managed_ids = {
+            id(member)
+            for source in self.sources.values()
+            for member in source.get_family()
+        }
+        source_z: dict[str, float] = {}
+        for face_id, source in self.sources.items():
+            if id(source) not in scene_ids:
+                raise OcclusionBindingError(
+                    f"face fill source {face_id} is not owned by the current Scene"
+                )
+            value = float(source.z_index)
+            if not np.isfinite(value):
+                raise OcclusionBindingError(
+                    f"face fill source {face_id} has a non-finite z_index"
+                )
+            source_z[face_id] = value
+        slots = tuple(sorted(source_z.values()))
+        if len(set(slots)) != len(slots):
+            raise OcclusionBindingError(
+                "managed face fills must occupy distinct authored z_index slots"
+            )
+        slot_set = set(slots)
+        slot_low, slot_high = min(slots), max(slots)
+        for member in scene_family:
+            if id(member) in managed_ids or not getattr(member, "has_points", lambda: False)():
+                continue
+            member_z = float(getattr(member, "z_index", float("nan")))
+            if member_z in slot_set:
+                raise OcclusionBindingError(
+                    "a managed face fill z_index is shared by another Scene drawable"
+                )
+            if slot_low < member_z < slot_high:
+                raise OcclusionBindingError(
+                    "an unrelated Scene drawable sits inside the managed face fill z band"
+                )
+        self._source_z = source_z
+        self._z_slots = slots
+
+    def prepare(
+        self,
+        frame: OpenFaceVisibilityFrame,
+        *,
+        world_points: Mapping[str, np.ndarray],
+        display_points: Mapping[str, np.ndarray],
+        containers: Sequence[list[object]],
+    ) -> dict[str, np.ndarray]:
+        if not self._z_slots:
+            self.configure_z_slots(containers)
+        if set(frame.advisory_face_draw_order) != set(self.model.face_map):
+            raise OcclusionBindingError(
+                "open-face draw order does not cover every managed face"
+            )
+        plans: dict[str, np.ndarray] = {}
+        for face in self.model.faces:
+            expected = np.asarray(
+                [
+                    (
+                        world_points[vertex_id]
+                        if self.source_coordinate_mode == "world"
+                        else display_points[vertex_id]
+                    )
+                    for vertex_id in face.vertex_ids
+                ],
+                dtype=float,
+            )
+            actual = np.asarray(self.sources[face.face_id].get_vertices(), dtype=float)
+            tolerance = self.tolerance_policy.resolve(expected).boundary
+            if not _face_points_match(actual, expected, tolerance):
+                raise OcclusionBindingError(
+                    f"face fill source {face.face_id} no longer matches its registered polygon"
+                )
+            if float(self.sources[face.face_id].z_index) != self._source_z[face.face_id]:
+                raise OcclusionBindingError(
+                    f"face fill source {face.face_id} changed its authored z_index"
+                )
+            plans[face.face_id] = np.asarray(
+                [display_points[vertex_id] for vertex_id in face.vertex_ids],
+                dtype=float,
+            )
+        return plans
+
+    def apply(
+        self,
+        frame: OpenFaceVisibilityFrame,
+        plans: Mapping[str, np.ndarray],
+    ) -> None:
+        for rank, face_id in enumerate(frame.advisory_face_draw_order):
+            points = plans[face_id]
+            proxy = self.proxies[face_id]
+            proxy.set_points_as_corners([*points, points[0]])
+            proxy.set_z_index(self._z_slots[rank], family=True)
+
+    def capture_and_hide(self) -> None:
+        snapshots: dict[str, _FaceFillSnapshot] = {}
+        for face_id, source in self.sources.items():
+            snapshots[face_id] = _FaceFillSnapshot(
+                source,
+                np.asarray(source.fill_rgbas, dtype=float).copy(),
+                getattr(source, "fill_opacity", None),
+            )
+        self._snapshots = snapshots
+        self.hide()
+
+    def hide(self) -> None:
+        for snapshot in self._snapshots.values():
+            hidden = snapshot.fill_rgbas.copy()
+            hidden[..., 3] = 0.0
+            snapshot.source.fill_rgbas = hidden
+            if hasattr(snapshot.source, "fill_opacity"):
+                snapshot.source.fill_opacity = 0.0
+
+    def restore(self) -> None:
+        for snapshot in self._snapshots.values():
+            snapshot.source.fill_rgbas = snapshot.fill_rgbas.copy()
+            if snapshot.fill_opacity is not None and hasattr(
+                snapshot.source, "fill_opacity"
+            ):
+                snapshot.source.fill_opacity = snapshot.fill_opacity
+        self._snapshots = {}
+
+    def identities(self) -> tuple[int, ...]:
+        return tuple(id(item) for item in self.root.get_family())
 
 
 def _guard_realtime_scale(
@@ -107,6 +335,7 @@ class OpenFaceOcclusion3D(ManimOcclusionBinding):
         *,
         position_provider: PositionProvider,
         stroke_bindings: Mapping[str, Mobject],
+        face_fill_bindings: Mapping[str, Mobject] | None = None,
         projection: ParallelProjection,
         display_point_provider: DisplayPointProvider | None = None,
         style: OcclusionStyle,
@@ -132,6 +361,23 @@ class OpenFaceOcclusion3D(ManimOcclusionBinding):
             source_coordinate_mode=source_coordinate_mode,
         )
         self.model: OpenFaceVisibilityModel = model
+        self._face_fill_layer = (
+            None
+            if face_fill_bindings is None
+            else _OpenFaceFillLayer(
+                model,
+                face_fill_bindings,
+                tolerance_policy=self.tolerance_policy,
+                source_coordinate_mode=source_coordinate_mode,
+            )
+        )
+        self._prepared_face_plans: dict[str, np.ndarray] = {}
+        if self._face_fill_layer is not None:
+            line_overlay_root = self.overlay_root
+            self.overlay_root = VGroup(
+                self._face_fill_layer.root,
+                line_overlay_root,
+            )
 
     def _prepare_frame(
         self,
@@ -162,7 +408,68 @@ class OpenFaceOcclusion3D(ManimOcclusionBinding):
                 capacity=self.capacities[stroke.source_edge_id],
                 style=self.style,
             )
+        if self._face_fill_layer is not None:
+            display_positions = {
+                vertex_id: (
+                    positions[vertex_id]
+                    if self.display_point_provider is None
+                    else np.asarray(
+                        self.display_point_provider(positions[vertex_id]), dtype=float
+                    )
+                )
+                for vertex_id in self.model.vertex_map
+            }
+            self._prepared_face_plans = self._face_fill_layer.prepare(
+                frame,
+                world_points=positions,
+                display_points=display_positions,
+                containers=self._scene_containers(),
+            )
         return frame, plans, positions
+
+    def _apply_frame(
+        self,
+        frame: OpenFaceVisibilityFrame,
+        plans: Mapping[str, OverlayPlan],
+    ) -> None:
+        if self._face_fill_layer is not None:
+            self._face_fill_layer.apply(frame, self._prepared_face_plans)
+        super()._apply_frame(frame, plans)  # type: ignore[arg-type]
+
+    def attach(self) -> "OpenFaceOcclusion3D":
+        if self.attached:
+            return self
+        try:
+            super().attach()
+            if self._face_fill_layer is not None:
+                self._face_fill_layer.capture_and_hide()
+            return self
+        except Exception:
+            if self._face_fill_layer is not None:
+                self._face_fill_layer.restore()
+            super().restore()
+            raise
+
+    def update(self, dt: float = 0.0) -> "OpenFaceOcclusion3D":
+        try:
+            super().update(dt)
+        finally:
+            if self._face_fill_layer is not None:
+                self._face_fill_layer.hide()
+        return self
+
+    def restore(self) -> "OpenFaceOcclusion3D":
+        try:
+            super().restore()
+        finally:
+            if self._face_fill_layer is not None:
+                self._face_fill_layer.restore()
+        return self
+
+    def face_fill_identities(self) -> tuple[int, ...]:
+        if self._face_fill_layer is None:
+            return ()
+        return self._face_fill_layer.identities()
 
 
 __all__ = [

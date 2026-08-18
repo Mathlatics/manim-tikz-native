@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import heapq
 from math import acos, pi
 from typing import Mapping, Sequence
 
@@ -36,6 +37,244 @@ class OpenFaceSolverError(ValueError):
 class _OpenFaceIntervalResult:
     interval: tuple[float, float] | None
     reason: str | None = None
+
+
+def _cross2(first: np.ndarray, second: np.ndarray) -> float:
+    return float(first[0] * second[1] - first[1] * second[0])
+
+
+def _polygon_signed_area(points: Sequence[np.ndarray]) -> float:
+    if len(points) < 3:
+        return 0.0
+    return 0.5 * sum(
+        _cross2(points[index], points[(index + 1) % len(points)])
+        for index in range(len(points))
+    )
+
+
+def _canonical_ccw_polygon(
+    points: Sequence[Sequence[float]],
+    *,
+    point_epsilon: float,
+) -> tuple[np.ndarray, ...]:
+    result: list[np.ndarray] = []
+    for raw in points:
+        point = np.asarray(raw, dtype=float)
+        if point.shape != (2,) or not np.all(np.isfinite(point)):
+            raise OpenFaceSolverError(
+                "INVALID_FACE_PROJECTION",
+                "face projection must contain finite two-component points",
+            )
+        if result and float(np.linalg.norm(point - result[-1])) <= point_epsilon:
+            continue
+        result.append(point)
+    if len(result) > 1 and float(np.linalg.norm(result[0] - result[-1])) <= point_epsilon:
+        result.pop()
+    if len(result) < 3:
+        return ()
+    area = _polygon_signed_area(result)
+    if area < 0.0:
+        result.reverse()
+    return tuple(result)
+
+
+def _convex_polygon_intersection(
+    subject: Sequence[np.ndarray],
+    clip: Sequence[np.ndarray],
+    *,
+    boundary_epsilon: float,
+) -> tuple[np.ndarray, ...]:
+    """Return the convex 2D overlap using deterministic Sutherland-Hodgman."""
+
+    output = list(subject)
+    for edge_index, clip_start in enumerate(clip):
+        if not output:
+            break
+        clip_end = clip[(edge_index + 1) % len(clip)]
+        clip_edge = clip_end - clip_start
+        input_points = output
+        output = []
+        previous = input_points[-1]
+        previous_value = _cross2(clip_edge, previous - clip_start)
+        previous_inside = previous_value >= -boundary_epsilon
+        for current in input_points:
+            current_value = _cross2(clip_edge, current - clip_start)
+            current_inside = current_value >= -boundary_epsilon
+            if current_inside != previous_inside:
+                denominator = previous_value - current_value
+                if abs(denominator) > 1.0e-300:
+                    amount = previous_value / denominator
+                    output.append(previous + amount * (current - previous))
+            if current_inside:
+                output.append(current)
+            previous = current
+            previous_value = current_value
+            previous_inside = current_inside
+        canonical: list[np.ndarray] = []
+        for point in output:
+            if (
+                not canonical
+                or float(np.linalg.norm(point - canonical[-1])) > boundary_epsilon
+            ):
+                canonical.append(point)
+        if (
+            len(canonical) > 1
+            and float(np.linalg.norm(canonical[0] - canonical[-1]))
+            <= boundary_epsilon
+        ):
+            canonical.pop()
+        output = canonical
+    return tuple(output)
+
+
+def _face_depth_at_screen_point(
+    screen_point: np.ndarray,
+    face_vertex_ids: Sequence[str],
+    positions: Mapping[str, np.ndarray],
+    normal: np.ndarray,
+    view: ParallelView,
+) -> float:
+    projection = np.asarray(view.projection_matrix, dtype=float)
+    anchor = positions[face_vertex_ids[0]]
+    system = np.asarray((projection[0], projection[1], normal), dtype=float)
+    target = np.asarray(
+        (screen_point[0], screen_point[1], float(np.dot(normal, anchor))),
+        dtype=float,
+    )
+    try:
+        world = np.linalg.solve(system, target)
+    except np.linalg.LinAlgError as exc:
+        raise OpenFaceSolverError(
+            "INVALID_FACE_PROJECTION",
+            "projected face has no stable parallel-view depth function",
+        ) from exc
+    if not np.all(np.isfinite(world)):
+        raise OpenFaceSolverError(
+            "INVALID_FACE_PROJECTION",
+            "projected face depth is not finite",
+        )
+    return float(np.dot(world, np.asarray(view.view_direction, dtype=float)))
+
+
+def _authoritative_face_draw_order(
+    model: OpenFaceVisibilityModel,
+    positions: Mapping[str, np.ndarray],
+    normals: Mapping[str, np.ndarray],
+    view: ParallelView,
+    policy: TolerancePolicy,
+) -> tuple[str, ...]:
+    """Solve one stable far-to-near painter order for all overlapping fills.
+
+    Depth is compared only inside the actual projected overlap polygon.  For
+    planar faces under parallel projection the depth difference is affine, so
+    its extrema occur at overlap vertices.  A sign change therefore proves
+    that no single whole-face painter order can represent the frame.
+    """
+
+    projection = np.asarray(view.projection_matrix, dtype=float)
+    projected_by_face: dict[str, tuple[np.ndarray, ...]] = {}
+    all_screen_points: list[np.ndarray] = []
+    for face in sorted(model.faces, key=lambda item: item.face_id):
+        projected = tuple(
+            np.asarray((projection @ positions[vertex_id])[:2], dtype=float)
+            for vertex_id in face.vertex_ids
+        )
+        projected_by_face[face.face_id] = projected
+        all_screen_points.extend(projected)
+    screen_values = np.asarray(all_screen_points, dtype=float)
+    extent = np.max(screen_values, axis=0) - np.min(screen_values, axis=0)
+    screen_scale = max(float(np.linalg.norm(extent)), policy.absolute_floor)
+    screen_world = max(policy.absolute_floor, policy.relative * screen_scale)
+    boundary_epsilon = policy.boundary_factor * screen_world
+    area_epsilon = boundary_epsilon * screen_scale
+
+    adjacency: dict[str, set[str]] = {
+        face.face_id: set() for face in model.faces
+    }
+    indegree = {face_id: 0 for face_id in adjacency}
+    ordered_faces = sorted(model.faces, key=lambda item: item.face_id)
+    for first_index, first in enumerate(ordered_faces):
+        first_polygon = _canonical_ccw_polygon(
+            projected_by_face[first.face_id], point_epsilon=boundary_epsilon
+        )
+        if not first_polygon or abs(_polygon_signed_area(first_polygon)) <= area_epsilon:
+            continue
+        for second in ordered_faces[first_index + 1 :]:
+            second_polygon = _canonical_ccw_polygon(
+                projected_by_face[second.face_id], point_epsilon=boundary_epsilon
+            )
+            if (
+                not second_polygon
+                or abs(_polygon_signed_area(second_polygon)) <= area_epsilon
+            ):
+                continue
+            overlap = _convex_polygon_intersection(
+                first_polygon,
+                second_polygon,
+                boundary_epsilon=boundary_epsilon,
+            )
+            if len(overlap) < 3 or abs(_polygon_signed_area(overlap)) <= area_epsilon:
+                continue
+            pair_points = tuple(
+                positions[vertex_id]
+                for face in (first, second)
+                for vertex_id in face.vertex_ids
+            )
+            depth_epsilon = policy.resolve(pair_points).depth
+            differences = tuple(
+                _face_depth_at_screen_point(
+                    point,
+                    first.vertex_ids,
+                    positions,
+                    normals[first.face_id],
+                    view,
+                )
+                - _face_depth_at_screen_point(
+                    point,
+                    second.vertex_ids,
+                    positions,
+                    normals[second.face_id],
+                    view,
+                )
+                for point in overlap
+            )
+            minimum = min(differences)
+            maximum = max(differences)
+            if minimum < -depth_epsilon and maximum > depth_epsilon:
+                raise OpenFaceSolverError(
+                    "FACE_ORDER_REQUIRES_SPLITTING",
+                    f"faces {first.face_id!r} and {second.face_id!r} cross inside "
+                    "their projected overlap",
+                )
+            if maximum <= depth_epsilon and minimum < -depth_epsilon:
+                far_id, near_id = first.face_id, second.face_id
+            elif minimum >= -depth_epsilon and maximum > depth_epsilon:
+                far_id, near_id = second.face_id, first.face_id
+            else:
+                # Coplanar/touching overlap has no geometric near side.  The
+                # frozen identity tie-break keeps traces byte deterministic.
+                far_id, near_id = sorted((first.face_id, second.face_id))
+            if near_id not in adjacency[far_id]:
+                adjacency[far_id].add(near_id)
+                indegree[near_id] += 1
+
+    ready = [face_id for face_id, count in indegree.items() if count == 0]
+    heapq.heapify(ready)
+    result: list[str] = []
+    while ready:
+        face_id = heapq.heappop(ready)
+        result.append(face_id)
+        for near_id in sorted(adjacency[face_id]):
+            indegree[near_id] -= 1
+            if indegree[near_id] == 0:
+                heapq.heappush(ready, near_id)
+    if len(result) != len(ordered_faces):
+        cyclic = sorted(face_id for face_id, count in indegree.items() if count > 0)
+        raise OpenFaceSolverError(
+            "FACE_ORDER_CYCLE",
+            "whole-face painter order contains a cycle: " + ", ".join(cyclic),
+        )
+    return tuple(result)
 
 
 def _segment_open_face_interval_result(
@@ -337,12 +576,12 @@ def compute_open_face_visibility(
     )
     seam_states = _seam_states(model, positions, validated.face_normals, policy)
 
-    face_depths: list[tuple[float, str]] = []
-    for face in model.faces:
-        centroid = np.mean([positions[item] for item in face.vertex_ids], axis=0)
-        face_depths.append((float(np.dot(centroid, view.view_direction)), face.face_id))
-    face_draw_order = tuple(
-        item[1] for item in sorted(face_depths, key=lambda item: (item[0], item[1]))
+    face_draw_order = _authoritative_face_draw_order(
+        model,
+        positions,
+        validated.face_normals,
+        view,
+        policy,
     )
     inclusive_edges_by_face: dict[str, set[tuple[str, str]]] = {
         face.face_id: set() for face in model.faces
