@@ -1,52 +1,150 @@
-# TikZ Native Provider
+# manim-tikz-native
 
-这是 `tex-to-mathcapture-ppt` 仓库中受 Git 管理的 TikZ → Manim 原生转换器。
-编辑器仍然只通过版本化 JSON Bridge 调用它，不直接导入转换器实现。
+[![CI](https://github.com/Mathlatics/manim-tikz-native/actions/workflows/ci.yml/badge.svg)](https://github.com/Mathlatics/manim-tikz-native/actions/workflows/ci.yml)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/)
+[![Manim 0.20.1](https://img.shields.io/badge/Manim-0.20.1-6c55a3.svg)](https://www.manim.community/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-## 目录
+Compile a documented, restricted TikZ subset into semantic native Manim
+objects. Keep named geometry editable, drive it with `ValueTracker`, and add
+projection-aware hidden-line removal for closed convex polyhedra or articulated
+open faces such as a dihedral angle.
 
-- `tikz_native/`：Provider 源码、schema 与 TikZ 子集定义；
-- `tests/`：二维、三维、Bridge、兼容性和 Provider 回归；
-- `examples/`：使用本仓库便携 TikZ 夹具的原生场景示例；
-- `scripts/`：转换、兼容性审计和基线验证工具；
-- `docs/`：转换规则、受控子集、三维原型和接入说明。
+This project does **not** convert arbitrary TikZ and does not silently fall back
+to SVG. Unsupported syntax is reported explicitly.
 
-本目录不建立嵌套 `.git`；所有文件与 PPT 编辑器共用仓库根目录的 Git 历史。
-版本标签使用 `tikz-native-provider-v<version>` 命名，避免与整套编辑器的发布标签混淆。
+[中文说明](README.zh-CN.md) · [Public API](docs/public-api.md) ·
+[Automatic occlusion](docs/automatic-occlusion.md) ·
+[Supported TikZ subset](docs/supported-tikz.md)
 
-## 建立环境
+## What it provides
+
+- restricted TikZ → native `Line`, `Polygon`, `Circle`, `Ellipse`, `Dot`,
+  `Tex`, `MathTex`, arrow and angle-marker objects;
+- stable semantic object IDs and named geometric relationships;
+- 2D and 3D geometry rigs driven by ordinary Manim trackers;
+- fixed-view and local-camera 3D projection;
+- automatic solid/hidden line splitting for closed convex polyhedra;
+- automatic line occlusion and face ordering for finite open convex faces and
+  articulated hinges;
+- readable native Manim source generation and versioned JSON bridges;
+- strict, component-level compatibility identities for cached integrations.
+
+## Requirements
+
+- Python 3.11 or newer;
+- Manim Community 0.20.1;
+- XeLaTeX with `standalone`, `fontspec`, `xeCJK`, `unicode-math`, and TikZ;
+- the TeX Live Fandol and Latin Modern fonts for the default template;
+- FFmpeg for video rendering.
+
+On macOS, a full TeX Live installation already includes the default fonts. On
+Debian or Ubuntu, the CI setup installs `texlive-xetex`,
+`texlive-latex-extra`, `texlive-lang-chinese`, and
+`texlive-fonts-recommended`.
+
+## Install
 
 ```bash
-cd /path/to/tex-to-mathcapture-ppt/tools/tikz-native-provider
-python3 -m venv .venv-manim
-.venv-manim/bin/python -m pip install -r requirements.txt
+git clone https://github.com/Mathlatics/manim-tikz-native.git
+cd manim-tikz-native
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install -e ".[test]"
 ```
 
-## 健康检查
+Check the compiler and its component identities:
 
 ```bash
-.venv-manim/bin/python -m tikz_native.bridge health
+tikz-native health
+tikz-native-rig-2d health
+tikz-native-rig-3d health
+tikz-native-source-v3 health
 ```
 
-也可以使用另一套已经安装 Manim 0.20.1 的 Python；调用端会把本目录放入
-`PYTHONPATH`，因此虚拟环境不需要进入 Git。
+## First TikZ scene
 
-## 回归测试
+```python
+from pathlib import Path
+
+from manim import Scene
+
+from tikz_native import compile_document
+from tikz_native.manim_renderer import NativeManimRenderer
+
+
+class NativeTikzScene(Scene):
+    def construct(self):
+        document = compile_document(Path("figure.tex"))
+        picture = document.pictures[0]
+        if picture.unsupported:
+            raise ValueError("Unsupported TikZ: " + "; ".join(picture.unsupported))
+
+        figure = NativeManimRenderer(scene_unit_per_cm=1.0).render(picture)
+        self.add(figure.group)
+        self.wait()
+```
+
+Render it with normal Manim:
 
 ```bash
-.venv-manim/bin/python -m unittest discover -s tests -p 'test_tikz_native_*.py'
+manim -pql scene.py NativeTikzScene
 ```
 
-修改 Provider 后必须同时核对 health 的 `provider.build_revision`、
-`provider.revision_component`、`provider.revision` 和 `provider.component_revisions`。
-`build_revision` 是整个源码树的构建身份；`revision` 是当前 Bridge 的主兼容身份。
-Geometry Rig 以资产编译为主身份，关系/源码/runtime 身份从 `component_revisions` 另取。
-只有相关组件身份改变时，才需要在 PPT 工作副本中显式
-重新转换受影响的 TikZ 资产或重新生成 Clip。禁止用真正不兼容的新组件静默
-重建旧资产，也不得因无关组件变化就废弃已有资产。
+The compiler keeps named coordinates and relationships. It does not embed the
+original TikZ as one opaque SVG object.
 
-回归所需的全国一卷 TikZ 已提取为只包含颜色、公共绘图宏和 16 个 `tikzpicture` 的
-便携夹具；测试不再依赖 `/Users/.../讲评课` 中的个人讲义文件。
+## Automatic occlusion demos
 
-旧的 2026-08-03 `tar.gz` 仍作为迁入前快照保留；当前完整历史应以主仓库提交、
-`tikz-native-provider-v*` 标签和仓库外 Git bundle 为准。
+Closed convex polyhedron:
+
+```bash
+manim -pql examples/polyhedron_visibility/cube_auto_occlusion.py \
+  CubeAutoOcclusionDemo
+```
+
+Articulated open faces / dihedral angle:
+
+```bash
+manim -pql examples/open_face_visibility/dihedral_auto_occlusion.py \
+  DihedralAutoOcclusionDemo
+```
+
+For ordinary Manim scenes, register stable vertices, maximal convex faces, and
+semantic `Line` objects through `OcclusionScene3D` or `OpenFaceScene3D`. The
+module updates preallocated visible and dashed slots in place during
+`scene.play()` and restores the original source objects when the session ends.
+
+See [automatic-occlusion.md](docs/automatic-occlusion.md) for the supported
+geometry and fail-closed rules.
+
+## Test
+
+```bash
+python -m unittest discover -s tests -p "test_*.py"
+python -m build
+python -m twine check dist/*
+```
+
+Two expensive motion-render tests are opt-in by design; the ordinary test suite
+still exercises real Cairo renders for the automatic-occlusion bindings.
+
+## Project boundaries
+
+This repository contains the reusable compiler, Manim runtime, algorithms,
+bridges, schemas, and examples. It deliberately does not contain a PowerPoint
+editor, browser UI, timeline model, ShapeAsset/ShapeState storage, or preview
+cache. Those are application concerns and can consume this package through its
+Python API or JSON bridges.
+
+## Status
+
+Version `0.1.0` is an alpha release. The public contracts are versioned and the
+compiler fails closed, but the accepted TikZ language is intentionally smaller
+than TikZ itself. Please report a minimal `.tex` example when requesting new
+syntax.
+
+## License
+
+MIT. See [LICENSE](LICENSE) and [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

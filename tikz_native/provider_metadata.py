@@ -39,7 +39,7 @@ def provider_info(
     component_revisions = provider_component_revisions()
     component_contract_revisions = provider_component_contract_revisions()
     return {
-        "name": "tikz-native-manim",
+        "name": "manim-tikz-native",
         "version": __version__,
         "protocol_version": PROTOCOL_VERSION,
         "request_schema": REQUEST_SCHEMA,

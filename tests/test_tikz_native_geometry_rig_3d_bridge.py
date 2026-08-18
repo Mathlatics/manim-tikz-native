@@ -20,7 +20,11 @@ from tikz_native.geometry_rig_3d_bridge import (
     execute_geometry_rig_3d_request,
     health_response,
 )
-from tikz_native.motion_3d_bridge import provider_info, sha256_file
+from tikz_native.motion_3d_bridge import sha256_file
+from tikz_native.version import (
+    COMPONENT_ASSET_COMPILER,
+    provider_component_revision,
+)
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -40,7 +44,8 @@ def _request(*, expected_revision: str | None = None) -> dict:
             "entry_macro": None,
             "picture_index": 1,
             "expected_asset_provider_revision": (
-                expected_revision or provider_info()["revision"]
+                expected_revision
+                or provider_component_revision(COMPONENT_ASSET_COMPILER)
             ),
         },
         "selection": {

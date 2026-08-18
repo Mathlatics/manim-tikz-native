@@ -83,7 +83,7 @@ def provider_info() -> dict[str, Any]:
     except PackageNotFoundError:
         manim_version = "unavailable"
     return {
-        "name": "tikz-native-manim",
+        "name": "manim-tikz-native",
         "version": __version__,
         "protocol_version": PROTOCOL_VERSION,
         "request_schema": MOTION_3D_BRIDGE_REQUEST_SCHEMA,

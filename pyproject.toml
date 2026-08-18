@@ -1,0 +1,68 @@
+[build-system]
+requires = ["setuptools>=77", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "manim-tikz-native"
+version = "0.1.0"
+description = "Compile a restricted semantic TikZ subset into native Manim objects, animation rigs, and automatic 3D occlusion."
+readme = "README.md"
+requires-python = ">=3.11"
+license = "MIT"
+authors = [
+  { name = "Mathlatics" },
+]
+keywords = ["manim", "tikz", "latex", "geometry", "animation", "occlusion"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Education",
+  "Intended Audience :: Science/Research",
+  "Operating System :: MacOS",
+  "Operating System :: POSIX :: Linux",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Multimedia :: Graphics :: 3D Rendering",
+  "Topic :: Scientific/Engineering :: Mathematics",
+]
+dependencies = [
+  "manim==0.20.1",
+]
+
+[project.optional-dependencies]
+test = [
+  "jsonschema>=4.23",
+  "referencing>=0.35",
+]
+dev = [
+  "build>=1.2",
+  "jsonschema>=4.23",
+  "referencing>=0.35",
+  "twine>=6",
+]
+
+[project.urls]
+Homepage = "https://github.com/Mathlatics/manim-tikz-native"
+Documentation = "https://github.com/Mathlatics/manim-tikz-native/tree/main/docs"
+Issues = "https://github.com/Mathlatics/manim-tikz-native/issues"
+Source = "https://github.com/Mathlatics/manim-tikz-native"
+
+[project.scripts]
+tikz-native = "tikz_native.bridge:main"
+tikz-native-rig-2d = "tikz_native.geometry_rig_bridge:main"
+tikz-native-rig-3d = "tikz_native.geometry_rig_3d_bridge:main"
+tikz-native-source-v3 = "tikz_native.geometry_rig_3d_source_v3_bridge:main"
+
+[tool.setuptools]
+include-package-data = true
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["tikz_native*", "polyhedron_visibility*"]
+
+[tool.setuptools.package-data]
+tikz_native = [
+  "schemas/*.json",
+  "examples/*.tex",
+  "subset_v0_1.json",
+]

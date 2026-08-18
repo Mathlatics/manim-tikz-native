@@ -34,6 +34,9 @@ from tikz_native.version import (
 
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE = ROOT / "examples" / "dihedral_fold_3d_demo" / "dihedral_fold.tex"
+EMBEDDED_RUNTIME_REVISION = provider_component_revision(
+    COMPONENT_EMBEDDED_MOTION_3D
+)
 
 
 class _InstantScene(Scene):
@@ -90,6 +93,8 @@ class EmbeddedMotion3DRuntimeTests(unittest.TestCase):
     def fixture(self, *, analysis=None, timeline=None):
         selected_analysis = self.analysis if analysis is None else analysis
         revision = provider_component_revision(COMPONENT_ASSET_COMPILER)
+        rig_revision = provider_component_revision(COMPONENT_GEOMETRY_RIG_3D)
+        runtime_revision = provider_component_revision(COMPONENT_EMBEDDED_MOTION_3D)
         semantic_hash = semantic_model_3d_hash(self.picture)
         figure = instantiate_picture(
             self.picture,
@@ -123,12 +128,15 @@ class EmbeddedMotion3DRuntimeTests(unittest.TestCase):
             "revisionMatch": True,
             "currentRigProviderRevision": revision,
             "expectedAssetProviderRevision": revision,
+            "geometryRig3dRevision": rig_revision,
+            "embeddedMotion3dRevision": runtime_revision,
             "semanticModelHash": semantic_hash,
         }
         semantic_manifest = {
             "dimension": 3,
             "pictureIndex": self.picture.index,
             "providerRevision": revision,
+            "geometryRig3dRevision": rig_revision,
             "semanticModelHash": semantic_hash,
             "bindings": selected_analysis["bindings"],
         }
@@ -212,6 +220,7 @@ class EmbeddedMotion3DRuntimeTests(unittest.TestCase):
             definition=definition,
             semantic_manifest=manifest,
             expected_provider_revision=revision,
+            expected_runtime_revision=EMBEDDED_RUNTIME_REVISION,
             runtime_contract=EMBEDDED_MOTION_3D_RUNTIME_CONTRACT,
         )
 
@@ -241,6 +250,7 @@ class EmbeddedMotion3DRuntimeTests(unittest.TestCase):
                 definition=definition,
                 semantic_manifest=manifest,
                 expected_provider_revision=revision,
+                expected_runtime_revision=EMBEDDED_RUNTIME_REVISION,
             )
 
         self.assertIs(scene.camera, global_camera)
@@ -256,7 +266,10 @@ class EmbeddedMotion3DRuntimeTests(unittest.TestCase):
         definition["expectedAssetProviderRevision"] = wrong_revision
         manifest["providerRevision"] = wrong_revision
 
-        with self.assertRaisesRegex(EmbeddedMotion3DError, "Provider revision"):
+        with self.assertRaisesRegex(
+            EmbeddedMotion3DError,
+            "asset_compiler component",
+        ):
             play_motion_3d_on_native_shape(
                 scene,
                 shape,
@@ -264,6 +277,7 @@ class EmbeddedMotion3DRuntimeTests(unittest.TestCase):
                 definition=definition,
                 semantic_manifest=manifest,
                 expected_provider_revision=wrong_revision,
+                expected_runtime_revision=EMBEDDED_RUNTIME_REVISION,
             )
 
         self.assert_restored(figure, shape, snapshot)
@@ -320,6 +334,7 @@ class EmbeddedMotion3DRuntimeTests(unittest.TestCase):
         definition["geometryRig3dRevision"] = provider_component_revision(
             COMPONENT_GEOMETRY_RIG_3D
         )
+        manifest.pop("geometryRig3dRevision")
         scene = _InstantScene()
         scene.add(shape)
         snapshot = self.snapshot(figure, shape)
@@ -332,6 +347,7 @@ class EmbeddedMotion3DRuntimeTests(unittest.TestCase):
                 definition=definition,
                 semantic_manifest=manifest,
                 expected_provider_revision=revision,
+                expected_runtime_revision=EMBEDDED_RUNTIME_REVISION,
             )
 
         self.assert_restored(figure, shape, snapshot)
@@ -355,6 +371,7 @@ class EmbeddedMotion3DRuntimeTests(unittest.TestCase):
             definition=definition,
             semantic_manifest=manifest,
             expected_provider_revision=revision,
+            expected_runtime_revision=EMBEDDED_RUNTIME_REVISION,
         )
 
         self.assertEqual(descendant.updaters, [updater])
@@ -378,6 +395,7 @@ class EmbeddedMotion3DRuntimeTests(unittest.TestCase):
                 definition=definition,
                 semantic_manifest=manifest,
                 expected_provider_revision=revision,
+                expected_runtime_revision=EMBEDDED_RUNTIME_REVISION,
             )
 
         self.assert_restored(figure, shape, snapshot)
@@ -402,6 +420,7 @@ class EmbeddedMotion3DRuntimeTests(unittest.TestCase):
             definition=definition,
             semantic_manifest=manifest,
             expected_provider_revision=revision,
+            expected_runtime_revision=EMBEDDED_RUNTIME_REVISION,
         )
 
         self.assert_restored(figure, shape, snapshot)
@@ -455,6 +474,7 @@ class EmbeddedMotion3DRuntimeTests(unittest.TestCase):
                 definition=definition,
                 semantic_manifest=manifest,
                 expected_provider_revision=revision,
+                expected_runtime_revision=EMBEDDED_RUNTIME_REVISION,
             )
 
         self.assertTrue(observed_stroke_width_per_pt)
@@ -520,6 +540,7 @@ class EmbeddedMotion3DRuntimeTests(unittest.TestCase):
                 definition=definition,
                 semantic_manifest=manifest,
                 expected_provider_revision=revision,
+                expected_runtime_revision=EMBEDDED_RUNTIME_REVISION,
             )
 
         self.assertTrue(observed_stroke_width_per_pt)
@@ -562,6 +583,7 @@ class EmbeddedMotion3DRuntimeTests(unittest.TestCase):
                     definition=definition,
                     semantic_manifest=manifest,
                     expected_provider_revision=revision,
+                    expected_runtime_revision=EMBEDDED_RUNTIME_REVISION,
                 )
                 test_case.assertIs(render_scene.camera, global_camera)
                 test_case.assert_restored(figure, shape, snapshot)
@@ -610,6 +632,7 @@ class EmbeddedMotion3DRuntimeTests(unittest.TestCase):
                     definition=definition,
                     semantic_manifest=manifest,
                     expected_provider_revision=revision,
+                    expected_runtime_revision=EMBEDDED_RUNTIME_REVISION,
                 )
                 test_case.assert_restored(figure, shape, snapshot)
 
@@ -699,6 +722,7 @@ class EmbeddedMotion3DRuntimeTests(unittest.TestCase):
             definition=definition,
             semantic_manifest=manifest,
             expected_provider_revision=revision,
+            expected_runtime_revision=EMBEDDED_RUNTIME_REVISION,
         )
 
         self.assertTrue(scene.observed_centers)

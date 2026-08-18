@@ -51,24 +51,19 @@ DEFAULT_TEX_TEMPLATE = TexTemplate(
 \usepackage{xeCJK}
 \usepackage{unicode-math}
 \usepackage{tikz}
+% These fonts ship with a standard TeX Live installation.  Keeping the
+% template path-free makes the package portable across macOS and Linux.
 \setCJKmainfont[
-  Path=/Users/leocyan/Library/Fonts/,
-  BoldFont=simhei.ttf,
-  ItalicFont=simfang.ttf,
+  BoldFont=FandolHei-Regular.otf,
+  ItalicFont=FandolKai-Regular.otf,
   FakeBold=2
-]{simsun.ttc}
+]{FandolSong-Regular.otf}
 \setCJKsansfont[
-  Path=/Users/leocyan/Library/Fonts/,
-  BoldFont=simhei.ttf,
+  BoldFont=FandolHei-Regular.otf,
   FakeBold=2
-]{simsun.ttc}
-\setmathfont[
-  Path=/Users/leocyan/Library/Fonts/,
-  FakeBold=2
-]{latinmodern-math.otf}
+]{FandolHei-Regular.otf}
+\setmathfont{latinmodern-math.otf}
 \setmainfont[
-  Path=/Users/leocyan/Library/Fonts/,
-  FakeBold=2,
   BoldFont=lmroman10-bold.otf,
   ItalicFont=lmroman10-italic.otf,
   BoldItalicFont=lmroman10-bolditalic.otf

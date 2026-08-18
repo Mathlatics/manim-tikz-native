@@ -18,13 +18,12 @@
 
 ## 渲染
 
-在 `tools/tikz-native-provider` 目录中执行：
+在仓库根目录中执行：
 
 ```bash
-PY=/Users/leocyan/Documents/Code/Manim/manim_scenes/.venv-manim/bin/python
 MEDIA_DIR=/absolute/path/to/an-empty-output-directory
 
-"$PY" -m manim -ql \
+python -m manim -ql \
   examples/analytic_geometry_ellipse_demo/scene.py \
   EllipseAnalyticGeometryDriverDemo \
   --media_dir "$MEDIA_DIR"
@@ -38,6 +37,4 @@ MEDIA_DIR=/absolute/path/to/an-empty-output-directory
 - `R` 根据 TikZ 保留的 `interpolation(O,P,-1)` 依赖重算，不在 Scene 中写死。
 - 动态角弧和角标已纳入同一绑定机制。
 
-## 尚未接入的边界
-
-这是 Provider 内部竖向 Demo，未修改 Bridge v1、网页编辑器、PPT metadata 或 ShapeState/Action 契约。验收后再单独设计便携几何模型和 Bridge v2。
+这个示例只演示可复用的 Manim 模块，不依赖网页编辑器、PPT 或时间线。

@@ -32,7 +32,11 @@ from tikz_native.motion_3d_render import (
     compile_motion_3d_asset,
 )
 from tikz_native.motion_3d import Motion3DSpec
-from tikz_native.provider import provider_info, sha256_file
+from tikz_native.provider import sha256_file
+from tikz_native.version import (
+    COMPONENT_MOTION_PREVIEW_3D,
+    provider_component_revision,
+)
 
 
 PROVIDER_ROOT = Path(__file__).parents[1]
@@ -48,7 +52,9 @@ def _request(source: Path, motion: Path, output_dir: Path) -> dict:
         "schema": MOTION_3D_BRIDGE_REQUEST_SCHEMA,
         "operation": MOTION_3D_BRIDGE_OPERATION,
         "job_id": "dihedral-motion-3d-test",
-        "provider_revision": provider_info()["revision"],
+        "provider_revision": provider_component_revision(
+            COMPONENT_MOTION_PREVIEW_3D
+        ),
         "input": {
             "source_path": str(source),
             "source_sha256": sha256_file(source),
@@ -224,7 +230,9 @@ class TikzNativeMotion3DBridgeTests(unittest.TestCase):
         trace = build_motion_3d_trace(
             self.compiled,
             motion,
-            provider_revision=provider_info()["revision"],
+            provider_revision=provider_component_revision(
+                COMPONENT_MOTION_PREVIEW_3D
+            ),
             source_sha256=sha256_file(SOURCE),
             motion_sha256=sha256_file(MOTION),
             profile=MOTION_3D_PREVIEW_PROFILE,

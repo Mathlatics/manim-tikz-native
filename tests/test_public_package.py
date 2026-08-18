@@ -1,0 +1,85 @@
+from __future__ import annotations
+
+from importlib import resources
+from pathlib import Path
+import tomllib
+import unittest
+
+import tikz_native
+from polyhedron_visibility import OcclusionScene3D
+from polyhedron_visibility.open_faces import OpenFaceScene3D
+from tikz_native.manim_renderer import DEFAULT_TEX_TEMPLATE
+
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+class PublicPackageTests(unittest.TestCase):
+    def test_distribution_and_runtime_versions_match(self) -> None:
+        metadata = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+        self.assertEqual(metadata["project"]["name"], "manim-tikz-native")
+        self.assertEqual(metadata["project"]["version"], tikz_native.__version__)
+        self.assertEqual(metadata["project"]["requires-python"], ">=3.11")
+
+    def test_public_authoring_and_tikz_entry_points_import(self) -> None:
+        self.assertEqual(OcclusionScene3D.__name__, "OcclusionScene3D")
+        self.assertEqual(OpenFaceScene3D.__name__, "OpenFaceScene3D")
+        for name in (
+            "NativeManimRenderer",
+            "NativeManim3DRenderer",
+            "adapt_picture_visibility_3d",
+            "adapt_picture_open_face_visibility_3d",
+            "bind_picture_visibility_3d",
+            "bind_picture_open_face_visibility_3d",
+            "bake_open_face_static_entry_3d",
+            "generate_native_manim_source_3d_v3",
+        ):
+            with self.subTest(name=name):
+                self.assertTrue(callable(getattr(tikz_native, name)))
+
+    def test_default_tex_template_has_no_machine_specific_font_path(self) -> None:
+        preamble = DEFAULT_TEX_TEMPLATE.preamble
+        self.assertNotIn("/Users/", preamble)
+        self.assertNotIn("Path=", preamble)
+        self.assertIn("FandolSong", preamble)
+        self.assertIn("latinmodern-math.otf", preamble)
+
+    def test_wheel_package_data_is_declared_and_present(self) -> None:
+        package_root = resources.files("tikz_native")
+        self.assertTrue(package_root.joinpath("subset_v0_1.json").is_file())
+        self.assertTrue(package_root.joinpath("examples/native_friendly_figure.tex").is_file())
+        schemas = package_root.joinpath("schemas")
+        self.assertTrue(schemas.joinpath("request-v1.schema.json").is_file())
+        self.assertTrue(
+            schemas.joinpath("geometry-rig-3d-source-v3-v1.schema.json").is_file()
+        )
+
+    def test_public_tree_contains_no_personal_or_editor_checkout_paths(self) -> None:
+        forbidden = (
+            "/Users/",
+            "Documents/" + "\u8bb2\u8bc4\u8bfe",
+            "/tools/tikz-native-provider",
+        )
+        roots = (
+            ROOT / "README.md",
+            ROOT / "README.zh-CN.md",
+            ROOT / "docs",
+            ROOT / "examples",
+            ROOT / "polyhedron_visibility",
+            ROOT / "tikz_native",
+        )
+        suffixes = {".md", ".py", ".tex", ".json", ".toml", ".yml", ".yaml"}
+        paths: list[Path] = []
+        for item in roots:
+            paths.extend([item] if item.is_file() else item.rglob("*"))
+        for path in paths:
+            if not path.is_file() or path.suffix not in suffixes:
+                continue
+            payload = path.read_text(encoding="utf-8", errors="replace")
+            for marker in forbidden:
+                with self.subTest(path=path.relative_to(ROOT), marker=marker):
+                    self.assertNotIn(marker, payload)
+
+
+if __name__ == "__main__":
+    unittest.main()

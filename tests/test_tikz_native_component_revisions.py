@@ -24,6 +24,7 @@ from tikz_native.provider import provider_info as asset_provider_info
 from tikz_native.version import (
     COMPONENT_ASSET_COMPILER,
     COMPONENT_EMBEDDED_MOTION_3D,
+    COMPONENT_GEOMETRY_RIG_2D,
     COMPONENT_GEOMETRY_RIG_3D,
     COMPONENT_MOTION_PREVIEW_2D,
     COMPONENT_MOTION_PREVIEW_3D,
@@ -50,35 +51,53 @@ from tikz_native.version import (
 ROOT = Path(__file__).resolve().parents[1]
 PACKAGE_ROOT = ROOT / "tikz_native"
 VISIBILITY_ROOT = ROOT / "polyhedron_visibility"
-LEGACY_ASSET_REVISION = (
-    "source-sha256:6920c63acf10ec22c3f94a1eeb9374799f5ce467419cb610a447675e9678c0ab"
+ASSET_REVISION = (
+    "source-sha256:ab7f963405fc04de38e394aaf6a87d83535dcabcf07c5fb55ef3965ff0fe24a8"
 )
-NATIVE_SOURCE_REVISION = (
-    "source-sha256:01df91473770e47746d4f14de2d94297a2e846be7dcb250652b65168fcda30d6"
+GEOMETRY_RIG_2D_REVISION = (
+    "source-sha256:b1fc6424921a77536a7ac03b81bb07e7da2fd94280151e6d780f8674a91c87b5"
+)
+NATIVE_SOURCE_2D_REVISION = (
+    "source-sha256:67595e78d46c2285fa7f2de6e2e0516f69d1403e59675ea5015d5c6eb1e925cb"
+)
+NATIVE_RIG_2D_REVISION = (
+    "source-sha256:9eb920be8b6368cc4eb658523084753e98657049dac37a7e1071ff32b4079756"
+)
+MOTION_PREVIEW_2D_REVISION = (
+    "source-sha256:257e982c33a4ab94dc5104e78c3495940b54a626df063a0bb05615ce844d7023"
+)
+GEOMETRY_RIG_3D_REVISION = (
+    "source-sha256:3f580038dcc69ff0e96eb0c27e4fa55ac38a4fa1051114c61d09eb4b988bb3f0"
 )
 NATIVE_SOURCE_3D_REVISION = (
-    "source-sha256:270a1d6d04659bb16f1ce2b5239fda2c19315691e103c12491e4eed84b460a45"
+    "source-sha256:374519e01a15a7bd7d99fb65dc36e882d938029dcdb728cdc27a027930ec4b20"
 )
 NATIVE_SOURCE_3D_V2_REVISION = (
-    "source-sha256:26d702598f6300ece385972271346a571e9fb28b273732584ce14fca98445769"
+    "source-sha256:5e18054bb19a47e03eea9966a5783928f5bac81e1fa649567d5739f662a702a8"
 )
 NATIVE_SOURCE_3D_V3_REVISION = (
-    "source-sha256:edd2fb995d5f551754260f7906e15547393302bc757925b174c6007b05b544a6"
+    "source-sha256:8d711b47f68c4171177b4ee7d651b0fb1c167d4e6eb59803f80d1ea6d905978b"
+)
+EMBEDDED_MOTION_3D_REVISION = (
+    "source-sha256:73b1c79e7d9178bb3be451e6b94977ba05361f2c187b6d8cf9df8dbb47c5ae59"
+)
+MOTION_PREVIEW_3D_REVISION = (
+    "source-sha256:6958a1284eb328e1dc07e3f1ee7658b9525f810a1f386449ce02088b05e93cbc"
 )
 POLYHEDRON_VISIBILITY_REVISION = (
     "source-sha256:aa45310ff3c70ac1922ddf61b457cafeb789f9011ec67069b70c23d63fb3a8ae"
 )
 TIKZ_POLYHEDRON_VISIBILITY_3D_REVISION = (
-    "source-sha256:f0e495883f71691f8b1ca3728ab78953ab8132b3e316a7a911a6e345f74fcd3c"
+    "source-sha256:76bf703ef380738af5ee0f463e9d2a43f4537d8d156d2af372953457dca6cc48"
 )
 OPEN_FACE_VISIBILITY_REVISION = (
     "source-sha256:8c831f441d21e2ceb39aed78ac3428936ac50fe86fa726ea548a52a4bf426341"
 )
 TIKZ_OPEN_FACE_VISIBILITY_3D_REVISION = (
-    "source-sha256:e9b8d7f72a8e18852d3c104a10cf513f2dc7bb968267a7952325eb1dc065e495"
+    "source-sha256:adb3cfad37ceff50c968984fbc779985c70c5a7cba583fd44ce1af66a2955e58"
 )
 TIKZ_OPEN_FACE_STATIC_ASSET_3D_REVISION = (
-    "source-sha256:056d7ce589b9f2ef2679e2e847c58f875eea72fecc2f88e5f598fd4c79993c8f"
+    "source-sha256:a11291d775923e57cfe36a3debb6ab0813098a11193093a0901ba82356fba2d2"
 )
 
 
@@ -168,44 +187,34 @@ class TikzNativeComponentRevisionTests(unittest.TestCase):
                     record["component_contract_revisions"], contracts
                 )
 
-    def test_verified_page8_and_page9_components_keep_their_frozen_identity(self) -> None:
+    def test_public_release_components_have_frozen_render_identities(self) -> None:
         revisions = provider_component_revisions()
-        self.assertEqual(revisions[COMPONENT_ASSET_COMPILER], LEGACY_ASSET_REVISION)
-        self.assertEqual(revisions[COMPONENT_NATIVE_RIG_2D], LEGACY_ASSET_REVISION)
-        self.assertEqual(
-            revisions[COMPONENT_MOTION_PREVIEW_2D], LEGACY_ASSET_REVISION
-        )
-        self.assertEqual(revisions[COMPONENT_GEOMETRY_RIG_3D], LEGACY_ASSET_REVISION)
-        self.assertEqual(revisions[COMPONENT_EMBEDDED_MOTION_3D], LEGACY_ASSET_REVISION)
-        self.assertEqual(
-            revisions[COMPONENT_MOTION_PREVIEW_3D], LEGACY_ASSET_REVISION
-        )
-        self.assertEqual(
-            revisions[COMPONENT_NATIVE_MANIM_SOURCE_2D], NATIVE_SOURCE_REVISION
-        )
-        self.assertEqual(
-            revisions[COMPONENT_NATIVE_MANIM_SOURCE_3D],
-            NATIVE_SOURCE_3D_REVISION,
-        )
-        self.assertEqual(
-            revisions[COMPONENT_NATIVE_MANIM_SOURCE_3D_V2],
-            NATIVE_SOURCE_3D_V2_REVISION,
-        )
-        self.assertEqual(
-            revisions[COMPONENT_NATIVE_MANIM_SOURCE_3D_V3],
-            NATIVE_SOURCE_3D_V3_REVISION,
-        )
-        self.assertEqual(
-            len(
-                {
-                    LEGACY_ASSET_REVISION,
-                    NATIVE_SOURCE_3D_REVISION,
-                    NATIVE_SOURCE_3D_V2_REVISION,
-                    NATIVE_SOURCE_3D_V3_REVISION,
-                }
+        expected = {
+            COMPONENT_ASSET_COMPILER: ASSET_REVISION,
+            COMPONENT_GEOMETRY_RIG_2D: GEOMETRY_RIG_2D_REVISION,
+            COMPONENT_NATIVE_MANIM_SOURCE_2D: NATIVE_SOURCE_2D_REVISION,
+            COMPONENT_NATIVE_RIG_2D: NATIVE_RIG_2D_REVISION,
+            COMPONENT_MOTION_PREVIEW_2D: MOTION_PREVIEW_2D_REVISION,
+            COMPONENT_GEOMETRY_RIG_3D: GEOMETRY_RIG_3D_REVISION,
+            COMPONENT_NATIVE_MANIM_SOURCE_3D: NATIVE_SOURCE_3D_REVISION,
+            COMPONENT_NATIVE_MANIM_SOURCE_3D_V2: NATIVE_SOURCE_3D_V2_REVISION,
+            COMPONENT_NATIVE_MANIM_SOURCE_3D_V3: NATIVE_SOURCE_3D_V3_REVISION,
+            COMPONENT_EMBEDDED_MOTION_3D: EMBEDDED_MOTION_3D_REVISION,
+            COMPONENT_MOTION_PREVIEW_3D: MOTION_PREVIEW_3D_REVISION,
+            COMPONENT_POLYHEDRON_VISIBILITY: POLYHEDRON_VISIBILITY_REVISION,
+            COMPONENT_TIKZ_POLYHEDRON_VISIBILITY_3D: (
+                TIKZ_POLYHEDRON_VISIBILITY_3D_REVISION
             ),
-            4,
-        )
+            COMPONENT_OPEN_FACE_VISIBILITY: OPEN_FACE_VISIBILITY_REVISION,
+            COMPONENT_TIKZ_OPEN_FACE_VISIBILITY_3D: (
+                TIKZ_OPEN_FACE_VISIBILITY_3D_REVISION
+            ),
+            COMPONENT_TIKZ_OPEN_FACE_STATIC_ASSET_3D: (
+                TIKZ_OPEN_FACE_STATIC_ASSET_3D_REVISION
+            ),
+        }
+        self.assertEqual(revisions, expected)
+        self.assertEqual(len(set(expected.values())), len(expected))
 
     def test_visibility_components_have_independent_frozen_identities(self) -> None:
         revisions = provider_component_revisions()
