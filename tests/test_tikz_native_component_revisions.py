@@ -23,7 +23,9 @@ from tikz_native.motion_bridge import provider_info as motion_2d_provider_info
 from tikz_native.provider import provider_info as asset_provider_info
 from tikz_native.version import (
     COMPONENT_ASSET_COMPILER,
+    COMPONENT_CONVEX_SECTION_3D,
     COMPONENT_EMBEDDED_MOTION_3D,
+    COMPONENT_FACE_DEPTH_CUE_3D,
     COMPONENT_GEOMETRY_RIG_2D,
     COMPONENT_GEOMETRY_RIG_3D,
     COMPONENT_MOTION_PREVIEW_2D,
@@ -36,6 +38,7 @@ from tikz_native.version import (
     COMPONENT_OPEN_FACE_VISIBILITY,
     COMPONENT_POLYHEDRON_VISIBILITY,
     COMPONENT_TIKZ_OPEN_FACE_STATIC_ASSET_3D,
+    COMPONENT_TIKZ_CONVEX_SECTION_3D,
     COMPONENT_TIKZ_OPEN_FACE_VISIBILITY_3D,
     COMPONENT_TIKZ_POLYHEDRON_VISIBILITY_3D,
     COMPONENT_CONTRACT_REVISION_SCHEMA,
@@ -87,6 +90,9 @@ MOTION_PREVIEW_3D_REVISION = (
 POLYHEDRON_VISIBILITY_REVISION = (
     "source-sha256:aa45310ff3c70ac1922ddf61b457cafeb789f9011ec67069b70c23d63fb3a8ae"
 )
+FACE_DEPTH_CUE_3D_REVISION = (
+    "source-sha256:be2a87b144147f49ed7f47c4955c366d00ad48b5cae98ff58e55ae63570da0fa"
+)
 TIKZ_POLYHEDRON_VISIBILITY_3D_REVISION = (
     "source-sha256:76bf703ef380738af5ee0f463e9d2a43f4537d8d156d2af372953457dca6cc48"
 )
@@ -98,6 +104,12 @@ TIKZ_OPEN_FACE_VISIBILITY_3D_REVISION = (
 )
 TIKZ_OPEN_FACE_STATIC_ASSET_3D_REVISION = (
     "source-sha256:a11291d775923e57cfe36a3debb6ab0813098a11193093a0901ba82356fba2d2"
+)
+CONVEX_SECTION_3D_REVISION = (
+    "source-sha256:03581834d1a596f4e678153cf4780329e5c7f424031b91ed20e8981f340d3a4f"
+)
+TIKZ_CONVEX_SECTION_3D_REVISION = (
+    "source-sha256:30d0a7bfc0a9a838975eeeedec5a0ca4feb003f227590d988d5c75af761aba2e"
 )
 
 
@@ -202,8 +214,13 @@ class TikzNativeComponentRevisionTests(unittest.TestCase):
             COMPONENT_EMBEDDED_MOTION_3D: EMBEDDED_MOTION_3D_REVISION,
             COMPONENT_MOTION_PREVIEW_3D: MOTION_PREVIEW_3D_REVISION,
             COMPONENT_POLYHEDRON_VISIBILITY: POLYHEDRON_VISIBILITY_REVISION,
+            COMPONENT_FACE_DEPTH_CUE_3D: FACE_DEPTH_CUE_3D_REVISION,
+            COMPONENT_CONVEX_SECTION_3D: CONVEX_SECTION_3D_REVISION,
             COMPONENT_TIKZ_POLYHEDRON_VISIBILITY_3D: (
                 TIKZ_POLYHEDRON_VISIBILITY_3D_REVISION
+            ),
+            COMPONENT_TIKZ_CONVEX_SECTION_3D: (
+                TIKZ_CONVEX_SECTION_3D_REVISION
             ),
             COMPONENT_OPEN_FACE_VISIBILITY: OPEN_FACE_VISIBILITY_REVISION,
             COMPONENT_TIKZ_OPEN_FACE_VISIBILITY_3D: (
@@ -220,8 +237,13 @@ class TikzNativeComponentRevisionTests(unittest.TestCase):
         revisions = provider_component_revisions()
         expected = {
             COMPONENT_POLYHEDRON_VISIBILITY: POLYHEDRON_VISIBILITY_REVISION,
+            COMPONENT_FACE_DEPTH_CUE_3D: FACE_DEPTH_CUE_3D_REVISION,
+            COMPONENT_CONVEX_SECTION_3D: CONVEX_SECTION_3D_REVISION,
             COMPONENT_TIKZ_POLYHEDRON_VISIBILITY_3D: (
                 TIKZ_POLYHEDRON_VISIBILITY_3D_REVISION
+            ),
+            COMPONENT_TIKZ_CONVEX_SECTION_3D: (
+                TIKZ_CONVEX_SECTION_3D_REVISION
             ),
             COMPONENT_OPEN_FACE_VISIBILITY: OPEN_FACE_VISIBILITY_REVISION,
             COMPONENT_TIKZ_OPEN_FACE_VISIBILITY_3D: (
@@ -376,6 +398,10 @@ print(json.dumps({
             baseline[COMPONENT_POLYHEDRON_VISIBILITY],
         )
         self.assertNotEqual(
+            components[COMPONENT_FACE_DEPTH_CUE_3D],
+            baseline[COMPONENT_FACE_DEPTH_CUE_3D],
+        )
+        self.assertNotEqual(
             components[COMPONENT_TIKZ_POLYHEDRON_VISIBILITY_3D],
             baseline[COMPONENT_TIKZ_POLYHEDRON_VISIBILITY_3D],
         )
@@ -387,15 +413,82 @@ print(json.dumps({
             components[COMPONENT_TIKZ_OPEN_FACE_VISIBILITY_3D],
             baseline[COMPONENT_TIKZ_OPEN_FACE_VISIBILITY_3D],
         )
+        self.assertNotEqual(
+            components[COMPONENT_CONVEX_SECTION_3D],
+            baseline[COMPONENT_CONVEX_SECTION_3D],
+        )
+        self.assertNotEqual(
+            components[COMPONENT_TIKZ_CONVEX_SECTION_3D],
+            baseline[COMPONENT_TIKZ_CONVEX_SECTION_3D],
+        )
         for component in baseline:
             if component in {
                 COMPONENT_POLYHEDRON_VISIBILITY,
+                COMPONENT_FACE_DEPTH_CUE_3D,
+                COMPONENT_CONVEX_SECTION_3D,
                 COMPONENT_TIKZ_POLYHEDRON_VISIBILITY_3D,
+                COMPONENT_TIKZ_CONVEX_SECTION_3D,
                 COMPONENT_OPEN_FACE_VISIBILITY,
                 COMPONENT_TIKZ_OPEN_FACE_VISIBILITY_3D,
                 COMPONENT_TIKZ_OPEN_FACE_STATIC_ASSET_3D,
                 COMPONENT_NATIVE_MANIM_SOURCE_3D_V3,
             }:
+                continue
+            self.assertEqual(components[component], baseline[component])
+
+    def test_editing_convex_section_core_changes_only_it_and_tikz_binding(self) -> None:
+        baseline = provider_component_revisions()
+        mutated = self._probe_copy(
+            "@tool/polyhedron_visibility/sections/solver.py"
+        )
+        components = mutated["components"]
+        self.assertNotEqual(mutated["build"], provider_revision())
+        for component in (
+            COMPONENT_CONVEX_SECTION_3D,
+            COMPONENT_TIKZ_CONVEX_SECTION_3D,
+        ):
+            self.assertNotEqual(components[component], baseline[component])
+        for component in baseline:
+            if component in {
+                COMPONENT_CONVEX_SECTION_3D,
+                COMPONENT_TIKZ_CONVEX_SECTION_3D,
+            }:
+                continue
+            self.assertEqual(components[component], baseline[component])
+
+    def test_editing_face_depth_cue_changes_it_and_section_dependents(self) -> None:
+        baseline = provider_component_revisions()
+        mutated = self._probe_copy(
+            "@tool/polyhedron_visibility/depth_cue/solver.py"
+        )
+        components = mutated["components"]
+        self.assertNotEqual(mutated["build"], provider_revision())
+        for component in (
+            COMPONENT_FACE_DEPTH_CUE_3D,
+            COMPONENT_CONVEX_SECTION_3D,
+            COMPONENT_TIKZ_CONVEX_SECTION_3D,
+        ):
+            self.assertNotEqual(components[component], baseline[component])
+        for component in baseline:
+            if component in {
+                COMPONENT_FACE_DEPTH_CUE_3D,
+                COMPONENT_CONVEX_SECTION_3D,
+                COMPONENT_TIKZ_CONVEX_SECTION_3D,
+            }:
+                continue
+            self.assertEqual(components[component], baseline[component])
+
+    def test_editing_tikz_convex_section_binding_changes_only_itself(self) -> None:
+        baseline = provider_component_revisions()
+        mutated = self._probe_copy("convex_section_3d_manim.py")
+        components = mutated["components"]
+        self.assertNotEqual(mutated["build"], provider_revision())
+        self.assertNotEqual(
+            components[COMPONENT_TIKZ_CONVEX_SECTION_3D],
+            baseline[COMPONENT_TIKZ_CONVEX_SECTION_3D],
+        )
+        for component in baseline:
+            if component == COMPONENT_TIKZ_CONVEX_SECTION_3D:
                 continue
             self.assertEqual(components[component], baseline[component])
 
@@ -436,9 +529,14 @@ print(json.dumps({
             components[COMPONENT_TIKZ_OPEN_FACE_VISIBILITY_3D],
             baseline[COMPONENT_TIKZ_OPEN_FACE_VISIBILITY_3D],
         )
+        self.assertNotEqual(
+            components[COMPONENT_TIKZ_CONVEX_SECTION_3D],
+            baseline[COMPONENT_TIKZ_CONVEX_SECTION_3D],
+        )
         for component in baseline:
             if component in {
                 COMPONENT_TIKZ_POLYHEDRON_VISIBILITY_3D,
+                COMPONENT_TIKZ_CONVEX_SECTION_3D,
                 COMPONENT_TIKZ_OPEN_FACE_VISIBILITY_3D,
                 COMPONENT_TIKZ_OPEN_FACE_STATIC_ASSET_3D,
                 COMPONENT_NATIVE_MANIM_SOURCE_3D_V3,
@@ -495,7 +593,9 @@ print(json.dumps({
         for component in baseline:
             if component in {
                 COMPONENT_POLYHEDRON_VISIBILITY,
+                COMPONENT_FACE_DEPTH_CUE_3D,
                 COMPONENT_OPEN_FACE_VISIBILITY,
+                COMPONENT_CONVEX_SECTION_3D,
             }:
                 self.assertEqual(components[component], baseline[component])
             else:

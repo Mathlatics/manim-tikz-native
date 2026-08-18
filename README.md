@@ -25,6 +25,18 @@ to SVG. Unsupported syntax is reported explicitly.
 - 2D and 3D geometry rigs driven by ordinary Manim trackers;
 - fixed-view and local-camera 3D projection;
 - automatic solid/hidden line splitting for closed convex polyhedra;
+- automatic intersections between a closed convex solid and independent
+  straight lines, including stable entry/exit markers;
+- a moving mathematical plane that derives point, segment, or polygon
+  cross-sections; its finite display patch auto-fits the complete solid by
+  default and joins the same global hidden-line calculation;
+- opt-in exact local far-to-near compositing for one transparent cutting plane
+  intersecting one closed convex solid: the plane, section, and crossed solid
+  faces are split before sorting, so one whole plane never has to sit entirely
+  in front of or behind the solid;
+- optional didactic face shading with near-color retention, distant-face fog,
+  continuous orientation tinting, and visible silhouette emphasis for closed
+  convex solids, while hidden dashes remain unchanged;
 - automatic line occlusion and face ordering for finite open convex faces and
   articulated hinges;
 - readable native Manim source generation and versioned JSON bridges;
@@ -112,10 +124,37 @@ manim -pql examples/open_face_visibility/dihedral_auto_occlusion.py \
   DihedralAutoOcclusionDemo
 ```
 
+Independent line and moving plane sections:
+
+```bash
+manim -pql examples/convex_sections/convex_sections_demo.py \
+  LineThroughCubeDemo
+manim -pql examples/convex_sections/convex_sections_demo.py \
+  MovingPlaneSectionDemo
+manim -pql examples/convex_sections/convex_sections_demo.py \
+  CombinedSectionAndLineDemo
+manim -pql examples/convex_sections/convex_sections_demo.py \
+  AccurateTransparentSectionDemo
+
+manim -pql examples/convex_sections/other_convex_solids_demo.py \
+  TetrahedronSectionDemo TriangularPrismSectionDemo \
+  SquarePyramidSectionDemo OctahedronSectionDemo
+```
+
 For ordinary Manim scenes, register stable vertices, maximal convex faces, and
 semantic `Line` objects through `OcclusionScene3D` or `OpenFaceScene3D`. The
 module updates preallocated visible and dashed slots in place during
 `scene.play()` and restores the original source objects when the session ends.
+Use `ConvexSectionScene3D` when one closed convex solid also needs independent
+straight-line intersections or one moving infinite cutting plane. Its authored
+half-width and half-height are minimum display sizes; the visible patch expands
+automatically with 15% margin and never shrinks during one attached session.
+Pass `accurate_transparency=True` and bind one native fill-only `Polygon` for
+every solid face when the cutting plane and solid faces must be split and
+composited in exact local depth order under parallel projection.
+Use `DepthCuedAutoOcclusion3D`, or provide a native `Polygon` for every face to
+`ConvexSectionScene3D`, when the scene also needs face-orientation shading,
+depth opacity, nearby warm/cool tinting, and automatic silhouette emphasis.
 
 See [automatic-occlusion.md](docs/automatic-occlusion.md) for the supported
 geometry and fail-closed rules.

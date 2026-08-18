@@ -45,8 +45,28 @@ class TikzNativeProviderTests(unittest.TestCase):
             info["component_contract_revisions"],
         )
         self.assertTrue(info["capabilities"]["polyhedron_visibility_parallel_v1"])
+        self.assertTrue(info["capabilities"]["face_depth_cue_parallel_v1"])
+        self.assertTrue(
+            info["capabilities"]["convex_line_solid_intersection_v1"]
+        )
+        self.assertTrue(
+            info["capabilities"]["convex_polyhedron_section_parallel_v1"]
+        )
+        self.assertTrue(
+            info["capabilities"][
+                "convex_section_transparent_compositing_parallel_v1"
+            ]
+        )
         self.assertTrue(
             info["capabilities"]["tikz_polyhedron_visibility_3d_v1"]
+        )
+        self.assertTrue(
+            info["capabilities"]["tikz_convex_polyhedron_section_3d_v1"]
+        )
+        self.assertTrue(
+            info["capabilities"][
+                "tikz_convex_section_transparent_compositing_3d_v1"
+            ]
         )
         self.assertTrue(
             info["capabilities"]["open_convex_face_visibility_parallel_v1"]

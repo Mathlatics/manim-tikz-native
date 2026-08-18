@@ -1,0 +1,110 @@
+"""Dynamic plane sections of closed convex polyhedra."""
+
+from ..depth_cue import FaceDepthCueStyle
+from .compositing import (
+    FragmentOrderRelation,
+    TRANSPARENT_SECTION_COMPOSITING_SCHEMA,
+    TransparentSectionCompositingError,
+    TransparentSectionCompositingFrame,
+    TransparentTriangle,
+    canonical_transparent_section_compositing_json,
+    compute_transparent_section_compositing,
+)
+from .compositing_manim import (
+    PreparedTransparentFragment,
+    PreparedTransparentSectionFrame,
+    TRANSPARENT_SECTION_BINDING_SCALE_LIMITS,
+    TransparentSectionBindingScaleLimits,
+    TransparentSectionLayer,
+    TransparentSectionManimError,
+    guard_transparent_section_scale,
+    transparent_triangle_capacity,
+)
+from .contract import (
+    ConvexSectionContractError,
+    SECTION_PLANE_SCHEMA,
+    SectionPlane3D,
+)
+from .authoring import (
+    ConvexSectionAuthoringError,
+    ConvexSectionScene3D,
+)
+from .solver import (
+    ConvexSectionSolverError,
+    compute_sectioned_visibility,
+    fit_plane_patch_to_convex_polyhedron,
+    intersect_plane_with_convex_polyhedron,
+    intersect_segment_with_convex_polyhedron,
+)
+from .manim import (
+    CONVEX_SECTION_BINDING_SCALE_LIMITS,
+    PLANE_PATCH_MODES,
+    ConvexSection3D,
+    ConvexSectionBindingScaleError,
+    ConvexSectionBindingScaleLimits,
+    ConvexSectionManimError,
+    ConvexSectionStyle,
+    PlaneProvider,
+)
+from .trace import (
+    ConvexSectionFrame,
+    NamedStrokeSolidIntersection,
+    SECTION_TRACE_SCHEMA,
+    SECTIONED_VISIBILITY_TRACE_SCHEMA,
+    SectionBoundarySegment,
+    SectionPoint,
+    SectionedVisibilityFrame,
+    SegmentSolidIntersection,
+    SolidBoundaryHit,
+    canonical_section_trace_json,
+    canonical_sectioned_trace_json,
+)
+
+
+__all__ = [
+    "ConvexSectionContractError",
+    "CONVEX_SECTION_BINDING_SCALE_LIMITS",
+    "ConvexSectionAuthoringError",
+    "ConvexSectionFrame",
+    "ConvexSection3D",
+    "ConvexSectionBindingScaleError",
+    "ConvexSectionBindingScaleLimits",
+    "ConvexSectionManimError",
+    "ConvexSectionStyle",
+    "FaceDepthCueStyle",
+    "FragmentOrderRelation",
+    "ConvexSectionScene3D",
+    "ConvexSectionSolverError",
+    "NamedStrokeSolidIntersection",
+    "PLANE_PATCH_MODES",
+    "SECTION_PLANE_SCHEMA",
+    "SECTION_TRACE_SCHEMA",
+    "SECTIONED_VISIBILITY_TRACE_SCHEMA",
+    "TRANSPARENT_SECTION_COMPOSITING_SCHEMA",
+    "TRANSPARENT_SECTION_BINDING_SCALE_LIMITS",
+    "SectionBoundarySegment",
+    "SectionPlane3D",
+    "SectionPoint",
+    "SectionedVisibilityFrame",
+    "SegmentSolidIntersection",
+    "SolidBoundaryHit",
+    "TransparentSectionCompositingError",
+    "TransparentSectionCompositingFrame",
+    "TransparentSectionBindingScaleLimits",
+    "TransparentSectionLayer",
+    "TransparentSectionManimError",
+    "TransparentTriangle",
+    "PreparedTransparentFragment",
+    "PreparedTransparentSectionFrame",
+    "PlaneProvider",
+    "canonical_section_trace_json",
+    "canonical_sectioned_trace_json",
+    "canonical_transparent_section_compositing_json",
+    "compute_sectioned_visibility",
+    "compute_transparent_section_compositing",
+    "fit_plane_patch_to_convex_polyhedron",
+    "guard_transparent_section_scale",
+    "intersect_plane_with_convex_polyhedron",
+    "intersect_segment_with_convex_polyhedron",
+    "transparent_triangle_capacity",
+]

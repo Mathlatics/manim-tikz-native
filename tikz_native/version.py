@@ -29,8 +29,11 @@ COMPONENT_NATIVE_MANIM_SOURCE_3D_V3 = "native_manim_source_3d_v3"
 COMPONENT_EMBEDDED_MOTION_3D = "embedded_motion_3d"
 COMPONENT_MOTION_PREVIEW_3D = "motion_preview_3d"
 COMPONENT_POLYHEDRON_VISIBILITY = "polyhedron_visibility"
+COMPONENT_FACE_DEPTH_CUE_3D = "face_depth_cue_3d"
+COMPONENT_CONVEX_SECTION_3D = "convex_section_3d"
 COMPONENT_OPEN_FACE_VISIBILITY = "open_face_visibility"
 COMPONENT_TIKZ_POLYHEDRON_VISIBILITY_3D = "tikz_polyhedron_visibility_3d"
+COMPONENT_TIKZ_CONVEX_SECTION_3D = "tikz_convex_section_3d"
 COMPONENT_TIKZ_OPEN_FACE_VISIBILITY_3D = "tikz_open_face_visibility_3d"
 COMPONENT_TIKZ_OPEN_FACE_STATIC_ASSET_3D = "tikz_open_face_static_asset_3d"
 
@@ -63,8 +66,11 @@ _PUBLIC_0_1_COMPONENT_REVISIONS: Final[dict[str, str]] = {
     COMPONENT_EMBEDDED_MOTION_3D: "source-sha256:73b1c79e7d9178bb3be451e6b94977ba05361f2c187b6d8cf9df8dbb47c5ae59",
     COMPONENT_MOTION_PREVIEW_3D: "source-sha256:6958a1284eb328e1dc07e3f1ee7658b9525f810a1f386449ce02088b05e93cbc",
     COMPONENT_POLYHEDRON_VISIBILITY: "source-sha256:aa45310ff3c70ac1922ddf61b457cafeb789f9011ec67069b70c23d63fb3a8ae",
+    COMPONENT_FACE_DEPTH_CUE_3D: "source-sha256:be2a87b144147f49ed7f47c4955c366d00ad48b5cae98ff58e55ae63570da0fa",
+    COMPONENT_CONVEX_SECTION_3D: "source-sha256:03581834d1a596f4e678153cf4780329e5c7f424031b91ed20e8981f340d3a4f",
     COMPONENT_OPEN_FACE_VISIBILITY: "source-sha256:8c831f441d21e2ceb39aed78ac3428936ac50fe86fa726ea548a52a4bf426341",
     COMPONENT_TIKZ_POLYHEDRON_VISIBILITY_3D: "source-sha256:76bf703ef380738af5ee0f463e9d2a43f4537d8d156d2af372953457dca6cc48",
+    COMPONENT_TIKZ_CONVEX_SECTION_3D: "source-sha256:30d0a7bfc0a9a838975eeeedec5a0ca4feb003f227590d988d5c75af761aba2e",
     COMPONENT_TIKZ_OPEN_FACE_VISIBILITY_3D: "source-sha256:adb3cfad37ceff50c968984fbc779985c70c5a7cba583fd44ce1af66a2955e58",
     COMPONENT_TIKZ_OPEN_FACE_STATIC_ASSET_3D: "source-sha256:a11291d775923e57cfe36a3debb6ab0813098a11193093a0901ba82356fba2d2",
 }
@@ -190,6 +196,31 @@ _COMPONENT_DEFINITIONS: Final[dict[str, dict[str, tuple[str, ...]]]] = {
             "@tool/polyhedron_visibility/trace.py",
         ),
     },
+    COMPONENT_FACE_DEPTH_CUE_3D: {
+        "dependencies": (COMPONENT_POLYHEDRON_VISIBILITY,),
+        "files": (
+            "@tool/polyhedron_visibility/depth_cue/__init__.py",
+            "@tool/polyhedron_visibility/depth_cue/contract.py",
+            "@tool/polyhedron_visibility/depth_cue/manim.py",
+            "@tool/polyhedron_visibility/depth_cue/solver.py",
+        ),
+    },
+    COMPONENT_CONVEX_SECTION_3D: {
+        "dependencies": (
+            COMPONENT_POLYHEDRON_VISIBILITY,
+            COMPONENT_FACE_DEPTH_CUE_3D,
+        ),
+        "files": (
+            "@tool/polyhedron_visibility/sections/__init__.py",
+            "@tool/polyhedron_visibility/sections/authoring.py",
+            "@tool/polyhedron_visibility/sections/compositing.py",
+            "@tool/polyhedron_visibility/sections/compositing_manim.py",
+            "@tool/polyhedron_visibility/sections/contract.py",
+            "@tool/polyhedron_visibility/sections/manim.py",
+            "@tool/polyhedron_visibility/sections/solver.py",
+            "@tool/polyhedron_visibility/sections/trace.py",
+        ),
+    },
     COMPONENT_OPEN_FACE_VISIBILITY: {
         "dependencies": (COMPONENT_POLYHEDRON_VISIBILITY,),
         "files": (
@@ -210,6 +241,14 @@ _COMPONENT_DEFINITIONS: Final[dict[str, dict[str, tuple[str, ...]]]] = {
             "polyhedron_visibility_3d_adapter.py",
             "polyhedron_visibility_3d_manim.py",
         ),
+    },
+    COMPONENT_TIKZ_CONVEX_SECTION_3D: {
+        "dependencies": (
+            COMPONENT_ASSET_COMPILER,
+            COMPONENT_CONVEX_SECTION_3D,
+            COMPONENT_TIKZ_POLYHEDRON_VISIBILITY_3D,
+        ),
+        "files": ("convex_section_3d_manim.py",),
     },
     COMPONENT_TIKZ_OPEN_FACE_VISIBILITY_3D: {
         "dependencies": (
@@ -288,11 +327,20 @@ _DECLARED_IMPLEMENTATION_DIGESTS: Final[dict[str, str]] = {
     COMPONENT_POLYHEDRON_VISIBILITY: (
         "aa45310ff3c70ac1922ddf61b457cafeb789f9011ec67069b70c23d63fb3a8ae"
     ),
+    COMPONENT_FACE_DEPTH_CUE_3D: (
+        "be2a87b144147f49ed7f47c4955c366d00ad48b5cae98ff58e55ae63570da0fa"
+    ),
+    COMPONENT_CONVEX_SECTION_3D: (
+        "03581834d1a596f4e678153cf4780329e5c7f424031b91ed20e8981f340d3a4f"
+    ),
     COMPONENT_OPEN_FACE_VISIBILITY: (
         "8c831f441d21e2ceb39aed78ac3428936ac50fe86fa726ea548a52a4bf426341"
     ),
     COMPONENT_TIKZ_POLYHEDRON_VISIBILITY_3D: (
         "76bf703ef380738af5ee0f463e9d2a43f4537d8d156d2af372953457dca6cc48"
+    ),
+    COMPONENT_TIKZ_CONVEX_SECTION_3D: (
+        "30d0a7bfc0a9a838975eeeedec5a0ca4feb003f227590d988d5c75af761aba2e"
     ),
     COMPONENT_TIKZ_OPEN_FACE_VISIBILITY_3D: (
         "adb3cfad37ceff50c968984fbc779985c70c5a7cba583fd44ce1af66a2955e58"
@@ -488,8 +536,10 @@ def provider_component_revision_matches(component: str, recorded: object) -> boo
 __all__ = [
     "ASSET_SCHEMA",
     "COMPONENT_ASSET_COMPILER",
+    "COMPONENT_CONVEX_SECTION_3D",
     "COMPONENT_CONTRACT_REVISION_SCHEMA",
     "COMPONENT_EMBEDDED_MOTION_3D",
+    "COMPONENT_FACE_DEPTH_CUE_3D",
     "COMPONENT_GEOMETRY_RIG_2D",
     "COMPONENT_GEOMETRY_RIG_3D",
     "COMPONENT_MOTION_PREVIEW_2D",
@@ -505,6 +555,7 @@ __all__ = [
     "COMPONENT_TIKZ_OPEN_FACE_VISIBILITY_3D",
     "COMPONENT_TIKZ_OPEN_FACE_STATIC_ASSET_3D",
     "COMPONENT_TIKZ_POLYHEDRON_VISIBILITY_3D",
+    "COMPONENT_TIKZ_CONVEX_SECTION_3D",
     "PROTOCOL_VERSION",
     "REQUEST_SCHEMA",
     "RESPONSE_SCHEMA",
