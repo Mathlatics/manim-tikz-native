@@ -22,6 +22,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
+            dvisvgm \
             ffmpeg \
             libcairo2-dev \
             libpango1.0-dev \
@@ -30,6 +31,12 @@ jobs:
             texlive-lang-chinese \
             texlive-latex-extra \
             texlive-xetex
+
+      - name: Verify renderer toolchain
+        run: |
+          command -v xelatex
+          command -v dvisvgm
+          command -v ffmpeg
 
       - uses: actions/setup-python@v5
         with:
