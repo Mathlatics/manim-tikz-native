@@ -42,7 +42,7 @@ On macOS, a full TeX Live installation already includes the default fonts. On
 Debian or Ubuntu, the CI setup installs `texlive-xetex`,
 `texlive-latex-extra`, `texlive-lang-chinese`, and
 `texlive-fonts-recommended`, plus the separate `dvisvgm` package used by
-Manim's TeX renderer.
+Manim's TeX renderer and `poppler-utils` for PDF measurement.
 
 ## Install
 
