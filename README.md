@@ -155,8 +155,15 @@ manim -pql examples/convex_sections/other_convex_solids_demo.py \
 manim -pql \
   examples/derived_dihedral_extraction/derived_dihedral_extraction_demo.py \
   RectangularBoxDihedralDemo TetrahedronDihedralDemo \
-  SquarePyramidDihedralDemo
+  SquarePyramidDihedralDemo RectangularBoxDihedralRoundTripDemo
 ```
+
+The round-trip scene separates the highlighted copy, rotates the shared
+assembly, and then returns the copy to exact coincidence. It exercises the
+same semantic identity handoff in reverse, so the final frame again contains
+one visible representation rather than two alpha-blended copies. The
+tetrahedron scene isolates the extraction handoff; the rectangular-box and
+square-pyramid scenes also demonstrate synchronized base-plane rotation.
 
 For ordinary Manim scenes, register stable vertices, maximal convex faces, and
 semantic `Line` objects through `OcclusionScene3D` or `OpenFaceScene3D`. The

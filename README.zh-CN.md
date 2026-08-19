@@ -75,7 +75,7 @@ python -m pip install -e ".[test]"
 
 另外需要安装 XeLaTeX、TikZ、Fandol 字体、Latin Modern 字体和 FFmpeg。
 
-## 两个最直观的示例
+## 主要示例
 
 ```bash
 # 闭合凸多面体
@@ -105,8 +105,13 @@ manim -pql examples/convex_sections/other_convex_solids_demo.py \
 manim -pql \
   examples/derived_dihedral_extraction/derived_dihedral_extraction_demo.py \
   RectangularBoxDihedralDemo TetrahedronDihedralDemo \
-  SquarePyramidDihedralDemo
+  SquarePyramidDihedralDemo RectangularBoxDihedralRoundTripDemo
 ```
+
+其中往返示例会让高亮复制体完成分离、同步旋转，再重新回到与原形状完全重合的
+位置。反向过程仍使用同一套语义交接计算，因此末帧重新只显示一份形状，不会出现
+两份半透明对象叠加变深。四面体示例专门展示纯分离交接；长方体与四棱锥示例还会
+继续展示同步底面旋转。
 
 ## 需要特别理解的边界
 

@@ -23,7 +23,9 @@ All notable changes to this project will be documented in this file.
   and projected line/line crossings;
 - add synchronized base-plane rotation so a selected source face can become
   the horizontal bottom after the dihedral copy is separated;
-- add rendered rectangular-box, tetrahedron, and square-pyramid examples.
+- add rendered rectangular-box, tetrahedron, and square-pyramid examples,
+  including one rectangular-box round trip that verifies the reverse identity
+  handoff back to exact coincidence.
 
 ## 0.1.0 - 2026-08-18
 
