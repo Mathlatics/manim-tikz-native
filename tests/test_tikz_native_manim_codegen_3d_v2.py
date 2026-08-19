@@ -84,7 +84,13 @@ class TikzNativeReadableManim3DV2Tests(unittest.TestCase):
             payload["sourceSha256"],
             hashlib.sha256(payload["sourceText"].encode("utf-8")).hexdigest(),
         )
-        self.assertTrue(payload["sourceText"].startswith("import numpy as np\nfrom manim import *\n"))
+        self.assertTrue(
+            payload["sourceText"].startswith(
+                "from __future__ import annotations\n"
+                "import numpy as np\n"
+                "from manim import *\n"
+            )
+        )
         for forbidden in (
             "import tikz_native",
             "from tikz_native",
@@ -172,7 +178,7 @@ class TikzNativeReadableManim3DV2Tests(unittest.TestCase):
         self.assertEqual(rig["status"], "ready")
         self.assertEqual(
             rig["nativeManimSource"]["sourceSha256"],
-            "734d692c78e90a61ff706721a3f7c4c4297c5b1fb8a6dd7223624df24d399d84",
+            "c72a323fdf877b6fe6c90f8adf40fdcc1b8c81a447df03eaa2bd79ed1a09ee0c",
         )
         self.assertIsNotNone(rig["nativeManimSourceV2"])
 

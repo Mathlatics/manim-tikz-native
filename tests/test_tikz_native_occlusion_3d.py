@@ -10,6 +10,7 @@ from tikz_native import compile_document
 from tikz_native.occlusion_3d import (
     parallel_occlusion_interval,
     parallel_view_direction,
+    standalone_occlusion_source,
 )
 
 
@@ -165,6 +166,49 @@ class TikzNativeOcclusion3DTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "finite"):
             parallel_view_direction(
                 ((1.0, 0.0, 0.0), (0.0, float("nan"), 0.0), (0.0, 0.0, 1.0))
+            )
+
+    def test_generated_kernel_is_self_contained_and_matches_runtime(self) -> None:
+        namespace: dict[str, object] = {}
+        source = (
+            "from __future__ import annotations\n"
+            "import numpy as np\n"
+            + standalone_occlusion_source()
+        )
+        exec(compile(source, "<standalone-occlusion-3d>", "exec"), namespace)
+        generated_interval = namespace["parallel_occlusion_interval"]
+        generated_view = namespace["parallel_view_direction"]
+
+        matrix = np.asarray(
+            ((1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0)),
+            dtype=float,
+        )
+        np.testing.assert_allclose(
+            generated_view(matrix),
+            parallel_view_direction(matrix),
+            atol=1.0e-14,
+        )
+        cases = (
+            ((-2.0, 0.0, 0.0), (2.0, 0.0, 0.0), FACE),
+            ((-2.0, 0.0, 1.0), (2.0, 0.0, 1.0), FACE),
+            (
+                (-5.0e7, 0.0, 0.0),
+                (5.0e7, 0.0, 0.0),
+                np.asarray(
+                    (
+                        (-0.5, -1.0, 1.0),
+                        (0.5, -1.0, 1.0),
+                        (0.5, 1.0, 1.0),
+                        (-0.5, 1.0, 1.0),
+                    ),
+                    dtype=float,
+                ),
+            ),
+        )
+        for start, end, face in cases:
+            self.assertEqual(
+                generated_interval(start, end, face, (0.0, 0.0, 1.0)),
+                parallel_occlusion_interval(start, end, face, (0.0, 0.0, 1.0)),
             )
 
     def test_compiler_keeps_a_coplanar_relation_as_one_visible_stroke(self) -> None:

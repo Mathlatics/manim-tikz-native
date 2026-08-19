@@ -10,10 +10,17 @@ dynamic scene use exactly the same geometry.
 from __future__ import annotations
 
 from collections.abc import Sequence
+from functools import lru_cache
+from pathlib import Path
 
 import numpy as np
 
 
+_STANDALONE_BEGIN = "# BEGIN TIKZ_NATIVE_STANDALONE_OCCLUSION_3D"
+_STANDALONE_END = "# END TIKZ_NATIVE_STANDALONE_OCCLUSION_3D"
+
+
+# BEGIN TIKZ_NATIVE_STANDALONE_OCCLUSION_3D
 _RELATIVE_TOLERANCE = 1.0e-9
 _ABSOLUTE_FLOOR = 1.0e-14
 _ANGULAR_TOLERANCE = 1.0e-10
@@ -309,4 +316,26 @@ def parallel_occlusion_interval(
     return lower, upper
 
 
-__all__ = ["parallel_occlusion_interval", "parallel_view_direction"]
+# END TIKZ_NATIVE_STANDALONE_OCCLUSION_3D
+
+
+@lru_cache(maxsize=1)
+def standalone_occlusion_source() -> str:
+    """Return the exact dependency-free kernel embedded in generated Manim code."""
+
+    source = Path(__file__).read_text(encoding="utf-8")
+    begin_marker = f"\n{_STANDALONE_BEGIN}\n"
+    end_marker = f"\n{_STANDALONE_END}\n"
+    try:
+        begin = source.index(begin_marker) + len(begin_marker)
+        end = source.index(end_marker, begin)
+    except ValueError as exc:  # pragma: no cover - packaging corruption guard
+        raise RuntimeError("standalone occlusion source markers are missing") from exc
+    return source[begin:end].strip()
+
+
+__all__ = [
+    "parallel_occlusion_interval",
+    "parallel_view_direction",
+    "standalone_occlusion_source",
+]
