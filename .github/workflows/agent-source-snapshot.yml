@@ -1,0 +1,24 @@
+name: Agent source snapshot
+
+on:
+  push:
+    branches:
+      - agent/fix-tikz-3d-occlusion-tolerances
+
+permissions:
+  contents: read
+
+jobs:
+  snapshot:
+    if: ${{ !contains(github.event.head_commit.message, '[skip snapshot]') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/upload-artifact@v4
+        with:
+          name: source-${{ github.sha }}
+          path: |
+            .
+            !.git
+          include-hidden-files: true
+          retention-days: 1
