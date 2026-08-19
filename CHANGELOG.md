@@ -9,6 +9,8 @@ All notable changes to this project will be documented in this file.
   visible coplanar or boundary-only contacts;
 - share that occlusion kernel with generated Manim v1/v2/v3 source so
   exported animations and the provider runtime cannot silently diverge;
+- add differential regression coverage for generated/runtime parity, extreme
+  scales, coplanar seams, malformed faces, and long-stroke/small-face cases;
 - add a reusable one-solid-plus-one-derived-dihedral workflow for copying two
   adjacent faces, handing off coincident source pixels, and moving the copy as
   one rigid teaching object;
