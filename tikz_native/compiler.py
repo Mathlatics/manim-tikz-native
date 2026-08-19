@@ -329,32 +329,68 @@ class _SafeExpressionEvaluator(ast.NodeVisitor):
         "tan": lambda value: math.tan(math.radians(value)),
     }
 
+    @staticmethod
+    def _finite(value: object, *, context: str) -> float:
+        try:
+            result = float(value)
+        except (TypeError, ValueError, OverflowError) as error:
+            raise TikzNativeError(
+                f"Invalid {context} in PGF math expression"
+            ) from error
+        if not math.isfinite(result):
+            raise TikzNativeError(
+                f"PGF math expression produced a non-finite {context}"
+            )
+        return result
+
     def visit_Expression(self, node: ast.Expression) -> float:
-        return float(self.visit(node.body))
+        return self._finite(self.visit(node.body), context="result")
 
     def visit_Constant(self, node: ast.Constant) -> float:
-        if not isinstance(node.value, (int, float)):
+        if isinstance(node.value, bool) or not isinstance(
+            node.value, (int, float)
+        ):
             raise TikzNativeError(f"Unsupported expression constant: {node.value!r}")
-        return float(node.value)
+        return self._finite(node.value, context="constant")
 
     def visit_BinOp(self, node: ast.BinOp) -> float:
         operation = self._binary.get(type(node.op))
         if operation is None:
             raise TikzNativeError(f"Unsupported operator: {type(node.op).__name__}")
-        return float(operation(self.visit(node.left), self.visit(node.right)))
+        try:
+            result = operation(self.visit(node.left), self.visit(node.right))
+        except (ArithmeticError, TypeError, ValueError) as error:
+            raise TikzNativeError(
+                "Invalid arithmetic in PGF math expression"
+            ) from error
+        return self._finite(result, context="arithmetic result")
 
     def visit_UnaryOp(self, node: ast.UnaryOp) -> float:
         operation = self._unary.get(type(node.op))
         if operation is None:
             raise TikzNativeError(f"Unsupported unary operator: {type(node.op).__name__}")
-        return float(operation(self.visit(node.operand)))
+        try:
+            result = operation(self.visit(node.operand))
+        except (ArithmeticError, TypeError, ValueError) as error:
+            raise TikzNativeError(
+                "Invalid unary arithmetic in PGF math expression"
+            ) from error
+        return self._finite(result, context="unary result")
 
     def visit_Call(self, node: ast.Call) -> float:
         if not isinstance(node.func, ast.Name) or node.func.id not in self._functions:
             raise TikzNativeError("Unsupported function call in PGF math expression")
         if node.keywords:
             raise TikzNativeError("Keyword arguments are not supported in PGF math")
-        return float(self._functions[node.func.id](*(self.visit(arg) for arg in node.args)))
+        try:
+            result = self._functions[node.func.id](
+                *(self.visit(arg) for arg in node.args)
+            )
+        except (ArithmeticError, TypeError, ValueError) as error:
+            raise TikzNativeError(
+                f"Invalid {node.func.id} call in PGF math expression"
+            ) from error
+        return self._finite(result, context=f"{node.func.id} result")
 
     def visit_Name(self, node: ast.Name) -> float:
         if node.id == "pi":
@@ -598,7 +634,12 @@ class TikzNativeCompiler:
             tree = ast.parse(value, mode="eval")
         except SyntaxError as error:
             raise TikzNativeError(f"Invalid PGF expression {expression!r}: {value!r}") from error
-        return _SafeExpressionEvaluator().visit(tree)
+        try:
+            return _SafeExpressionEvaluator().visit(tree)
+        except TikzNativeError as error:
+            raise TikzNativeError(
+                f"Invalid PGF expression {expression!r}: {error}"
+            ) from error
 
     def _parse_length(
         self,

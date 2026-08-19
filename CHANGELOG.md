@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+- reject invalid or non-finite PGF arithmetic with a stable `TikzNativeError`
+  instead of leaking raw Python numeric exceptions;
 - add a reusable one-solid-plus-one-derived-dihedral workflow for copying two
   adjacent faces, handing off coincident source pixels, and moving the copy as
   one rigid teaching object;
