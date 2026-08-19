@@ -2,6 +2,29 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased
+
+- add a reusable one-solid-plus-one-derived-dihedral workflow for copying two
+  adjacent faces, handing off coincident source pixels, and moving the copy as
+  one rigid teaching object;
+- replace the first-motion binary handoff with a smooth, geometry-driven
+  activation envelope for the reappearing source faces and edges;
+- extract that envelope into a reusable source-to-copy lineage contract for a
+  whole registered solid or any copied face/stroke subset, while keeping the
+  existing derived-dihedral authoring API compatible;
+- solve source-solid and copied-dihedral semantic line visibility in one global
+  frame, with stable visible/dashed slots and transactional restore;
+- split intersecting translucent solid/copy faces into stable local triangles
+  and sort only overlapping fragments from far to near;
+- gate those splits by finite polygon crossings and batch consecutive
+  same-source fragments into seam-free compound transparent fills;
+- unify transparent face batches with visible and dashed stroke fragments in
+  one deterministic Cairo painter graph, including line/face depth exchanges
+  and projected line/line crossings;
+- add synchronized base-plane rotation so a selected source face can become
+  the horizontal bottom after the dihedral copy is separated;
+- add rendered rectangular-box, tetrahedron, and square-pyramid examples.
+
 ## 0.1.0 - 2026-08-18
 
 Initial public alpha release.

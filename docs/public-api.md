@@ -213,6 +213,194 @@ The default coplanar policy draws the highlighted section over a coincident
 solid face. Set `transparent_coplanar_policy="solid_over_section"` to reverse
 that teaching convention, or `"fail"` to reject the coincident state.
 
+## Reuse one identity handoff for any copied geometry
+
+When a second entity is copied from a registered first entity, freeze that
+lineage instead of trying to rediscover it from pixels:
+
+```python
+from polyhedron_visibility.copy_handoff import (
+    CopyIdentityHandoffMap,
+    CopyIdentityHandoffPolicy,
+    compute_copy_identity_handoff,
+)
+
+handoff = CopyIdentityHandoffMap.from_visibility_model(
+    "solid-to-analysis-copy",
+    solid_visibility_model,
+    source_entity_id="solid",
+    copy_entity_id="analysis-copy",
+    # Omit these two arguments to pair the complete solid.
+    face_ids=("front", "top"),
+    stroke_ids=("edge.E.F", "edge.F.G", "edge.G.H"),
+    policy=CopyIdentityHandoffPolicy(activation_distance=0.12),
+)
+
+frame = compute_copy_identity_handoff(
+    handoff,
+    source_positions=source_positions_by_runtime_vertex_id,
+    copy_positions=copy_positions_by_runtime_vertex_id,
+    final_point_provider=project_to_overlay_coordinates,
+)
+
+# Apply these factors to the corresponding source paint only. The copy stays
+# at full opacity throughout the handoff.
+source_face_scales = frame.source_face_opacity_scales
+source_stroke_scales = frame.source_stroke_opacity_scales
+```
+
+Every source/copy vertex identity must be explicit and one-to-one. At zero
+separation all paired source factors are zero; at half the configured distance
+the cubic smoothstep factor is `0.5`; at or beyond the full distance it is
+`1.0`. Each face and stroke uses only its own corresponding vertices, so a
+partially copied or articulated structure does not unnecessarily fade unrelated
+source primitives. `final_point_provider` determines whether separation is
+measured in world, projected, or fixed-frame coordinates.
+
+`ExtractedDihedralOcclusion3D` constructs and consumes this map automatically;
+its existing `identity_handoff_distance` argument remains the convenient
+author-facing control.
+
+## Extract and move one dihedral from a closed solid
+
+`ExtractedDihedralScene3D` uses the same closed-convex registration contract,
+then freezes two adjacent source faces as one independent teaching copy:
+
+```python
+import numpy as np
+from manim import GOLD, ValueTracker
+
+from polyhedron_visibility import OcclusionStyle, ParallelProjection
+from polyhedron_visibility.dihedral_extraction import (
+    ExtractedDihedralScene3D,
+    RigidTransform3D,
+)
+
+visibility = ExtractedDihedralScene3D("cube-analysis")
+
+# Register every live solid vertex, maximal face, semantic boundary Line, and
+# optional fill-only face Polygon just as for OcclusionScene3D.
+for vertex_id, provider in vertex_providers.items():
+    visibility.vertex(vertex_id, provider)
+for face_id, vertex_ids in cube_faces.items():
+    visibility.face(
+        face_id,
+        vertex_ids,
+        source_mobject=face_polygons[face_id],
+    )
+for edge_id, (start, end, incident_faces) in cube_edges.items():
+    visibility.stroke(
+        edge_id,
+        start,
+        end,
+        edge_lines[edge_id],
+        incident_face_ids=incident_faces,
+    )
+
+progress = ValueTracker(0.0)
+separation = np.asarray((2.4, -0.8, 0.9))
+entity = visibility.extract_dihedral(
+    "analysis-copy",
+    ("front", "top"),
+    transform_provider=lambda: RigidTransform3D.translation_by(
+        separation * progress.get_value()
+    ),
+    edge_color=GOLD,
+    face_color=GOLD,
+    face_opacity=0.40,
+)
+scene.add(entity.mobject)
+
+# Turn one source face into the horizontal bottom face. The source solid's
+# geometric center remains fixed and the face's validated outward normal
+# finishes at world -Z.
+base_progress = ValueTracker(0.0)
+base_rotation = visibility.base_plane_rotation("right")
+
+def source_transform():
+    source_shift = RigidTransform3D.translation_by(
+        -0.5 * separation * progress.get_value()
+    )
+    return source_shift.compose(
+        base_rotation.transform(base_progress.get_value())
+    )
+
+controller = visibility.controller(
+    scene,
+    projection=ParallelProjection(projection_matrix),
+    style=OcclusionStyle(max_projected_length=10.0),
+    accurate_transparency=True,
+    # None is the default: exact transparency automatically enables the
+    # shared face/stroke painter graph. Set False only for legacy comparison.
+    unified_compositing=None,
+    unified_fragment_slots_per_style=12,
+    global_transform_provider=source_transform,
+    # Final overlay-coordinate distance over which coincident source faces and
+    # edges smoothly regain paint ownership. The default is 0.12.
+    identity_handoff_distance=0.12,
+)
+with controller.session():
+    scene.play(progress.animate.set_value(1.0))
+    scene.play(base_progress.animate.set_value(1.0))
+```
+
+The selected faces must share exactly one edge. Every unique boundary edge of
+the two-face union must map to exactly one registered semantic `Line`.
+`RigidTransform3D` only accepts proper right-handed rotations and finite
+translations; it rejects scaling, reflection, and shear.
+
+`base_plane_rotation(face_id)` reads the validated outward orientation of one
+source face. By default it rotates that normal to world `(0, 0, -1)`, so the
+solid lies above a horizontal bottom face. The source solid's geometric center
+(the centroid of all registered solid vertices) defines the rotation pivot.
+The extracted dihedral inherits that authored center; its local placement moves
+the center with the copy, so the separated copy rotates about its own current
+center. The shortest normal-alignment rotation is used. Pass another
+`target_outward_normal` or an explicit `anchor` when the lesson needs a
+different base direction or pivot.
+
+When `global_transform_provider` is present, the controller owns the shared
+center-relative motion for that session. The source solid receives transform
+`G`; the extracted dihedral receives `L.compose(G)`, where `L` is its local
+placement. Thus a translation inside `L` moves the copy and its rotation center
+together instead of making the copy orbit the source center. The example uses
+`-T/2` for the source and relative placement `T` for the copy, so the two finish
+at opposite sides. Source `Line` and fill-only `Polygon` geometry, hidden-line
+slots, and exact transparent fragments are all updated from the same
+once-per-frame samples.
+
+If the authored solid is already drawn in final parallel-projected Scene
+coordinates, pass the same callable as `display_point_provider` and set
+`source_coordinate_mode="display"`. The extracted face and edge source objects
+then follow that display mapping before each validation and frame solve.
+
+At the identity transform, selected source fills and edges are suppressed while
+the highlighted copy is shown once. When the copy separates, the corresponding
+source face and edge slots regain opacity through a geometry-driven smoothstep
+instead of switching on in the first non-identity frame. The same handoff runs
+in reverse when the copy returns. `identity_handoff_distance` is measured in
+the final overlay coordinate space and must be finite and positive. After that
+distance both entities are fully active. `accurate_transparency=True` requires
+one fill-only,
+non-gradient native `Polygon` for every solid and extracted face, with distinct
+authored face z-indices and no unrelated drawable inside that z band.
+Finite polygon intersection evidence gates every transparent split; crossing
+infinite supporting planes alone is not enough. Triangles that remain
+consecutive in the valid depth order and share one source face are rendered as
+one compound fill batch. Their identities remain available in the trace, but
+their internal antialiasing boundaries are absent from the image.
+
+Unless explicitly disabled, `accurate_transparency=True` also enables
+`unified_compositing`. The controller refines every authoritative visible or
+hidden span at projected line/line crossings and line/face depth exchanges,
+then orders the resulting stroke fragments together with exact transparent
+face batches. The fixed slot pool contains
+`unified_fragment_slots_per_style` visible and hidden fragments per semantic
+stroke; exceeding that author-time capacity keeps the last-good frame and
+raises an error. All managed face and stroke source objects must have distinct
+finite authored `z_index` values, and no unrelated drawable may occupy the
+combined managed band.
+
 ## TikZ visibility adapters
 
 - `tikz_native.polyhedron_visibility_3d_adapter.adapt_picture_visibility_3d`

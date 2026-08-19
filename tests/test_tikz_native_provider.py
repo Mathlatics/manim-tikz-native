@@ -57,6 +57,23 @@ class TikzNativeProviderTests(unittest.TestCase):
                 "convex_section_transparent_compositing_parallel_v1"
             ]
         )
+        self.assertTrue(info["capabilities"]["copy_identity_handoff_v1"])
+        self.assertTrue(
+            info["capabilities"]["derived_dihedral_visibility_parallel_v1"]
+        )
+        self.assertTrue(
+            info["capabilities"][
+                "derived_dihedral_transparent_compositing_parallel_v1"
+            ]
+        )
+        self.assertTrue(
+            info["capabilities"][
+                "derived_dihedral_unified_compositing_parallel_v1"
+            ]
+        )
+        self.assertTrue(
+            info["capabilities"]["derived_dihedral_base_plane_rotation_v1"]
+        )
         self.assertTrue(
             info["capabilities"]["tikz_polyhedron_visibility_3d_v1"]
         )

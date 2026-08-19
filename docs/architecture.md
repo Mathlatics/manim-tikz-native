@@ -18,7 +18,10 @@ TikzNativeCompiler ──► DocumentSpec / PictureSpec
 versioned JSON bridges                 polyhedron_visibility
                                                │
                                                ├── closed convex hull solver
-                                               └── open-face / hinge solver
+                                               ├── open-face / hinge solver
+                                               ├── convex-section solver
+                                               ├── source/copy identity handoff
+                                               └── derived-dihedral compositor
 ```
 
 ## Packages
@@ -40,9 +43,27 @@ operates on explicit topology and a parallel projection:
 - `VisibilityModel` / `OcclusionScene3D` for closed convex polyhedra;
 - `OpenFaceVisibilityModel` / `OpenFaceScene3D` for finite convex panels and
   articulated hinges.
+- `CopyIdentityHandoffMap` for explicit source/copy vertex, face, and stroke
+  lineage plus a projection-aware continuous paint-ownership handoff.
+- `DerivedDihedralModel` / `ExtractedDihedralScene3D` for one closed solid and
+  one rigid two-face teaching copy derived from adjacent source faces; this
+  controller consumes the generic copy handoff instead of maintaining a
+  separate coincidence heuristic.
+- `BasePlaneRotation3D` for a center-relative rotation template that turns one
+  validated source face into the horizontal bottom plane; each entity's local
+  placement moves that center with the entity.
 
 The solver is NumPy-based. The Cairo binding uses fixed-capacity Manim line
-slots so object identity stays stable across animation frames.
+slots so object identity stays stable across animation frames. Exact
+transparent section and derived-dihedral paths also use conservative,
+preallocated triangle pools; they never allocate fragments inside a frame
+updater. The derived-dihedral path gates partitions by finite polygon
+crossings, then submits consecutive same-source triangles as one compound fill
+path so solver triangulation does not become a visible Cairo seam. Its unified
+compositing stage further splits semantic stroke spans only at local depth
+events, builds face/line and line/line ordering constraints, rejects cycles,
+and maps the resulting deterministic far-to-near order onto the existing fixed
+triangle and line slots.
 
 ## Component revisions
 

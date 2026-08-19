@@ -39,6 +39,18 @@ to SVG. Unsupported syntax is reported explicitly.
   convex solids, while hidden dashes remain unchanged;
 - automatic line occlusion and face ordering for finite open convex faces and
   articulated hinges;
+- a reusable source-to-copy identity handoff: a whole solid or any registered
+  face/edge subset keeps explicit semantic lineage, lets the copy own exactly
+  coincident pixels, and fades only the paired source primitives back in as
+  the two geometries separate;
+- one extracted dihedral copied from two adjacent faces of a closed convex
+  solid: the source solid and the independently translated/rotated copy share
+  one global line-occlusion solve; it uses that generic copy handoff before
+  intersecting translucent faces are split and ordered locally;
+- synchronized base-plane rotation for that solid/copy assembly: one selected
+  source face can be turned into a horizontal bottom face after extraction,
+  while each independently placed entity rotates about its own translated
+  geometric center;
 - readable native Manim source generation and versioned JSON bridges;
 - strict, component-level compatibility identities for cached integrations.
 
@@ -139,6 +151,11 @@ manim -pql examples/convex_sections/convex_sections_demo.py \
 manim -pql examples/convex_sections/other_convex_solids_demo.py \
   TetrahedronSectionDemo TriangularPrismSectionDemo \
   SquarePyramidSectionDemo OctahedronSectionDemo
+
+manim -pql \
+  examples/derived_dihedral_extraction/derived_dihedral_extraction_demo.py \
+  RectangularBoxDihedralDemo TetrahedronDihedralDemo \
+  SquarePyramidDihedralDemo
 ```
 
 For ordinary Manim scenes, register stable vertices, maximal convex faces, and
@@ -152,6 +169,24 @@ automatically with 15% margin and never shrinks during one attached session.
 Pass `accurate_transparency=True` and bind one native fill-only `Polygon` for
 every solid face when the cutting plane and solid faces must be split and
 composited in exact local depth order under parallel projection.
+Use `ExtractedDihedralScene3D` when two adjacent faces of one closed solid must
+be highlighted in place and then moved out as one independent teaching
+object. The initial coincident source faces/edges are handed off to the
+highlighted copy without double alpha blending; after motion begins, both
+entities take part in global hidden-line removal. With
+`accurate_transparency=True`, crossings between their translucent faces are
+split only where the finite polygons truly intersect before far-to-near
+sorting. Consecutive triangles from the same authored face and the same valid
+depth position share one compound fill pass, so internal triangulation edges
+do not appear in the rendered face. This option now also enables unified
+compositing by default: visible and dashed stroke spans are split at local
+line/face depth exchanges and projected line/line crossings, then face batches
+and stroke fragments share one deterministic far-to-near Cairo paint order.
+Thus the hidden-line calculation and the pixels painted by Manim use the same
+depth evidence instead of placing every line above every transparent face.
+Call `base_plane_rotation(face_id)` and pass its tracker-driven transform as
+`global_transform_provider` to rotate the solid and already separated copy as
+one assembly without losing automatic line or transparent-face occlusion.
 Use `DepthCuedAutoOcclusion3D`, or provide a native `Polygon` for every face to
 `ConvexSectionScene3D`, when the scene also needs face-orientation shading,
 depth opacity, nearby warm/cool tinting, and automatic silhouette emphasis.

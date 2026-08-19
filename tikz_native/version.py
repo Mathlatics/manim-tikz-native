@@ -31,6 +31,8 @@ COMPONENT_MOTION_PREVIEW_3D = "motion_preview_3d"
 COMPONENT_POLYHEDRON_VISIBILITY = "polyhedron_visibility"
 COMPONENT_FACE_DEPTH_CUE_3D = "face_depth_cue_3d"
 COMPONENT_CONVEX_SECTION_3D = "convex_section_3d"
+COMPONENT_COPY_IDENTITY_HANDOFF = "copy_identity_handoff"
+COMPONENT_DERIVED_DIHEDRAL_VISIBILITY = "derived_dihedral_visibility"
 COMPONENT_OPEN_FACE_VISIBILITY = "open_face_visibility"
 COMPONENT_TIKZ_POLYHEDRON_VISIBILITY_3D = "tikz_polyhedron_visibility_3d"
 COMPONENT_TIKZ_CONVEX_SECTION_3D = "tikz_convex_section_3d"
@@ -68,6 +70,8 @@ _PUBLIC_0_1_COMPONENT_REVISIONS: Final[dict[str, str]] = {
     COMPONENT_POLYHEDRON_VISIBILITY: "source-sha256:aa45310ff3c70ac1922ddf61b457cafeb789f9011ec67069b70c23d63fb3a8ae",
     COMPONENT_FACE_DEPTH_CUE_3D: "source-sha256:be2a87b144147f49ed7f47c4955c366d00ad48b5cae98ff58e55ae63570da0fa",
     COMPONENT_CONVEX_SECTION_3D: "source-sha256:03581834d1a596f4e678153cf4780329e5c7f424031b91ed20e8981f340d3a4f",
+    COMPONENT_COPY_IDENTITY_HANDOFF: "source-sha256:bf8aa2d0fe3ec9921320305279f2e23c8ab71d68b5613d19d19f467326d293b7",
+    COMPONENT_DERIVED_DIHEDRAL_VISIBILITY: "source-sha256:000fc2b3fbd8bf381daff710400e93d8f20387766876f25cc2e2b429c21ec7a1",
     COMPONENT_OPEN_FACE_VISIBILITY: "source-sha256:8c831f441d21e2ceb39aed78ac3428936ac50fe86fa726ea548a52a4bf426341",
     COMPONENT_TIKZ_POLYHEDRON_VISIBILITY_3D: "source-sha256:76bf703ef380738af5ee0f463e9d2a43f4537d8d156d2af372953457dca6cc48",
     COMPONENT_TIKZ_CONVEX_SECTION_3D: "source-sha256:30d0a7bfc0a9a838975eeeedec5a0ca4feb003f227590d988d5c75af761aba2e",
@@ -221,6 +225,34 @@ _COMPONENT_DEFINITIONS: Final[dict[str, dict[str, tuple[str, ...]]]] = {
             "@tool/polyhedron_visibility/sections/trace.py",
         ),
     },
+    COMPONENT_COPY_IDENTITY_HANDOFF: {
+        "dependencies": (),
+        "files": (
+            "@tool/polyhedron_visibility/copy_handoff/__init__.py",
+            "@tool/polyhedron_visibility/copy_handoff/contract.py",
+            "@tool/polyhedron_visibility/copy_handoff/solver.py",
+        ),
+    },
+    COMPONENT_DERIVED_DIHEDRAL_VISIBILITY: {
+        "dependencies": (
+            COMPONENT_POLYHEDRON_VISIBILITY,
+            COMPONENT_CONVEX_SECTION_3D,
+            COMPONENT_COPY_IDENTITY_HANDOFF,
+        ),
+        "files": (
+            "@tool/polyhedron_visibility/dihedral_extraction/__init__.py",
+            "@tool/polyhedron_visibility/dihedral_extraction/authoring.py",
+            "@tool/polyhedron_visibility/dihedral_extraction/base_plane.py",
+            "@tool/polyhedron_visibility/dihedral_extraction/compositing.py",
+            "@tool/polyhedron_visibility/dihedral_extraction/compositing_manim.py",
+            "@tool/polyhedron_visibility/dihedral_extraction/contract.py",
+            "@tool/polyhedron_visibility/dihedral_extraction/manim.py",
+            "@tool/polyhedron_visibility/dihedral_extraction/solver.py",
+            "@tool/polyhedron_visibility/dihedral_extraction/trace.py",
+            "@tool/polyhedron_visibility/dihedral_extraction/unified_compositing.py",
+            "@tool/polyhedron_visibility/dihedral_extraction/unified_compositing_manim.py",
+        ),
+    },
     COMPONENT_OPEN_FACE_VISIBILITY: {
         "dependencies": (COMPONENT_POLYHEDRON_VISIBILITY,),
         "files": (
@@ -332,6 +364,12 @@ _DECLARED_IMPLEMENTATION_DIGESTS: Final[dict[str, str]] = {
     ),
     COMPONENT_CONVEX_SECTION_3D: (
         "03581834d1a596f4e678153cf4780329e5c7f424031b91ed20e8981f340d3a4f"
+    ),
+    COMPONENT_COPY_IDENTITY_HANDOFF: (
+        "bf8aa2d0fe3ec9921320305279f2e23c8ab71d68b5613d19d19f467326d293b7"
+    ),
+    COMPONENT_DERIVED_DIHEDRAL_VISIBILITY: (
+        "000fc2b3fbd8bf381daff710400e93d8f20387766876f25cc2e2b429c21ec7a1"
     ),
     COMPONENT_OPEN_FACE_VISIBILITY: (
         "8c831f441d21e2ceb39aed78ac3428936ac50fe86fa726ea548a52a4bf426341"
@@ -537,6 +575,8 @@ __all__ = [
     "ASSET_SCHEMA",
     "COMPONENT_ASSET_COMPILER",
     "COMPONENT_CONVEX_SECTION_3D",
+    "COMPONENT_COPY_IDENTITY_HANDOFF",
+    "COMPONENT_DERIVED_DIHEDRAL_VISIBILITY",
     "COMPONENT_CONTRACT_REVISION_SCHEMA",
     "COMPONENT_EMBEDDED_MOTION_3D",
     "COMPONENT_FACE_DEPTH_CUE_3D",

@@ -67,6 +67,92 @@ The plane can also participate as one additional line occluder. Solid edges,
 free lines, and the derived section boundary are all updated through stable,
 preallocated slots.
 
+## General source-to-copy identity handoff
+
+`polyhedron_visibility.copy_handoff` handles the short interval in which a
+copied geometric entity still occupies the same pixels as its source. The
+copy operation freezes semantic vertex pairs and the corresponding face/stroke
+pairs. Every frame then measures those paired vertices in the same final
+coordinate space used by the overlay. At exact identity the copy owns the
+coincident paint; as it separates, only the paired source faces and strokes
+return through a cubic smoothstep. The copy stays at full authored opacity.
+
+The contract works for a complete copied solid or a selected registered
+subset. It does not infer similarity from rendered pixels and it does not
+match unrelated objects by proximity. Callers can therefore move, rotate, or
+return the copy without changing object identity or creating frame-local
+Mobjects. The extracted-dihedral controller below is the first built-in
+consumer of this generic policy.
+
+## One closed solid plus one extracted dihedral
+
+`ExtractedDihedralScene3D` freezes a teaching copy of exactly two adjacent
+source faces from one validated closed convex solid. The two faces must share
+one complete source edge, and every boundary edge of their union must already
+be registered as one straight semantic `Line`.
+
+The extracted copy has its own stable vertex, face, and stroke identities and
+is driven by a proper rigid transform: one right-handed rotation plus one
+translation. It does not continue reading the solid's live vertices after the
+copy is frozen. This makes “highlight the angle inside the solid, then move it
+out for analysis” explicit and reproducible.
+
+The same assembly can then make any declared source face the base plane.
+`base_plane_rotation(face_id)` builds a rigid rotation about the source solid's
+geometric center (the centroid of all registered solid vertices) and maps the
+face's validated outward normal to world `-Z`. Supplying that motion as the
+controller's `global_transform_provider` applies that center-relative motion
+before each entity's independent placement. The source solid therefore rotates
+about its own moved center. The copied dihedral inherits the same authored
+center, but its local transform moves that center with the copy before display;
+it rotates in place at its separated location instead of orbiting a fixed
+world-space pivot. A balanced layout can translate the source by `-T/2` and use
+the copy's relative transform `T`, leaving the copy at `+T/2`.
+
+At the identity transform, coincident source faces and boundary edges hand off
+their display to the highlighted copy. They are not drawn twice. As the copy
+starts moving, each paired source face and boundary edge is reactivated with a
+cubic smoothstep derived from its current separation in the final overlay
+coordinate space. The default handoff reaches full strength at `0.12` overlay
+units, and `identity_handoff_distance` may be adjusted for another scene scale.
+This avoids a binary color/layer change on the first animated frame and works
+symmetrically when the copy returns. After the handoff, all solid faces and
+both extracted faces become one occluder set; all solid and extracted semantic
+lines are cut into visible and hidden spans by that same frame calculation.
+
+With `accurate_transparency=True`, the Cairo binding also handles translucent
+face intersections. A face is split by another face only when their finite
+convex polygons share a positive-length 3D crossing; disjoint polygons are not
+partitioned merely because their infinite supporting planes cross. The local
+cells are still triangulated for exact depth constraints, but consecutive
+triangles from one source face at one valid draw position are submitted as one
+compound Cairo path. A stable, conservatively preallocated pool updates points,
+opacity, color, and `z_index` in place. Invalid frames keep the last good line
+and fill state.
+
+The same accurate mode enables unified Cairo compositing by default. The
+authoritative visible/hidden spans are refined at line/face depth-exchange
+roots and projected line/line crossings. Exact transparent face batches,
+visible stroke fragments, and dashed stroke fragments then enter one local
+dependency graph. A deterministic topological order assigns the already
+preallocated Manim slots their far-to-near `z_index` values. No updater creates
+or replaces a `Mobject`. Ambiguous equal-depth crossings, contradictory local
+orders, dependency cycles, or fragment-capacity overflow fail before mutation
+and retain the complete last-good frame.
+
+This is a technical-drawing compositor under parallel projection, not a depth
+buffer. An incident boundary or a coplanar semantic construction line is ink
+on its face and paints above that fill. A line strictly behind a translucent
+face paints first and is therefore tinted by the face; a line in front paints
+after it. At a projected line crossing the nearer fragment paints last. The
+binding requires distinct authored `z_index` values for every managed face and
+stroke and rejects unrelated drawables inside the combined managed z band.
+
+This v1 feature deliberately supports one closed convex solid and one copied
+two-face dihedral. It does not yet accept an arbitrary second solid, several
+copies, non-rigid deformation, curved faces, labels, dots, arrows, or arbitrary
+compound source paths as managed occlusion geometry.
+
 For intersecting transparent fills, `accurate_transparency=True` enables a
 separate exact-order path for one closed convex solid and one fitted plane patch
 under parallel projection:
@@ -156,6 +242,9 @@ Version 0.1 supports:
   emphasis for registered native `Polygon` face fills;
 - exact local transparent-fragment ordering for one closed convex solid and
   one intersecting automatically fitted plane patch under parallel projection;
+- one closed convex solid plus one rigidly transformed two-face dihedral copied
+  from adjacent source faces, including global semantic-line occlusion,
+  duplicate-free identity handoff, and exact local transparent-face splitting;
 - at most 24 solid faces, 768 preallocated transparent triangles, and 589824
   transparent-fragment pair checks for the real-time exact section binding;
 - at most 64 open faces, 128 open strokes, 64 seams, 4096 candidate pairs, and
@@ -169,7 +258,9 @@ It intentionally rejects or does not claim support for:
 - undeclared seams, non-manifold closed meshes, or topology changes;
 - general order-independent transparency, refraction, or arbitrary surface
   intersections;
-- multiple solids intersecting or mutually occluding one another;
+- arbitrary multiple solids intersecting or mutually occluding one another
+  (the one-solid-plus-one-derived-dihedral workflow above is the only supported
+  multi-entity case);
 - non-convex solids, curved cutting surfaces, or several simultaneous cutting
   planes;
 - OpenGL binding parity.
