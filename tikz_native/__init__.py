@@ -14,6 +14,7 @@ from .compiler import (
     PictureSpec,
     Projection3DSpec,
     TikzNativeCompiler,
+    TikzNativeError,
     compile_document,
 )
 from .fixed_view_renderer import NativeFixedViewRenderer
@@ -144,6 +145,7 @@ __all__ = [
     "RESPONSE_SCHEMA",
     "TikzNativeAutoOcclusion3D",
     "TikzNativeCompiler",
+    "TikzNativeError",
     "TikzNativeOpenFaceAutoOcclusion3D",
     "TikzNativeOpenFaceStaticAsset3DError",
     "TikzNativeOpenFaceVisibility3DAdapterError",
