@@ -4,6 +4,9 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+- harden explicit TikZ line-versus-face occlusion with scale-aware local
+  coordinates, normalized view rays, strict convex-face validation, and
+  visible coplanar or boundary-only contacts;
 - add a reusable one-solid-plus-one-derived-dihedral workflow for copying two
   adjacent faces, handing off coincident source pixels, and moving the copy as
   one rigid teaching object;
