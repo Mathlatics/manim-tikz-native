@@ -4,8 +4,10 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
-- reject invalid or non-finite PGF arithmetic with a stable `TikzNativeError`
-  instead of leaking raw Python numeric exceptions;
+- reject invalid, non-finite, or excessively deep PGF arithmetic with a stable
+  `TikzNativeError` instead of leaking raw Python numeric exceptions, and
+  recheck every TikZ length after unit conversion so line widths, radii,
+  spacing, dashes, and arrow dimensions cannot become infinite;
 - add a reusable one-solid-plus-one-derived-dihedral workflow for copying two
   adjacent faces, handing off coincident source pixels, and moving the copy as
   one rigid teaching object;

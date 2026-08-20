@@ -361,6 +361,54 @@ class TikzNativeCompilerTests(unittest.TestCase):
         )
         self.assertEqual(document.pictures[0].coordinates["A"], (3.0, 0.0))
 
+    def test_length_overflow_after_unit_conversion_fails_closed(self) -> None:
+        statements = (
+            r"\draw[line width=1e308cm] (0,0) -- (1,0);",
+            r"\fill (0,0) circle (1e308cm);",
+            r"\node[inner sep=1e308cm] at (0,0) {$A$};",
+        )
+        for statement in statements:
+            with self.subTest(statement=statement):
+                picture = compile_document(
+                    source_text=(
+                        "\\begin{tikzpicture}\n"
+                        f"  {statement}\n"
+                        "\\end{tikzpicture}\n"
+                    )
+                ).pictures[0]
+                self.assertFalse(picture.objects)
+                self.assertTrue(
+                    any(
+                        "length must remain finite after unit conversion" in item
+                        for item in picture.unsupported
+                    ),
+                    picture.unsupported,
+                )
+
+        with self.assertRaisesRegex(
+            TikzNativeError,
+            "length must remain finite after unit conversion",
+        ):
+            compile_document(
+                source_text=r"""
+\begin{tikzpicture}
+  \pgfmathsetlengthmacro{\bad}{1e308*1cm}
+  \draw[line width=\bad] (0,0) -- (1,0);
+\end{tikzpicture}
+"""
+            )
+
+    def test_deep_pgf_expression_has_a_stable_complexity_error(self) -> None:
+        expression = "+".join("1" for _ in range(1500))
+        source_text = (
+            "\\begin{tikzpicture}\n"
+            f"  \\pgfmathsetmacro{{\\bad}}{{{expression}}}\n"
+            "  \\coordinate (A) at (\\bad,0);\n"
+            "\\end{tikzpicture}\n"
+        )
+        with self.assertRaisesRegex(TikzNativeError, "too complex"):
+            compile_document(source_text=source_text)
+
     def test_xcolor_mix_is_not_opacity(self) -> None:
         polygon = self.document.pictures[0].objects[0]
         self.assertEqual(polygon.style.fill_color, "#DEECEB")

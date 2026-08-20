@@ -22,6 +22,8 @@ from .occlusion_3d import parallel_occlusion_interval
 TEX_PT_PER_CM = 72.27 / 2.54
 MM_TO_PT = 72.27 / 25.4
 HINGE_RELATION_SCHEMA = "tikz-native-hinge-relation/v1"
+_PGF_EXPRESSION_MAX_NODES = 512
+_PGF_EXPRESSION_MAX_DEPTH = 64
 
 
 class TikzNativeError(RuntimeError):
@@ -31,6 +33,15 @@ class TikzNativeError(RuntimeError):
 @dataclass(frozen=True)
 class Length:
     pt: float
+
+    def __post_init__(self) -> None:
+        try:
+            value = float(self.pt)
+        except (TypeError, ValueError, OverflowError) as error:
+            raise TikzNativeError("TikZ length must be a finite number") from error
+        if not math.isfinite(value):
+            raise TikzNativeError("TikZ length must remain finite after unit conversion")
+        object.__setattr__(self, "pt", value)
 
     def to_json(self) -> dict[str, float]:
         return {"pt": self.pt}
@@ -401,6 +412,23 @@ class _SafeExpressionEvaluator(ast.NodeVisitor):
         raise TikzNativeError(f"Unsupported PGF expression node: {type(node).__name__}")
 
 
+def _validate_pgf_expression_complexity(tree: ast.AST) -> None:
+    """Reject expressions before Python recursion or resource limits leak out."""
+
+    seen = 0
+    pending: list[tuple[ast.AST, int]] = [(tree, 0)]
+    while pending:
+        node, depth = pending.pop()
+        seen += 1
+        if seen > _PGF_EXPRESSION_MAX_NODES or depth > _PGF_EXPRESSION_MAX_DEPTH:
+            raise TikzNativeError(
+                "PGF math expression is too complex to evaluate safely"
+            )
+        pending.extend(
+            (child, depth + 1) for child in ast.iter_child_nodes(node)
+        )
+
+
 class TikzNativeCompiler:
     """Compile a deliberate subset of TikZ into semantic native-object specs."""
 
@@ -632,10 +660,19 @@ class TikzNativeCompiler:
         value = re.sub(r"\s+", "", value)
         try:
             tree = ast.parse(value, mode="eval")
+        except RecursionError as error:
+            raise TikzNativeError(
+                f"Invalid PGF expression {expression!r}: expression is too complex"
+            ) from error
         except SyntaxError as error:
             raise TikzNativeError(f"Invalid PGF expression {expression!r}: {value!r}") from error
         try:
+            _validate_pgf_expression_complexity(tree)
             return _SafeExpressionEvaluator().visit(tree)
+        except RecursionError as error:
+            raise TikzNativeError(
+                f"Invalid PGF expression {expression!r}: expression is too complex"
+            ) from error
         except TikzNativeError as error:
             raise TikzNativeError(
                 f"Invalid PGF expression {expression!r}: {error}"
