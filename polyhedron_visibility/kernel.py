@@ -1,7 +1,8 @@
-"""Public, renderer-independent geometry-kernel surface.
+"""Public renderer-independent geometry-kernel surface.
 
-Importing this module never imports Manim. It is the stable aggregation point
-for the four incremental kernel layers.
+Importing ``polyhedron_visibility.kernel`` does not import Manim.  The package
+root uses lazy public exports so Python can reach this module without first
+loading the renderer bindings.
 """
 
 from .compositor import (
@@ -12,9 +13,10 @@ from .compositor import (
 )
 from .geometry import (
     DEFAULT_GEOMETRY_CONTEXT,
+    DEFAULT_RESOLVED_GEOMETRY_CONTEXT,
     GeometryContext,
     GeometryQuantity,
-    GeometryScale,
+    ResolvedGeometryContext,
     coordinate_scale,
     resolve_geometry_context,
 )
@@ -37,12 +39,13 @@ from .visibility import (
 __all__ = [
     "CompositorCycleError",
     "DEFAULT_GEOMETRY_CONTEXT",
+    "DEFAULT_RESOLVED_GEOMETRY_CONTEXT",
     "GeometryContext",
     "GeometryQuantity",
-    "GeometryScale",
     "OcclusionInterval",
     "PainterConstraint",
     "ParameterInterval",
+    "ResolvedGeometryContext",
     "TaggedInterval",
     "VisibilityKind",
     "VisibilitySpan",
