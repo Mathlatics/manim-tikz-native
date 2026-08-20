@@ -19,7 +19,7 @@ from typing import Any, Mapping, Sequence
 
 from .compiler import ObjectSpec, PictureSpec
 from .native_manim_codegen_3d import (
-    _SOURCE_HELPERS,
+    _current_source_helpers,
     _authored_coordinates,
     _literal,
     _object_payload,
@@ -685,7 +685,7 @@ def geometry_coordinates_3d(driver_values):
 
 def _v2_source_helpers() -> str:
     helpers = _replace_function(
-        _SOURCE_HELPERS,
+        _current_source_helpers(),
         "geometry_coordinates_3d",
         _GEOMETRY_COORDINATES_V2,
     )

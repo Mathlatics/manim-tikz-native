@@ -13,6 +13,7 @@ from pprint import pformat
 from typing import Any, Mapping
 
 from .compiler import ObjectSpec, PictureSpec, StyleSpec
+from .occlusion_3d import standalone_occlusion_source
 
 
 NATIVE_MANIM_SOURCE_3D_SCHEMA = "tikz-native-manim-source-3d/v1"
@@ -430,87 +431,7 @@ def _object_logical_point(spec, coordinates, name_field, value_field):
     return _point3(spec[value_field], value_field)
 
 
-def _clip_affine_interval(low, high, constant, slope, minimum=None, maximum=None):
-    tolerance = 1e-10
-    if abs(slope) <= tolerance:
-        if minimum is not None and constant < minimum - tolerance:
-            return None
-        if maximum is not None and constant > maximum + tolerance:
-            return None
-        return low, high
-    if minimum is not None:
-        boundary = (minimum - constant) / slope
-        if slope > 0:
-            low = max(low, boundary)
-        else:
-            high = min(high, boundary)
-    if maximum is not None:
-        boundary = (maximum - constant) / slope
-        if slope > 0:
-            high = min(high, boundary)
-        else:
-            low = max(low, boundary)
-    if low >= high - tolerance:
-        return None
-    return max(0.0, low), min(1.0, high)
-
-
-def parallel_view_direction(projection_matrix):
-    matrix = np.asarray(projection_matrix, dtype=float)
-    direction = np.cross(matrix[0], matrix[1])
-    length = float(np.linalg.norm(direction))
-    if matrix.shape != (3, 3) or length <= 1e-12:
-        raise ValueError("projection matrix has dependent screen rows")
-    direction /= length
-    return -direction if float(np.dot(direction, matrix[2])) < 0.0 else direction
-
-
-def parallel_occlusion_interval(start, end, face, view_direction):
-    start = _point3(start)
-    end = _point3(end)
-    face = np.asarray(face, dtype=float)
-    view = _point3(view_direction)
-    if face.shape not in {(3, 3), (4, 3)}:
-        return None
-    segment = end - start
-    anchor = face[0]
-    basis_u = face[1] - anchor
-    basis_v = face[2 if len(face) == 3 else 3] - anchor
-    normal = np.cross(basis_u, basis_v)
-    denominator = float(np.dot(view, normal))
-    if abs(denominator) <= 1e-10:
-        return None
-    lambda_zero = float(np.dot(anchor - start, normal)) / denominator
-    lambda_slope = -float(np.dot(segment, normal)) / denominator
-    w_zero = start + view * lambda_zero - anchor
-    w_slope = segment + view * lambda_slope
-    uu = float(np.dot(basis_u, basis_u))
-    uv = float(np.dot(basis_u, basis_v))
-    vv = float(np.dot(basis_v, basis_v))
-    gram = uu * vv - uv * uv
-    if abs(gram) <= 1e-10:
-        return None
-    def coefficients(vector):
-        wu = float(np.dot(vector, basis_u))
-        wv = float(np.dot(vector, basis_v))
-        return (wu * vv - wv * uv) / gram, (wv * uu - wu * uv) / gram
-    alpha_zero, beta_zero = coefficients(w_zero)
-    alpha_slope, beta_slope = coefficients(w_slope)
-    constraints = [
-        (lambda_zero, lambda_slope, 0.0, None),
-        (alpha_zero, alpha_slope, 0.0, 1.0),
-        (beta_zero, beta_slope, 0.0, 1.0),
-    ]
-    if len(face) == 3:
-        constraints.append((alpha_zero + beta_zero, alpha_slope + beta_slope, None, 1.0))
-    interval = (0.0, 1.0)
-    for constant, slope, minimum, maximum in constraints:
-        interval = _clip_affine_interval(
-            interval[0], interval[1], constant, slope, minimum, maximum
-        )
-        if interval is None:
-            return None
-    return interval
+# __TIKZ_NATIVE_OCCLUSION_3D_KERNEL__
 
 
 def _visible_stroke_width(mobject):
@@ -987,6 +908,15 @@ def restore_geometry_3d_objects(state):
 '''
 
 
+def _current_source_helpers() -> str:
+    """Use the runtime occlusion kernel in the portable generated source."""
+
+    placeholder = "# __TIKZ_NATIVE_OCCLUSION_3D_KERNEL__"
+    if _SOURCE_HELPERS.count(placeholder) != 1:
+        raise RuntimeError("generated 3D source has an invalid occlusion placeholder")
+    return _SOURCE_HELPERS.replace(placeholder, standalone_occlusion_source())
+
+
 def generate_native_manim_source_3d(
     picture: PictureSpec,
     rig: Mapping[str, Any],
@@ -1100,7 +1030,7 @@ def generate_native_manim_source_3d(
         f"PICTURE_SCALE = {float(picture.scale)!r}",
         "TEX_POINTS_PER_CM = 72.27 / 2.54",
     ]
-    source_text = "\n".join(source_lines) + _SOURCE_HELPERS + "\n"
+    source_text = "\n".join(source_lines) + _current_source_helpers() + "\n"
     compile(source_text, "<tikz-native-manim-source-3d>", "exec")
     return {
         "schema": NATIVE_MANIM_SOURCE_3D_SCHEMA,

@@ -16,7 +16,7 @@ from .projection_3d import (
     matrix_from_tikz_basis,
     tikz_three_d_view_basis,
 )
-from .occlusion_3d import parallel_occlusion_interval
+from .occlusion_3d import OcclusionGeometryError, parallel_occlusion_interval
 
 
 TEX_PT_PER_CM = 72.27 / 2.54
@@ -1485,12 +1485,17 @@ class TikzNativeCompiler:
             return None
         if len(face) not in {3, 4} or any(len(point) != 3 for point in face):
             return None
-        return parallel_occlusion_interval(
-            start,
-            end,
-            face,
-            picture.projection_3d.matrix[2],
-        )
+        try:
+            return parallel_occlusion_interval(
+                start,
+                end,
+                face,
+                picture.projection_3d.matrix[2],
+            )
+        except OcclusionGeometryError as error:
+            raise TikzNativeError(
+                f"invalid 3D occlusion relation: {error}"
+            ) from error
 
     @staticmethod
     def _interpolate_point(

@@ -257,7 +257,7 @@ class TikzNativeGeometryRig3DTests(unittest.TestCase):
         )
         self.assertEqual(
             groups["hinge:fold-angle:axis"]["objectIds"],
-            ["occluded_hidden.A.B.0", "occluded_hidden.A.B.0.2"],
+            ["occluded_visible.A.B.0", "occluded_visible.A.B.0.2"],
         )
         self.assertEqual(
             groups["derived:M"]["objectIds"],
