@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+- route the production closed-polyhedron `AutoOcclusion3D` solver through the
+  shared `GeometryContext`, topology, and visibility layers while preserving
+  the frozen v1 trace schema and interval classification;
+- add an explicit tolerance-expanded visibility boundary mode for legacy trace
+  compatibility without changing the exact-domain default used by new geometry;
 - reject invalid, non-finite, or excessively deep PGF arithmetic with a stable
   `TikzNativeError` instead of leaking raw Python numeric exceptions, and
   recheck every TikZ length after unit conversion so line widths, radii,

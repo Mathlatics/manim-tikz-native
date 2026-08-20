@@ -29,6 +29,9 @@ from polyhedron_visibility.api import AutoOcclusion3D, ParallelProjection
 from polyhedron_visibility.binding import OcclusionBindingError, OcclusionCapacityError
 from polyhedron_visibility.style import OcclusionStyle
 from polyhedron_visibility.style import OcclusionStyleError
+from polyhedron_visibility.visibility import (
+    partition_visibility as shared_partition_visibility,
+)
 
 
 IDENTITY_PROJECTION = ((1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0))
@@ -160,6 +163,16 @@ class AutoOcclusion3DManimTests(unittest.TestCase):
 
     def tearDown(self) -> None:
         self.config.__exit__(None, None, None)
+
+    def test_public_binding_reaches_shared_visibility_kernel(self) -> None:
+        fixture = _Fixture(_InstantScene())
+        with patch(
+            "polyhedron_visibility.parallel_solver.partition_visibility",
+            wraps=shared_partition_visibility,
+        ) as partition_mock:
+            fixture.controller.attach()
+        self.assertGreater(partition_mock.call_count, 0)
+        fixture.controller.restore()
 
     def test_attach_uses_independent_root_real_dt_updater_and_fixed_slots(self) -> None:
         fixture = _Fixture(_InstantScene())

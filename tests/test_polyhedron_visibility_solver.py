@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json
+import random
 import unittest
+from unittest.mock import patch
 
 import numpy as np
 
@@ -14,9 +16,96 @@ from polyhedron_visibility import (
     compute_frame_visibility,
     segment_face_occlusion_interval,
 )
-
+from polyhedron_visibility import parallel_solver as solver_module
+from polyhedron_visibility.geometry import GeometryContext as SharedGeometryContext
+from polyhedron_visibility.parallel_solver import (
+    _segment_face_interval_result,
+    _spans_from_intervals,
+)
+from polyhedron_visibility.trace import (
+    RawOcclusionInterval,
+    VisibilitySpan as TraceVisibilitySpan,
+)
+from polyhedron_visibility.visibility import (
+    partition_visibility as shared_partition_visibility,
+)
 
 IDENTITY_VIEW = np.eye(3)
+
+
+def _legacy_spans_from_intervals(
+    intervals: list[RawOcclusionInterval],
+    parameter_epsilon: float,
+) -> tuple[TraceVisibilitySpan, ...]:
+    """Frozen v1 reference copied from the pre-kernel production solver."""
+
+    boundaries = [0.0, 1.0]
+    for item in intervals:
+        boundaries.extend((item.start, item.end))
+    boundaries.sort()
+    unique: list[float] = []
+    for value in boundaries:
+        value = min(1.0, max(0.0, float(value)))
+        if not unique or abs(value - unique[-1]) > parameter_epsilon:
+            unique.append(value)
+        else:
+            unique[-1] = max(unique[-1], value)
+    if unique[0] > 0.0:
+        unique.insert(0, 0.0)
+    if unique[-1] < 1.0:
+        unique.append(1.0)
+
+    spans: list[TraceVisibilitySpan] = []
+    for start, end in zip(unique, unique[1:]):
+        if end - start <= parameter_epsilon:
+            continue
+        midpoint = 0.5 * (start + end)
+        active = tuple(
+            sorted(
+                item.face_id
+                for item in intervals
+                if item.start - parameter_epsilon
+                <= midpoint
+                <= item.end + parameter_epsilon
+            )
+        )
+        kind = "hidden" if active else "visible"
+        span = TraceVisibilitySpan(start, end, kind, active, len(active))
+        if (
+            spans
+            and spans[-1].kind == span.kind
+            and spans[-1].occluder_face_ids == span.occluder_face_ids
+            and abs(spans[-1].end - span.start) <= parameter_epsilon
+        ):
+            previous = spans[-1]
+            spans[-1] = TraceVisibilitySpan(
+                previous.start,
+                span.end,
+                previous.kind,
+                previous.occluder_face_ids,
+                previous.level,
+            )
+        else:
+            spans.append(span)
+    if not spans:
+        return (TraceVisibilitySpan(0.0, 1.0, "visible", (), 0),)
+    first = spans[0]
+    spans[0] = TraceVisibilitySpan(
+        0.0,
+        first.end,
+        first.kind,
+        first.occluder_face_ids,
+        first.level,
+    )
+    last = spans[-1]
+    spans[-1] = TraceVisibilitySpan(
+        last.start,
+        1.0,
+        last.kind,
+        last.occluder_face_ids,
+        last.level,
+    )
+    return tuple(spans)
 
 
 def face_model(*, reverse_inputs: bool = False, scale: float = 1.0) -> VisibilityModel:
@@ -97,6 +186,90 @@ def octahedron_model() -> VisibilityModel:
 
 
 class ParallelVisibilitySolverTests(unittest.TestCase):
+    def test_production_solver_reaches_shared_geometry_and_visibility_layers(self) -> None:
+        created_contexts: list[SharedGeometryContext] = []
+
+        def tracked_context(*args, **kwargs):
+            context = SharedGeometryContext(*args, **kwargs)
+            created_contexts.append(context)
+            return context
+
+        with (
+            patch.object(solver_module, "GeometryContext", side_effect=tracked_context),
+            patch.object(
+                solver_module,
+                "partition_visibility",
+                wraps=shared_partition_visibility,
+            ) as partition_mock,
+        ):
+            frame = compute_frame_visibility(
+                face_model(),
+                projection_matrix=IDENTITY_VIEW,
+            )
+
+        self.assertTrue(created_contexts)
+        self.assertGreater(partition_mock.call_count, 0)
+        self.assertEqual(frame.edge_map["probe"].spans[1].kind, "hidden")
+
+    def test_shared_partition_matches_frozen_v1_trace_exactly(self) -> None:
+        targeted = [
+            RawOcclusionInterval("face-d", 0.0008, 0.7),
+            RawOcclusionInterval("face-b", 0.0025, 0.02),
+            RawOcclusionInterval("face-c", 0.5098, 0.7),
+            RawOcclusionInterval("face-a", 0.5101, 0.9),
+        ]
+        for epsilon in (0.0, 1.0e-9, 1.0e-3):
+            with self.subTest(kind="targeted", epsilon=epsilon):
+                self.assertEqual(
+                    _spans_from_intervals(targeted, epsilon),
+                    _legacy_spans_from_intervals(targeted, epsilon),
+                )
+
+        random_source = random.Random(20260821)
+        for epsilon in (0.0, 1.0e-12, 1.0e-9, 1.0e-3, 5.0e-2):
+            for sample in range(1000):
+                intervals: list[RawOcclusionInterval] = []
+                for index in range(random_source.randrange(0, 8)):
+                    start = random_source.random()
+                    end = random_source.random()
+                    if end < start:
+                        start, end = end, start
+                    if end - start <= epsilon:
+                        continue
+                    intervals.append(
+                        RawOcclusionInterval(f"face-{index}", start, end)
+                    )
+                intervals.sort(
+                    key=lambda item: (item.start, item.end, item.face_id)
+                )
+                with self.subTest(
+                    kind="random",
+                    epsilon=epsilon,
+                    sample=sample,
+                ):
+                    self.assertEqual(
+                        _spans_from_intervals(intervals, epsilon),
+                        _legacy_spans_from_intervals(intervals, epsilon),
+                    )
+
+    def test_private_interval_helper_keeps_legacy_tolerance_keyword(self) -> None:
+        result = _segment_face_interval_result(
+            (-2.0, 0.0, 0.0),
+            (2.0, 0.0, 0.0),
+            (
+                (-1.0, -1.0, 1.0),
+                (1.0, -1.0, 1.0),
+                (1.0, 1.0, 1.0),
+                (-1.0, 1.0, 1.0),
+            ),
+            ParallelView.from_matrix(IDENTITY_VIEW),
+            tolerance_policy=TolerancePolicy(),
+        )
+        self.assertIsNotNone(result.interval)
+        assert result.interval is not None
+        self.assertAlmostEqual(result.interval[0], 0.25, places=7)
+        self.assertAlmostEqual(result.interval[1], 0.75, places=7)
+
     def test_parallel_view_and_one_arbitrary_convex_face_interval(self) -> None:
         view = ParallelView.from_matrix(IDENTITY_VIEW)
         self.assertTrue(np.allclose(view.view_direction, (0, 0, 1)))
