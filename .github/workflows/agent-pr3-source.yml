@@ -1,0 +1,23 @@
+name: Agent PR3 source snapshot
+
+on:
+  push:
+    branches:
+      - agent/unify-geometry-tolerance-layers
+
+permissions:
+  contents: read
+
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pr3-source-${{ github.sha }}
+          path: |
+            .
+            !.git
+          include-hidden-files: true
+          retention-days: 1
