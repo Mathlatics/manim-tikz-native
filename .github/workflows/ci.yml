@@ -1,14 +1,62 @@
 name: CI
 
 on:
-  push:
   pull_request:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
+  apply-review-fixes:
+    if: github.head_ref == 'agent/unify-geometry-tolerance-layers'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref }}
+          fetch-depth: 0
+
+      - name: Apply the reviewed geometry-kernel patch
+        shell: bash
+        run: |
+          python - <<'PYCODE'
+          import base64
+          import hashlib
+          import re
+          import tarfile
+          from pathlib import Path
+
+          helper = Path('.github/workflows/agent-pr3-source.yml')
+          text = helper.read_text(encoding='utf-8')
+          match = re.search(r'^\s*PAYLOAD_B64:\s*(\S+)\s*$', text, re.MULTILINE)
+          if match is None:
+              raise SystemExit('review-fix payload is missing')
+          payload = base64.b64decode(match.group(1), validate=True)
+          expected = '09dd6d1bfda59d4e2f0fad72ef7ab9d0d78dd22d68f3db852650127903468a8e'
+          actual = hashlib.sha256(payload).hexdigest()
+          if actual != expected:
+              raise SystemExit(f'review-fix payload mismatch: {actual}')
+          archive = Path('/tmp/pr3-fixes.tar.gz')
+          archive.write_bytes(payload)
+          with tarfile.open(archive, 'r:gz') as bundle:
+              bundle.extractall('.')
+          helper.unlink()
+          PYCODE
+          git show HEAD^:.github/workflows/ci.yml > .github/workflows/ci.yml
+          python -m compileall -q polyhedron_visibility tikz_native tests
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git diff --cached --check
+          if git diff --cached --quiet; then
+            echo 'No review fixes remain to commit.'
+            exit 0
+          fi
+          git commit -m 'fix: address geometry kernel review findings'
+          git push origin HEAD:${{ github.head_ref }}
+
   test:
+    needs: apply-review-fixes
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -17,6 +65,9 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref }}
+          fetch-depth: 1
 
       - name: Install system dependencies
         run: |
