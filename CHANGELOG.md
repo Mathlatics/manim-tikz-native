@@ -6,7 +6,9 @@ All notable changes to this project will be documented in this file.
 
 - harden explicit TikZ line-versus-face occlusion with scale-aware local
   coordinates, normalized view rays, strict convex-face validation, and
-  visible coplanar or boundary-only contacts;
+  visible coplanar or boundary-only contacts; malformed, non-planar,
+  degenerate, or non-convex faces now fail closed instead of making the whole
+  semantic line appear visible;
 - share that occlusion kernel with generated Manim v1/v2/v3 source so
   exported animations and the provider runtime cannot silently diverge;
 - add differential regression coverage for generated/runtime parity, extreme

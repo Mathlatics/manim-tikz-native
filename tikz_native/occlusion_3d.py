@@ -28,6 +28,10 @@ _BOUNDARY_FACTOR = 8.0
 _DEPTH_FACTOR = 8.0
 
 
+class OcclusionGeometryError(ValueError):
+    """The authored line, face, or view cannot be interpreted safely."""
+
+
 def _stable_norm(vector: np.ndarray) -> float | None:
     """Return a finite Euclidean norm without avoidable overflow/underflow."""
 
@@ -85,7 +89,7 @@ def _clip_greater_equal(
 
 
 def parallel_view_direction(
-    projection_matrix: Sequence[Sequence[float]] | np.ndarray,
+    projection_matrix: "Sequence[Sequence[float]] | np.ndarray",
     *,
     tolerance: float = 1.0e-12,
 ) -> np.ndarray:
@@ -135,17 +139,19 @@ def parallel_view_direction(
 
 
 def parallel_occlusion_interval(
-    start: Sequence[float] | np.ndarray,
-    end: Sequence[float] | np.ndarray,
-    face: Sequence[Sequence[float]] | np.ndarray,
-    view_direction: Sequence[float] | np.ndarray,
+    start: "Sequence[float] | np.ndarray",
+    end: "Sequence[float] | np.ndarray",
+    face: "Sequence[Sequence[float]] | np.ndarray",
+    view_direction: "Sequence[float] | np.ndarray",
 ) -> tuple[float, float] | None:
     """Return the non-zero part of a segment hidden by a finite convex face.
 
     The returned values parameterize ``start + t * (end - start)``. A face only
     occludes when it lies a positive, tolerance-aware distance toward the
-    viewer. Coplanar contacts, boundary-only contacts, invalid geometry, and
-    zero-length intersections return ``None``.
+    viewer. Coplanar contacts, boundary-only contacts, and zero-length
+    intersections return ``None``. Malformed or ambiguous geometry raises
+    :class:`OcclusionGeometryError`, so callers cannot mistake invalid input
+    for a fully visible line.
 
     Calculations are performed in coordinates local to the face scale. This
     keeps the result stable when the whole model is uniformly scaled and avoids
@@ -157,30 +163,39 @@ def parallel_occlusion_interval(
         end_array = np.asarray(end, dtype=float)
         face_array = np.asarray(face, dtype=float)
         view = _unit_vector(np.asarray(view_direction, dtype=float))
-    except (TypeError, ValueError):
-        return None
+    except (TypeError, ValueError) as exc:
+        raise OcclusionGeometryError(
+            "line, face, and view must contain numeric coordinates"
+        ) from exc
     if start_array.shape != (3,) or end_array.shape != (3,):
-        return None
+        raise OcclusionGeometryError("line endpoints must be finite 3D points")
     if (
         face_array.ndim != 2
         or face_array.shape[1:] != (3,)
         or len(face_array) < 3
-        or view is None
     ):
-        return None
+        raise OcclusionGeometryError(
+            "occluding face must contain at least three ordered 3D vertices"
+        )
+    if view is None:
+        raise OcclusionGeometryError(
+            "view direction must be a finite non-zero 3D vector"
+        )
     if not (
         np.all(np.isfinite(start_array))
         and np.all(np.isfinite(end_array))
         and np.all(np.isfinite(face_array))
     ):
-        return None
+        raise OcclusionGeometryError(
+            "line endpoints and face vertices must all be finite"
+        )
 
     segment = end_array - start_array
     if not np.all(np.isfinite(segment)):
-        return None
+        raise OcclusionGeometryError("line segment arithmetic is not finite")
     segment_length = _stable_norm(segment)
     if segment_length is None or segment_length <= _ABSOLUTE_FLOOR:
-        return None
+        raise OcclusionGeometryError("line segment must have non-zero length")
     segment_world_tolerance = max(
         _ABSOLUTE_FLOOR,
         _RELATIVE_TOLERANCE * segment_length,
@@ -192,10 +207,10 @@ def parallel_occlusion_interval(
 
     extent = np.max(face_array, axis=0) - np.min(face_array, axis=0)
     if not np.all(np.isfinite(extent)):
-        return None
+        raise OcclusionGeometryError("face extent arithmetic is not finite")
     face_scale = _stable_norm(extent)
     if face_scale is None or face_scale <= _ABSOLUTE_FLOOR:
-        return None
+        raise OcclusionGeometryError("occluding face is degenerate")
 
     world_tolerance = max(
         _ABSOLUTE_FLOOR,
@@ -214,7 +229,7 @@ def parallel_occlusion_interval(
         and np.all(np.isfinite(start_local))
         and np.all(np.isfinite(end_local))
     ):
-        return None
+        raise OcclusionGeometryError("normalized occlusion geometry is not finite")
 
     normal: np.ndarray | None = None
     for index in range(1, len(face_local) - 1):
@@ -224,11 +239,11 @@ def parallel_occlusion_interval(
             normal = candidate / length
             break
     if normal is None:
-        return None
+        raise OcclusionGeometryError("occluding face has no stable plane")
 
     distances = face_local @ normal
     if float(np.max(np.abs(distances))) > boundary_local:
-        return None
+        raise OcclusionGeometryError("occluding face vertices are not coplanar")
 
     turns: list[float] = []
     for index in range(len(face_local)):
@@ -239,10 +254,14 @@ def parallel_occlusion_interval(
             np.dot(np.cross(current - before, after - current), normal)
         )
         if abs(signed) <= world_local * world_local:
-            return None
+            raise OcclusionGeometryError(
+                "occluding face has repeated or collinear boundary vertices"
+            )
         turns.append(signed)
     if min(turns) < 0.0 < max(turns):
-        return None
+        raise OcclusionGeometryError(
+            "occluding face boundary is not a consistently ordered convex polygon"
+        )
     orientation = 1.0 if turns[0] > 0.0 else -1.0
 
     # Locally consistent turns are not enough to reject every self-crossing
@@ -252,8 +271,8 @@ def parallel_occlusion_interval(
         next_index = (index + 1) % len(face_local)
         edge = face_local[next_index] - edge_start
         edge_length = _stable_norm(edge)
-        if edge_length is None:
-            return None
+        if edge_length is None or edge_length <= world_local:
+            raise OcclusionGeometryError("occluding face has a degenerate boundary edge")
         threshold = boundary_local * max(edge_length, world_local)
         for point_index, point in enumerate(face_local):
             if point_index in {index, next_index}:
@@ -262,7 +281,9 @@ def parallel_occlusion_interval(
                 np.dot(np.cross(edge, point - edge_start), normal)
             )
             if signed <= threshold:
-                return None
+                raise OcclusionGeometryError(
+                    "occluding face boundary is non-convex or self-crossing"
+                )
 
     denominator = float(np.dot(view, normal))
     if abs(denominator) <= _ANGULAR_TOLERANCE:
@@ -288,8 +309,8 @@ def parallel_occlusion_interval(
     for index, edge_start in enumerate(face_local):
         edge = face_local[(index + 1) % len(face_local)] - edge_start
         edge_length = _stable_norm(edge)
-        if edge_length is None:
-            return None
+        if edge_length is None or edge_length <= world_local:
+            raise OcclusionGeometryError("occluding face has a degenerate boundary edge")
         threshold = boundary_local * max(edge_length, world_local)
         value_zero = orientation * float(
             np.dot(np.cross(edge, projected_zero - edge_start), normal)
@@ -335,6 +356,7 @@ def standalone_occlusion_source() -> str:
 
 
 __all__ = [
+    "OcclusionGeometryError",
     "parallel_occlusion_interval",
     "parallel_view_direction",
     "standalone_occlusion_source",

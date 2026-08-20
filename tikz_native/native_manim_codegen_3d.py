@@ -1003,7 +1003,6 @@ def generate_native_manim_source_3d(
         ),
     }
     source_lines = [
-        "from __future__ import annotations",
         "import numpy as np",
         "from manim import *",
         "",

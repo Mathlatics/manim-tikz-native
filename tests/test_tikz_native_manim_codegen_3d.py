@@ -73,13 +73,7 @@ class TikzNativeReadableManim3DTests(unittest.TestCase):
             payload["sourceSha256"],
             hashlib.sha256(source.encode("utf-8")).hexdigest(),
         )
-        self.assertTrue(
-            source.startswith(
-                "from __future__ import annotations\n"
-                "import numpy as np\n"
-                "from manim import *\n"
-            )
-        )
+        self.assertTrue(source.startswith("import numpy as np\nfrom manim import *\n"))
         for required in (
             "def rotate_point_about_axis(",
             "def geometry_coordinates_3d(",

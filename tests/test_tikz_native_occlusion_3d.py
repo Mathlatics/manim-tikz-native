@@ -8,6 +8,7 @@ import numpy as np
 
 from tikz_native import compile_document
 from tikz_native.occlusion_3d import (
+    OcclusionGeometryError,
     parallel_occlusion_interval,
     parallel_view_direction,
     standalone_occlusion_source,
@@ -132,22 +133,20 @@ class TikzNativeOcclusion3DTests(unittest.TestCase):
             (1.0, 1.0, 1.0),
             (-1.0, 1.0, 1.0),
         ]
-        self.assertIsNone(
+        with self.assertRaisesRegex(OcclusionGeometryError, "convex|self-crossing"):
             parallel_occlusion_interval(
                 (-2.0, 0.0, 0.0),
                 (2.0, 0.0, 0.0),
                 nonconvex,
                 (0.0, 0.0, 1.0),
             )
-        )
-        self.assertIsNone(
+        with self.assertRaisesRegex(OcclusionGeometryError, "view direction"):
             parallel_occlusion_interval(
                 (-2.0, 0.0, 0.0),
                 (2.0, 0.0, 0.0),
                 FACE,
                 (0.0, 0.0, float("nan")),
             )
-        )
 
     def test_projection_direction_is_scale_invariant_and_validated(self) -> None:
         np.testing.assert_allclose(
@@ -170,11 +169,7 @@ class TikzNativeOcclusion3DTests(unittest.TestCase):
 
     def test_generated_kernel_is_self_contained_and_matches_runtime(self) -> None:
         namespace: dict[str, object] = {}
-        source = (
-            "from __future__ import annotations\n"
-            "import numpy as np\n"
-            + standalone_occlusion_source()
-        )
+        source = "import numpy as np\n" + standalone_occlusion_source()
         exec(compile(source, "<standalone-occlusion-3d>", "exec"), namespace)
         generated_interval = namespace["parallel_occlusion_interval"]
         generated_view = namespace["parallel_view_direction"]
@@ -248,6 +243,43 @@ class TikzNativeOcclusion3DTests(unittest.TestCase):
             for object_id in relation.object_ids
         ]
         self.assertEqual(visibility, ["visible"])
+
+    def test_compiler_rejects_a_nonplanar_relation_instead_of_showing_it(self) -> None:
+        source = r"""
+\begin{tikzpicture}[
+  x={(1cm,0cm)},
+  y={(0cm,1cm)},
+  z={(0cm,0cm)},
+  edge/.style={black,thick},
+  hidden/.style={black,densely dashed,thin}
+]
+  \coordinate (S) at (-2,0,0);
+  \coordinate (E) at (2,0,0);
+  \coordinate (A) at (-1,-1,1);
+  \coordinate (B) at (1,-1,1);
+  \coordinate (C) at (1,1,1);
+  \coordinate (D) at (-1,1,1.2);
+  \DrawSpaceLineBehindParallelogramFace[edge][hidden]
+    {S}{E}{A}{B}{C}{D}
+\end{tikzpicture}
+"""
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "nonplanar-occlusion.tex"
+            path.write_text(source, encoding="utf-8")
+            picture = compile_document(path).pictures[0]
+
+        self.assertFalse(picture.occlusion_relations)
+        self.assertFalse(
+            any(item.id.startswith("occluded_visible.S.E") for item in picture.objects)
+        )
+        self.assertTrue(
+            any(
+                "invalid 3D occlusion relation" in diagnostic
+                and "not coplanar" in diagnostic
+                for diagnostic in picture.unsupported
+            ),
+            picture.unsupported,
+        )
 
 
 if __name__ == "__main__":

@@ -70,9 +70,7 @@ class TikzNativeReadableManim3DV3Tests(unittest.TestCase):
         )
         self.assertTrue(
             payload["sourceText"].startswith(
-                "from __future__ import annotations\n"
-                "import numpy as np\n"
-                "from manim import *\n"
+                "import numpy as np\nfrom manim import *\n"
             )
         )
         for forbidden in (

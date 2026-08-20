@@ -937,7 +937,6 @@ def generate_native_manim_source_3d_v2(
     }
     driver_order = tuple(str(item["driverId"]) for item in internal_drivers)
     source_lines = [
-        "from __future__ import annotations",
         "import numpy as np",
         "from manim import *",
         "",
