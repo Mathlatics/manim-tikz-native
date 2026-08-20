@@ -1,9 +1,10 @@
-"""Shared geometry-layer context and scale-aware tolerance access.
+"""Shared, renderer-independent geometry tolerance context.
 
-This module is intentionally independent from Manim. It is the canonical
-entry point for numerical interpretation shared by geometry, topology,
-visibility, and compositing code. Existing solvers can migrate incrementally
-by accepting :class:`GeometryContext` while keeping their public APIs stable.
+The existing :class:`TolerancePolicy` remains the numerical source of truth.
+This module does not reinterpret its coefficients.  Instead, one unresolved
+``GeometryContext`` delegates to ``TolerancePolicy.resolve`` for the concrete
+geometry being solved and returns an immutable ``ResolvedGeometryContext``
+that can be passed through topology, visibility, and compositing code.
 """
 
 from __future__ import annotations
@@ -12,81 +13,23 @@ from dataclasses import dataclass, field, replace
 from enum import Enum
 from math import isfinite
 from types import MappingProxyType
-from typing import Any, Iterable, Mapping
+from typing import Iterable, Mapping, Sequence
 
-from .contract import TolerancePolicy
+from .contract import ResolvedTolerance, TolerancePolicy
+
+
+PositionInput = Mapping[str, Sequence[float]] | Sequence[Sequence[float]]
 
 
 class GeometryQuantity(str, Enum):
-    """Kinds of numerical comparison used by the geometry kernel."""
+    """Numerical comparisons that must not silently share one unit."""
 
     LENGTH = "length"
+    BOUNDARY = "boundary"
     DEPTH = "depth"
     PARAMETER = "parameter"
     ANGULAR = "angular"
     SCREEN = "screen"
-
-
-_DEFAULT_FLOORS: Mapping[GeometryQuantity, float] = MappingProxyType(
-    {
-        GeometryQuantity.LENGTH: 1.0e-12,
-        GeometryQuantity.DEPTH: 1.0e-12,
-        GeometryQuantity.PARAMETER: 1.0e-12,
-        GeometryQuantity.ANGULAR: 1.0e-12,
-        GeometryQuantity.SCREEN: 1.0e-12,
-    }
-)
-
-_POLICY_ALIASES: Mapping[GeometryQuantity, tuple[str, ...]] = MappingProxyType(
-    {
-        GeometryQuantity.LENGTH: (
-            "length_epsilon",
-            "length_tolerance",
-            "point_epsilon",
-            "point_tolerance",
-        ),
-        GeometryQuantity.DEPTH: (
-            "depth_epsilon",
-            "depth_tolerance",
-            "visibility_epsilon",
-        ),
-        GeometryQuantity.PARAMETER: (
-            "parameter_epsilon",
-            "parameter_tolerance",
-            "param_epsilon",
-            "param_tolerance",
-        ),
-        GeometryQuantity.ANGULAR: (
-            "angular_epsilon",
-            "angular_tolerance",
-            "angle_epsilon",
-            "angle_tolerance",
-        ),
-        GeometryQuantity.SCREEN: (
-            "screen_epsilon",
-            "screen_tolerance",
-            "projection_epsilon",
-            "projection_tolerance",
-        ),
-    }
-)
-
-_ABSOLUTE_ALIASES = (
-    "absolute_epsilon",
-    "absolute_tolerance",
-    "absolute",
-    "abs_epsilon",
-    "abs_tolerance",
-    "abs_tol",
-)
-_RELATIVE_ALIASES = (
-    "relative_epsilon",
-    "relative_tolerance",
-    "relative",
-    "rel_epsilon",
-    "rel_tolerance",
-    "rel_tol",
-)
 
 
 def _finite_nonnegative(name: str, value: float) -> float:
@@ -96,186 +39,181 @@ def _finite_nonnegative(name: str, value: float) -> float:
     return result
 
 
-def _candidate_value(candidate: Any, scale: float) -> float | None:
-    """Return one finite non-negative policy value, or ``None``.
-
-    A legacy policy may expose either a scalar attribute or a method accepting
-    the local scale. Keeping that compatibility logic here prevents every
-    solver from inventing another interpretation of the same policy.
-    """
-
-    try:
-        value = candidate(scale) if callable(candidate) else candidate
-    except TypeError:
-        try:
-            value = candidate() if callable(candidate) else candidate
-        except (TypeError, ValueError, OverflowError):
-            return None
-    except (ValueError, OverflowError):
-        return None
-    try:
-        result = float(value)
-    except (TypeError, ValueError, OverflowError):
-        return None
-    if not isfinite(result) or result < 0.0:
-        return None
-    return result
-
-
-def _policy_value(policy: Any, names: Iterable[str], scale: float) -> float | None:
-    for name in names:
-        if not hasattr(policy, name):
-            continue
-        result = _candidate_value(getattr(policy, name), scale)
-        if result is not None:
-            return result
-    return None
+def _normalize_overrides(
+    overrides: Mapping[GeometryQuantity | str, float],
+) -> Mapping[GeometryQuantity, float]:
+    normalized: dict[GeometryQuantity, float] = {}
+    for quantity, value in dict(overrides).items():
+        resolved = GeometryQuantity(quantity)
+        normalized[resolved] = _finite_nonnegative(
+            f"override[{resolved.value}]",
+            value,
+        )
+    return MappingProxyType(normalized)
 
 
 @dataclass(frozen=True, slots=True)
-class GeometryScale:
-    """Local scales for quantities that do not share the same unit."""
+class ResolvedGeometryContext:
+    """One concrete tolerance interpretation for one geometry solve.
 
-    length: float = 1.0
-    depth: float = 1.0
-    parameter: float = 1.0
-    angular: float = 1.0
-    screen: float = 1.0
+    ``resolved`` is exactly the object produced by the legacy
+    ``TolerancePolicy.resolve`` method.  Quantity lookup only names those
+    already-resolved values; it never applies an additional scale floor or
+    relative multiplier.
+    """
+
+    policy: TolerancePolicy
+    resolved: ResolvedTolerance
+    screen: float
+    overrides: Mapping[GeometryQuantity | str, float] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        for name in ("length", "depth", "parameter", "angular", "screen"):
-            object.__setattr__(
-                self,
-                name,
-                _finite_nonnegative(name, getattr(self, name)),
-            )
+        if not isinstance(self.policy, TolerancePolicy):
+            raise TypeError("policy must be a TolerancePolicy")
+        if not isinstance(self.resolved, ResolvedTolerance):
+            raise TypeError("resolved must be a ResolvedTolerance")
+        for name in ("scale", "world", "parameter", "angular", "boundary", "depth"):
+            _finite_nonnegative(f"resolved.{name}", getattr(self.resolved, name))
+        object.__setattr__(self, "screen", _finite_nonnegative("screen", self.screen))
+        object.__setattr__(self, "overrides", _normalize_overrides(self.overrides))
 
-    def for_quantity(self, quantity: GeometryQuantity | str) -> float:
-        resolved = GeometryQuantity(quantity)
-        return float(getattr(self, resolved.value))
+    def epsilon(self, quantity: GeometryQuantity | str) -> float:
+        """Return the already-resolved tolerance for one quantity."""
+
+        resolved_quantity = GeometryQuantity(quantity)
+        override = self.overrides.get(resolved_quantity)
+        if override is not None:
+            return float(override)
+        values = {
+            GeometryQuantity.LENGTH: self.resolved.world,
+            GeometryQuantity.BOUNDARY: self.resolved.boundary,
+            GeometryQuantity.DEPTH: self.resolved.depth,
+            GeometryQuantity.PARAMETER: self.resolved.parameter,
+            GeometryQuantity.ANGULAR: self.resolved.angular,
+            GeometryQuantity.SCREEN: self.screen,
+        }
+        return float(values[resolved_quantity])
+
+    def with_overrides(self, **overrides: float) -> "ResolvedGeometryContext":
+        merged = dict(self.overrides)
+        merged.update(overrides)
+        return replace(self, overrides=merged)
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "policy": {
+                "relative": self.policy.relative,
+                "absolute_floor": self.policy.absolute_floor,
+                "angular": self.policy.angular,
+                "boundary_factor": self.policy.boundary_factor,
+                "depth_factor": self.policy.depth_factor,
+            },
+            "resolved": self.resolved.to_dict(),
+            "screen": self.screen,
+            "overrides": {
+                quantity.value: value
+                for quantity, value in self.overrides.items()
+            },
+        }
 
 
 @dataclass(frozen=True, slots=True)
 class GeometryContext:
-    """One numerical contract shared by all geometry-kernel layers.
+    """Unresolved numerical policy shared by geometry-kernel layers.
 
-    ``TolerancePolicy`` remains the source of authored defaults. This adapter
-    gives every layer the same lookup rules, separates quantity-specific
-    scales, and supports explicit per-scene overrides without mutating global
-    state.
+    Call :meth:`resolve` with the same positions and optional edge length that
+    a legacy solver would pass to ``TolerancePolicy.resolve``.  This explicit
+    resolution step prevents a later layer from inventing a different local
+    scale for the same frame.
     """
 
     tolerance: TolerancePolicy = field(default_factory=TolerancePolicy)
-    scale: GeometryScale = field(default_factory=GeometryScale)
+    screen_tolerance: float | None = None
     overrides: Mapping[GeometryQuantity | str, float] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        if self.tolerance is None:
-            raise ValueError("tolerance policy must not be None")
-        normalized: dict[GeometryQuantity, float] = {}
-        for quantity, value in dict(self.overrides).items():
-            resolved = GeometryQuantity(quantity)
-            normalized[resolved] = _finite_nonnegative(
-                f"override[{resolved.value}]",
-                value,
-            )
-        object.__setattr__(self, "overrides", MappingProxyType(normalized))
+        if not isinstance(self.tolerance, TolerancePolicy):
+            raise TypeError("tolerance must be a TolerancePolicy")
+        screen = self.screen_tolerance
+        if screen is not None:
+            screen = _finite_nonnegative("screen_tolerance", screen)
+        object.__setattr__(self, "screen_tolerance", screen)
+        object.__setattr__(self, "overrides", _normalize_overrides(self.overrides))
 
-    def with_scale(self, **changes: float) -> "GeometryContext":
-        """Return a context with selected local scales replaced."""
+    def resolve(
+        self,
+        positions: PositionInput = (),
+        *,
+        edge_length: float | None = None,
+    ) -> ResolvedGeometryContext:
+        """Resolve by delegating exactly once to the existing policy."""
 
-        return replace(self, scale=replace(self.scale, **changes))
+        resolved = self.tolerance.resolve(positions, edge_length=edge_length)
+        screen = (
+            resolved.world
+            if self.screen_tolerance is None
+            else self.screen_tolerance
+        )
+        return ResolvedGeometryContext(
+            policy=self.tolerance,
+            resolved=resolved,
+            screen=screen,
+            overrides=self.overrides,
+        )
 
     def with_tolerance(self, tolerance: TolerancePolicy) -> "GeometryContext":
         return replace(self, tolerance=tolerance)
+
+    def with_screen_tolerance(self, value: float | None) -> "GeometryContext":
+        return replace(self, screen_tolerance=value)
 
     def with_overrides(self, **overrides: float) -> "GeometryContext":
         merged = dict(self.overrides)
         merged.update(overrides)
         return replace(self, overrides=merged)
 
-    def epsilon(
-        self,
-        quantity: GeometryQuantity | str,
-        *,
-        scale: float | None = None,
-    ) -> float:
-        """Resolve one scale-aware tolerance using a single policy contract."""
-
-        resolved = GeometryQuantity(quantity)
-        if resolved in self.overrides:
-            return float(self.overrides[resolved])
-
-        effective_scale = self.scale.for_quantity(resolved)
-        if scale is not None:
-            effective_scale = _finite_nonnegative("scale", scale)
-
-        for generic_name in ("epsilon_for", "tolerance_for"):
-            generic = getattr(self.tolerance, generic_name, None)
-            if not callable(generic):
-                continue
-            for args in (
-                (resolved.value, effective_scale),
-                (resolved, effective_scale),
-                (resolved.value,),
-                (resolved,),
-            ):
-                try:
-                    candidate = generic(*args)
-                except (TypeError, ValueError, OverflowError):
-                    continue
-                value = _candidate_value(candidate, effective_scale)
-                if value is not None:
-                    return max(_DEFAULT_FLOORS[resolved], value)
-
-        specific = _policy_value(
-            self.tolerance,
-            _POLICY_ALIASES[resolved],
-            effective_scale,
-        )
-        absolute = _policy_value(
-            self.tolerance,
-            _ABSOLUTE_ALIASES,
-            effective_scale,
-        )
-        relative = _policy_value(
-            self.tolerance,
-            _RELATIVE_ALIASES,
-            effective_scale,
-        )
-
-        candidates = [_DEFAULT_FLOORS[resolved]]
-        if specific is not None:
-            candidates.append(specific)
-        if absolute is not None:
-            candidates.append(absolute)
-        if relative is not None:
-            candidates.append(relative * max(1.0, effective_scale))
-        return max(candidates)
-
 
 DEFAULT_GEOMETRY_CONTEXT = GeometryContext()
+DEFAULT_RESOLVED_GEOMETRY_CONTEXT = DEFAULT_GEOMETRY_CONTEXT.resolve()
 
 
 def resolve_geometry_context(
-    context: GeometryContext | None = None,
+    context: GeometryContext | ResolvedGeometryContext | None = None,
     *,
     tolerance: TolerancePolicy | None = None,
-) -> GeometryContext:
-    """Normalize legacy ``tolerance=`` and new ``context=`` call styles."""
+    positions: PositionInput = (),
+    edge_length: float | None = None,
+) -> ResolvedGeometryContext:
+    """Normalize legacy ``tolerance=`` and new context call styles.
 
-    if context is not None and tolerance is not None:
-        if context.tolerance is not tolerance and context.tolerance != tolerance:
+    A resolved context is returned unchanged.  An unresolved context is
+    resolved with the supplied geometry.  Supplying contradictory policies is
+    rejected instead of choosing one silently.
+    """
+
+    if isinstance(context, ResolvedGeometryContext):
+        if tolerance is not None and context.policy != tolerance:
             raise ValueError("context and tolerance specify different policies")
-    if context is not None:
+        if edge_length is not None or tuple(positions):
+            raise ValueError("a resolved context cannot be resolved a second time")
         return context
-    if tolerance is not None:
-        return GeometryContext(tolerance=tolerance)
-    return DEFAULT_GEOMETRY_CONTEXT
+
+    if context is not None and not isinstance(context, GeometryContext):
+        raise TypeError("context must be a GeometryContext or ResolvedGeometryContext")
+
+    if context is not None and tolerance is not None and context.tolerance != tolerance:
+        raise ValueError("context and tolerance specify different policies")
+
+    unresolved = context or GeometryContext(tolerance=tolerance or TolerancePolicy())
+    return unresolved.resolve(positions, edge_length=edge_length)
 
 
-def coordinate_scale(values: Iterable[Any], *, floor: float = 1.0) -> float:
-    """Return a finite coordinate magnitude without depending on NumPy."""
+def coordinate_scale(values: Iterable[object], *, floor: float = 0.0) -> float:
+    """Return the largest finite coordinate magnitude.
+
+    The default floor is zero.  A hidden unit-scale floor would reproduce the
+    very small-geometry mismatch this context is designed to prevent.
+    """
 
     result = _finite_nonnegative("floor", floor)
     stack = list(values)
@@ -287,7 +225,7 @@ def coordinate_scale(values: Iterable[Any], *, floor: float = 1.0) -> float:
             scalar = float(value)
         except (TypeError, ValueError, OverflowError):
             try:
-                stack.extend(value)
+                stack.extend(value)  # type: ignore[arg-type]
             except TypeError as exc:
                 raise TypeError("coordinate values must be numeric") from exc
             continue
