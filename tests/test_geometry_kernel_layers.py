@@ -22,6 +22,7 @@ from polyhedron_visibility.geometry import (
     resolve_geometry_context,
 )
 from polyhedron_visibility.topology import (
+    BreakpointCluster,
     ParameterInterval,
     TaggedInterval,
     assert_exact_partition,
@@ -30,6 +31,7 @@ from polyhedron_visibility.topology import (
 )
 from polyhedron_visibility.visibility import (
     OcclusionInterval,
+    VisibilityBoundaryMode,
     VisibilityKind,
     VisibilitySpan,
     partition_visibility,
@@ -150,6 +152,22 @@ class TopologyLayerTests(unittest.TestCase):
         self.assertEqual(cells, (domain,))
         self.assertEqual(assert_exact_partition(domain, cells), cells)
 
+    def test_upper_breakpoint_clusters_preserve_frozen_trace_representative(self) -> None:
+        domain = ParameterInterval(0.0, 1.0)
+        cells = partition_parameter_domain(
+            domain,
+            [0.2, 0.2005],
+            tolerance=1.0e-3,
+            cluster=BreakpointCluster.UPPER,
+        )
+        self.assertEqual(
+            cells,
+            (
+                ParameterInterval(0.0, 0.2005),
+                ParameterInterval(0.2005, 1.0),
+            ),
+        )
+
     def test_coalescing_respects_semantic_identity(self) -> None:
         same = coalesce_tagged_intervals(
             [
@@ -181,6 +199,28 @@ class VisibilityLayerTests(unittest.TestCase):
         self.assertEqual(len(spans), 1)
         self.assertEqual(spans[0].interval, domain)
         self.assertIs(spans[0].kind, VisibilityKind.VISIBLE)
+
+    def test_tolerance_expanded_mode_preserves_frozen_v1_edge_classification(self) -> None:
+        domain = ParameterInterval(0.0, 1.0)
+        spans = partition_visibility(
+            domain,
+            [
+                OcclusionInterval(
+                    ParameterInterval(0.0008, 0.7),
+                    "face-d",
+                ),
+                OcclusionInterval(
+                    ParameterInterval(0.0025, 0.02),
+                    "face-b",
+                ),
+            ],
+            parameter_tolerance=1.0e-3,
+            occluder_key=lambda owner: owner,
+            boundary_mode=VisibilityBoundaryMode.TOLERANCE_EXPANDED,
+        )
+        self.assertEqual(spans[0].interval.start, 0.0)
+        self.assertEqual(spans[0].occluders, ("face-b", "face-d"))
+        self.assertEqual(spans[-1].interval.end, 1.0)
 
     def test_same_occluder_handoff_keeps_one_hidden_slot(self) -> None:
         domain = ParameterInterval(0.0, 1.0)

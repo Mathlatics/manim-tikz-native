@@ -8,11 +8,19 @@ domain coverage while geometry values move through degenerate positions.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from enum import Enum
 from math import isfinite
 from typing import Generic, Iterable, TypeVar
 
 
 TagT = TypeVar("TagT")
+
+
+class BreakpointCluster(str, Enum):
+    """Representative retained when nearby breakpoints form one cluster."""
+
+    LOWER = "lower"
+    UPPER = "upper"
 
 
 def _finite(name: str, value: float) -> float:
@@ -89,15 +97,26 @@ def partition_parameter_domain(
     breakpoints: Iterable[float],
     *,
     tolerance: float = 0.0,
+    cluster: BreakpointCluster | str = BreakpointCluster.LOWER,
 ) -> tuple[ParameterInterval, ...]:
-    """Split ``domain`` into exact, consecutive cells.
+    """Split ``domain`` into deterministic consecutive cells.
 
-    Near-duplicate breakpoints are coalesced, but the returned first and last
-    endpoints are always exactly ``domain.start`` and ``domain.end``. The
-    single-cell case therefore still covers the complete authored domain.
+    ``LOWER`` is the exact-domain default introduced with the shared kernel:
+    near-duplicate interior breakpoints keep their lower representative and
+    the first/last endpoints remain exactly the authored domain boundaries.
+
+    ``UPPER`` retains the upper representative of each tolerance cluster.  It
+    exists for frozen trace contracts whose historical interval splitter used
+    that convention.  A tolerance-sized edge cell may then be returned; the
+    visibility layer decides whether that cell is semantically paintable.
     """
 
     epsilon = _tolerance(tolerance)
+    try:
+        cluster_mode = BreakpointCluster(cluster)
+    except ValueError as exc:
+        raise ValueError("cluster must be 'lower' or 'upper'") from exc
+
     points = [domain.start, domain.end]
     for raw in breakpoints:
         value = _finite("breakpoint", raw)
@@ -106,16 +125,28 @@ def partition_parameter_domain(
         points.append(min(domain.end, max(domain.start, value)))
     points.sort()
 
-    unique = [domain.start]
-    for value in points[1:-1]:
-        if value - unique[-1] <= epsilon:
-            continue
-        if domain.end - value <= epsilon:
-            continue
-        unique.append(value)
-    unique.append(domain.end)
+    if cluster_mode is BreakpointCluster.LOWER:
+        unique = [domain.start]
+        for value in points[1:-1]:
+            if value - unique[-1] <= epsilon:
+                continue
+            if domain.end - value <= epsilon:
+                continue
+            unique.append(value)
+        unique.append(domain.end)
+    else:
+        unique: list[float] = []
+        for value in points:
+            if not unique or value - unique[-1] > epsilon:
+                unique.append(value)
+            else:
+                unique[-1] = max(unique[-1], value)
+        if unique[0] > domain.start:
+            unique.insert(0, domain.start)
+        if unique[-1] < domain.end:
+            unique.append(domain.end)
 
-    if len(unique) == 2:
+    if len(unique) == 2 and unique[0] == domain.start and unique[1] == domain.end:
         return (domain,)
 
     cells = tuple(

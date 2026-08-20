@@ -1,25 +1,30 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from math import isfinite
 from typing import Mapping, Sequence
 
 import numpy as np
 
 from .contract import (
     ContractError,
-    ResolvedTolerance,
     TolerancePolicy,
     VisibilityModel,
     _validate_convex_face_points,
 )
+from .geometry import GeometryContext, ResolvedGeometryContext
+from .topology import ParameterInterval
 from .trace import (
     EdgeVisibility,
     FaceToleranceTrace,
     RawOcclusionInterval,
     SkippedFace,
     VisibilityFrame,
-    VisibilitySpan,
+    VisibilitySpan as TraceVisibilitySpan,
+)
+from .visibility import (
+    OcclusionInterval as KernelOcclusionInterval,
+    VisibilityBoundaryMode,
+    partition_visibility,
 )
 
 
@@ -121,8 +126,18 @@ def _segment_face_interval_result(
     face_points: Sequence[Sequence[float]],
     view: ParallelView,
     *,
-    tolerance_policy: TolerancePolicy,
+    geometry_context: GeometryContext | None = None,
+    tolerance_policy: TolerancePolicy | None = None,
 ) -> _IntervalResult:
+    if geometry_context is not None and tolerance_policy is not None:
+        if geometry_context.tolerance != tolerance_policy:
+            raise SolverError(
+                "geometry_context and tolerance_policy specify different policies"
+            )
+    context = geometry_context or GeometryContext(
+        tolerance=tolerance_policy or TolerancePolicy()
+    )
+
     start = np.asarray(segment_start, dtype=float)
     end = np.asarray(segment_end, dtype=float)
     points = np.asarray(face_points, dtype=float)
@@ -132,9 +147,11 @@ def _segment_face_interval_result(
         raise SolverError("segment and face coordinates must be finite and non-degenerate")
     segment = end - start
     segment_length = float(np.linalg.norm(segment))
-    edge_tolerance = tolerance_policy.resolve((start, end), edge_length=segment_length)
-    face_tolerance = tolerance_policy.resolve(points)
-    if segment_length <= tolerance_policy.absolute_floor:
+    edge_tolerance = context.resolve(
+        (start, end), edge_length=segment_length
+    ).resolved
+    face_tolerance = context.resolve(points).resolved
+    if segment_length <= context.tolerance.absolute_floor:
         raise SolverError("semantic stroke has zero length")
     try:
         normal = _validate_convex_face_points(points, face_tolerance, "occluder")
@@ -204,71 +221,58 @@ def segment_face_occlusion_interval(
     *,
     tolerance_policy: TolerancePolicy | None = None,
 ) -> tuple[float, float] | None:
+    policy = tolerance_policy or TolerancePolicy()
     return _segment_face_interval_result(
         segment_start,
         segment_end,
         face_points,
         view,
-        tolerance_policy=tolerance_policy or TolerancePolicy(),
+        geometry_context=GeometryContext(tolerance=policy),
     ).interval
 
 
 def _spans_from_intervals(
-    intervals: Sequence[RawOcclusionInterval], parameter_epsilon: float
-) -> tuple[VisibilitySpan, ...]:
-    boundaries = [0.0, 1.0]
-    for item in intervals:
-        boundaries.extend((item.start, item.end))
-    boundaries.sort()
-    unique: list[float] = []
-    for value in boundaries:
-        value = min(1.0, max(0.0, float(value)))
-        if not unique or abs(value - unique[-1]) > parameter_epsilon:
-            unique.append(value)
-        else:
-            unique[-1] = max(unique[-1], value)
-    if unique[0] > 0:
-        unique.insert(0, 0.0)
-    if unique[-1] < 1:
-        unique.append(1.0)
+    intervals: Sequence[RawOcclusionInterval],
+    parameter_epsilon: float | None = None,
+    *,
+    context: ResolvedGeometryContext | None = None,
+) -> tuple[TraceVisibilitySpan, ...]:
+    """Adapt shared kernel spans to the frozen v1 trace schema.
 
-    spans: list[VisibilitySpan] = []
-    for start, end in zip(unique, unique[1:]):
-        if end - start <= parameter_epsilon:
-            continue
-        midpoint = 0.5 * (start + end)
-        active = tuple(sorted(
-            item.face_id
-            for item in intervals
-            if item.start - parameter_epsilon <= midpoint <= item.end + parameter_epsilon
-        ))
-        kind = "hidden" if active else "visible"
-        span = VisibilitySpan(start, end, kind, active, len(active))
-        if (
-            spans
-            and spans[-1].kind == span.kind
-            and spans[-1].occluder_face_ids == span.occluder_face_ids
-            and abs(spans[-1].end - span.start) <= parameter_epsilon
-        ):
-            previous = spans[-1]
-            spans[-1] = VisibilitySpan(
-                previous.start,
-                span.end,
-                previous.kind,
-                previous.occluder_face_ids,
-                previous.level,
-            )
-        else:
-            spans.append(span)
-    if not spans:
-        return (VisibilitySpan(0.0, 1.0, "visible", (), 0),)
-    spans[0] = VisibilitySpan(
-        0.0, spans[0].end, spans[0].kind, spans[0].occluder_face_ids, spans[0].level
+    ``TOLERANCE_EXPANDED`` intentionally preserves the historical v1
+    breakpoint and membership convention, including upper-clustered
+    near-duplicate endpoints and tolerance-expanded ownership.  The shared
+    kernel owns partitioning and semantic coalescing; this adapter only maps
+    its fail-closed objects back into the persisted trace shape.
+    """
+
+    try:
+        kernel_spans = partition_visibility(
+            ParameterInterval(0.0, 1.0),
+            (
+                KernelOcclusionInterval(
+                    ParameterInterval(item.start, item.end),
+                    item.face_id,
+                )
+                for item in intervals
+            ),
+            context=context,
+            parameter_tolerance=parameter_epsilon,
+            occluder_key=lambda face_id: face_id,
+            boundary_mode=VisibilityBoundaryMode.TOLERANCE_EXPANDED,
+        )
+    except (TypeError, ValueError) as exc:
+        raise SolverError(f"invalid occlusion interval partition: {exc}") from exc
+    return tuple(
+        TraceVisibilitySpan(
+            span.interval.start,
+            span.interval.end,
+            span.kind.value,
+            span.occluders,
+            len(span.occluders),
+        )
+        for span in kernel_spans
     )
-    spans[-1] = VisibilitySpan(
-        spans[-1].start, 1.0, spans[-1].kind, spans[-1].occluder_face_ids, spans[-1].level
-    )
-    return tuple(spans)
 
 
 def _validated_positions(
@@ -299,6 +303,7 @@ def compute_frame_visibility(
     require_closed_convex_manifold: bool = False,
 ) -> VisibilityFrame:
     policy = tolerance_policy or TolerancePolicy()
+    geometry_context = GeometryContext(tolerance=policy)
     view = ParallelView.from_matrix(projection_matrix)
     positions = _validated_positions(
         model,
@@ -312,7 +317,7 @@ def compute_frame_visibility(
         if surface_vertex_ids
         else positions
     )
-    tolerance = policy.resolve(tolerance_positions)
+    tolerance = geometry_context.resolve(tolerance_positions).resolved
     face_depths: list[tuple[float, str]] = []
     for face in model.faces:
         centroid = np.mean([positions[item] for item in face.vertex_ids], axis=0)
@@ -324,7 +329,10 @@ def compute_frame_visibility(
         start = positions[stroke.vertex_ids[0]]
         end = positions[stroke.vertex_ids[1]]
         length = float(np.linalg.norm(end - start))
-        edge_tolerance = policy.resolve((start, end), edge_length=length)
+        edge_context = geometry_context.resolve(
+            (start, end), edge_length=length
+        )
+        edge_tolerance = edge_context.resolved
         if length <= edge_tolerance.world:
             raise SolverError(
                 f"semantic stroke {stroke.source_edge_id} has zero length"
@@ -334,9 +342,9 @@ def compute_frame_visibility(
         face_tolerances = tuple(
             FaceToleranceTrace(
                 face_id=face.face_id,
-                world=(resolved := policy.resolve(
+                world=(resolved := geometry_context.resolve(
                     [positions[item] for item in face.vertex_ids]
-                )).world,
+                ).resolved).world,
                 boundary=resolved.boundary,
                 depth=resolved.depth,
                 angular=resolved.angular,
@@ -360,7 +368,7 @@ def compute_frame_visibility(
                     end,
                     [positions[item] for item in face.vertex_ids],
                     view,
-                    tolerance_policy=policy,
+                    geometry_context=geometry_context,
                 )
                 if result.interval is None:
                     skipped.append(SkippedFace(face.face_id, result.reason or "no_occlusion"))
@@ -375,7 +383,7 @@ def compute_frame_visibility(
                 source_edge_id=stroke.source_edge_id,
                 raw_intervals=tuple(raw_intervals),
                 skipped_faces=tuple(skipped),
-                spans=_spans_from_intervals(raw_intervals, edge_tolerance.parameter),
+                spans=_spans_from_intervals(raw_intervals, context=edge_context),
                 parameter_epsilon=edge_tolerance.parameter,
                 face_tolerances=face_tolerances,
             )

@@ -21,6 +21,7 @@ from .geometry import (
     resolve_geometry_context,
 )
 from .topology import (
+    BreakpointCluster,
     ParameterInterval,
     TaggedInterval,
     assert_exact_partition,
@@ -29,6 +30,7 @@ from .topology import (
 )
 from .visibility import (
     OcclusionInterval,
+    VisibilityBoundaryMode,
     VisibilityKind,
     VisibilitySpan,
     hidden_intervals,
@@ -37,6 +39,7 @@ from .visibility import (
 )
 
 __all__ = [
+    "BreakpointCluster",
     "CompositorCycleError",
     "DEFAULT_GEOMETRY_CONTEXT",
     "DEFAULT_RESOLVED_GEOMETRY_CONTEXT",
@@ -47,6 +50,7 @@ __all__ = [
     "ParameterInterval",
     "ResolvedGeometryContext",
     "TaggedInterval",
+    "VisibilityBoundaryMode",
     "VisibilityKind",
     "VisibilitySpan",
     "assert_exact_partition",

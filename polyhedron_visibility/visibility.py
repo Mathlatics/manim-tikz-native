@@ -14,6 +14,7 @@ from .geometry import (
     resolve_geometry_context,
 )
 from .topology import (
+    BreakpointCluster,
     ParameterInterval,
     TaggedInterval,
     coalesce_tagged_intervals,
@@ -27,6 +28,13 @@ OccluderT = TypeVar("OccluderT", bound=Hashable)
 class VisibilityKind(str, Enum):
     VISIBLE = "visible"
     HIDDEN = "hidden"
+
+
+class VisibilityBoundaryMode(str, Enum):
+    """How numerical tolerance affects parameter-domain boundaries."""
+
+    EXACT = "exact"
+    TOLERANCE_EXPANDED = "tolerance_expanded"
 
 
 def _require_hashable(name: str, value: object) -> None:
@@ -96,16 +104,30 @@ def partition_visibility(
     context: GeometryContext | ResolvedGeometryContext | None = None,
     parameter_tolerance: float | None = None,
     occluder_key: Callable[[OccluderT], object] | None = None,
+    boundary_mode: VisibilityBoundaryMode | str = VisibilityBoundaryMode.EXACT,
 ) -> tuple[VisibilitySpan[OccluderT], ...]:
     """Classify a parameter domain into stable visible and hidden spans.
 
     Occluders are kept in first-authored order.  When ``occluder_key`` is
     supplied, it is the primary key and first-authored order is the explicit
     secondary key.  Equal keys therefore never fall back to set/hash order.
+
+    ``EXACT`` keeps the kernel's exact authored-domain semantics.
+    ``TOLERANCE_EXPANDED`` reproduces the frozen v1 line-visibility contract:
+    clustered breakpoints retain their upper representative, membership is
+    expanded by the parameter tolerance, tolerance-sized cells are not
+    paintable, and the first/last surviving classifications extend to the
+    authored domain boundaries.
     """
 
     if not isinstance(domain, ParameterInterval):
         raise TypeError("domain must be a ParameterInterval")
+    try:
+        boundary = VisibilityBoundaryMode(boundary_mode)
+    except ValueError as exc:
+        raise ValueError(
+            "boundary_mode must be 'exact' or 'tolerance_expanded'"
+        ) from exc
     resolved_context = resolve_geometry_context(context)
     epsilon = (
         resolved_context.epsilon(GeometryQuantity.PARAMETER)
@@ -126,17 +148,38 @@ def partition_visibility(
         clipped.append(OcclusionInterval(interval, candidate.occluder))
         breakpoints.extend((interval.start, interval.end))
 
-    cells = partition_parameter_domain(domain, breakpoints, tolerance=epsilon)
+    cells = partition_parameter_domain(
+        domain,
+        breakpoints,
+        tolerance=epsilon,
+        cluster=(
+            BreakpointCluster.UPPER
+            if boundary is VisibilityBoundaryMode.TOLERANCE_EXPANDED
+            else BreakpointCluster.LOWER
+        ),
+    )
     tagged: list[
         TaggedInterval[tuple[VisibilityKind, tuple[OccluderT, ...]]]
     ] = []
 
     for cell in cells:
+        if (
+            boundary is VisibilityBoundaryMode.TOLERANCE_EXPANDED
+            and cell.length <= epsilon
+        ):
+            continue
         active: list[OccluderT] = []
         active_seen: set[OccluderT] = set()
         for candidate in clipped:
             owner = candidate.occluder
-            if owner in active_seen or not candidate.interval.contains(cell.midpoint):
+            if owner in active_seen or not candidate.interval.contains(
+                cell.midpoint,
+                tolerance=(
+                    epsilon
+                    if boundary is VisibilityBoundaryMode.TOLERANCE_EXPANDED
+                    else 0.0
+                ),
+            ):
                 continue
             active_seen.add(owner)
             active.append(owner)
@@ -160,7 +203,22 @@ def partition_visibility(
             tag = (VisibilityKind.VISIBLE, ())
         tagged.append(TaggedInterval(cell, tag))
 
-    merged = coalesce_tagged_intervals(tagged, tolerance=epsilon)
+    merged = list(coalesce_tagged_intervals(tagged, tolerance=epsilon))
+    if not merged:
+        return (
+            VisibilitySpan(domain, VisibilityKind.VISIBLE, ()),
+        )
+    if boundary is VisibilityBoundaryMode.TOLERANCE_EXPANDED:
+        first = merged[0]
+        merged[0] = TaggedInterval(
+            ParameterInterval(domain.start, first.interval.end),
+            first.tag,
+        )
+        last = merged[-1]
+        merged[-1] = TaggedInterval(
+            ParameterInterval(last.interval.start, domain.end),
+            last.tag,
+        )
     return tuple(
         VisibilitySpan(span.interval, span.tag[0], span.tag[1])
         for span in merged

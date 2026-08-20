@@ -51,8 +51,9 @@ actual scale.
 `polyhedron_visibility.topology` owns identities and connectivity, not depth.
 
 - `ParameterInterval` represents one finite closed parameter interval.
-- `partition_parameter_domain(...)` creates consecutive cells whose first and
-  last endpoints are exactly the authored domain boundaries.
+- `partition_parameter_domain(...)` creates deterministic consecutive cells.
+  Its default keeps exact authored-domain boundaries; the explicit upper-cluster
+  mode exists only for frozen trace compatibility.
 - `TaggedInterval` carries semantic identity through a moving configuration.
 - `coalesce_tagged_intervals(...)` merges adjacent cells only when their
   semantic identity agrees.
@@ -69,6 +70,12 @@ occluders must not silently become one slot.
 - `OcclusionInterval` attributes a hidden range to one semantic occluder.
 - `VisibilitySpan` rejects inconsistent visible/hidden states at construction.
 - `partition_visibility(...)` returns stable visible and hidden spans.
+- Its default `EXACT` mode keeps authored parameter boundaries. The explicit
+  `TOLERANCE_EXPANDED` mode preserves the historical closed-polyhedron v1 trace
+  convention while that production path is migrated.
+- Compatibility modes are internal adapters for frozen persisted contracts;
+  new geometry should use the exact defaults unless it must reproduce an
+  already-versioned trace byte for byte.
 - Boundary-only contact has no positive parameter length and remains visible.
 - Occluders use first-authored order as the deterministic tie breaker, even
   when a caller-provided semantic sort key is equal.
@@ -95,18 +102,35 @@ painter order.
 The compositor does not decide whether a line is visible. It only orders the
 fragments supplied by the visibility layer.
 
-## Migration plan
+## Production adoption and migration plan
 
-This slice establishes contracts and regression tests without moving all
-existing solvers at once. Subsequent changes should stay small and reviewable:
+The closed-polyhedron production chain is now the first migrated slice:
 
-1. resolve one `GeometryContext` through the existing line/face solver and
-   compare every result with the legacy tolerance path;
-2. replace local breakpoint and interval-merging helpers with the topology
-   layer;
-3. return kernel `VisibilitySpan` data before constructing stable Manim slots;
-4. replace duplicated painter-graph sorts in section, open-face, and derived
+```text
+AutoOcclusion3D
+    -> ManimOcclusionBinding
+    -> parallel_solver.compute_frame_visibility
+    -> GeometryContext + partition_visibility
+    -> frozen VisibilityFrame / Manim slots
+```
+
+The line/face intersection formula and persisted v1 trace objects remain
+unchanged. `parallel_solver` resolves frame-, face-, and edge-local contexts at
+the same boundaries formerly passed to `TolerancePolicy.resolve(...)`, then
+adapts shared kernel spans back to the frozen trace schema. Differential tests
+cover legacy breakpoint behavior and canonical traces, and a production-path
+test proves that `AutoOcclusion3D` reaches the shared visibility layer.
+
+The remaining migration should stay small and reviewable:
+
+1. migrate open-face and section interval partitioning while preserving their
+   richer logical-surface trace identities;
+2. replace duplicated painter-graph sorts in section, open-face, and derived
    dihedral compositors with the shared compositor;
+3. promote the existing derived-dihedral face/stroke relation generator into a
+   reusable open-face compositing stage;
+4. route both generic and TikZ-native open-face Manim bindings through that
+   shared stage;
 5. use the same layers for conics and quadrics rather than adding a parallel
    curved-geometry visibility stack.
 
