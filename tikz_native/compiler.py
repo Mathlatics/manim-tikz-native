@@ -22,6 +22,8 @@ from .occlusion_3d import OcclusionGeometryError, parallel_occlusion_interval
 TEX_PT_PER_CM = 72.27 / 2.54
 MM_TO_PT = 72.27 / 25.4
 HINGE_RELATION_SCHEMA = "tikz-native-hinge-relation/v1"
+_PGF_EXPRESSION_MAX_NODES = 512
+_PGF_EXPRESSION_MAX_DEPTH = 64
 
 
 class TikzNativeError(RuntimeError):
@@ -31,6 +33,15 @@ class TikzNativeError(RuntimeError):
 @dataclass(frozen=True)
 class Length:
     pt: float
+
+    def __post_init__(self) -> None:
+        try:
+            value = float(self.pt)
+        except (TypeError, ValueError, OverflowError) as error:
+            raise TikzNativeError("TikZ length must be a finite number") from error
+        if not math.isfinite(value):
+            raise TikzNativeError("TikZ length must remain finite after unit conversion")
+        object.__setattr__(self, "pt", value)
 
     def to_json(self) -> dict[str, float]:
         return {"pt": self.pt}
@@ -329,32 +340,68 @@ class _SafeExpressionEvaluator(ast.NodeVisitor):
         "tan": lambda value: math.tan(math.radians(value)),
     }
 
+    @staticmethod
+    def _finite(value: object, *, context: str) -> float:
+        try:
+            result = float(value)
+        except (TypeError, ValueError, OverflowError) as error:
+            raise TikzNativeError(
+                f"Invalid {context} in PGF math expression"
+            ) from error
+        if not math.isfinite(result):
+            raise TikzNativeError(
+                f"PGF math expression produced a non-finite {context}"
+            )
+        return result
+
     def visit_Expression(self, node: ast.Expression) -> float:
-        return float(self.visit(node.body))
+        return self._finite(self.visit(node.body), context="result")
 
     def visit_Constant(self, node: ast.Constant) -> float:
-        if not isinstance(node.value, (int, float)):
+        if isinstance(node.value, bool) or not isinstance(
+            node.value, (int, float)
+        ):
             raise TikzNativeError(f"Unsupported expression constant: {node.value!r}")
-        return float(node.value)
+        return self._finite(node.value, context="constant")
 
     def visit_BinOp(self, node: ast.BinOp) -> float:
         operation = self._binary.get(type(node.op))
         if operation is None:
             raise TikzNativeError(f"Unsupported operator: {type(node.op).__name__}")
-        return float(operation(self.visit(node.left), self.visit(node.right)))
+        try:
+            result = operation(self.visit(node.left), self.visit(node.right))
+        except (ArithmeticError, TypeError, ValueError) as error:
+            raise TikzNativeError(
+                "Invalid arithmetic in PGF math expression"
+            ) from error
+        return self._finite(result, context="arithmetic result")
 
     def visit_UnaryOp(self, node: ast.UnaryOp) -> float:
         operation = self._unary.get(type(node.op))
         if operation is None:
             raise TikzNativeError(f"Unsupported unary operator: {type(node.op).__name__}")
-        return float(operation(self.visit(node.operand)))
+        try:
+            result = operation(self.visit(node.operand))
+        except (ArithmeticError, TypeError, ValueError) as error:
+            raise TikzNativeError(
+                "Invalid unary arithmetic in PGF math expression"
+            ) from error
+        return self._finite(result, context="unary result")
 
     def visit_Call(self, node: ast.Call) -> float:
         if not isinstance(node.func, ast.Name) or node.func.id not in self._functions:
             raise TikzNativeError("Unsupported function call in PGF math expression")
         if node.keywords:
             raise TikzNativeError("Keyword arguments are not supported in PGF math")
-        return float(self._functions[node.func.id](*(self.visit(arg) for arg in node.args)))
+        try:
+            result = self._functions[node.func.id](
+                *(self.visit(arg) for arg in node.args)
+            )
+        except (ArithmeticError, TypeError, ValueError) as error:
+            raise TikzNativeError(
+                f"Invalid {node.func.id} call in PGF math expression"
+            ) from error
+        return self._finite(result, context=f"{node.func.id} result")
 
     def visit_Name(self, node: ast.Name) -> float:
         if node.id == "pi":
@@ -363,6 +410,23 @@ class _SafeExpressionEvaluator(ast.NodeVisitor):
 
     def generic_visit(self, node: ast.AST) -> float:
         raise TikzNativeError(f"Unsupported PGF expression node: {type(node).__name__}")
+
+
+def _validate_pgf_expression_complexity(tree: ast.AST) -> None:
+    """Reject expressions before Python recursion or resource limits leak out."""
+
+    seen = 0
+    pending: list[tuple[ast.AST, int]] = [(tree, 0)]
+    while pending:
+        node, depth = pending.pop()
+        seen += 1
+        if seen > _PGF_EXPRESSION_MAX_NODES or depth > _PGF_EXPRESSION_MAX_DEPTH:
+            raise TikzNativeError(
+                "PGF math expression is too complex to evaluate safely"
+            )
+        pending.extend(
+            (child, depth + 1) for child in ast.iter_child_nodes(node)
+        )
 
 
 class TikzNativeCompiler:
@@ -596,9 +660,23 @@ class TikzNativeCompiler:
         value = re.sub(r"\s+", "", value)
         try:
             tree = ast.parse(value, mode="eval")
+        except RecursionError as error:
+            raise TikzNativeError(
+                f"Invalid PGF expression {expression!r}: expression is too complex"
+            ) from error
         except SyntaxError as error:
             raise TikzNativeError(f"Invalid PGF expression {expression!r}: {value!r}") from error
-        return _SafeExpressionEvaluator().visit(tree)
+        try:
+            _validate_pgf_expression_complexity(tree)
+            return _SafeExpressionEvaluator().visit(tree)
+        except RecursionError as error:
+            raise TikzNativeError(
+                f"Invalid PGF expression {expression!r}: expression is too complex"
+            ) from error
+        except TikzNativeError as error:
+            raise TikzNativeError(
+                f"Invalid PGF expression {expression!r}: {error}"
+            ) from error
 
     def _parse_length(
         self,

@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+- reject invalid, non-finite, or excessively deep PGF arithmetic with a stable
+  `TikzNativeError` instead of leaking raw Python numeric exceptions, and
+  recheck every TikZ length after unit conversion so line widths, radii,
+  spacing, dashes, and arrow dimensions cannot become infinite;
 - harden explicit TikZ line-versus-face occlusion with scale-aware local
   coordinates, normalized view rays, strict convex-face validation, and
   visible coplanar or boundary-only contacts; malformed, non-planar,
