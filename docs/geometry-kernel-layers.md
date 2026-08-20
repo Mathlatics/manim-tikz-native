@@ -40,6 +40,12 @@ Explicit overrides are exact local values; they are not hidden scale factors.
 This preserves the old numerical contract even for very small geometry. A
 model with extent below one unit is never silently promoted to unit scale.
 
+Later layers should normally receive a `ResolvedGeometryContext`. The
+unresolved `GeometryContext` must first be resolved with the current frame's
+world positions and any relevant edge length. Resolving against an empty
+geometry is only the library default; it is not a substitute for the scene's
+actual scale.
+
 ## 2. Topology
 
 `polyhedron_visibility.topology` owns identities and connectivity, not depth.
