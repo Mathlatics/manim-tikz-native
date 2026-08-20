@@ -22,16 +22,19 @@ jobs:
           python - <<'PYCODE'
           import base64
           import hashlib
-          import re
           import tarfile
           from pathlib import Path
 
           helper = Path('.github/workflows/agent-pr3-source.yml')
-          text = helper.read_text(encoding='utf-8')
-          match = re.search(r'^\s*PAYLOAD_B64:\s*(\S+)\s*$', text, re.MULTILINE)
-          if match is None:
+          payload_text = None
+          for line in helper.read_text(encoding='utf-8').splitlines():
+              marker = 'PAYLOAD_B64:'
+              if marker in line:
+                  payload_text = line.split(marker, 1)[1].strip()
+                  break
+          if not payload_text:
               raise SystemExit('review-fix payload is missing')
-          payload = base64.b64decode(match.group(1), validate=True)
+          payload = base64.b64decode(payload_text, validate=True)
           expected = '09dd6d1bfda59d4e2f0fad72ef7ab9d0d78dd22d68f3db852650127903468a8e'
           actual = hashlib.sha256(payload).hexdigest()
           if actual != expected:
