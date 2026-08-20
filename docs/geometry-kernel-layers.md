@@ -73,6 +73,9 @@ occluders must not silently become one slot.
 - Its default `EXACT` mode keeps authored parameter boundaries. The explicit
   `TOLERANCE_EXPANDED` mode preserves the historical closed-polyhedron v1 trace
   convention while that production path is migrated.
+- Compatibility modes are internal adapters for frozen persisted contracts;
+  new geometry should use the exact defaults unless it must reproduce an
+  already-versioned trace byte for byte.
 - Boundary-only contact has no positive parameter length and remains visible.
 - Occluders use first-authored order as the deterministic tie breaker, even
   when a caller-provided semantic sort key is equal.
