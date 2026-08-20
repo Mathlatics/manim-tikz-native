@@ -30,10 +30,11 @@ jobs:
           marker = 'PAYLOAD_B64:'
           if marker not in text:
               raise SystemExit('review-fix payload is missing')
-          payload_block = text.split(marker, 1)[1].split('\n        run:', 1)[0]
-          payload_text = ''.join(payload_block.split())
-          if not payload_text:
-              raise SystemExit('review-fix payload is empty')
+          payload_block = text.split(marker, 1)[1]
+          padding_end = payload_block.find('==')
+          if padding_end < 0:
+              raise SystemExit('review-fix payload terminator is missing')
+          payload_text = ''.join(payload_block[:padding_end + 2].split())
           payload = base64.b64decode(payload_text, validate=True)
           expected = '09dd6d1bfda59d4e2f0fad72ef7ab9d0d78dd22d68f3db852650127903468a8e'
           actual = hashlib.sha256(payload).hexdigest()
