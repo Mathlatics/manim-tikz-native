@@ -1,3 +1,5 @@
+"""Public package-surface regressions for fail-closed compiler errors."""
+
 from __future__ import annotations
 
 import unittest
