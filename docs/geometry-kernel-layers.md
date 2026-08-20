@@ -104,7 +104,7 @@ fragments supplied by the visibility layer.
 
 ## Production adoption and migration plan
 
-The closed-polyhedron production chain is now the first migrated slice:
+The closed-polyhedron production chain was the first migrated slice:
 
 ```text
 AutoOcclusion3D
@@ -114,24 +114,50 @@ AutoOcclusion3D
     -> frozen VisibilityFrame / Manim slots
 ```
 
-The line/face intersection formula and persisted v1 trace objects remain
-unchanged. `parallel_solver` resolves frame-, face-, and edge-local contexts at
-the same boundaries formerly passed to `TolerancePolicy.resolve(...)`, then
-adapts shared kernel spans back to the frozen trace schema. Differential tests
-cover legacy breakpoint behavior and canonical traces, and a production-path
-test proves that `AutoOcclusion3D` reaches the shared visibility layer.
+The open-face and section production paths now reuse the same topology and
+compositor contracts:
+
+```text
+OpenFaceOcclusion3D / TikZ open-face binding
+    -> open_faces.compute_open_face_visibility
+    -> partition_visibility + stable_topological_sort
+    -> frozen OpenFaceVisibilityFrame
+
+ConvexSection3D
+    -> sections.compute_sectioned_visibility
+    -> partition_visibility
+    -> frozen VisibilityFrame
+
+TransparentSectionLayer
+    -> compute_transparent_section_compositing
+    -> domain-specific fragment relations
+    -> stable_topological_sort
+    -> frozen transparent-compositing trace
+```
+
+The line/face intersection formulas, overlap tests, depth relation generation,
+and persisted v1 trace objects remain unchanged. Open faces carry a structured
+`(face_id, logical_surface_id)` identity through the shared visibility layer,
+then adapt it back to the existing face-level and logical-surface-level trace.
+The compatibility boundary mode reproduces the old interval splitter byte for
+byte, while new geometry keeps exact authored-domain defaults. Open-face whole
+faces and transparent section fragments preserve the historical lexicographic
+identity tie breaker when no depth constraint distinguishes them.
+
+Differential tests cover legacy breakpoint behavior, public canonical traces,
+and painter orders. Production-path tests prove that the public open-face and
+section entry points reach the shared partitioner and compositor rather than a
+parallel private implementation.
 
 The remaining migration should stay small and reviewable:
 
-1. migrate open-face and section interval partitioning while preserving their
-   richer logical-surface trace identities;
-2. replace duplicated painter-graph sorts in section, open-face, and derived
-   dihedral compositors with the shared compositor;
-3. promote the existing derived-dihedral face/stroke relation generator into a
-   reusable open-face compositing stage;
-4. route both generic and TikZ-native open-face Manim bindings through that
-   shared stage;
-5. use the same layers for conics and quadrics rather than adding a parallel
+1. replace the derived-dihedral compositor's duplicated final graph sort with
+   the shared compositor while retaining its face/stroke relation generator;
+2. promote that existing face/stroke relation generator into a reusable
+   open-face compositing stage;
+3. route both generic and TikZ-native open-face Manim bindings through that
+   shared face/stroke stage;
+4. use the same layers for conics and quadrics rather than adding a parallel
    curved-geometry visibility stack.
 
 ## Invariants for future curved geometry

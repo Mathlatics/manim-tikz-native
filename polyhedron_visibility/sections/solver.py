@@ -12,6 +12,12 @@ from ..parallel_solver import (
     compute_frame_visibility,
     segment_face_occlusion_interval,
 )
+from ..topology import ParameterInterval
+from ..visibility import (
+    OcclusionInterval,
+    VisibilityBoundaryMode,
+    partition_visibility,
+)
 from ..trace import (
     EdgeVisibility,
     FaceToleranceTrace,
@@ -517,72 +523,31 @@ def _visibility_spans(
     intervals: Sequence[RawOcclusionInterval],
     parameter_epsilon: float,
 ) -> tuple[VisibilitySpan, ...]:
-    boundaries = [0.0, 1.0]
-    for item in intervals:
-        boundaries.extend((item.start, item.end))
-    boundaries.sort()
-    unique: list[float] = []
-    for raw in boundaries:
-        value = min(1.0, max(0.0, float(raw)))
-        if not unique or abs(value - unique[-1]) > parameter_epsilon:
-            unique.append(value)
-        else:
-            unique[-1] = max(unique[-1], value)
-    if not unique:
-        unique = [0.0, 1.0]
-    if unique[0] > 0:
-        unique.insert(0, 0.0)
-    if unique[-1] < 1:
-        unique.append(1.0)
+    """Adapt shared visibility spans back to the frozen section v1 trace."""
 
-    spans: list[VisibilitySpan] = []
-    for start, end in zip(unique, unique[1:]):
-        if end - start <= parameter_epsilon:
-            continue
-        midpoint = 0.5 * (start + end)
-        active = tuple(
-            sorted(
-                item.face_id
-                for item in intervals
-                if item.start - parameter_epsilon
-                <= midpoint
-                <= item.end + parameter_epsilon
+    kernel_spans = partition_visibility(
+        ParameterInterval(0.0, 1.0),
+        tuple(
+            OcclusionInterval(
+                ParameterInterval(item.start, item.end),
+                item.face_id,
             )
-        )
-        span = VisibilitySpan(
-            start,
-            end,
-            "hidden" if active else "visible",
-            active,
-            len(active),
-        )
-        if (
-            spans
-            and spans[-1].kind == span.kind
-            and spans[-1].occluder_face_ids == span.occluder_face_ids
-            and abs(spans[-1].end - span.start) <= parameter_epsilon
-        ):
-            previous = spans[-1]
-            spans[-1] = VisibilitySpan(
-                previous.start,
-                span.end,
-                previous.kind,
-                previous.occluder_face_ids,
-                previous.level,
-            )
-        else:
-            spans.append(span)
-    if not spans:
-        return (VisibilitySpan(0.0, 1.0, "visible", (), 0),)
-    first = spans[0]
-    last = spans[-1]
-    spans[0] = VisibilitySpan(
-        0.0, first.end, first.kind, first.occluder_face_ids, first.level
+            for item in intervals
+        ),
+        parameter_tolerance=parameter_epsilon,
+        occluder_key=lambda face_id: face_id,
+        boundary_mode=VisibilityBoundaryMode.TOLERANCE_EXPANDED,
     )
-    spans[-1] = VisibilitySpan(
-        last.start, 1.0, last.kind, last.occluder_face_ids, last.level
+    return tuple(
+        VisibilitySpan(
+            span.interval.start,
+            span.interval.end,
+            span.kind.value,
+            tuple(span.occluders),
+            len(span.occluders),
+        )
+        for span in kernel_spans
     )
-    return tuple(spans)
 
 
 def compute_sectioned_visibility(

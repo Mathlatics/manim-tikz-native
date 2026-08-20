@@ -2,12 +2,16 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import hashlib
-import heapq
 import json
 from typing import Mapping, Sequence
 
 import numpy as np
 
+from ..compositor import (
+    CompositorCycleError,
+    PainterConstraint,
+    stable_topological_sort,
+)
 from ..contract import ContractError, TolerancePolicy, VisibilityModel
 from ..parallel_solver import ParallelView, SolverError
 from .contract import SectionPlane3D
@@ -781,29 +785,45 @@ def _topological_draw_order(
     fragments: Sequence[TransparentTriangle],
     relations: Sequence[FragmentOrderRelation],
 ) -> tuple[str, ...]:
+    """Adapt section fragment relations to the shared stable compositor."""
+
     identities = {item.fragment_id for item in fragments}
-    outgoing = {item: set() for item in identities}
-    indegree = {item: 0 for item in identities}
     for relation in relations:
-        if relation.near_fragment_id not in outgoing[relation.far_fragment_id]:
-            outgoing[relation.far_fragment_id].add(relation.near_fragment_id)
-            indegree[relation.near_fragment_id] += 1
-    ready = [item for item in identities if indegree[item] == 0]
-    heapq.heapify(ready)
-    order: list[str] = []
-    while ready:
-        current = heapq.heappop(ready)
-        order.append(current)
-        for target in sorted(outgoing[current]):
-            indegree[target] -= 1
-            if indegree[target] == 0:
-                heapq.heappush(ready, target)
-    if len(order) != len(identities):
-        cyclic = sorted(item for item, degree in indegree.items() if degree > 0)
-        raise TransparentSectionCompositingError(
-            "transparent fragment ordering contains a cycle: " + ", ".join(cyclic)
+        missing = {
+            relation.far_fragment_id,
+            relation.near_fragment_id,
+        } - identities
+        if missing:
+            raise TransparentSectionCompositingError(
+                "transparent fragment relation references unknown identities: "
+                + ", ".join(sorted(missing))
+            )
+        if relation.far_fragment_id == relation.near_fragment_id:
+            raise TransparentSectionCompositingError(
+                "transparent fragment ordering contains a cycle: "
+                + relation.far_fragment_id
+            )
+    constraints = tuple(
+        PainterConstraint(
+            relation.far_fragment_id,
+            relation.near_fragment_id,
         )
-    return tuple(order)
+        for relation in relations
+    )
+    try:
+        # The v1 trace used a heap of fragment IDs, so lexicographic identity
+        # remains the authored-order tie breaker for otherwise unrelated items.
+        return stable_topological_sort(
+            sorted(identities),
+            constraints,
+            key=lambda fragment_id: fragment_id,
+        )
+    except CompositorCycleError as exc:
+        cyclic = sorted(str(fragment_id) for fragment_id in exc.unresolved)
+        raise TransparentSectionCompositingError(
+            "transparent fragment ordering contains a cycle: "
+            + ", ".join(cyclic)
+        ) from exc
 
 
 def compute_transparent_section_compositing(
