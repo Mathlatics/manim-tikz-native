@@ -1,0 +1,24 @@
+name: Agent source snapshot
+
+on:
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  snapshot:
+    if: ${{ github.head_ref == 'agent/migrate-auto-occlusion-kernel' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/upload-artifact@v4
+        with:
+          name: source-${{ github.event.pull_request.head.sha }}
+          path: |
+            .
+            !.git
+          include-hidden-files: true
+          retention-days: 1
