@@ -11,6 +11,9 @@ All notable changes to this project will be documented in this file.
   topology/visibility kernel, preserve dual face/logical-surface provenance,
   and replace their private whole-face and transparent-fragment graph sorts
   with the deterministic shared compositor;
+- route the derived-dihedral unified face/stroke painter graph through the
+  shared deterministic compositor while preserving its existing relation
+  generator, lexicographic tie break, trace schema, and Cairo z-slot output;
 - add an explicit tolerance-expanded visibility boundary mode for legacy trace
   compatibility without changing the exact-domain default used by new geometry;
 - reject invalid, non-finite, or excessively deep PGF arithmetic with a stable

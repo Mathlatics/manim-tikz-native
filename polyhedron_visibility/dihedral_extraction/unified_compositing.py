@@ -2,12 +2,16 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import hashlib
-import heapq
 import json
 from typing import Mapping, Sequence
 
 import numpy as np
 
+from ..compositor import (
+    CompositorCycleError,
+    PainterConstraint,
+    stable_topological_sort,
+)
 from ..contract import TolerancePolicy
 from ..parallel_solver import ParallelView
 from ..sections.compositing import (
@@ -993,9 +997,17 @@ def _draw_order(
     item_ids: Sequence[str],
     relations: Sequence[UnifiedPaintRelation],
 ) -> tuple[str, ...]:
+    """Adapt derived-dihedral relations to the shared stable compositor.
+
+    The domain layer remains fail-closed: relation endpoints must already be
+    registered paint items and self-relations retain the historical cycle
+    error instead of being ignored by the generic compositor.  Lexicographic
+    item identity remains the v1 tie-break for otherwise unrelated nodes.
+    """
+
     identities = set(item_ids)
-    outgoing = {item_id: set() for item_id in identities}
-    indegree = {item_id: 0 for item_id in identities}
+    constraints: list[PainterConstraint[str]] = []
+    self_relations: set[str] = set()
     for relation in relations:
         if (
             relation.far_item_id not in identities
@@ -1004,28 +1016,34 @@ def _draw_order(
             raise DerivedDihedralUnifiedCompositingError(
                 "unified paint relation references an unknown item"
             )
-        if relation.near_item_id not in outgoing[relation.far_item_id]:
-            outgoing[relation.far_item_id].add(relation.near_item_id)
-            indegree[relation.near_item_id] += 1
-    ready = [item_id for item_id, degree in indegree.items() if degree == 0]
-    heapq.heapify(ready)
-    result: list[str] = []
-    while ready:
-        current = heapq.heappop(ready)
-        result.append(current)
-        for target in sorted(outgoing[current]):
-            indegree[target] -= 1
-            if indegree[target] == 0:
-                heapq.heappush(ready, target)
-    if len(result) != len(identities):
-        cyclic = sorted(
-            item_id for item_id, degree in indegree.items() if degree > 0
+        if relation.far_item_id == relation.near_item_id:
+            self_relations.add(relation.far_item_id)
+            continue
+        constraints.append(
+            PainterConstraint(
+                relation.far_item_id,
+                relation.near_item_id,
+            )
         )
+
+    if self_relations:
+        raise DerivedDihedralUnifiedCompositingError(
+            "unified face/stroke painter order contains a cycle: "
+            + ", ".join(sorted(self_relations))
+        )
+
+    try:
+        return stable_topological_sort(
+            tuple(sorted(identities)),
+            constraints,
+            key=lambda item_id: item_id,
+        )
+    except CompositorCycleError as exc:
+        cyclic = sorted(str(item_id) for item_id in exc.unresolved)
         raise DerivedDihedralUnifiedCompositingError(
             "unified face/stroke painter order contains a cycle: "
             + ", ".join(cyclic)
-        )
-    return tuple(result)
+        ) from exc
 
 
 def compute_derived_dihedral_unified_compositing(

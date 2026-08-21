@@ -133,6 +133,12 @@ TransparentSectionLayer
     -> domain-specific fragment relations
     -> stable_topological_sort
     -> frozen transparent-compositing trace
+
+DerivedDihedralUnifiedLayer
+    -> compute_derived_dihedral_unified_compositing
+    -> domain-specific face/line and line/line relations
+    -> stable_topological_sort
+    -> frozen unified-compositing trace / existing Cairo z slots
 ```
 
 The line/face intersection formulas, overlap tests, depth relation generation,
@@ -149,15 +155,19 @@ and painter orders. Production-path tests prove that the public open-face and
 section entry points reach the shared partitioner and compositor rather than a
 parallel private implementation.
 
+The derived-dihedral compositor also keeps its specialized face/stroke
+fragmentation and depth-relation generation, but its final graph ordering now
+uses the same shared compositor. Its domain adapter continues to reject unknown
+item identities and self-relations before calling the generic sorter, and maps
+shared cycle errors back to the existing derived-dihedral error contract.
+
 The remaining migration should stay small and reviewable:
 
-1. replace the derived-dihedral compositor's duplicated final graph sort with
-   the shared compositor while retaining its face/stroke relation generator;
-2. promote that existing face/stroke relation generator into a reusable
+1. promote the derived-dihedral face/stroke relation generator into a reusable
    open-face compositing stage;
-3. route both generic and TikZ-native open-face Manim bindings through that
+2. route both generic and TikZ-native open-face Manim bindings through that
    shared face/stroke stage;
-4. use the same layers for conics and quadrics rather than adding a parallel
+3. use the same layers for conics and quadrics rather than adding a parallel
    curved-geometry visibility stack.
 
 ## Invariants for future curved geometry
