@@ -1,17 +1,27 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-import heapq
 from math import acos, pi
 from typing import Mapping, Sequence
 
 import numpy as np
 
+from ..compositor import (
+    CompositorCycleError,
+    PainterConstraint,
+    stable_topological_sort,
+)
 from ..contract import TolerancePolicy
 from ..parallel_solver import (
     ParallelView,
     SolverError as FrozenSolverError,
     _clip_greater_equal,
+)
+from ..topology import ParameterInterval
+from ..visibility import (
+    OcclusionInterval,
+    VisibilityBoundaryMode,
+    partition_visibility,
 )
 from .contract import OpenFaceContractError, OpenFaceVisibilityModel
 from .trace import (
@@ -37,6 +47,14 @@ class OpenFaceSolverError(ValueError):
 class _OpenFaceIntervalResult:
     interval: tuple[float, float] | None
     reason: str | None = None
+
+
+@dataclass(frozen=True, order=True, slots=True)
+class _OpenFaceOccluderIdentity:
+    """Stable dual identity carried through the shared visibility layer."""
+
+    face_id: str
+    logical_surface_id: str
 
 
 def _cross2(first: np.ndarray, second: np.ndarray) -> float:
@@ -169,12 +187,16 @@ def _authoritative_face_draw_order(
     planar faces under parallel projection the depth difference is affine, so
     its extrema occur at overlap vertices.  A sign change therefore proves
     that no single whole-face painter order can represent the frame.
+
+    Geometry still owns overlap and depth relation generation.  The shared
+    compositor owns only the final deterministic topological order.
     """
 
     projection = np.asarray(view.projection_matrix, dtype=float)
     projected_by_face: dict[str, tuple[np.ndarray, ...]] = {}
     all_screen_points: list[np.ndarray] = []
-    for face in sorted(model.faces, key=lambda item: item.face_id):
+    ordered_faces = sorted(model.faces, key=lambda item: item.face_id)
+    for face in ordered_faces:
         projected = tuple(
             np.asarray((projection @ positions[vertex_id])[:2], dtype=float)
             for vertex_id in face.vertex_ids
@@ -188,11 +210,7 @@ def _authoritative_face_draw_order(
     boundary_epsilon = policy.boundary_factor * screen_world
     area_epsilon = boundary_epsilon * screen_scale
 
-    adjacency: dict[str, set[str]] = {
-        face.face_id: set() for face in model.faces
-    }
-    indegree = {face_id: 0 for face_id in adjacency}
-    ordered_faces = sorted(model.faces, key=lambda item: item.face_id)
+    constraints: list[PainterConstraint[str]] = []
     for first_index, first in enumerate(ordered_faces):
         first_polygon = _canonical_ccw_polygon(
             projected_by_face[first.face_id], point_epsilon=boundary_epsilon
@@ -254,27 +272,21 @@ def _authoritative_face_draw_order(
                 # Coplanar/touching overlap has no geometric near side.  The
                 # frozen identity tie-break keeps traces byte deterministic.
                 far_id, near_id = sorted((first.face_id, second.face_id))
-            if near_id not in adjacency[far_id]:
-                adjacency[far_id].add(near_id)
-                indegree[near_id] += 1
+            constraints.append(PainterConstraint(far_id, near_id))
 
-    ready = [face_id for face_id, count in indegree.items() if count == 0]
-    heapq.heapify(ready)
-    result: list[str] = []
-    while ready:
-        face_id = heapq.heappop(ready)
-        result.append(face_id)
-        for near_id in sorted(adjacency[face_id]):
-            indegree[near_id] -= 1
-            if indegree[near_id] == 0:
-                heapq.heappush(ready, near_id)
-    if len(result) != len(ordered_faces):
-        cyclic = sorted(face_id for face_id, count in indegree.items() if count > 0)
+    face_ids = tuple(face.face_id for face in ordered_faces)
+    try:
+        return stable_topological_sort(
+            face_ids,
+            constraints,
+            key=lambda face_id: face_id,
+        )
+    except CompositorCycleError as exc:
+        cyclic = sorted(str(face_id) for face_id in exc.unresolved)
         raise OpenFaceSolverError(
             "FACE_ORDER_CYCLE",
             "whole-face painter order contains a cycle: " + ", ".join(cyclic),
-        )
-    return tuple(result)
+        ) from exc
 
 
 def _segment_open_face_interval_result(
@@ -383,94 +395,46 @@ def _spans_from_intervals(
     intervals: Sequence[OpenFaceRawOcclusionInterval],
     parameter_epsilon: float,
 ) -> tuple[OpenFaceVisibilitySpan, ...]:
-    boundaries = [0.0, 1.0]
-    for interval in intervals:
-        boundaries.extend((interval.start, interval.end))
-    boundaries.sort()
-    unique: list[float] = []
-    for raw in boundaries:
-        value = min(1.0, max(0.0, float(raw)))
-        if not unique or abs(value - unique[-1]) > parameter_epsilon:
-            unique.append(value)
-        else:
-            unique[-1] = max(unique[-1], value)
-    if unique[0] > 0.0:
-        unique.insert(0, 0.0)
-    if unique[-1] < 1.0:
-        unique.append(1.0)
+    """Adapt shared visibility spans back to the frozen open-face v1 trace."""
 
-    spans: list[OpenFaceVisibilitySpan] = []
-    for start, end in zip(unique, unique[1:]):
-        if end - start <= parameter_epsilon:
-            continue
-        midpoint = 0.5 * (start + end)
-        active = tuple(
-            sorted(
-                (
-                    interval
-                    for interval in intervals
-                    if interval.start - parameter_epsilon
-                    <= midpoint
-                    <= interval.end + parameter_epsilon
-                ),
-                key=lambda item: (item.face_id, item.logical_surface_id),
+    hidden = tuple(
+        OcclusionInterval(
+            ParameterInterval(interval.start, interval.end),
+            _OpenFaceOccluderIdentity(
+                interval.face_id,
+                interval.logical_surface_id,
+            ),
+        )
+        for interval in intervals
+    )
+    kernel_spans = partition_visibility(
+        ParameterInterval(0.0, 1.0),
+        hidden,
+        parameter_tolerance=parameter_epsilon,
+        occluder_key=lambda owner: (
+            owner.face_id,
+            owner.logical_surface_id,
+        ),
+        boundary_mode=VisibilityBoundaryMode.TOLERANCE_EXPANDED,
+    )
+    result: list[OpenFaceVisibilitySpan] = []
+    for span in kernel_spans:
+        face_ids = tuple(owner.face_id for owner in span.occluders)
+        surface_ids = tuple(
+            sorted({owner.logical_surface_id for owner in span.occluders})
+        )
+        result.append(
+            OpenFaceVisibilitySpan(
+                start=span.interval.start,
+                end=span.interval.end,
+                kind=span.kind.value,
+                occluder_face_ids=face_ids,
+                occluder_logical_surface_ids=surface_ids,
+                face_level=len(face_ids),
+                surface_level=len(surface_ids),
             )
         )
-        face_ids = tuple(item.face_id for item in active)
-        surface_ids = tuple(sorted({item.logical_surface_id for item in active}))
-        kind = "hidden" if active else "visible"
-        span = OpenFaceVisibilitySpan(
-            start=start,
-            end=end,
-            kind=kind,
-            occluder_face_ids=face_ids,
-            occluder_logical_surface_ids=surface_ids,
-            face_level=len(face_ids),
-            surface_level=len(surface_ids),
-        )
-        if (
-            spans
-            and spans[-1].kind == span.kind
-            and spans[-1].occluder_face_ids == span.occluder_face_ids
-            and spans[-1].occluder_logical_surface_ids
-            == span.occluder_logical_surface_ids
-            and abs(spans[-1].end - span.start) <= parameter_epsilon
-        ):
-            previous = spans[-1]
-            spans[-1] = OpenFaceVisibilitySpan(
-                previous.start,
-                span.end,
-                previous.kind,
-                previous.occluder_face_ids,
-                previous.occluder_logical_surface_ids,
-                previous.face_level,
-                previous.surface_level,
-            )
-        else:
-            spans.append(span)
-    if not spans:
-        return (OpenFaceVisibilitySpan(0.0, 1.0, "visible"),)
-    first = spans[0]
-    spans[0] = OpenFaceVisibilitySpan(
-        0.0,
-        first.end,
-        first.kind,
-        first.occluder_face_ids,
-        first.occluder_logical_surface_ids,
-        first.face_level,
-        first.surface_level,
-    )
-    last = spans[-1]
-    spans[-1] = OpenFaceVisibilitySpan(
-        last.start,
-        1.0,
-        last.kind,
-        last.occluder_face_ids,
-        last.occluder_logical_surface_ids,
-        last.face_level,
-        last.surface_level,
-    )
-    return tuple(spans)
+    return tuple(result)
 
 
 def _seam_states(

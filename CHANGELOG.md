@@ -7,6 +7,10 @@ All notable changes to this project will be documented in this file.
 - route the production closed-polyhedron `AutoOcclusion3D` solver through the
   shared `GeometryContext`, topology, and visibility layers while preserving
   the frozen v1 trace schema and interval classification;
+- route open-face and section interval classification through the shared
+  topology/visibility kernel, preserve dual face/logical-surface provenance,
+  and replace their private whole-face and transparent-fragment graph sorts
+  with the deterministic shared compositor;
 - add an explicit tolerance-expanded visibility boundary mode for legacy trace
   compatibility without changing the exact-domain default used by new geometry;
 - reject invalid, non-finite, or excessively deep PGF arithmetic with a stable
