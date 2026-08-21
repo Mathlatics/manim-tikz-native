@@ -1,22 +1,21 @@
 name: Agent source snapshot
 
 on:
-  push:
+  pull_request:
     branches:
-      - agent/open-face-unified-compositing
+      - main
 
 permissions:
   contents: read
 
 jobs:
   snapshot:
-    if: ${{ !contains(github.event.head_commit.message, '[skip snapshot]') }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/upload-artifact@v4
         with:
-          name: source-${{ github.sha }}
+          name: source-${{ github.event.pull_request.head.sha }}
           path: |
             .
             !.git
