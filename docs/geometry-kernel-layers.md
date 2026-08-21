@@ -159,7 +159,9 @@ The derived-dihedral compositor also keeps its specialized face/stroke
 fragmentation and depth-relation generation, but its final graph ordering now
 uses the same shared compositor. Its domain adapter continues to reject unknown
 item identities and self-relations before calling the generic sorter, and maps
-shared cycle errors back to the existing derived-dihedral error contract.
+shared cycle errors back to the existing derived-dihedral error contract. The
+fail-closed exception type is preserved for malformed self-relations; the exact
+residual-node list in that diagnostic is not part of the compatibility contract.
 
 The remaining migration should stay small and reviewable:
 

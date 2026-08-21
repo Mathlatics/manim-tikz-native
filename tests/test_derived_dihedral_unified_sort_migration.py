@@ -122,6 +122,21 @@ class DerivedDihedralUnifiedSortMigrationTests(unittest.TestCase):
         ):
             _draw_order(("face:a",), (_relation("face:a", "face:a"),))
 
+    def test_self_relation_with_downstream_node_remains_fail_closed(self) -> None:
+        with self.assertRaises(
+            DerivedDihedralUnifiedCompositingError
+        ) as context:
+            _draw_order(
+                ("label:c", "face:b", "face:a"),
+                (
+                    _relation("face:a", "face:a"),
+                    _relation("face:a", "face:b"),
+                ),
+            )
+        message = str(context.exception)
+        self.assertIn("contains a cycle:", message)
+        self.assertIn("face:a", message)
+
     def test_multi_node_cycle_is_adapted_to_the_domain_error(self) -> None:
         with self.assertRaisesRegex(
             DerivedDihedralUnifiedCompositingError,
