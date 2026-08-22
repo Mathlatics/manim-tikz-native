@@ -16,7 +16,16 @@ from .contract import (
     OpenFaceContractError,
     OpenFaceVisibilityModel,
 )
-from .manim import OpenFaceOcclusion3D
+from .manim import (
+    OPEN_FACE_UNIFIED_BINDING_SCALE_LIMITS,
+    OpenFaceOcclusion3D,
+    OpenFaceUnifiedBindingScaleLimits,
+)
+from .unified_compositing import (
+    OPEN_FACE_UNIFIED_COMPOSITING_LIMITS,
+    OpenFacePaintPolicy,
+    OpenFaceUnifiedCompositingLimits,
+)
 
 
 class OpenFaceAuthoringError(ValueError):
@@ -379,6 +388,15 @@ class OpenFaceScene3D:
         display_point_provider: DisplayPointProvider | None = None,
         tolerance_policy: TolerancePolicy | None = None,
         source_coordinate_mode: Literal["world", "display"] = "world",
+        compositing_mode: Literal["legacy", "unified"] = "legacy",
+        paint_policy: OpenFacePaintPolicy | str = OpenFacePaintPolicy.DIAGRAMMATIC,
+        painter_z_band: tuple[float, float] | None = None,
+        unified_compositing_limits: OpenFaceUnifiedCompositingLimits = (
+            OPEN_FACE_UNIFIED_COMPOSITING_LIMITS
+        ),
+        unified_binding_scale_limits: OpenFaceUnifiedBindingScaleLimits = (
+            OPEN_FACE_UNIFIED_BINDING_SCALE_LIMITS
+        ),
     ) -> OpenFaceOcclusion3D:
         model = self.freeze(tolerance_policy=tolerance_policy)
         return OpenFaceOcclusion3D(
@@ -392,6 +410,11 @@ class OpenFaceScene3D:
             style=style,
             tolerance_policy=tolerance_policy,
             source_coordinate_mode=source_coordinate_mode,
+            compositing_mode=compositing_mode,
+            paint_policy=paint_policy,
+            painter_z_band=painter_z_band,
+            unified_compositing_limits=unified_compositing_limits,
+            unified_binding_scale_limits=unified_binding_scale_limits,
         )
 
 

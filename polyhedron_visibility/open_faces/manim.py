@@ -13,7 +13,12 @@ from ..binding import (
     ManimOcclusionBinding,
     OcclusionBindingError,
     OverlayPlan,
+    PlannedSegment,
     PositionProvider,
+    _capture_family_style,
+    _hide_snapshots,
+    _restore_snapshots,
+    _using_cairo_renderer,
     build_overlay_plan,
 )
 from ..contract import TolerancePolicy
@@ -21,6 +26,19 @@ from ..style import OcclusionStyle
 from .contract import OpenFaceVisibilityModel
 from .solver import compute_open_face_visibility
 from .trace import OpenFaceVisibilityFrame
+from .unified_compositing import (
+    OPEN_FACE_UNIFIED_COMPOSITING_LIMITS,
+    OpenFacePaintPolicy,
+    OpenFaceUnifiedCompositingFrame,
+    OpenFaceUnifiedCompositingLimits,
+    compute_open_face_unified_compositing,
+)
+from .unified_manim import (
+    OPEN_FACE_UNIFIED_BINDING_SCALE_LIMITS,
+    OpenFaceUnifiedBindingScaleLimits,
+    OpenFaceUnifiedManimRuntime,
+    PreparedOpenFaceUnifiedManimFrame,
+)
 
 
 class OpenFaceBindingScaleError(OcclusionBindingError):
@@ -92,6 +110,8 @@ class _OpenFaceFillLayer:
         self.source_coordinate_mode = source_coordinate_mode
         self.sources: dict[str, Polygon] = {}
         self.proxies: dict[str, Polygon] = {}
+        self._base_fill_rgbas: dict[str, np.ndarray] = {}
+        self._base_fill_opacity: dict[str, object] = {}
         for face in sorted(model.faces, key=lambda item: item.face_id):
             source = face_bindings[face.face_id]
             if not isinstance(source, Polygon) or tuple(source.get_family()) != (source,):
@@ -123,6 +143,10 @@ class _OpenFaceFillLayer:
                 proxy.fill_opacity = getattr(source, "fill_opacity")
             self.sources[face.face_id] = source
             self.proxies[face.face_id] = proxy
+            self._base_fill_rgbas[face.face_id] = raw_fill.copy()
+            self._base_fill_opacity[face.face_id] = getattr(
+                source, "fill_opacity", None
+            )
         self.root = VGroup(
             *(self.proxies[face_id] for face_id in sorted(self.proxies))
         )
@@ -183,20 +207,12 @@ class _OpenFaceFillLayer:
         self._source_z = source_z
         self._z_slots = slots
 
-    def prepare(
+    def prepare_geometry(
         self,
-        frame: OpenFaceVisibilityFrame,
         *,
         world_points: Mapping[str, np.ndarray],
         display_points: Mapping[str, np.ndarray],
-        containers: Sequence[list[object]],
     ) -> dict[str, np.ndarray]:
-        if not self._z_slots:
-            self.configure_z_slots(containers)
-        if set(frame.advisory_face_draw_order) != set(self.model.face_map):
-            raise OcclusionBindingError(
-                "open-face draw order does not cover every managed face"
-            )
         plans: dict[str, np.ndarray] = {}
         for face in self.model.faces:
             expected = np.asarray(
@@ -216,26 +232,66 @@ class _OpenFaceFillLayer:
                 raise OcclusionBindingError(
                     f"face fill source {face.face_id} no longer matches its registered polygon"
                 )
-            if float(self.sources[face.face_id].z_index) != self._source_z[face.face_id]:
-                raise OcclusionBindingError(
-                    f"face fill source {face.face_id} changed its authored z_index"
-                )
             plans[face.face_id] = np.asarray(
                 [display_points[vertex_id] for vertex_id in face.vertex_ids],
                 dtype=float,
             )
         return plans
 
+    def prepare(
+        self,
+        frame: OpenFaceVisibilityFrame,
+        *,
+        world_points: Mapping[str, np.ndarray],
+        display_points: Mapping[str, np.ndarray],
+        containers: Sequence[list[object]],
+    ) -> dict[str, np.ndarray]:
+        if not self._z_slots:
+            self.configure_z_slots(containers)
+        if set(frame.advisory_face_draw_order) != set(self.model.face_map):
+            raise OcclusionBindingError(
+                "open-face draw order does not cover every managed face"
+            )
+        plans = self.prepare_geometry(
+            world_points=world_points,
+            display_points=display_points,
+        )
+        for face_id, source in self.sources.items():
+            if float(source.z_index) != self._source_z[face_id]:
+                raise OcclusionBindingError(
+                    f"face fill source {face_id} changed its authored z_index"
+                )
+        return plans
+
+    def apply_geometry(
+        self,
+        plans: Mapping[str, np.ndarray],
+        *,
+        opacity_multiplier: float = 1.0,
+    ) -> None:
+        multiplier = float(opacity_multiplier)
+        if not np.isfinite(multiplier) or multiplier < 0.0:
+            raise OcclusionBindingError(
+                "face fill opacity multiplier must be finite and non-negative"
+            )
+        for face_id, points in plans.items():
+            proxy = self.proxies[face_id]
+            proxy.set_points_as_corners([*points, points[0]])
+            fill = self._base_fill_rgbas[face_id].copy()
+            fill[..., 3] *= multiplier
+            proxy.fill_rgbas = fill
+            base_opacity = self._base_fill_opacity[face_id]
+            if base_opacity is not None and hasattr(proxy, "fill_opacity"):
+                proxy.fill_opacity = float(base_opacity) * multiplier
+
     def apply(
         self,
         frame: OpenFaceVisibilityFrame,
         plans: Mapping[str, np.ndarray],
     ) -> None:
+        self.apply_geometry(plans)
         for rank, face_id in enumerate(frame.advisory_face_draw_order):
-            points = plans[face_id]
-            proxy = self.proxies[face_id]
-            proxy.set_points_as_corners([*points, points[0]])
-            proxy.set_z_index(self._z_slots[rank], family=True)
+            self.proxies[face_id].set_z_index(self._z_slots[rank], family=True)
 
     def capture_and_hide(self) -> None:
         snapshots: dict[str, _FaceFillSnapshot] = {}
@@ -322,10 +378,9 @@ def _guard_realtime_scale(
 class OpenFaceOcclusion3D(ManimOcclusionBinding):
     """Cairo binding for finite independent convex faces and articulated hinges.
 
-    The binding deliberately inherits the frozen closed-polyhedron binding's
-    lifecycle, fixed slot allocation, Scene ownership checks, straight-Line
-    gate, source-style restoration, and last-good-frame transaction.  Only
-    frame preparation is replaced with the open-face solver.
+    ``legacy`` preserves the released split face/line z-order implementation.
+    ``unified`` consumes the renderer-neutral painter graph and maps every face,
+    solid fragment, and hidden dash group into one explicit reserved z band.
     """
 
     def __init__(
@@ -341,16 +396,42 @@ class OpenFaceOcclusion3D(ManimOcclusionBinding):
         style: OcclusionStyle,
         tolerance_policy: TolerancePolicy | None = None,
         source_coordinate_mode: Literal["world", "display"] = "world",
+        compositing_mode: Literal["legacy", "unified"] = "legacy",
+        paint_policy: OpenFacePaintPolicy | str = OpenFacePaintPolicy.DIAGRAMMATIC,
+        painter_z_band: tuple[float, float] | None = None,
+        unified_compositing_limits: OpenFaceUnifiedCompositingLimits = (
+            OPEN_FACE_UNIFIED_COMPOSITING_LIMITS
+        ),
+        unified_binding_scale_limits: OpenFaceUnifiedBindingScaleLimits = (
+            OPEN_FACE_UNIFIED_BINDING_SCALE_LIMITS
+        ),
     ) -> None:
         if not isinstance(model, OpenFaceVisibilityModel):
+            raise OcclusionBindingError("model must be an OpenFaceVisibilityModel")
+        if compositing_mode not in {"legacy", "unified"}:
             raise OcclusionBindingError(
-                "model must be an OpenFaceVisibilityModel"
+                "compositing_mode must be 'legacy' or 'unified'"
             )
-        _guard_realtime_scale(model, style)
+        selected_policy = OpenFacePaintPolicy.parse(paint_policy)
+        if compositing_mode == "legacy":
+            _guard_realtime_scale(model, style)
+        elif face_fill_bindings is None:
+            raise OcclusionBindingError(
+                "unified open-face compositing requires a source Polygon for every face"
+            )
+        elif painter_z_band is None:
+            raise OcclusionBindingError(
+                "unified open-face compositing requires an explicit painter_z_band"
+            )
+
         self.projection = projection
+        self.compositing_mode = compositing_mode
+        self.paint_policy = selected_policy
+        self.painter_z_band = painter_z_band
+        self.unified_compositing_limits = unified_compositing_limits
         super().__init__(
             scene,
-            model,  # type: ignore[arg-type] -- compatible frozen-slot protocol
+            model,  # type: ignore[arg-type] -- compatible fixed-topology protocol
             position_provider=position_provider,
             stroke_bindings=stroke_bindings,
             projection_provider=projection.current_matrix,
@@ -359,6 +440,7 @@ class OpenFaceOcclusion3D(ManimOcclusionBinding):
             tolerance_policy=tolerance_policy,
             require_closed_convex_manifold=False,
             source_coordinate_mode=source_coordinate_mode,
+            allocate_overlay_slots=compositing_mode == "legacy",
         )
         self.model: OpenFaceVisibilityModel = model
         self._face_fill_layer = (
@@ -372,16 +454,60 @@ class OpenFaceOcclusion3D(ManimOcclusionBinding):
             )
         )
         self._prepared_face_plans: dict[str, np.ndarray] = {}
-        if self._face_fill_layer is not None:
-            line_overlay_root = self.overlay_root
-            self.overlay_root = VGroup(
-                self._face_fill_layer.root,
-                line_overlay_root,
+        self._unified_runtime: OpenFaceUnifiedManimRuntime | None = None
+        self.last_unified_frame: OpenFaceUnifiedCompositingFrame | None = None
+        if compositing_mode == "unified":
+            assert self._face_fill_layer is not None
+            assert face_fill_bindings is not None
+            assert painter_z_band is not None
+            self._unified_runtime = OpenFaceUnifiedManimRuntime(
+                model,
+                face_layer=self._face_fill_layer,
+                stroke_sources=stroke_bindings,
+                face_sources=face_fill_bindings,
+                style=style,
+                painter_z_band=painter_z_band,
+                scale_limits=unified_binding_scale_limits,
             )
+            self.overlay_root.add(self._unified_runtime.root)
+        elif self._face_fill_layer is not None:
+            line_overlay_root = self.overlay_root
+            self.overlay_root = VGroup(self._face_fill_layer.root, line_overlay_root)
+
+    @property
+    def display_mobject(self) -> Mobject:
+        """Display proxy to target with opacity animations while attached.
+
+        In unified mode use ``FadeOut(..., remover=False)`` if the controller
+        should remain attached and continue receiving geometry updates.
+        """
+
+        if self._unified_runtime is not None:
+            return self._unified_runtime.display_mobject
+        return self.overlay_root
+
+    def _display_positions(
+        self,
+        positions: Mapping[str, np.ndarray],
+    ) -> dict[str, np.ndarray]:
+        return {
+            vertex_id: (
+                np.asarray(positions[vertex_id], dtype=float)
+                if self.display_point_provider is None
+                else np.asarray(
+                    self.display_point_provider(positions[vertex_id]), dtype=float
+                )
+            )
+            for vertex_id in self.model.vertex_map
+        }
 
     def _prepare_frame(
         self,
     ) -> tuple[OpenFaceVisibilityFrame, dict[str, OverlayPlan], dict[str, np.ndarray]]:
+        if self.compositing_mode == "unified":
+            raise OcclusionBindingError(
+                "legacy frame preparation is unavailable in unified mode"
+            )
         positions, projection = self._current_inputs()
         frame = compute_open_face_visibility(
             self.model,
@@ -409,16 +535,7 @@ class OpenFaceOcclusion3D(ManimOcclusionBinding):
                 style=self.style,
             )
         if self._face_fill_layer is not None:
-            display_positions = {
-                vertex_id: (
-                    positions[vertex_id]
-                    if self.display_point_provider is None
-                    else np.asarray(
-                        self.display_point_provider(positions[vertex_id]), dtype=float
-                    )
-                )
-                for vertex_id in self.model.vertex_map
-            }
+            display_positions = self._display_positions(positions)
             self._prepared_face_plans = self._face_fill_layer.prepare(
                 frame,
                 world_points=positions,
@@ -436,7 +553,119 @@ class OpenFaceOcclusion3D(ManimOcclusionBinding):
             self._face_fill_layer.apply(frame, self._prepared_face_plans)
         super()._apply_frame(frame, plans)  # type: ignore[arg-type]
 
+    def _prepare_unified_frame(
+        self,
+    ) -> tuple[PreparedOpenFaceUnifiedManimFrame, dict[str, np.ndarray]]:
+        runtime = self._unified_runtime
+        face_layer = self._face_fill_layer
+        if runtime is None or face_layer is None:
+            raise OcclusionBindingError("unified open-face runtime is not configured")
+        positions, projection = self._current_inputs()
+        frame = compute_open_face_unified_compositing(
+            self.model,
+            projection_matrix=projection,
+            vertex_positions=positions,
+            tolerance_policy=self.tolerance_policy,
+            paint_policy=self.paint_policy,
+            limits=self.unified_compositing_limits,
+        )
+        display_positions = self._display_positions(positions)
+        face_plans = face_layer.prepare_geometry(
+            world_points=positions,
+            display_points=display_positions,
+        )
+        prepared = runtime.prepare(
+            frame,
+            face_plans=face_plans,
+            display_positions=display_positions,
+            containers=self._scene_containers(),
+        )
+        validation_plans = {
+            stroke.source_edge_id: OverlayPlan(
+                visible_segments=(
+                    PlannedSegment(
+                        0.0,
+                        1.0,
+                        tuple(
+                            float(item)
+                            for item in display_positions[stroke.vertex_ids[0]]
+                        ),
+                        tuple(
+                            float(item)
+                            for item in display_positions[stroke.vertex_ids[1]]
+                        ),
+                    ),
+                ),
+                hidden_segments=(),
+            )
+            for stroke in self.model.strokes
+        }
+        self._validate_source_geometry(validation_plans, positions)
+        return prepared, positions
+
+    def _hide_unified_sources(self) -> None:
+        for edge_id in sorted(self._source_snapshots):
+            _hide_snapshots(self._source_snapshots[edge_id])
+        if self._face_fill_layer is not None:
+            self._face_fill_layer.hide()
+
+    def _attach_unified(self) -> "OpenFaceOcclusion3D":
+        if self.attached:
+            return self
+        if not _using_cairo_renderer():
+            raise OcclusionBindingError(
+                "automatic occlusion binding v1 supports the Cairo renderer only"
+            )
+        if any(
+            any(item is self.overlay_root for item in container)
+            for container in self._scene_containers()
+        ):
+            raise OcclusionBindingError("overlay root is already owned by the Scene")
+        runtime = self._unified_runtime
+        face_layer = self._face_fill_layer
+        assert runtime is not None and face_layer is not None
+
+        previous_resolved = self._resolved_styles
+        resolved = runtime.configure_styles()
+        self._resolved_styles = resolved
+        prepared, _positions = self._prepare_unified_frame()
+        snapshots = {
+            edge_id: _capture_family_style(source)
+            for edge_id, source in self.stroke_bindings.items()
+        }
+        self._source_snapshots = snapshots
+
+        def finalize_sources() -> None:
+            for edge_id in sorted(snapshots):
+                _hide_snapshots(snapshots[edge_id])
+            face_layer.capture_and_hide()
+
+        try:
+            runtime.apply(prepared, after_apply=finalize_sources)
+            self.last_unified_frame = prepared.frame
+            self.last_frame = prepared.frame.visibility
+            self._attached = True
+            self.scene.mobjects.append(self.overlay_root)
+            self._register_fixed_frame_overlay()
+            self._invalidate_cairo_static_image()
+        except Exception:
+            self._attached = False
+            for values in snapshots.values():
+                _restore_snapshots(values)
+            face_layer.restore()
+            runtime.restore()
+            self._remove_fixed_frame_overlay()
+            self._remove_overlay_identity()
+            self._invalidate_cairo_static_image()
+            self._source_snapshots = {}
+            self._resolved_styles = previous_resolved
+            self.last_unified_frame = None
+            raise
+        return self
+
     def attach(self) -> "OpenFaceOcclusion3D":
+        if self.compositing_mode == "unified":
+            return self._attach_unified()
         if self.attached:
             return self
         try:
@@ -451,6 +680,22 @@ class OpenFaceOcclusion3D(ManimOcclusionBinding):
             raise
 
     def update(self, dt: float = 0.0) -> "OpenFaceOcclusion3D":
+        if self.compositing_mode == "unified":
+            del dt
+            if not self.attached:
+                raise OcclusionBindingError("occlusion binding is not attached")
+            runtime = self._unified_runtime
+            assert runtime is not None
+            prepared, _positions = self._prepare_unified_frame()
+            try:
+                runtime.apply(prepared, after_apply=self._hide_unified_sources)
+            except Exception:
+                # The binding owns source visibility while attached.
+                self._hide_unified_sources()
+                raise
+            self.last_unified_frame = prepared.frame
+            self.last_frame = prepared.frame.visibility
+            return self
         try:
             super().update(dt)
         finally:
@@ -459,6 +704,28 @@ class OpenFaceOcclusion3D(ManimOcclusionBinding):
         return self
 
     def restore(self) -> "OpenFaceOcclusion3D":
+        if self.compositing_mode == "unified":
+            runtime = self._unified_runtime
+            if not self.attached and not self._source_snapshots:
+                self._remove_fixed_frame_overlay()
+                self._remove_overlay_identity()
+                if runtime is not None:
+                    runtime.restore()
+                return self
+            self._attached = False
+            self._remove_fixed_frame_overlay()
+            self._remove_overlay_identity()
+            for edge_id in sorted(self._source_snapshots):
+                _restore_snapshots(self._source_snapshots[edge_id])
+            if self._face_fill_layer is not None:
+                self._face_fill_layer.restore()
+            if runtime is not None:
+                runtime.restore()
+            self._invalidate_cairo_static_image()
+            self._source_snapshots = {}
+            self._resolved_styles = {}
+            self.last_unified_frame = None
+            return self
         try:
             super().restore()
         finally:
@@ -466,15 +733,41 @@ class OpenFaceOcclusion3D(ManimOcclusionBinding):
                 self._face_fill_layer.restore()
         return self
 
+    def detach(self) -> "OpenFaceOcclusion3D":
+        return self.restore()
+
     def face_fill_identities(self) -> tuple[int, ...]:
         if self._face_fill_layer is None:
             return ()
         return self._face_fill_layer.identities()
 
+    def slot_counts(self, edge_id: str) -> tuple[int, int]:
+        if self._unified_runtime is not None:
+            return self._unified_runtime.slot_counts(edge_id)
+        return super().slot_counts(edge_id)
+
+    def slot_identities(self) -> tuple[int, ...]:
+        if self._unified_runtime is not None:
+            return self._unified_runtime.slot_identities()
+        return super().slot_identities()
+
+    def slot_snapshot(self) -> tuple[object, ...]:
+        if self._unified_runtime is not None:
+            return self._unified_runtime.slot_snapshot()
+        return super().slot_snapshot()
+
+    @property
+    def active_painter_z_indices(self) -> dict[str, float]:
+        if self._unified_runtime is None:
+            return {}
+        return self._unified_runtime.active_z_indices
+
 
 __all__ = [
     "OPEN_FACE_BINDING_SCALE_LIMITS",
+    "OPEN_FACE_UNIFIED_BINDING_SCALE_LIMITS",
     "OpenFaceBindingScaleError",
     "OpenFaceBindingScaleLimits",
     "OpenFaceOcclusion3D",
+    "OpenFaceUnifiedBindingScaleLimits",
 ]
