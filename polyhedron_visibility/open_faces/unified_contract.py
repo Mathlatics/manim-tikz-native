@@ -49,6 +49,9 @@ class OpenFaceUnifiedCompositingLimits:
     max_total_fragments: int = 32768
     max_fragment_pair_candidates: int = 262144
     max_relations: int = 262144
+    # Keep new limits after the original public positional fields.  Existing
+    # callers may construct this exported dataclass positionally.
+    max_fragment_face_candidates: int = 262144
 
     def __post_init__(self) -> None:
         for name in self.__dataclass_fields__:
@@ -82,6 +85,14 @@ class OpenFacePaintFace:
 
 @dataclass(frozen=True, slots=True)
 class PaintPathFragment:
+    """One painter cell with a frame-local deterministic identity.
+
+    ``fragment_id`` is stable only within one computed frame.  A later frame
+    may add or remove painter events and therefore renumber fragments on the
+    same source path.  Renderer bindings must use their own preallocated slot
+    identity rather than treating this value as cross-frame lineage.
+    """
+
     fragment_id: str
     source_path_id: str
     parameter_interval: ParameterInterval
@@ -169,6 +180,18 @@ class OpenFacePaintRelation:
         }
 
 
+def _fragment_sort_key(
+    fragment: PaintPathFragment,
+) -> tuple[str, float, float, str]:
+    interval = fragment.parameter_interval
+    return (
+        fragment.source_path_id,
+        interval.start,
+        interval.end,
+        fragment.fragment_id,
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class OpenFaceUnifiedCompositingFrame:
     visibility: OpenFaceVisibilityFrame
@@ -188,24 +211,143 @@ class OpenFaceUnifiedCompositingFrame:
             raise TypeError("paint_policy must be an OpenFacePaintPolicy")
         if not all(isinstance(item, OpenFacePaintFace) for item in self.faces):
             raise TypeError("faces must contain OpenFacePaintFace values")
+
+        expected_faces = tuple(
+            (item.face_id, item.logical_surface_id)
+            for item in self.visibility.face_tolerances
+        )
+        expected_face_ids = tuple(face_id for face_id, _ in expected_faces)
+        if len(set(expected_face_ids)) != len(expected_face_ids):
+            raise ValueError("visibility face identities must be unique")
+        actual_faces = tuple(
+            (item.face_id, item.logical_surface_id) for item in self.faces
+        )
+        if actual_faces != expected_faces:
+            raise ValueError(
+                "faces must exactly match visibility face identities in canonical order"
+            )
+        advisory_order = self.visibility.advisory_face_draw_order
+        if (
+            len(advisory_order) != len(expected_face_ids)
+            or set(advisory_order) != set(expected_face_ids)
+        ):
+            raise ValueError(
+                "visibility advisory face order must cover every face exactly once"
+            )
+
         if not all(
             isinstance(item, PaintPathFragment) for item in self.path_fragments
         ):
             raise TypeError("path_fragments must contain PaintPathFragment values")
-        visibility_path_ids = set(self.visibility.edge_map)
-        unknown_paths = sorted(
-            {item.source_path_id for item in self.path_fragments}
-            - visibility_path_ids
+        canonical_fragments = tuple(
+            sorted(self.path_fragments, key=_fragment_sort_key)
         )
+        if self.path_fragments != canonical_fragments:
+            raise ValueError(
+                "path_fragments must use canonical source and parameter order"
+            )
+
+        visibility_edges = self.visibility.edges
+        visibility_path_ids = tuple(item.source_edge_id for item in visibility_edges)
+        if len(set(visibility_path_ids)) != len(visibility_path_ids):
+            raise ValueError("visibility path identities must be unique")
+        if visibility_path_ids != tuple(sorted(visibility_path_ids)):
+            raise ValueError("visibility paths must use canonical identity order")
+
+        fragments_by_path: dict[str, list[PaintPathFragment]] = {}
+        for fragment in self.path_fragments:
+            fragments_by_path.setdefault(fragment.source_path_id, []).append(fragment)
+        unknown_paths = sorted(set(fragments_by_path) - set(visibility_path_ids))
         if unknown_paths:
             raise ValueError(
                 "path fragments reference unknown visibility paths: "
                 + ", ".join(unknown_paths)
             )
+        missing_paths = sorted(set(visibility_path_ids) - set(fragments_by_path))
+        if missing_paths:
+            raise ValueError(
+                "path fragments are missing visibility paths: "
+                + ", ".join(missing_paths)
+            )
+
+        for edge in visibility_edges:
+            fragments = fragments_by_path[edge.source_edge_id]
+            epsilon = float(edge.parameter_epsilon)
+            if not np.isfinite(epsilon) or epsilon < 0.0:
+                raise ValueError(
+                    f"visibility path {edge.source_edge_id!r} has invalid parameter epsilon"
+                )
+            if any(fragment.parameter_interval.length <= 0.0 for fragment in fragments):
+                raise ValueError(
+                    f"path {edge.source_edge_id!r} contains an empty painter fragment"
+                )
+            if abs(fragments[0].parameter_interval.start) > epsilon:
+                raise ValueError(
+                    f"path {edge.source_edge_id!r} fragments do not start at zero"
+                )
+            if abs(fragments[-1].parameter_interval.end - 1.0) > epsilon:
+                raise ValueError(
+                    f"path {edge.source_edge_id!r} fragments do not end at one"
+                )
+            for left, right in zip(fragments, fragments[1:]):
+                delta = right.parameter_interval.start - left.parameter_interval.end
+                if delta > epsilon:
+                    raise ValueError(
+                        f"path {edge.source_edge_id!r} fragment partition contains a gap"
+                    )
+                if delta < -epsilon:
+                    raise ValueError(
+                        f"path {edge.source_edge_id!r} fragment partition overlaps"
+                    )
+
+            for fragment in fragments:
+                interval = fragment.parameter_interval
+                matches = [
+                    span
+                    for span in edge.spans
+                    if span.start - epsilon <= interval.start
+                    and interval.end <= span.end + epsilon
+                ]
+                if len(matches) != 1:
+                    raise ValueError(
+                        f"path {edge.source_edge_id!r} fragment does not fit within "
+                        "one visibility span"
+                    )
+                span = matches[0]
+                try:
+                    expected_kind = VisibilityKind(span.kind)
+                except ValueError as exc:
+                    raise ValueError(
+                        f"path {edge.source_edge_id!r} has unsupported visibility "
+                        f"kind {span.kind!r}"
+                    ) from exc
+                if fragment.visibility_kind is not expected_kind:
+                    raise ValueError(
+                        f"path {edge.source_edge_id!r} fragment visibility kind "
+                        "disagrees with the visibility trace"
+                    )
+                if (
+                    fragment.occluder_face_ids != span.occluder_face_ids
+                    or fragment.occluder_logical_surface_ids
+                    != span.occluder_logical_surface_ids
+                ):
+                    raise ValueError(
+                        f"path {edge.source_edge_id!r} fragment occluders disagree "
+                        "with the visibility trace"
+                    )
+
         if not all(
             isinstance(item, OpenFacePaintRelation) for item in self.order_relations
         ):
             raise TypeError("order_relations must contain OpenFacePaintRelation values")
+        canonical_relations = tuple(
+            sorted(
+                self.order_relations,
+                key=lambda item: (item.far_item_id, item.near_item_id),
+            )
+        )
+        if self.order_relations != canonical_relations:
+            raise ValueError("order_relations must use canonical identity order")
 
         item_ids = self.item_ids
         item_set = set(item_ids)
