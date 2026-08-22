@@ -324,6 +324,10 @@ def compute_path_fragments(
                     tuple(sorted(set(span.occluder_logical_surface_ids))),
                 )
             )
+        if not path_result:
+            raise OpenFaceUnifiedCompositingError(
+                f"path {path_id!r} produced no painter fragments"
+            )
         if len(path_result) > limits.max_fragments_per_path:
             raise OpenFaceUnifiedCompositingError(
                 f"path {path_id!r} produced {len(path_result)} fragments; "
@@ -334,6 +338,13 @@ def compute_path_fragments(
         raise OpenFaceUnifiedCompositingError(
             f"unified painter produced {len(result)} fragments; "
             f"limit is {limits.max_total_fragments}"
+        )
+    fragment_face_candidates = len(result) * len(model.faces)
+    if fragment_face_candidates > limits.max_fragment_face_candidates:
+        raise OpenFaceUnifiedCompositingError(
+            "unified painter fragment_face_candidates="
+            f"{fragment_face_candidates} exceeds limit "
+            f"{limits.max_fragment_face_candidates}"
         )
     return tuple(result)
 
