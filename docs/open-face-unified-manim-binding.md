@@ -29,7 +29,8 @@ Unified mode hides authored face fills and source strokes, then draws proxy
 faces, solid fragments, and dashed fragments in one explicit z interval. Source
 objects may share an authored z-index. The reserved interval must be finite,
 increasing, and free of unrelated visible Scene drawables. It is revalidated on
-reattach after a restore/detach cycle.
+every prepared frame and on reattach after a restore/detach cycle. The check
+excludes the binding's own preallocated proxy family.
 
 ## Fixed slots and dash phase
 
@@ -55,10 +56,13 @@ reuses the same preallocated proxy identities.
 ## Opacity lifecycle
 
 While attached, animate `controller.display_mobject`, not the hidden authored
-sources. Use `FadeOut(..., remover=False)` when the controller should remain
-attached. An invisible opacity sentinel is the animation-owned value; the
-updater reads its interpolated alpha and applies it to every face/path proxy, so
-geometry updates do not cancel FadeIn/FadeOut.
+sources. `FadeOut(controller.display_mobject)` and the matching `FadeIn(...)`
+remove and restore the display proxy while an invisible sibling driver keeps
+the geometry updater alive. To keep the proxy continuously present, animate
+`controller.display_mobject.animate.set_opacity(...)` instead. An invisible
+opacity sentinel is the animation-owned value; the updater reads its
+interpolated alpha and applies it to every face/path proxy, so geometry updates
+do not cancel opacity animations.
 
 ## Scope
 

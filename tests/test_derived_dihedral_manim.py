@@ -10,6 +10,7 @@ from manim import BLUE, GOLD, Line, Polygon, Scene, ValueTracker, VGroup, tempco
 from polyhedron_visibility import OcclusionStyle, ParallelProjection
 from polyhedron_visibility.dihedral_extraction import (
     BasePlaneRotation3D,
+    DerivedDihedralUnifiedManimError,
     ExtractedDihedralOcclusion3D,
     ExtractedDihedralScene3D,
     RigidTransform3D,
@@ -526,6 +527,35 @@ class ExtractedDihedralManimTests(unittest.TestCase):
                 fixture.faces[face_id].fill_rgbas,
                 expected,
             )
+
+    def test_unified_update_revalidates_reserved_band(self) -> None:
+        scene = Scene()
+        fixture = _CubeExtractionFixture(
+            scene,
+            accurate_transparency=True,
+        )
+        controller = fixture.controller.attach()
+        controller.update()
+        last_good_frame = controller.last_unified_compositing
+        last_good_slots = controller.slot_snapshot()
+        last_good_z = controller.active_unified_z_indices()
+        low, high = controller._unified_layer._band.z_band
+
+        intruder = Line((-2, 2, 0), (2, 2, 0)).set_z_index((low + high) / 2.0)
+        scene.add(intruder)
+        with self.assertRaisesRegex(
+            DerivedDihedralUnifiedManimError,
+            "managed painter z band",
+        ):
+            controller.update()
+        self.assertIs(controller.last_unified_compositing, last_good_frame)
+        self.assertEqual(controller.slot_snapshot(), last_good_slots)
+        self.assertEqual(controller.active_unified_z_indices(), last_good_z)
+
+        scene.remove(intruder)
+        controller.update()
+        self.assertIsNot(controller.last_unified_compositing, last_good_frame)
+        controller.restore()
 
     def test_unified_fragment_capacity_failure_keeps_last_good_frame(self) -> None:
         fixture = _CubeExtractionFixture(

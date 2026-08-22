@@ -42,12 +42,16 @@ class DerivedDihedralUnifiedLayer:
         *,
         face_sources: Mapping[str, Mobject],
         stroke_sources: Mapping[str, Mobject],
+        managed_roots: Sequence[Mobject] = (),
     ) -> None:
         self.face_sources = dict(face_sources)
         self.stroke_sources = dict(stroke_sources)
         # Preserve the released derived-dihedral contract: authored sources
         # define the band and must occupy distinct slots.
-        self._band = ManagedPainterBand(require_distinct_source_z=True)
+        self._band = ManagedPainterBand(
+            require_distinct_source_z=True,
+            managed_roots=managed_roots,
+        )
 
     def configure(self, containers: Sequence[list[object]]) -> None:
         try:

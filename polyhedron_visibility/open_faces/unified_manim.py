@@ -420,7 +420,10 @@ class OpenFaceUnifiedManimRuntime:
             *(self.path_slots[key].root for key in sorted(self.path_slots)),
             opacity_sentinel=self._opacity_sentinel,
         )
-        self._band = ManagedPainterBand(z_band=painter_z_band)
+        self._band = ManagedPainterBand(
+            z_band=painter_z_band,
+            managed_roots=(self.root,),
+        )
         self._resolved_styles: dict[str, ResolvedOcclusionStyle] = {}
         self._last_frame: OpenFaceUnifiedCompositingFrame | None = None
 

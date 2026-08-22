@@ -6,7 +6,16 @@ import unittest
 from unittest.mock import patch
 
 import numpy as np
-from manim import BLACK, RED, Line, Polygon, Scene, tempconfig
+from manim import (
+    BLACK,
+    RED,
+    Line,
+    Polygon,
+    Scene,
+    ThreeDScene,
+    ValueTracker,
+    tempconfig,
+)
 
 from polyhedron_visibility.api import ParallelProjection
 from polyhedron_visibility.binding import OcclusionBindingError
@@ -21,6 +30,7 @@ class _UnifiedFixture:
         *,
         paint_policy: str = "diagrammatic",
         shared_source_z: bool = True,
+        fixed_display: bool = False,
     ) -> None:
         self.scene = scene
         self.positions = {
@@ -63,6 +73,11 @@ class _UnifiedFixture:
         self.controller = builder.controller(
             scene,
             projection=ParallelProjection.identity(),
+            display_point_provider=(
+                (lambda point: np.asarray(point, dtype=float))
+                if fixed_display
+                else None
+            ),
             style=OcclusionStyle(
                 max_projected_length=8.0,
                 dash_length=0.20,
@@ -215,6 +230,28 @@ class OpenFaceUnifiedManimTests(unittest.TestCase):
         self.assertEqual(fixture.face.get_fill_opacity(), 1.0)
         self.assertEqual(fixture.path.get_stroke_opacity(), 1.0)
 
+    def test_update_revalidates_reserved_band_and_excludes_managed_slots(self) -> None:
+        scene = Scene()
+        fixture = _UnifiedFixture(scene)
+        controller = fixture.controller.attach()
+        controller.update()
+        last_good = controller.last_unified_frame
+        snapshot = controller.slot_snapshot()
+
+        intruder = Line((-1, 2, 0), (1, 2, 0)).set_z_index(25)
+        scene.add(intruder)
+        with self.assertRaisesRegex(OcclusionBindingError, "managed painter z band"):
+            controller.update()
+        self.assertIs(controller.last_unified_frame, last_good)
+        self.assertEqual(controller.slot_snapshot(), snapshot)
+        self.assertEqual(fixture.face.get_fill_opacity(), 0.0)
+        self.assertEqual(fixture.path.get_stroke_opacity(), 0.0)
+
+        scene.remove(intruder)
+        controller.update()
+        self.assertIsNot(controller.last_unified_frame, last_good)
+        controller.restore()
+
     def test_diagrammatic_and_physical_modes_change_real_cairo_pixels(self) -> None:
         arrays = []
         for policy in ("diagrammatic", "physical"):
@@ -235,20 +272,67 @@ class OpenFaceUnifiedManimTests(unittest.TestCase):
             def construct(inner_self) -> None:
                 fixture = _UnifiedFixture(inner_self)
                 controller = fixture.controller.attach()
+                runtime = controller._unified_runtime
+                assert runtime is not None
+                update_driver = controller._unified_update_driver
+                assert update_driver is not None
                 identities = controller.slot_identities()
+                inner_self.display_is_runtime_root = (
+                    controller.display_mobject is runtime.root
+                )
+                fade_samples = []
+                motion = ValueTracker(0.0)
+
+                def move_source(line) -> None:
+                    y = motion.get_value()
+                    fixture.positions["P"][1] = y
+                    fixture.positions["Q"][1] = y
+                    line.put_start_and_end_on(
+                        fixture.positions["P"],
+                        fixture.positions["Q"],
+                    )
+
+                fixture.path.add_updater(move_source)
+                frame_before_fade = controller.last_unified_frame
+
+                def capture_opacity(_mobject, dt) -> None:
+                    del dt
+                    fade_samples.append(runtime.root.opacity_multiplier)
+
+                update_driver.add_updater(capture_opacity)
                 inner_self.play(
                     FadeOut(controller.display_mobject),
+                    motion.animate.set_value(0.5),
                     run_time=0.4,
                 )
-                inner_self.after_fade_out = (
-                    controller._unified_runtime.root.opacity_multiplier
+                fixture.path.remove_updater(move_source)
+                inner_self.fade_out_minimum = min(fade_samples)
+                inner_self.updated_during_fade_out = (
+                    controller.last_unified_frame is not frame_before_fade
+                    and np.isclose(fixture.positions["P"][1], 0.5)
                 )
+                inner_self.fade_out_ownership = (
+                    controller.display_mobject not in inner_self.mobjects
+                    and update_driver in inner_self.mobjects
+                )
+                fade_samples.clear()
                 inner_self.play(
                     FadeIn(controller.display_mobject),
                     run_time=0.4,
                 )
-                inner_self.after_fade_in = (
-                    controller._unified_runtime.root.opacity_multiplier
+                inner_self.fade_in_minimum = min(fade_samples)
+                inner_self.after_fade_in = runtime.root.opacity_multiplier
+                inner_self.fade_in_ownership = (
+                    inner_self.mobjects.count(controller.display_mobject) == 1
+                    and inner_self.mobjects.count(update_driver) == 1
+                )
+                previous_frame = controller.last_unified_frame
+                fixture.positions["P"][1] = 0.75
+                fixture.positions["Q"][1] = 0.75
+                fixture.sync_sources()
+                inner_self.wait(0.4)
+                inner_self.updated_after_fade_in = (
+                    controller.last_unified_frame is not previous_frame
                 )
                 controller.detach()
                 controller.attach()
@@ -274,10 +358,72 @@ class OpenFaceUnifiedManimTests(unittest.TestCase):
             scene = UnifiedScene()
             scene.render()
             self.assertTrue(Path(scene.renderer.file_writer.movie_file_path).is_file())
-            self.assertLessEqual(scene.after_fade_out, 1.0e-6)
+            self.assertTrue(scene.display_is_runtime_root)
+            self.assertLess(scene.fade_out_minimum, 1.0)
+            self.assertTrue(scene.updated_during_fade_out)
+            self.assertTrue(scene.fade_out_ownership)
+            self.assertLessEqual(scene.fade_in_minimum, 1.0e-6)
             self.assertGreaterEqual(scene.after_fade_in, 1.0 - 1.0e-6)
+            self.assertTrue(scene.fade_in_ownership)
+            self.assertTrue(scene.updated_after_fade_in)
             self.assertTrue(scene.same_identities)
             self.assertEqual(scene.restored, (1.0, 1.0))
+
+    def test_fixed_frame_fade_detach_and_reattach_do_not_leak(self) -> None:
+        from manim import FadeIn, FadeOut
+
+        class FixedFrameScene(ThreeDScene):
+            def construct(inner_self) -> None:
+                fixture = _UnifiedFixture(inner_self, fixed_display=True)
+                controller = fixture.controller.attach()
+                runtime = controller._unified_runtime
+                update_driver = controller._unified_update_driver
+                assert runtime is not None and update_driver is not None
+                family = set(controller.overlay_root.get_family())
+                inner_self.fixed_after_attach = family.issubset(
+                    inner_self.camera.fixed_in_frame_mobjects
+                )
+
+                inner_self.play(FadeOut(controller.display_mobject), run_time=0.2)
+                inner_self.play(FadeIn(controller.display_mobject), run_time=0.2)
+                inner_self.single_scene_ownership = (
+                    inner_self.mobjects.count(runtime.root) == 1
+                    and inner_self.mobjects.count(update_driver) == 1
+                )
+
+                controller.detach()
+                inner_self.clear_after_detach = not (
+                    family & inner_self.camera.fixed_in_frame_mobjects
+                )
+                controller.attach()
+                inner_self.fixed_after_reattach = family.issubset(
+                    inner_self.camera.fixed_in_frame_mobjects
+                )
+                controller.restore()
+                inner_self.clear_after_restore = not (
+                    family & inner_self.camera.fixed_in_frame_mobjects
+                )
+
+        with TemporaryDirectory() as media_dir, tempconfig(
+            {
+                "renderer": "cairo",
+                "media_dir": media_dir,
+                "pixel_width": 160,
+                "pixel_height": 90,
+                "frame_rate": 5,
+                "disable_caching": True,
+                "write_to_movie": True,
+                "save_last_frame": False,
+            }
+        ):
+            scene = FixedFrameScene()
+            scene.render()
+            self.assertTrue(Path(scene.renderer.file_writer.movie_file_path).is_file())
+            self.assertTrue(scene.fixed_after_attach)
+            self.assertTrue(scene.single_scene_ownership)
+            self.assertTrue(scene.clear_after_detach)
+            self.assertTrue(scene.fixed_after_reattach)
+            self.assertTrue(scene.clear_after_restore)
 
 
 if __name__ == "__main__":

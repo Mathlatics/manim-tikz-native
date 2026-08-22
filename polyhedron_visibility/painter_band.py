@@ -5,6 +5,9 @@ from typing import Mapping, Sequence
 
 import numpy as np
 from manim import Mobject
+from manim.mobject.types.image_mobject import AbstractImageMobject
+from manim.mobject.types.point_cloud_mobject import PMobject
+from manim.mobject.types.vectorized_mobject import VMobject
 
 from .binding import OcclusionBindingError
 
@@ -38,6 +41,10 @@ def _scene_family(containers: Sequence[list[object]]) -> tuple[object, ...]:
 
 
 def _has_drawable_points(value: object) -> bool:
+    if not isinstance(value, (VMobject, PMobject, AbstractImageMobject)):
+        # Cairo deliberately treats a plain Mobject (including ValueTracker)
+        # as a non-rendering scene participant even when it stores points.
+        return False
     points = np.asarray(getattr(value, "points", np.empty((0, 3))), dtype=float)
     if points.size == 0:
         return False
@@ -65,9 +72,15 @@ class ManagedPainterBand:
         *,
         z_band: tuple[float, float] | None = None,
         require_distinct_source_z: bool = False,
+        managed_roots: Sequence[Mobject] = (),
     ) -> None:
         self._requested_band = z_band
         self._require_distinct_source_z = bool(require_distinct_source_z)
+        self._managed_family_ids = {
+            id(member)
+            for root in managed_roots
+            for member in root.get_family()
+        }
         self._z_low = 0.0
         self._z_high = 0.0
         self._configured = False
@@ -90,8 +103,6 @@ class ManagedPainterBand:
         containers: Sequence[list[object]],
         sources: Mapping[str, Mobject],
     ) -> None:
-        if self._configured:
-            return
         if not sources:
             raise ManagedPainterBandError("managed painter band requires source objects")
         family = _scene_family(containers)
@@ -114,21 +125,28 @@ class ManagedPainterBand:
                 )
             authored[source_id] = value
 
-        if self._requested_band is None:
-            if self._require_distinct_source_z and len(set(authored.values())) != len(authored):
-                raise ManagedPainterBandError(
-                    "managed painter sources must occupy distinct authored z_index slots"
-                )
-            if len(set(authored.values())) < 2:
-                raise ManagedPainterBandError(
-                    "derived painter band requires at least two authored z_index values"
-                )
-            low, high = min(authored.values()), max(authored.values())
+        if self._configured:
+            low, high = self._z_low, self._z_high
         else:
-            low, high = self._validate_explicit_band(self._requested_band)
+            if self._requested_band is None:
+                if self._require_distinct_source_z and len(set(authored.values())) != len(authored):
+                    raise ManagedPainterBandError(
+                        "managed painter sources must occupy distinct authored z_index slots"
+                    )
+                if len(set(authored.values())) < 2:
+                    raise ManagedPainterBandError(
+                        "derived painter band requires at least two authored z_index values"
+                    )
+                low, high = min(authored.values()), max(authored.values())
+            else:
+                low, high = self._validate_explicit_band(self._requested_band)
 
         for member in family:
-            if id(member) in source_family_ids or not _has_drawable_points(member):
+            if (
+                id(member) in source_family_ids
+                or id(member) in self._managed_family_ids
+                or not _has_drawable_points(member)
+            ):
                 continue
             value = float(getattr(member, "z_index", float("nan")))
             if np.isfinite(value) and low <= value <= high:

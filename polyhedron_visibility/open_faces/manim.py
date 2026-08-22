@@ -5,7 +5,7 @@ from math import ceil
 from typing import Literal, Mapping, Sequence
 
 import numpy as np
-from manim import Mobject, Polygon, VGroup
+from manim import Mobject, Polygon, VGroup, VMobject
 
 from ..api import ParallelProjection
 from ..binding import (
@@ -455,6 +455,7 @@ class OpenFaceOcclusion3D(ManimOcclusionBinding):
         )
         self._prepared_face_plans: dict[str, np.ndarray] = {}
         self._unified_runtime: OpenFaceUnifiedManimRuntime | None = None
+        self._unified_update_driver: VMobject | None = None
         self.last_unified_frame: OpenFaceUnifiedCompositingFrame | None = None
         if compositing_mode == "unified":
             assert self._face_fill_layer is not None
@@ -469,7 +470,14 @@ class OpenFaceOcclusion3D(ManimOcclusionBinding):
                 painter_z_band=painter_z_band,
                 scale_limits=unified_binding_scale_limits,
             )
-            self.overlay_root.add(self._unified_runtime.root)
+            self._unified_update_driver = VMobject()
+            for updater in tuple(self.overlay_root.updaters):
+                self._unified_update_driver.add_updater(updater)
+            self.overlay_root.clear_updaters()
+            self.overlay_root.add(
+                self._unified_runtime.root,
+                self._unified_update_driver,
+            )
         elif self._face_fill_layer is not None:
             line_overlay_root = self.overlay_root
             self.overlay_root = VGroup(self._face_fill_layer.root, line_overlay_root)
@@ -478,8 +486,9 @@ class OpenFaceOcclusion3D(ManimOcclusionBinding):
     def display_mobject(self) -> Mobject:
         """Display proxy to target with opacity animations while attached.
 
-        In unified mode use ``FadeOut(..., remover=False)`` if the controller
-        should remain attached and continue receiving geometry updates.
+        Unified mode keeps its updater on an invisible sibling driver.  A
+        ``FadeOut``/``FadeIn`` cycle can therefore remove and restore the
+        display proxy without interrupting live geometry computation.
         """
 
         if self._unified_runtime is not None:
