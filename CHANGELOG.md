@@ -14,6 +14,17 @@ All notable changes to this project will be documented in this file.
 - route the derived-dihedral unified face/stroke painter graph through the
   shared deterministic compositor while preserving its existing relation
   generator, lexicographic tie break, trace schema, and Cairo z-slot output;
+- add a renderer-neutral open-face unified-compositing component that splits
+  straight semantic paths at visibility, finite-face, and path-crossing painter
+  events, preserves reverse-collinear parameter correspondence, emits validated
+  face/path relations for diagrammatic or physical paint policy, and keeps the
+  existing open-face v1 visibility trace unchanged; diagrammatic compositing
+  consistently keeps semantic solid or dashed ink above overlapping face fill,
+  while physical compositing follows actual depth;
+- reuse each projected source-path intersection for fragmentation and painter
+  relations, localize point events to adjacent fragments, sweep collinear
+  overlap intervals in parameter order, and fail closed on an explicit
+  fragment-pair-candidate limit instead of scanning every fragment pair;
 - add an explicit tolerance-expanded visibility boundary mode for legacy trace
   compatibility without changing the exact-domain default used by new geometry;
 - reject invalid, non-finite, or excessively deep PGF arithmetic with a stable
