@@ -17,8 +17,13 @@ from polyhedron_visibility.topology import ParameterInterval
 from polyhedron_visibility.visibility import VisibilityKind
 from tests.test_open_face_unified_compositing import (
     IDENTITY_VIEW,
+    _crossing_paths_model,
     _panel_probe_model,
     _parallel_faces_model,
+)
+from tikz_native.version import (
+    COMPONENT_OPEN_FACE_UNIFIED_COMPOSITING,
+    provider_component_revisions,
 )
 
 
@@ -148,7 +153,10 @@ class OpenFaceUnifiedContractHardeningTests(unittest.TestCase):
             replace(valid, path_fragments=tuple(wrong_provenance))
 
     def test_relations_must_use_canonical_identity_order(self) -> None:
-        valid = self._valid_panel_frame()
+        valid = compute_open_face_unified_compositing(
+            _crossing_paths_model(),
+            projection_matrix=IDENTITY_VIEW,
+        )
         self.assertGreater(len(valid.order_relations), 1)
         with self.assertRaisesRegex(ValueError, "canonical identity order"):
             replace(
@@ -187,6 +195,13 @@ class OpenFaceUnifiedContractHardeningTests(unittest.TestCase):
             ),
         )
         self.assertEqual(len(frame.path_fragments), 3)
+
+    def test_print_current_unified_component_revision(self) -> None:
+        revision = provider_component_revisions()[
+            COMPONENT_OPEN_FACE_UNIFIED_COMPOSITING
+        ]
+        print(f"OPEN_FACE_UNIFIED_COMPONENT_REVISION={revision}", flush=True)
+        self.assertTrue(revision.startswith(("source-sha256:", "component-sha256:")))
 
 
 if __name__ == "__main__":
