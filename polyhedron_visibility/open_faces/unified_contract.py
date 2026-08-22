@@ -47,9 +47,11 @@ class OpenFaceUnifiedCompositingLimits:
     max_line_line_pairs: int = 4096
     max_fragments_per_path: int = 1024
     max_total_fragments: int = 32768
-    max_fragment_face_candidates: int = 262144
     max_fragment_pair_candidates: int = 262144
     max_relations: int = 262144
+    # Keep new limits after the original public positional fields.  Existing
+    # callers may construct this exported dataclass positionally.
+    max_fragment_face_candidates: int = 262144
 
     def __post_init__(self) -> None:
         for name in self.__dataclass_fields__:
@@ -299,16 +301,17 @@ class OpenFaceUnifiedCompositingFrame:
                     )
 
             for fragment in fragments:
-                midpoint = fragment.parameter_interval.midpoint
+                interval = fragment.parameter_interval
                 matches = [
                     span
                     for span in edge.spans
-                    if span.start - epsilon <= midpoint <= span.end + epsilon
+                    if span.start - epsilon <= interval.start
+                    and interval.end <= span.end + epsilon
                 ]
                 if len(matches) != 1:
                     raise ValueError(
-                        f"path {edge.source_edge_id!r} fragment does not map to one "
-                        "visibility span"
+                        f"path {edge.source_edge_id!r} fragment does not fit within "
+                        "one visibility span"
                     )
                 span = matches[0]
                 try:

@@ -17,8 +17,9 @@ object. A frame is accepted only when all of the following conditions hold:
   silently lose a source path;
 - fragments are ordered by source path and parameter interval, form a complete
   non-overlapping partition of each source path, and have positive length;
-- every fragment's visible/hidden kind and occluder provenance agree with the
-  visibility span containing its midpoint;
+- every fragment fits completely within one visibility span (up to the trace's
+  parameter epsilon), and its visible/hidden kind and occluder provenance agree
+  with that complete span;
 - paint relations are in canonical identity order, reference known items, have
   no duplicate or contradictory direction, and form an acyclic graph;
 - the draw order covers every item exactly once and equals the deterministic
@@ -50,6 +51,10 @@ identities without changing the meaning of the current frame-local IDs.
 renderer allocates objects. In addition to source face/path pairs, total
 fragments, fragment-pair candidates, and relations, it includes
 `max_fragment_face_candidates`.
+
+The new face-candidate limit is appended after the original public dataclass
+fields so existing positional construction keeps its previous meaning. New
+code should still prefer keyword arguments for clarity.
 
 The current straight-path implementation conservatively counts
 

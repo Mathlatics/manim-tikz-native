@@ -148,6 +148,37 @@ class OpenFaceUnifiedContractHardeningTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "occluders disagree"):
             replace(valid, path_fragments=tuple(wrong_provenance))
 
+    def test_fragment_cannot_cross_visibility_spans_when_midpoint_matches(self) -> None:
+        valid = self._valid_panel_frame()
+        hidden = next(
+            fragment
+            for fragment in valid.path_fragments
+            if fragment.visibility_kind is VisibilityKind.HIDDEN
+        )
+        invalid = replace(
+            hidden,
+            parameter_interval=ParameterInterval(0.0, 1.0),
+        )
+        relations = tuple(
+            relation
+            for relation in valid.order_relations
+            if relation.far_item_id in {valid.faces[0].item_id, invalid.item_id}
+            and relation.near_item_id in {valid.faces[0].item_id, invalid.item_id}
+        )
+        with self.assertRaisesRegex(ValueError, "fit within one visibility span"):
+            replace(
+                valid,
+                path_fragments=(invalid,),
+                order_relations=relations,
+                draw_order=(valid.faces[0].item_id, invalid.item_id),
+            )
+
+    def test_new_limit_preserves_original_positional_constructor_order(self) -> None:
+        limits = OpenFaceUnifiedCompositingLimits(1, 2, 3, 4, 5, 6, 7, 8)
+        self.assertEqual(limits.max_fragment_pair_candidates, 7)
+        self.assertEqual(limits.max_relations, 8)
+        self.assertEqual(limits.max_fragment_face_candidates, 262144)
+
     def test_relations_must_use_canonical_identity_order(self) -> None:
         valid = compute_open_face_unified_compositing(
             _crossing_paths_model(),
