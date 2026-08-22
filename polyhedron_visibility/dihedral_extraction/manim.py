@@ -589,6 +589,14 @@ class ExtractedDihedralOcclusion3D(ManimOcclusionBinding):
             DerivedDihedralUnifiedLayer(
                 face_sources=self.face_fill_bindings,
                 stroke_sources=self.stroke_bindings,
+                managed_roots=(
+                    *(
+                        (self._transparent_layer.root,)
+                        if self._transparent_layer is not None
+                        else ()
+                    ),
+                    *(slot.root for slot in self._slots.values()),
+                ),
             )
             if self.unified_compositing
             else None

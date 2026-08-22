@@ -385,6 +385,7 @@ class ManimOcclusionBinding:
         tolerance_policy: TolerancePolicy | None = None,
         require_closed_convex_manifold: bool = False,
         source_coordinate_mode: Literal["world", "display"] = "world",
+        allocate_overlay_slots: bool = True,
     ) -> None:
         self.scene = scene
         self.model = model
@@ -428,14 +429,24 @@ class ManimOcclusionBinding:
                 raise OcclusionBindingError(
                     f"source stroke {edge_id} must be one complete straight Manim Line"
                 )
-        self.capacities = {
-            stroke.source_edge_id: OverlayCapacity.for_stroke(stroke, model, style)
-            for stroke in model.strokes
-        }
-        self._slots = {
-            stroke.source_edge_id: _StrokeSlots(self.capacities[stroke.source_edge_id])
-            for stroke in model.strokes
-        }
+        self.capacities = (
+            {
+                stroke.source_edge_id: OverlayCapacity.for_stroke(stroke, model, style)
+                for stroke in model.strokes
+            }
+            if allocate_overlay_slots
+            else {}
+        )
+        self._slots = (
+            {
+                stroke.source_edge_id: _StrokeSlots(
+                    self.capacities[stroke.source_edge_id]
+                )
+                for stroke in model.strokes
+            }
+            if allocate_overlay_slots
+            else {}
+        )
         self.overlay_root = VGroup(*(self._slots[key].root for key in sorted(self._slots)))
 
         # Manim detects time-aware Mobject updaters by the literal ``dt``

@@ -7,6 +7,12 @@ import numpy as np
 from manim import Mobject
 
 from ..binding import OcclusionBindingError, OverlayPlan
+from ..painter_band import (
+    ManagedPainterBand,
+    ManagedPainterBandError,
+    PreparedPainterBand,
+    PreparedPainterItem,
+)
 from .compositing_manim import (
     DerivedDihedralTransparentLayer,
     PreparedDerivedDihedralTransparentFrame,
@@ -18,29 +24,14 @@ class DerivedDihedralUnifiedManimError(OcclusionBindingError):
     """Raised before one unified face/stroke paint order mutates Cairo state."""
 
 
-@dataclass(frozen=True)
-class PreparedUnifiedPaintItem:
-    item_id: str
-    mobject: Mobject
-    z_index: float
+# Compatibility export: existing callers and traces use this domain name.
+PreparedUnifiedPaintItem = PreparedPainterItem
 
 
 @dataclass(frozen=True)
 class PreparedDerivedDihedralUnifiedFrame:
     frame: DerivedDihedralUnifiedCompositingFrame
     items: tuple[PreparedUnifiedPaintItem, ...]
-
-
-def _scene_family(containers: Sequence[list[object]]) -> tuple[object, ...]:
-    result: list[object] = []
-    seen: set[int] = set()
-    for container in containers:
-        for root in container:
-            for member in root.get_family():
-                if id(member) not in seen:
-                    seen.add(id(member))
-                    result.append(member)
-    return tuple(result)
 
 
 class DerivedDihedralUnifiedLayer:
@@ -51,60 +42,25 @@ class DerivedDihedralUnifiedLayer:
         *,
         face_sources: Mapping[str, Mobject],
         stroke_sources: Mapping[str, Mobject],
+        managed_roots: Sequence[Mobject] = (),
     ) -> None:
         self.face_sources = dict(face_sources)
         self.stroke_sources = dict(stroke_sources)
-        self._z_low = 0.0
-        self._z_high = 0.0
-        self._configured = False
-        self._active_z_indices: dict[str, float] = {}
+        # Preserve the released derived-dihedral contract: authored sources
+        # define the band and must occupy distinct slots.
+        self._band = ManagedPainterBand(
+            require_distinct_source_z=True,
+            managed_roots=managed_roots,
+        )
 
     def configure(self, containers: Sequence[list[object]]) -> None:
-        if self._configured:
-            return
-        family = _scene_family(containers)
-        scene_ids = {id(item) for item in family}
-        sources = {**self.face_sources, **self.stroke_sources}
-        source_family_ids = {
-            id(member)
-            for source in sources.values()
-            for member in source.get_family()
-        }
-        z_values: dict[str, float] = {}
-        for source_id, source in sources.items():
-            if id(source) not in scene_ids:
-                raise DerivedDihedralUnifiedManimError(
-                    f"unified paint source {source_id!r} is not owned by the Scene"
-                )
-            value = float(source.z_index)
-            if not np.isfinite(value):
-                raise DerivedDihedralUnifiedManimError(
-                    f"unified paint source {source_id!r} has non-finite z_index"
-                )
-            z_values[source_id] = value
-        if len(set(z_values.values())) != len(z_values):
-            raise DerivedDihedralUnifiedManimError(
-                "unified face and stroke sources must occupy distinct authored z_index slots"
+        try:
+            self._band.configure(
+                containers=containers,
+                sources={**self.face_sources, **self.stroke_sources},
             )
-        if len(z_values) < 2:
-            raise DerivedDihedralUnifiedManimError(
-                "unified compositing requires at least two authored z_index slots"
-            )
-        low = min(z_values.values())
-        high = max(z_values.values())
-        for member in family:
-            if id(member) in source_family_ids:
-                continue
-            if not getattr(member, "has_points", lambda: False)():
-                continue
-            value = float(getattr(member, "z_index", float("nan")))
-            if low <= value <= high:
-                raise DerivedDihedralUnifiedManimError(
-                    "an unrelated Scene drawable occupies the unified face/stroke z band"
-                )
-        self._z_low = low
-        self._z_high = high
-        self._configured = True
+        except ManagedPainterBandError as exc:
+            raise DerivedDihedralUnifiedManimError(str(exc)) from exc
 
     @staticmethod
     def _validate_segment(
@@ -136,9 +92,7 @@ class DerivedDihedralUnifiedLayer:
         containers: Sequence[list[object]],
     ) -> PreparedDerivedDihedralUnifiedFrame:
         self.configure(containers)
-        batch_map = {
-            batch.batch_id: batch for batch in transparent_prepared.batches
-        }
+        batch_map = {batch.batch_id: batch for batch in transparent_prepared.batches}
         item_mobjects: dict[str, Mobject] = {}
         for batch in frame.face_batches:
             prepared = batch_map.get(batch.item_id)
@@ -146,9 +100,7 @@ class DerivedDihedralUnifiedLayer:
                 raise DerivedDihedralUnifiedManimError(
                     f"unified face batch {batch.item_id!r} lost its transparent slot"
                 )
-            item_mobjects[batch.item_id] = transparent_layer.slots[
-                prepared.slot_index
-            ]
+            item_mobjects[batch.item_id] = transparent_layer.slots[prepared.slot_index]
         for fragment in frame.stroke_fragments:
             if fragment.source_edge_id not in plans:
                 raise DerivedDihedralUnifiedManimError(
@@ -182,35 +134,27 @@ class DerivedDihedralUnifiedLayer:
                 actual_end=segment.end_parameter,
             )
             item_mobjects[fragment.item_id] = mobject
-        if set(item_mobjects) != set(frame.draw_order):
-            raise DerivedDihedralUnifiedManimError(
-                "unified draw order does not cover every active face and stroke item"
+        try:
+            prepared = self._band.prepare(
+                draw_order=frame.draw_order,
+                item_mobjects=item_mobjects,
             )
-        denominator = max(1, len(frame.draw_order) - 1)
-        items = tuple(
-            PreparedUnifiedPaintItem(
-                item_id,
-                item_mobjects[item_id],
-                self._z_low
-                + (self._z_high - self._z_low) * rank / denominator,
-            )
-            for rank, item_id in enumerate(frame.draw_order)
-        )
-        return PreparedDerivedDihedralUnifiedFrame(frame, items)
+        except ManagedPainterBandError as exc:
+            raise DerivedDihedralUnifiedManimError(str(exc)) from exc
+        return PreparedDerivedDihedralUnifiedFrame(frame, prepared.items)
 
     def apply(self, prepared: PreparedDerivedDihedralUnifiedFrame) -> None:
-        active: dict[str, float] = {}
-        for item in prepared.items:
-            item.mobject.set_z_index(item.z_index, family=True)
-            active[item.item_id] = item.z_index
-        self._active_z_indices = active
+        try:
+            self._band.apply(PreparedPainterBand(prepared.items))
+        except ManagedPainterBandError as exc:
+            raise DerivedDihedralUnifiedManimError(str(exc)) from exc
 
     @property
     def active_z_indices(self) -> dict[str, float]:
-        return dict(self._active_z_indices)
+        return self._band.active_z_indices
 
     def restore(self) -> None:
-        self._active_z_indices = {}
+        self._band.restore()
 
 
 __all__ = [

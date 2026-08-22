@@ -36,6 +36,14 @@ _EXPORTS: Final[dict[str, tuple[str, str]]] = {
     ),
     "OpenFaceBindingScaleError": (".manim", "OpenFaceBindingScaleError"),
     "OpenFaceBindingScaleLimits": (".manim", "OpenFaceBindingScaleLimits"),
+    "OPEN_FACE_UNIFIED_BINDING_SCALE_LIMITS": (
+        ".manim",
+        "OPEN_FACE_UNIFIED_BINDING_SCALE_LIMITS",
+    ),
+    "OpenFaceUnifiedBindingScaleLimits": (
+        ".manim",
+        "OpenFaceUnifiedBindingScaleLimits",
+    ),
     "OpenFaceOcclusion3D": (".manim", "OpenFaceOcclusion3D"),
     "OPEN_FACE_TRACE_SCHEMA": (".trace", "OPEN_FACE_TRACE_SCHEMA"),
     "OpenFaceEdgeVisibility": (".trace", "OpenFaceEdgeVisibility"),
