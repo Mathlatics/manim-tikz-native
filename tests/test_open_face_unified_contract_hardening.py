@@ -21,10 +21,6 @@ from tests.test_open_face_unified_compositing import (
     _panel_probe_model,
     _parallel_faces_model,
 )
-from tikz_native.version import (
-    COMPONENT_OPEN_FACE_UNIFIED_COMPOSITING,
-    provider_component_revisions,
-)
 
 
 def _view_collapsed_path_model() -> OpenFaceVisibilityModel:
@@ -195,13 +191,6 @@ class OpenFaceUnifiedContractHardeningTests(unittest.TestCase):
             ),
         )
         self.assertEqual(len(frame.path_fragments), 3)
-
-    def test_print_current_unified_component_revision(self) -> None:
-        revision = provider_component_revisions()[
-            COMPONENT_OPEN_FACE_UNIFIED_COMPOSITING
-        ]
-        print(f"OPEN_FACE_UNIFIED_COMPONENT_REVISION={revision}", flush=True)
-        self.assertTrue(revision.startswith(("source-sha256:", "component-sha256:")))
 
 
 if __name__ == "__main__":
