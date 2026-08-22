@@ -57,6 +57,29 @@ class _OpenFaceOccluderIdentity:
     logical_surface_id: str
 
 
+@dataclass(frozen=True, slots=True)
+class _OpenFaceFaceRelation:
+    """One pairwise whole-face painter relation produced by geometry."""
+
+    far_face_id: str
+    near_face_id: str
+    reason: str
+    minimum_depth_difference: float
+    maximum_depth_difference: float
+    overlap_measure: float
+
+
+@dataclass(frozen=True, slots=True)
+class _OpenFaceFacePainterSolution:
+    """Pairwise face relations plus the frozen v1 total order."""
+
+    draw_order: tuple[str, ...]
+    relations: tuple[_OpenFaceFaceRelation, ...]
+    projected_faces: Mapping[str, tuple[np.ndarray, ...]]
+    screen_epsilon: float
+    area_epsilon: float
+
+
 def _cross2(first: np.ndarray, second: np.ndarray) -> float:
     return float(first[0] * second[1] - first[1] * second[0])
 
@@ -174,53 +197,61 @@ def _face_depth_at_screen_point(
     return float(np.dot(world, np.asarray(view.view_direction, dtype=float)))
 
 
-def _authoritative_face_draw_order(
+def _solve_face_painter(
     model: OpenFaceVisibilityModel,
     positions: Mapping[str, np.ndarray],
     normals: Mapping[str, np.ndarray],
     view: ParallelView,
     policy: TolerancePolicy,
-) -> tuple[str, ...]:
-    """Solve one stable far-to-near painter order for all overlapping fills.
+) -> _OpenFaceFacePainterSolution:
+    """Return exact pairwise whole-face relations and one stable total order.
 
     Depth is compared only inside the actual projected overlap polygon.  For
     planar faces under parallel projection the depth difference is affine, so
     its extrema occur at overlap vertices.  A sign change therefore proves
     that no single whole-face painter order can represent the frame.
 
-    Geometry still owns overlap and depth relation generation.  The shared
-    compositor owns only the final deterministic topological order.
+    The pairwise relations are retained for the unified face/path compositor;
+    the existing visibility trace continues to expose only ``draw_order``.
     """
 
     projection = np.asarray(view.projection_matrix, dtype=float)
-    projected_by_face: dict[str, tuple[np.ndarray, ...]] = {}
+    raw_projected: dict[str, tuple[np.ndarray, ...]] = {}
     all_screen_points: list[np.ndarray] = []
-    ordered_faces = sorted(model.faces, key=lambda item: item.face_id)
+    ordered_faces = tuple(sorted(model.faces, key=lambda item: item.face_id))
     for face in ordered_faces:
         projected = tuple(
             np.asarray((projection @ positions[vertex_id])[:2], dtype=float)
             for vertex_id in face.vertex_ids
         )
-        projected_by_face[face.face_id] = projected
+        raw_projected[face.face_id] = projected
         all_screen_points.extend(projected)
+
     screen_values = np.asarray(all_screen_points, dtype=float)
     extent = np.max(screen_values, axis=0) - np.min(screen_values, axis=0)
     screen_scale = max(float(np.linalg.norm(extent)), policy.absolute_floor)
     screen_world = max(policy.absolute_floor, policy.relative * screen_scale)
     boundary_epsilon = policy.boundary_factor * screen_world
     area_epsilon = boundary_epsilon * screen_scale
+    projected_by_face = {
+        face.face_id: _canonical_ccw_polygon(
+            raw_projected[face.face_id],
+            point_epsilon=boundary_epsilon,
+        )
+        for face in ordered_faces
+    }
 
     constraints: list[PainterConstraint[str]] = []
+    relations: list[_OpenFaceFaceRelation] = []
     for first_index, first in enumerate(ordered_faces):
-        first_polygon = _canonical_ccw_polygon(
-            projected_by_face[first.face_id], point_epsilon=boundary_epsilon
-        )
-        if not first_polygon or abs(_polygon_signed_area(first_polygon)) <= area_epsilon:
+        first_polygon = projected_by_face[first.face_id]
+        if (
+            not first_polygon
+            or abs(_polygon_signed_area(first_polygon)) <= area_epsilon
+        ):
             continue
         for second in ordered_faces[first_index + 1 :]:
-            second_polygon = _canonical_ccw_polygon(
-                projected_by_face[second.face_id], point_epsilon=boundary_epsilon
-            )
+            second_polygon = projected_by_face[second.face_id]
             if (
                 not second_polygon
                 or abs(_polygon_signed_area(second_polygon)) <= area_epsilon
@@ -231,7 +262,8 @@ def _authoritative_face_draw_order(
                 second_polygon,
                 boundary_epsilon=boundary_epsilon,
             )
-            if len(overlap) < 3 or abs(_polygon_signed_area(overlap)) <= area_epsilon:
+            overlap_measure = abs(_polygon_signed_area(overlap))
+            if len(overlap) < 3 or overlap_measure <= area_epsilon:
                 continue
             pair_points = tuple(
                 positions[vertex_id]
@@ -266,17 +298,30 @@ def _authoritative_face_draw_order(
                 )
             if maximum <= depth_epsilon and minimum < -depth_epsilon:
                 far_id, near_id = first.face_id, second.face_id
+                reason = "face_depth"
             elif minimum >= -depth_epsilon and maximum > depth_epsilon:
                 far_id, near_id = second.face_id, first.face_id
+                reason = "face_depth"
             else:
                 # Coplanar/touching overlap has no geometric near side.  The
                 # frozen identity tie-break keeps traces byte deterministic.
                 far_id, near_id = sorted((first.face_id, second.face_id))
+                reason = "face_coplanar_tie"
             constraints.append(PainterConstraint(far_id, near_id))
+            relations.append(
+                _OpenFaceFaceRelation(
+                    far_id,
+                    near_id,
+                    reason,
+                    float(minimum),
+                    float(maximum),
+                    float(overlap_measure),
+                )
+            )
 
     face_ids = tuple(face.face_id for face in ordered_faces)
     try:
-        return stable_topological_sort(
+        draw_order = stable_topological_sort(
             face_ids,
             constraints,
             key=lambda face_id: face_id,
@@ -287,6 +332,31 @@ def _authoritative_face_draw_order(
             "FACE_ORDER_CYCLE",
             "whole-face painter order contains a cycle: " + ", ".join(cyclic),
         ) from exc
+    return _OpenFaceFacePainterSolution(
+        draw_order=draw_order,
+        relations=tuple(relations),
+        projected_faces=projected_by_face,
+        screen_epsilon=boundary_epsilon,
+        area_epsilon=area_epsilon,
+    )
+
+
+def _authoritative_face_draw_order(
+    model: OpenFaceVisibilityModel,
+    positions: Mapping[str, np.ndarray],
+    normals: Mapping[str, np.ndarray],
+    view: ParallelView,
+    policy: TolerancePolicy,
+) -> tuple[str, ...]:
+    """Compatibility wrapper returning the frozen v1 whole-face order."""
+
+    return _solve_face_painter(
+        model,
+        positions,
+        normals,
+        view,
+        policy,
+    ).draw_order
 
 
 def _segment_open_face_interval_result(

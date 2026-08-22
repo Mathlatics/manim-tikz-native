@@ -38,6 +38,7 @@ from tikz_native.version import (
     COMPONENT_NATIVE_MANIM_SOURCE_3D_V3,
     COMPONENT_NATIVE_RIG_2D,
     COMPONENT_OPEN_FACE_VISIBILITY,
+    COMPONENT_OPEN_FACE_UNIFIED_COMPOSITING,
     COMPONENT_POLYHEDRON_VISIBILITY,
     COMPONENT_TIKZ_OPEN_FACE_STATIC_ASSET_3D,
     COMPONENT_TIKZ_CONVEX_SECTION_3D,
@@ -81,7 +82,7 @@ NATIVE_SOURCE_3D_V2_REVISION = (
     "source-sha256:3783dd61ed9c86d89f0b45c403c3af4a9b5cf5181bb7d771133cfa3cb35a7912"
 )
 NATIVE_SOURCE_3D_V3_REVISION = (
-    "source-sha256:6ea462bf57a13354319b35531d78a92ced12ef5dd2f5f6f71f99aec18d653d83"
+    "source-sha256:363e8fadf63316c5f8f08c03e91ab97dbce89e5bca9a819f16c7d01b40188f4c"
 )
 EMBEDDED_MOTION_3D_REVISION = (
     "source-sha256:ff40797b718cd31fe04dd8443fffedfdeffb46648f20b026eba5bdd7c871996f"
@@ -99,13 +100,16 @@ TIKZ_POLYHEDRON_VISIBILITY_3D_REVISION = (
     "source-sha256:bf67977c039677fa92f9673b8ef7e04b1958728565871312fee07d5f1006737e"
 )
 OPEN_FACE_VISIBILITY_REVISION = (
-    "source-sha256:2825886e45e407e30bfb70e226c311753673f6a97e7f4215b3eb75bb564c243f"
+    "source-sha256:60d1802fe87e3f2e6c61cfe976e37d289301ae8bb87ee4fe75167914d2931e89"
+)
+OPEN_FACE_UNIFIED_COMPOSITING_REVISION = (
+    "source-sha256:c9f78baa283d97dbcf4c540234e291b9fb5a312cc008a3a78305844c47f1fcdc"
 )
 TIKZ_OPEN_FACE_VISIBILITY_3D_REVISION = (
-    "source-sha256:b97edebd41c22943155c7374d30316566b2213c25b9c808e7c740276e4493adb"
+    "source-sha256:7ffe4cb6bdf552ed4545a6b3bb0835e7945f1108fd83d8279d36f9d35ce3e701"
 )
 TIKZ_OPEN_FACE_STATIC_ASSET_3D_REVISION = (
-    "source-sha256:e77b655d9a43f4403e3012a1b7d251e9852ffb17001ca558c6c50745d4fb204e"
+    "source-sha256:a1e452ad86ce1ae335144c136ed8ce9f630b0f300007ecff2af4a882e982afa8"
 )
 CONVEX_SECTION_3D_REVISION = (
     "source-sha256:e50a786a5bb86e57578a4635ec365f1342e4d68cd897ea7bafacaa0236145a41"
@@ -160,6 +164,11 @@ class TikzNativeComponentRevisionTests(unittest.TestCase):
 
         self.assertEqual(asset["revision"], revisions[COMPONENT_ASSET_COMPILER])
         self.assertEqual(asset["revision_component"], COMPONENT_ASSET_COMPILER)
+        self.assertTrue(
+            asset["capabilities"][
+                "open_convex_face_unified_compositing_parallel_v1"
+            ]
+        )
         self.assertEqual(
             motion_2d["revision"], revisions[COMPONENT_MOTION_PREVIEW_2D]
         )
@@ -235,6 +244,9 @@ class TikzNativeComponentRevisionTests(unittest.TestCase):
                 TIKZ_CONVEX_SECTION_3D_REVISION
             ),
             COMPONENT_OPEN_FACE_VISIBILITY: OPEN_FACE_VISIBILITY_REVISION,
+            COMPONENT_OPEN_FACE_UNIFIED_COMPOSITING: (
+                OPEN_FACE_UNIFIED_COMPOSITING_REVISION
+            ),
             COMPONENT_TIKZ_OPEN_FACE_VISIBILITY_3D: (
                 TIKZ_OPEN_FACE_VISIBILITY_3D_REVISION
             ),
@@ -262,6 +274,9 @@ class TikzNativeComponentRevisionTests(unittest.TestCase):
                 TIKZ_CONVEX_SECTION_3D_REVISION
             ),
             COMPONENT_OPEN_FACE_VISIBILITY: OPEN_FACE_VISIBILITY_REVISION,
+            COMPONENT_OPEN_FACE_UNIFIED_COMPOSITING: (
+                OPEN_FACE_UNIFIED_COMPOSITING_REVISION
+            ),
             COMPONENT_TIKZ_OPEN_FACE_VISIBILITY_3D: (
                 TIKZ_OPEN_FACE_VISIBILITY_3D_REVISION
             ),
@@ -426,6 +441,10 @@ print(json.dumps({
             baseline[COMPONENT_OPEN_FACE_VISIBILITY],
         )
         self.assertNotEqual(
+            components[COMPONENT_OPEN_FACE_UNIFIED_COMPOSITING],
+            baseline[COMPONENT_OPEN_FACE_UNIFIED_COMPOSITING],
+        )
+        self.assertNotEqual(
             components[COMPONENT_TIKZ_OPEN_FACE_VISIBILITY_3D],
             baseline[COMPONENT_TIKZ_OPEN_FACE_VISIBILITY_3D],
         )
@@ -450,6 +469,7 @@ print(json.dumps({
                 COMPONENT_TIKZ_POLYHEDRON_VISIBILITY_3D,
                 COMPONENT_TIKZ_CONVEX_SECTION_3D,
                 COMPONENT_OPEN_FACE_VISIBILITY,
+                COMPONENT_OPEN_FACE_UNIFIED_COMPOSITING,
                 COMPONENT_TIKZ_OPEN_FACE_VISIBILITY_3D,
                 COMPONENT_TIKZ_OPEN_FACE_STATIC_ASSET_3D,
                 COMPONENT_NATIVE_MANIM_SOURCE_3D_V3,
@@ -562,6 +582,7 @@ print(json.dumps({
         self.assertNotEqual(mutated["build"], provider_revision())
         for component in (
             COMPONENT_OPEN_FACE_VISIBILITY,
+            COMPONENT_OPEN_FACE_UNIFIED_COMPOSITING,
             COMPONENT_TIKZ_OPEN_FACE_VISIBILITY_3D,
             COMPONENT_TIKZ_OPEN_FACE_STATIC_ASSET_3D,
             COMPONENT_NATIVE_MANIM_SOURCE_3D_V3,
@@ -570,10 +591,27 @@ print(json.dumps({
         for component in baseline:
             if component in {
                 COMPONENT_OPEN_FACE_VISIBILITY,
+                COMPONENT_OPEN_FACE_UNIFIED_COMPOSITING,
                 COMPONENT_TIKZ_OPEN_FACE_VISIBILITY_3D,
                 COMPONENT_TIKZ_OPEN_FACE_STATIC_ASSET_3D,
                 COMPONENT_NATIVE_MANIM_SOURCE_3D_V3,
             }:
+                continue
+            self.assertEqual(components[component], baseline[component])
+
+    def test_editing_open_face_unified_core_changes_only_its_component(self) -> None:
+        baseline = provider_component_revisions()
+        mutated = self._probe_copy(
+            "@tool/polyhedron_visibility/open_faces/unified_compositing.py"
+        )
+        components = mutated["components"]
+        self.assertNotEqual(mutated["build"], provider_revision())
+        self.assertNotEqual(
+            components[COMPONENT_OPEN_FACE_UNIFIED_COMPOSITING],
+            baseline[COMPONENT_OPEN_FACE_UNIFIED_COMPOSITING],
+        )
+        for component in baseline:
+            if component == COMPONENT_OPEN_FACE_UNIFIED_COMPOSITING:
                 continue
             self.assertEqual(components[component], baseline[component])
 
@@ -656,6 +694,7 @@ print(json.dumps({
                 COMPONENT_POLYHEDRON_VISIBILITY,
                 COMPONENT_FACE_DEPTH_CUE_3D,
                 COMPONENT_OPEN_FACE_VISIBILITY,
+                COMPONENT_OPEN_FACE_UNIFIED_COMPOSITING,
                 COMPONENT_CONVEX_SECTION_3D,
                 COMPONENT_COPY_IDENTITY_HANDOFF,
                 COMPONENT_DERIVED_DIHEDRAL_VISIBILITY,

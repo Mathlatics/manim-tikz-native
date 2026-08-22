@@ -163,14 +163,38 @@ shared cycle errors back to the existing derived-dihedral error contract. The
 fail-closed exception type is preserved for malformed self-relations; the exact
 residual-node list in that diagnostic is not part of the compatibility contract.
 
-The remaining migration should stay small and reviewable:
+The renderer-neutral open-face unified-compositing stage is now a separate
+Provider component.  It preserves the frozen v1 visibility frame, then splits
+straight semantic paths at visibility boundaries, finite-face overlap/depth
+events, projected path crossings, and direction-preserving collinear overlap
+events.  The result contains only face identities, path-fragment parameter
+intervals, visibility provenance, pairwise paint relations, and a validated
+deterministic draw order; it imports neither Manim nor render-slot concepts.
 
-1. promote the derived-dihedral face/stroke relation generator into a reusable
-   open-face compositing stage;
-2. route both generic and TikZ-native open-face Manim bindings through that
-   shared face/stroke stage;
-3. use the same layers for conics and quadrics rather than adding a parallel
-   curved-geometry visibility stack.
+Its two paint policies deliberately answer different questions.  The
+`physical` policy orders every positive-area face/path overlap by actual view
+depth.  The `diagrammatic` policy treats semantic path ink as the foreground
+over every overlapping face fill; visibility still decides whether that ink
+is solid or dashed.  Explicit coplanar declarations keep the same ink-over-fill
+rule, while an undeclared depth tie remains a fail-closed authoring error.
+
+Projected path/path intersections are computed once per source-path pair and
+reused both for fragmentation and for painter-relation generation.  Point
+events are localized only to the adjacent fragments, and collinear overlaps
+are matched with a parameter-ordered sweep instead of comparing the Cartesian
+product of all fragments.  A separate fragment-pair-candidate limit fails
+closed before an unexpectedly dense arrangement can consume unbounded work.
+
+The next migration should remain a separate product-binding change:
+
+1. map these renderer-neutral fragments to preallocated generic open-face Cairo
+   slots and one managed painter z-band;
+2. make frame application rollback-safe and cover fade/restore/reattach
+   lifecycles;
+3. route the actual TikZ-native generated-source path through an explicit,
+   persisted unified-compositing mode;
+4. use the same path-fragment contracts for conics and quadrics rather than
+   adding a parallel curved-geometry visibility stack.
 
 ## Invariants for future curved geometry
 

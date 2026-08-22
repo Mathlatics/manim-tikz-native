@@ -90,6 +90,7 @@ def provider_info(
             "tikz_convex_polyhedron_section_3d_v1": True,
             "tikz_convex_section_transparent_compositing_3d_v1": True,
             "open_convex_face_visibility_parallel_v1": True,
+            "open_convex_face_unified_compositing_parallel_v1": True,
             "tikz_open_face_visibility_3d_v1": True,
             "tikz_open_face_static_asset_3d_v1": True,
             "provider_component_revisions_v1": True,

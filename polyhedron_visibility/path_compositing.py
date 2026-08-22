@@ -42,8 +42,14 @@ def line_convex_polygon_interval(
         slope = orientation * float(
             edge[0] * direction[1] - edge[1] * direction[0]
         )
-        threshold = -epsilon * max(float(np.linalg.norm(edge)), epsilon)
-        if abs(slope) <= epsilon * max(length, 1.0):
+        edge_length = float(np.linalg.norm(edge))
+        threshold = -epsilon * max(edge_length, epsilon)
+        # ``slope`` is a 2D cross product with units of length squared.
+        # Compare it with the half-space boundary tolerance in the same units;
+        # a hard unit-length floor would classify every small-scale crossing as
+        # parallel and can turn a tiny endpoint touch into full-segment overlap.
+        slope_tolerance = epsilon * max(edge_length, epsilon)
+        if abs(slope) <= slope_tolerance:
             if value < threshold:
                 return None
             continue
@@ -106,12 +112,21 @@ def segment_intersection_parameters(
     if overlap_high - overlap_low <= epsilon or abs(scalar_delta) <= epsilon:
         return None
     first_a, first_b = overlap_low / first_length, overlap_high / first_length
-    second_a = (overlap_low - second_low) / scalar_delta
-    second_b = (overlap_high - second_low) / scalar_delta
-    second_a, second_b = sorted((second_a, second_b))
-    second_a = min(1.0, max(0.0, second_a))
-    second_b = min(1.0, max(0.0, second_b))
-    if second_b - second_a <= epsilon / second_length:
+    # Preserve correspondence between the two segments.  ``first_a`` and
+    # ``second_a`` describe the same projected point, as do ``first_b`` and
+    # ``second_b``.  The second parameters are intentionally allowed to run
+    # from high to low when the second segment is oriented opposite to the
+    # first; sorting them independently would move a depth-exchange root to a
+    # different screen point.
+    second_a = min(
+        1.0,
+        max(0.0, (overlap_low - second_low) / scalar_delta),
+    )
+    second_b = min(
+        1.0,
+        max(0.0, (overlap_high - second_low) / scalar_delta),
+    )
+    if abs(second_b - second_a) <= epsilon / second_length:
         return None
     return "overlap", (first_a, first_b, second_a, second_b)
 

@@ -8,6 +8,7 @@ import json
 
 import numpy as np
 
+from ..compositor import CompositorCycleError, PainterConstraint, stable_topological_sort
 from ..topology import ParameterInterval
 from ..visibility import VisibilityKind
 from .trace import OpenFaceVisibilityFrame
@@ -46,6 +47,7 @@ class OpenFaceUnifiedCompositingLimits:
     max_line_line_pairs: int = 4096
     max_fragments_per_path: int = 1024
     max_total_fragments: int = 32768
+    max_fragment_pair_candidates: int = 262144
     max_relations: int = 262144
 
     def __post_init__(self) -> None:
@@ -180,13 +182,75 @@ class OpenFaceUnifiedCompositingFrame:
     def __post_init__(self) -> None:
         if self.schema != OPEN_FACE_UNIFIED_COMPOSITING_SCHEMA:
             raise ValueError("invalid unified-compositing schema")
+        if not isinstance(self.visibility, OpenFaceVisibilityFrame):
+            raise TypeError("visibility must be an OpenFaceVisibilityFrame")
         if not isinstance(self.paint_policy, OpenFacePaintPolicy):
             raise TypeError("paint_policy must be an OpenFacePaintPolicy")
+        if not all(isinstance(item, OpenFacePaintFace) for item in self.faces):
+            raise TypeError("faces must contain OpenFacePaintFace values")
+        if not all(
+            isinstance(item, PaintPathFragment) for item in self.path_fragments
+        ):
+            raise TypeError("path_fragments must contain PaintPathFragment values")
+        visibility_path_ids = set(self.visibility.edge_map)
+        unknown_paths = sorted(
+            {item.source_path_id for item in self.path_fragments}
+            - visibility_path_ids
+        )
+        if unknown_paths:
+            raise ValueError(
+                "path fragments reference unknown visibility paths: "
+                + ", ".join(unknown_paths)
+            )
+        if not all(
+            isinstance(item, OpenFacePaintRelation) for item in self.order_relations
+        ):
+            raise TypeError("order_relations must contain OpenFacePaintRelation values")
+
         item_ids = self.item_ids
-        if len(set(item_ids)) != len(item_ids):
+        item_set = set(item_ids)
+        if len(item_set) != len(item_ids):
             raise ValueError("paint item identities must be unique")
-        if set(self.draw_order) != set(item_ids) or len(self.draw_order) != len(item_ids):
+        if set(self.draw_order) != item_set or len(self.draw_order) != len(item_ids):
             raise ValueError("draw_order must cover every paint item exactly once")
+
+        directions: set[tuple[str, str]] = set()
+        constraints: list[PainterConstraint[str]] = []
+        for relation in self.order_relations:
+            direction = (relation.far_item_id, relation.near_item_id)
+            if relation.far_item_id not in item_set or relation.near_item_id not in item_set:
+                raise ValueError("paint relation references an unknown item")
+            if direction in directions:
+                raise ValueError("duplicate paint relation direction")
+            if (direction[1], direction[0]) in directions:
+                raise ValueError("paint relations contain contradictory directions")
+            directions.add(direction)
+            constraints.append(PainterConstraint(*direction))
+
+        try:
+            canonical_order = stable_topological_sort(
+                item_ids,
+                constraints,
+                key=lambda item_id: item_id,
+            )
+        except CompositorCycleError as exc:
+            unresolved = ", ".join(sorted(str(item) for item in exc.unresolved))
+            raise ValueError(
+                "paint relations contain a cycle: " + unresolved
+            ) from exc
+
+        rank = {item_id: index for index, item_id in enumerate(self.draw_order)}
+        for relation in self.order_relations:
+            if rank[relation.far_item_id] >= rank[relation.near_item_id]:
+                raise ValueError(
+                    "draw_order contradicts a paint relation: "
+                    f"{relation.far_item_id!r} must precede "
+                    f"{relation.near_item_id!r}"
+                )
+        if self.draw_order != canonical_order:
+            raise ValueError(
+                "draw_order must be the canonical deterministic topological order"
+            )
 
     @property
     def item_ids(self) -> tuple[str, ...]:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Mapping, Sequence
 
 import numpy as np
@@ -27,6 +28,60 @@ from .unified_contract import (
 _PAINTER_EVENT_EPSILON_FACTOR = 1024.0
 
 
+@dataclass(frozen=True, slots=True)
+class _ProjectedPathPairEvent:
+    """One projected event expressed in complete source-path parameters."""
+
+    first_path_id: str
+    second_path_id: str
+    kind: str
+    parameters: tuple[float, ...]
+
+
+def _compute_projected_path_pair_events(
+    model: OpenFaceVisibilityModel,
+    positions: Mapping[str, np.ndarray],
+    view: ParallelView,
+    screen_epsilon: float,
+) -> tuple[_ProjectedPathPairEvent, ...]:
+    """Intersect every source-path pair once in stable identity order."""
+
+    matrix = np.asarray(view.projection_matrix, dtype=float)
+    strokes = tuple(sorted(model.strokes, key=lambda item: item.source_edge_id))
+    screens: dict[str, np.ndarray] = {}
+    for stroke in strokes:
+        world = np.asarray(
+            (positions[stroke.vertex_ids[0]], positions[stroke.vertex_ids[1]]),
+            dtype=float,
+        )
+        screens[stroke.source_edge_id] = world @ matrix[:2].T
+
+    result: list[_ProjectedPathPairEvent] = []
+    for first_index, first in enumerate(strokes):
+        first_screen = screens[first.source_edge_id]
+        for second in strokes[first_index + 1 :]:
+            second_screen = screens[second.source_edge_id]
+            hit = segment_intersection_parameters(
+                first_screen[0],
+                first_screen[1],
+                second_screen[0],
+                second_screen[1],
+                screen_epsilon,
+            )
+            if hit is None:
+                continue
+            kind, parameters = hit
+            result.append(
+                _ProjectedPathPairEvent(
+                    first.source_edge_id,
+                    second.source_edge_id,
+                    kind,
+                    tuple(float(value) for value in parameters),
+                )
+            )
+    return tuple(result)
+
+
 def _add_boundary(
     values: dict[str, list[float]],
     priorities: dict[str, dict[float, int]],
@@ -47,9 +102,18 @@ def _cluster_boundaries(
     priorities: Mapping[float, int],
     tolerance: float,
 ) -> list[float]:
+    if not np.isfinite(tolerance) or tolerance < 0.0:
+        raise ValueError("boundary-cluster tolerance must be finite and non-negative")
+    ordered = [float(value) for value in sorted(values)]
+    if any(not np.isfinite(value) for value in ordered):
+        raise ValueError("painter boundaries must be finite")
+
+    # A cluster is bounded by its first member, not by a chain of adjacent
+    # near-neighbours.  The latter can swallow arbitrarily distant real events
+    # when every consecutive gap happens to lie inside the tolerance.
     clusters: list[list[float]] = []
-    for value in sorted(values):
-        if not clusters or abs(value - clusters[-1][-1]) > tolerance:
+    for value in ordered:
+        if not clusters or value - clusters[-1][0] > tolerance:
             clusters.append([value])
         else:
             clusters[-1].append(value)
@@ -75,6 +139,7 @@ def compute_path_fragments(
     projected_faces: Mapping[str, tuple[np.ndarray, ...]],
     screen_epsilon: float,
     limits: OpenFaceUnifiedCompositingLimits,
+    pair_events: Sequence[_ProjectedPathPairEvent] | None = None,
 ) -> tuple[PaintPathFragment, ...]:
     """Split semantic paths at visibility and painter-order events."""
 
@@ -128,82 +193,84 @@ def compute_path_fragments(
             epsilon = policy.resolve(
                 (world[0], world[1], *(positions[key] for key in face.vertex_ids))
             ).depth
-            if (first < -epsilon < last) or (last < -epsilon < first):
-                if first * last < 0.0:
-                    root = interval[0] - first * (interval[1] - interval[0]) / (
-                        last - first
-                    )
-                    _add_boundary(boundaries, priorities, path_id, root, 2)
+            if (
+                first < -epsilon and last > epsilon
+            ) or (last < -epsilon and first > epsilon):
+                root = interval[0] - first * (interval[1] - interval[0]) / (
+                    last - first
+                )
+                _add_boundary(boundaries, priorities, path_id, root, 2)
+
+    strokes = tuple(sorted(model.strokes, key=lambda item: item.source_edge_id))
+    events = (
+        tuple(pair_events)
+        if pair_events is not None
+        else _compute_projected_path_pair_events(
+            model,
+            positions,
+            view,
+            screen_epsilon,
+        )
+    )
 
     # Localize projected path crossings and collinear overlap/depth events.
-    strokes = tuple(sorted(model.strokes, key=lambda item: item.source_edge_id))
-    for first_index, first in enumerate(strokes):
+    for event in events:
+        first = model.stroke_map[event.first_path_id]
+        second = model.stroke_map[event.second_path_id]
         first_world = np.asarray(
             (positions[first.vertex_ids[0]], positions[first.vertex_ids[1]]),
             dtype=float,
         )
-        first_screen = first_world @ matrix[:2].T
         first_depth = first_world @ direction
-        for second in strokes[first_index + 1 :]:
-            second_world = np.asarray(
-                (positions[second.vertex_ids[0]], positions[second.vertex_ids[1]]),
-                dtype=float,
+        second_world = np.asarray(
+            (positions[second.vertex_ids[0]], positions[second.vertex_ids[1]]),
+            dtype=float,
+        )
+        second_depth = second_world @ direction
+        values = event.parameters
+        if event.kind == "point":
+            first_t, second_t = values
+            _add_boundary(boundaries, priorities, first.source_edge_id, first_t, 2)
+            _add_boundary(boundaries, priorities, second.source_edge_id, second_t, 2)
+            continue
+        first_a, first_b, second_a, second_b = values
+        for path_id, low, high in (
+            (first.source_edge_id, first_a, first_b),
+            (second.source_edge_id, second_a, second_b),
+        ):
+            _add_boundary(boundaries, priorities, path_id, low, 2)
+            _add_boundary(boundaries, priorities, path_id, high, 2)
+        differences = (
+            float(
+                first_depth[0] + first_a * (first_depth[1] - first_depth[0])
+                - second_depth[0]
+                - second_a * (second_depth[1] - second_depth[0])
+            ),
+            float(
+                first_depth[0] + first_b * (first_depth[1] - first_depth[0])
+                - second_depth[0]
+                - second_b * (second_depth[1] - second_depth[0])
+            ),
+        )
+        depth_epsilon = policy.resolve(
+            (first_world[0], first_world[1], second_world[0], second_world[1])
+        ).depth
+        if differences[0] * differences[1] < -(depth_epsilon * depth_epsilon):
+            ratio = -differences[0] / (differences[1] - differences[0])
+            _add_boundary(
+                boundaries,
+                priorities,
+                first.source_edge_id,
+                first_a + ratio * (first_b - first_a),
+                2,
             )
-            second_screen = second_world @ matrix[:2].T
-            second_depth = second_world @ direction
-            hit = segment_intersection_parameters(
-                first_screen[0],
-                first_screen[1],
-                second_screen[0],
-                second_screen[1],
-                screen_epsilon,
+            _add_boundary(
+                boundaries,
+                priorities,
+                second.source_edge_id,
+                second_a + ratio * (second_b - second_a),
+                2,
             )
-            if hit is None:
-                continue
-            kind, values = hit
-            if kind == "point":
-                first_t, second_t = values
-                _add_boundary(boundaries, priorities, first.source_edge_id, first_t, 2)
-                _add_boundary(boundaries, priorities, second.source_edge_id, second_t, 2)
-                continue
-            first_a, first_b, second_a, second_b = values
-            for path_id, low, high in (
-                (first.source_edge_id, first_a, first_b),
-                (second.source_edge_id, second_a, second_b),
-            ):
-                _add_boundary(boundaries, priorities, path_id, low, 2)
-                _add_boundary(boundaries, priorities, path_id, high, 2)
-            differences = (
-                float(
-                    first_depth[0] + first_a * (first_depth[1] - first_depth[0])
-                    - second_depth[0]
-                    - second_a * (second_depth[1] - second_depth[0])
-                ),
-                float(
-                    first_depth[0] + first_b * (first_depth[1] - first_depth[0])
-                    - second_depth[0]
-                    - second_b * (second_depth[1] - second_depth[0])
-                ),
-            )
-            depth_epsilon = policy.resolve(
-                (first_world[0], first_world[1], second_world[0], second_world[1])
-            ).depth
-            if differences[0] * differences[1] < -(depth_epsilon * depth_epsilon):
-                ratio = -differences[0] / (differences[1] - differences[0])
-                _add_boundary(
-                    boundaries,
-                    priorities,
-                    first.source_edge_id,
-                    first_a + ratio * (first_b - first_a),
-                    2,
-                )
-                _add_boundary(
-                    boundaries,
-                    priorities,
-                    second.source_edge_id,
-                    second_a + ratio * (second_b - second_a),
-                    2,
-                )
 
     result: list[PaintPathFragment] = []
     for stroke in strokes:
