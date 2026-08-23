@@ -231,10 +231,22 @@ def _resolve_context(
         for surface in surfaces
         for point in surface.characteristic_points
     )
+    def curve_probe(curve: AnalyticCurve3D, index: int) -> tuple[float, float, float]:
+        # Reconstructing the upper endpoint as ``start + length`` can round one
+        # ULP beyond ``domain.end`` for large or asymmetric conic parameters.
+        # Preserve the authored endpoints exactly and interpolate only the
+        # three interior probes.
+        if index == 0:
+            parameter = curve.domain.start
+        elif index == 4:
+            parameter = curve.domain.end
+        else:
+            ratio = index / 4.0
+            parameter = (1.0 - ratio) * curve.domain.start + ratio * curve.domain.end
+        return curve.point(parameter)
+
     curve_points = tuple(
-        curve.point(curve.domain.start + curve.domain.length * index / 4.0)
-        for curve in curves
-        for index in range(5)
+        curve_probe(curve, index) for curve in curves for index in range(5)
     )
     return resolve_geometry_context(context, positions=(*points, *curve_points))
 

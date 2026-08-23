@@ -18,6 +18,11 @@ TikZ 图压成一张 SVG 或图片。转换后的直线、面、点、标签仍�
 分离的凸二次曲面可以共同参加同一份全局遮挡；如果实体相交或出现无法证明的
 循环前后关系，模块会明确报错，不会猜测画面。
 
+当旋转截平面使圆锥截线依次变成椭圆、抛物线和双曲线时，Manim 控制器会自动
+使用两组预先建立的曲线槽位交接画面。临界位置使用解析计算得到的真正抛物线，
+前后短暂交叉淡化；所有曲线始终进入同一套曲面遮挡和绘图排序，不会在动画中途
+临时创建、删除或冒充另一种数学分支。
+
 在闭合凸多面体上，还可以继续加入两类对象：
 
 - 独立直线：自动计算直线进入、穿过和离开实体的位置，实体内部的部分自动画成
@@ -130,7 +135,8 @@ manim -pql \
 # 球面、圆柱、圆锥截口，以及多个二次曲面的全局遮挡
 manim -pql examples/quadrics/quadric_occlusion_demo.py \
   MovingSphereSectionDemo ObliqueCylinderSectionDemo \
-  ConeSectionFamiliesDemo GlobalQuadricOcclusionDemo
+  ConeSectionFamiliesDemo ConeSectionTopologyTransitionDemo \
+  GlobalQuadricOcclusionDemo
 ```
 
 其中往返示例会让高亮复制体完成分离、同步旋转，再重新回到与原形状完全重合的

@@ -445,6 +445,8 @@ points are:
 - `fit_plane_display_patch()`;
 - `compute_plane_motion_schedule()`,
   `track_scheduled_plane_section()`, and `track_moving_section_point()`;
+- `build_section_transition_plan()` and
+  `QuadricSectionTransition3D`;
 - `QuadricOcclusion3D`, `QuadricManimStyle`, and `QuadricManimLimits`.
 
 The Manim binding accepts immutable surface/curve sequences or callbacks that
@@ -456,6 +458,15 @@ prepared painter frame transactionally.  Its default
 `surface_order_mode="automatic"` recomputes the certified global frame on each
 update and exposes the committed evidence through `last_global_frame`;
 `surface_order_mode="explicit"` retains the legacy manual-constraint path.
+
+`QuadricSectionTransition3D` is the topology-changing companion to
+`QuadricOcclusion3D`.  It consumes a `ScheduledSectionAnimation` and a
+normalized progress source, reserves two banks of curve slots once, and uses
+the exact analytic event frames to hand off ellipse, parabola, and hyperbola
+families.  Cross-fading curves from both banks stay inside one ordinary
+quadric visibility solve and one painter graph.  The updater therefore neither
+creates nor removes Manim objects, and sampling the same progress gives the
+same result in forward or reverse playback.
 
 Global ordering accepts a bounded set of pairwise-strictly-separated convex
 spheres, capped finite cylinders, and one-nappe cones/frusta.  Intersecting

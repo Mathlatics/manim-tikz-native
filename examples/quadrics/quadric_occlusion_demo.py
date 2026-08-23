@@ -4,7 +4,8 @@ Render all scenes at preview quality with::
 
     manim -pql examples/quadrics/quadric_occlusion_demo.py \
       MovingSphereSectionDemo ObliqueCylinderSectionDemo \
-      ConeSectionFamiliesDemo GlobalQuadricOcclusionDemo
+      ConeSectionFamiliesDemo ConeSectionTopologyTransitionDemo \
+      GlobalQuadricOcclusionDemo
 
 The mathematical surface and curve records are immutable Python data.  During
 an animation the callbacks create a fresh record for the current tracker
@@ -16,7 +17,7 @@ from __future__ import annotations
 from math import pi, sqrt
 
 import numpy as np
-from manim import DOWN, UP, Scene, Text, ValueTracker, smooth
+from manim import DOWN, UP, Polygon, Scene, Text, ValueTracker, smooth
 
 from polyhedron_visibility.parallel_solver import ParallelView
 from polyhedron_visibility.quadrics.contract import (
@@ -30,8 +31,16 @@ from polyhedron_visibility.quadrics.manim import (
     QuadricManimStyle,
     QuadricOcclusion3D,
 )
+from polyhedron_visibility.quadrics.plane_motion import (
+    AxisAnglePlaneMotion,
+    track_scheduled_plane_section,
+)
+from polyhedron_visibility.quadrics.plane_patch import fit_plane_display_patch
 from polyhedron_visibility.quadrics.sections import compute_quadric_section
 from polyhedron_visibility.quadrics.trace import section_trace_curves
+from polyhedron_visibility.quadrics.transition_manim import (
+    QuadricSectionTransition3D,
+)
 
 
 DEMO_VIEW = ParallelView.from_matrix(
@@ -51,10 +60,12 @@ CONE_VIEW = ParallelView.from_matrix(
 )
 
 
-def _style(*, fill_color: str = "#3B82F6") -> QuadricManimStyle:
+def _style(
+    *, fill_color: str = "#3B82F6", fill_opacity: float = 1.0
+) -> QuadricManimStyle:
     return QuadricManimStyle(
         surface_fill_color=fill_color,
-        surface_fill_opacity=1.0,
+        surface_fill_opacity=fill_opacity,
         surface_stroke_color="#17324F",
         surface_stroke_width=1.6,
         visible_curve_color="#F6C344",
@@ -220,6 +231,126 @@ class ConeSectionFamiliesDemo(Scene):
                 )
             )
         self.wait(2.5)
+        controller.restore()
+
+
+class ConeSectionTopologyTransitionDemo(Scene):
+    """One rotating plane automatically hands off ellipse/parabola/hyperbola."""
+
+    def construct(self) -> None:
+        _title(
+            self,
+            "Automatic conic-family handoff",
+            "ellipse → exact parabola → hyperbola, with continuous occlusion",
+        )
+        cone = ConeSpec(
+            "transition-cone",
+            (0.0, 0.0, -1.5),
+            (0.0, 0.0, 1.0),
+            pi / 6.0,
+            (0.0, 4.0),
+            radial_axis=(1.0, 0.0, 0.0),
+        )
+        motion = AxisAnglePlaneMotion(
+            "transition-plane-motion",
+            SectionPlane(
+                "transition-plane",
+                (0.0, 0.0, 0.2),
+                (0.0, 0.0, 1.0),
+                u_axis=(1.0, 0.0, 0.0),
+            ),
+            (0.0, 0.0, 0.2),
+            (0.0, 1.0, 0.0),
+            0.72,
+            1.35,
+        )
+        scheduled = track_scheduled_plane_section(
+            "transition-section", cone, motion
+        )
+        progress = ValueTracker(0.0)
+
+        def projected_patch_points() -> np.ndarray:
+            plane = motion.plane_at(progress.get_value())
+            fitted = fit_plane_display_patch(
+                "transition-plane-patch", plane, (cone,), margin_ratio=0.08
+            )
+            u_axis, v_axis, _normal = plane.basis
+            center = (
+                np.asarray(plane.point, dtype=float)
+                + fitted.patch.center_coordinates[0] * u_axis
+                + fitted.patch.center_coordinates[1] * v_axis
+            )
+            corners = tuple(
+                center
+                + sign_u * fitted.patch.half_width * u_axis
+                + sign_v * fitted.patch.half_height * v_axis
+                for sign_u, sign_v in ((-1, -1), (1, -1), (1, 1), (-1, 1))
+            )
+            return np.asarray(
+                [
+                    (
+                        float((CONE_VIEW.matrix @ point)[0]),
+                        float((CONE_VIEW.matrix @ point)[1]),
+                        0.0,
+                    )
+                    for point in corners
+                ],
+                dtype=float,
+            )
+
+        initial_patch = projected_patch_points()
+        plane_patch = Polygon(*initial_patch)
+        plane_patch.set_fill("#63C7B2", opacity=0.15)
+        plane_patch.set_stroke("#2C8C7A", width=1.4, opacity=0.65)
+        plane_patch.set_z_index(19.0)
+
+        def update_patch(value: Polygon, dt: float) -> None:
+            del dt
+            points = projected_patch_points()
+            value.set_points_as_corners(np.vstack((points, points[0])))
+
+        plane_patch.add_updater(update_patch)
+        self.add(plane_patch)
+
+        labels = tuple(
+            Text(name, font_size=20, color="#6B4F1D").move_to((x, -3.25, 0.0))
+            for name, x in (("ELLIPSE", -2.7), ("PARABOLA", 0.0), ("HYPERBOLA", 2.9))
+        )
+        self.add(*labels)
+
+        controller = QuadricSectionTransition3D(
+            self,
+            scheduled=scheduled,
+            progress=progress,
+            projection=CONE_VIEW,
+            transition_fraction=0.055,
+            paint_policy="diagrammatic",
+            style=_style(fill_color="#5275A8", fill_opacity=0.76),
+            max_chord_error=0.008,
+        ).attach()
+
+        family_names = ("oval", "parabola", "hyperbola")
+        for label, family in zip(labels, family_names):
+            def update_label(value: Text, dt: float, family_name: str = family) -> None:
+                del dt
+                weight = sum(
+                    layer.opacity
+                    for layer, signature in zip(
+                        controller.transition_frame.layers,
+                        controller.active_signatures,
+                    )
+                    if signature.conic_family.value == family_name
+                )
+                value.set_opacity(0.28 + 0.72 * weight)
+
+            label.add_updater(update_label)
+
+        self.wait(0.5)
+        self.play(progress.animate.set_value(1.0), run_time=6.0, rate_func=smooth)
+        self.wait(0.7)
+        for label in labels:
+            label.clear_updaters()
+        plane_patch.clear_updaters()
         controller.restore()
 
 

@@ -13,8 +13,11 @@ from polyhedron_visibility.open_faces import OpenFaceScene3D
 from polyhedron_visibility.quadrics import (
     ConeSpec,
     CylinderSpec,
+    QuadricSectionTransition3D,
     SectionPlane,
+    SectionTransitionPlan,
     SphereSpec,
+    build_section_transition_plan,
     compute_quadric_section,
 )
 from tikz_native.manim_renderer import DEFAULT_TEX_TEMPLATE
@@ -51,6 +54,11 @@ class PublicPackageTests(unittest.TestCase):
         self.assertEqual(CylinderSpec.__name__, "CylinderSpec")
         self.assertEqual(ConeSpec.__name__, "ConeSpec")
         self.assertEqual(SectionPlane.__name__, "SectionPlane")
+        self.assertEqual(SectionTransitionPlan.__name__, "SectionTransitionPlan")
+        self.assertEqual(
+            QuadricSectionTransition3D.__name__, "QuadricSectionTransition3D"
+        )
+        self.assertTrue(callable(build_section_transition_plan))
         self.assertTrue(callable(compute_quadric_section))
 
         completed = subprocess.run(
@@ -58,7 +66,10 @@ class PublicPackageTests(unittest.TestCase):
                 sys.executable,
                 "-c",
                 (
-                    "import sys; import polyhedron_visibility.quadrics; "
+                    "import sys; from polyhedron_visibility.quadrics import "
+                    "SectionTransitionPlan, build_section_transition_plan; "
+                    "assert SectionTransitionPlan.__name__; "
+                    "assert callable(build_section_transition_plan); "
                     "assert 'manim' not in sys.modules"
                 ),
             ],

@@ -97,6 +97,7 @@ def provider_info(
             "generated_open_face_visibility_3d_v1": True,
             "quadric_occlusion_parallel_v1": True,
             "quadric_section_animation_trace_v1": True,
+            "quadric_section_topology_transition_manim_v1": True,
             "quadric_global_compositing_v1": True,
             "provider_component_revisions_v1": True,
             "provider_component_contract_revisions_v1": True,

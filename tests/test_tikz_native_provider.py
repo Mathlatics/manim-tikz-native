@@ -97,9 +97,10 @@ class TikzNativeProviderTests(unittest.TestCase):
         self.assertTrue(
             info["capabilities"]["quadric_section_animation_trace_v1"]
         )
-        self.assertNotIn(
-            "quadric_section_animation_v1",
-            info["capabilities"],
+        self.assertTrue(
+            info["capabilities"][
+                "quadric_section_topology_transition_manim_v1"
+            ]
         )
         self.assertTrue(
             info["capabilities"]["quadric_global_compositing_v1"]

@@ -69,6 +69,9 @@ QuadricSurfaceSpec = SphereSpec | CylinderSpec | ConeSpec
 AnalyticCurve3D = SegmentCurve | EllipseArcCurve | ParametricConicBranch
 SurfaceInput = Sequence[QuadricSurfaceSpec] | Callable[[], Sequence[QuadricSurfaceSpec]]
 CurveInput = Sequence[AnalyticCurve3D] | Callable[[], Sequence[AnalyticCurve3D]]
+CurveOpacityInput = (
+    Mapping[str, float] | Callable[[], Mapping[str, float]] | None
+)
 ProjectionInput = (
     ParallelView
     | Sequence[Sequence[float]]
@@ -245,6 +248,7 @@ class _PreparedNumericFrame:
     global_frame: GlobalQuadricFrame | None
     surfaces: tuple[_PreparedSurface, ...]
     fragments: Mapping[str, tuple[_PreparedCurveFragment, ...]]
+    curve_opacities: Mapping[str, float]
     fragment_slot_maps: Mapping[str, Mapping[str, int]]
     item_mobjects: Mapping[str, Mobject]
 
@@ -637,8 +641,11 @@ class QuadricOcclusion3D:
     """One fixed-topology, fixed-capacity quadric Cairo controller.
 
     ``surfaces`` and ``curves`` may be callables so an animation can return
-    freshly constructed immutable analytic specs each frame.  Their semantic
-    identities must remain unchanged while the controller is alive.
+    freshly constructed immutable analytic specs each frame.  By default their
+    semantic identities must remain unchanged while the controller is alive.
+    The advanced ``allocated_curve_ids`` mode reserves a larger immutable
+    identity pool and lets each frame activate any subset of that pool;
+    ``curve_opacities`` then supplies the opacity for every active identity.
     ``surface_order_mode='automatic'`` recomputes and consumes one complete
     global painter frame on every update.  ``'explicit'`` keeps the legacy
     caller-supplied surface-order path.
@@ -658,6 +665,8 @@ class QuadricOcclusion3D:
         painter_z_band: tuple[float, float] = (20.0, 30.0),
         surface_constraints: Sequence[SurfaceConstraintInput] = (),
         surface_order_mode: str = "automatic",
+        allocated_curve_ids: Sequence[str] | None = None,
+        curve_opacities: CurveOpacityInput = None,
     ) -> None:
         if not isinstance(style, QuadricManimStyle):
             raise TypeError("style must be a QuadricManimStyle")
@@ -683,6 +692,7 @@ class QuadricOcclusion3D:
         self.max_chord_error = _positive(max_chord_error, "max_chord_error")
         self.surface_constraints = tuple(surface_constraints)
         self.surface_order_mode = surface_order_mode
+        self._curve_opacity_input = curve_opacities
         self._attached = False
         self._fixed_frame_camera: ThreeDCamera | None = None
         self._last_frame: QuadricCompositingFrame | None = None
@@ -691,7 +701,28 @@ class QuadricOcclusion3D:
         initial_surfaces = self._resolve_surfaces()
         initial_curves = self._resolve_curves()
         self._surface_ids = tuple(item.surface_id for item in initial_surfaces)
-        self._curve_ids = tuple(item.curve_id for item in initial_curves)
+        initial_curve_ids = tuple(item.curve_id for item in initial_curves)
+        self._allow_curve_subset = allocated_curve_ids is not None
+        if allocated_curve_ids is None:
+            self._curve_ids = initial_curve_ids
+        else:
+            if isinstance(allocated_curve_ids, (str, bytes)):
+                raise TypeError("allocated_curve_ids must be a sequence of identities")
+            canonical_ids: list[str] = []
+            for raw in allocated_curve_ids:
+                if not isinstance(raw, str) or not raw.strip():
+                    raise QuadricManimError(
+                        "allocated_curve_ids must contain non-empty strings"
+                    )
+                canonical_ids.append(raw.strip())
+            if len(set(canonical_ids)) != len(canonical_ids):
+                raise QuadricManimError("allocated_curve_ids must be unique")
+            self._curve_ids = tuple(sorted(canonical_ids))
+            unknown = sorted(set(initial_curve_ids) - set(self._curve_ids))
+            if unknown:
+                raise QuadricManimCapacityError(
+                    "initial curves were not preallocated: " + ", ".join(unknown)
+                )
         if len(self._surface_ids) > limits.max_surfaces:
             raise QuadricManimCapacityError(
                 f"surface count exceeds fixed limit {limits.max_surfaces}"
@@ -776,6 +807,41 @@ class QuadricOcclusion3D:
         )
         return _coerce_view(value)
 
+    def _resolve_curve_opacities(
+        self, active_curve_ids: Sequence[str]
+    ) -> dict[str, float]:
+        active = tuple(active_curve_ids)
+        if self._curve_opacity_input is None:
+            return {curve_id: 1.0 for curve_id in active}
+        raw = (
+            self._curve_opacity_input()
+            if callable(self._curve_opacity_input)
+            else self._curve_opacity_input
+        )
+        if not isinstance(raw, Mapping):
+            raise QuadricManimError("curve_opacities must resolve to a mapping")
+        result: dict[str, float] = {}
+        for key, value in raw.items():
+            if not isinstance(key, str) or not key.strip():
+                raise QuadricManimError(
+                    "curve_opacities keys must be non-empty curve identities"
+                )
+            curve_id = key.strip()
+            if curve_id not in self._curve_ids:
+                raise QuadricManimCapacityError(
+                    f"curve opacity references unallocated curve {curve_id!r}"
+                )
+            opacity = _non_negative(value, f"curve opacity for {curve_id!r}")
+            if opacity > 1.0:
+                raise QuadricManimError("curve opacity must not exceed 1")
+            result[curve_id] = opacity
+        missing = sorted(set(active) - set(result))
+        if missing:
+            raise QuadricManimError(
+                "curve_opacities omitted active curves: " + ", ".join(missing)
+            )
+        return {curve_id: result[curve_id] for curve_id in active}
+
     def _validate_fixed_topology(
         self,
         surfaces: Sequence[QuadricSurfaceSpec],
@@ -787,7 +853,13 @@ class QuadricOcclusion3D:
             raise QuadricManimCapacityError(
                 "surface identities changed after fixed-capacity allocation"
             )
-        if curve_ids != self._curve_ids:
+        if self._allow_curve_subset:
+            unknown = sorted(set(curve_ids) - set(self._curve_ids))
+            if unknown:
+                raise QuadricManimCapacityError(
+                    "curve identities were not preallocated: " + ", ".join(unknown)
+                )
+        elif curve_ids != self._curve_ids:
             raise QuadricManimCapacityError(
                 "curve identities changed after fixed-capacity allocation"
             )
@@ -820,6 +892,8 @@ class QuadricOcclusion3D:
         surfaces = self._resolve_surfaces()
         curves = self._resolve_curves()
         self._validate_fixed_topology(surfaces, curves)
+        active_curve_ids = tuple(item.curve_id for item in curves)
+        curve_opacities = self._resolve_curve_opacities(active_curve_ids)
         view = self._resolve_view()
         compositor_style = self.style.compositor_style(
             max_projected_length=self.limits.max_projected_length
@@ -912,15 +986,17 @@ class QuadricOcclusion3D:
 
         curve_map = {curve.curve_id: curve for curve in curves}
         by_curve: dict[str, list[QuadricCurvePaintFragment]] = {
-            curve_id: [] for curve_id in self._curve_ids
+            curve_id: [] for curve_id in active_curve_ids
         }
         for fragment in frame.curve_fragments:
             if fragment.painted:
                 by_curve[fragment.curve_id].append(fragment)
 
         prepared_by_curve: dict[str, tuple[_PreparedCurveFragment, ...]] = {}
-        next_maps: dict[str, Mapping[str, int]] = {}
-        for curve_id in self._curve_ids:
+        next_maps: dict[str, Mapping[str, int]] = {
+            curve_id: {} for curve_id in self._curve_ids
+        }
+        for curve_id in active_curve_ids:
             fragments = tuple(sorted(by_curve[curve_id], key=lambda item: item.item_id))
             assignment = self._assign_fragment_slots(
                 curve_id, tuple(item.item_id for item in fragments)
@@ -978,6 +1054,7 @@ class QuadricOcclusion3D:
             global_frame,
             tuple(surface_plans),
             prepared_by_curve,
+            curve_opacities,
             next_maps,
             item_mobjects,
         )
@@ -1108,7 +1185,11 @@ class QuadricOcclusion3D:
                 self._apply_surface(surface, opacity)
             for curve_id, fragments in prepared.numeric.fragments.items():
                 for fragment in fragments:
-                    self._apply_curve_fragment(curve_id, fragment, opacity)
+                    self._apply_curve_fragment(
+                        curve_id,
+                        fragment,
+                        opacity * prepared.numeric.curve_opacities[curve_id],
+                    )
             self._band.apply(prepared.painter_band)
             self._fragment_slot_maps = {
                 curve_id: dict(values)
@@ -1145,6 +1226,12 @@ class QuadricOcclusion3D:
     @property
     def active_painter_z_indices(self) -> dict[str, float]:
         return self._band.active_z_indices
+
+    @property
+    def allocated_curve_ids(self) -> tuple[str, ...]:
+        """Return the immutable curve identities reserved at construction."""
+
+        return self._curve_ids
 
     def attach(self) -> "QuadricOcclusion3D":
         if self._attached:

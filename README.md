@@ -44,7 +44,8 @@ to SVG. Unsupported syntax is reported explicitly.
 - analytic finite spheres, capped cylinders, and one-nappe cones/frusta under
   parallel projection, including plane sections, front-solid/hidden-dashed
   conic arcs, projected curve/curve depth ordering, rotating-plane topology
-  schedules, and strictly separated multi-solid painter graphs;
+  schedules, automatic ellipse/parabola/hyperbola Manim handoff, and strictly
+  separated multi-solid painter graphs;
 - a reusable source-to-copy identity handoff: a whole solid or any registered
   face/edge subset keeps explicit semantic lineage, lets the copy own exactly
   coincident pixels, and fades only the paired source primitives back in as
@@ -160,7 +161,8 @@ Quadratic surfaces and conic sections:
 ```bash
 manim -pql examples/quadrics/quadric_occlusion_demo.py \
   MovingSphereSectionDemo ObliqueCylinderSectionDemo \
-  ConeSectionFamiliesDemo GlobalQuadricOcclusionDemo
+  ConeSectionFamiliesDemo ConeSectionTopologyTransitionDemo \
+  GlobalQuadricOcclusionDemo
 ```
 
 Independent line and moving plane sections:

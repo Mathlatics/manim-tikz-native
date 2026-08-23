@@ -208,6 +208,10 @@ _EXPORTS: Final[dict[str, tuple[str, str]]] = {
         ".animation",
         "track_moving_section_point",
     ),
+    "match_tracked_section_frame": (
+        ".animation",
+        "match_tracked_section_frame",
+    ),
     "track_quadric_section_animation": (
         ".animation",
         "track_quadric_section_animation",
@@ -242,6 +246,29 @@ _EXPORTS: Final[dict[str, tuple[str, str]]] = {
     "track_scheduled_plane_section": (
         ".plane_motion",
         "track_scheduled_plane_section",
+    ),
+    "SECTION_TRANSITION_PLAN_SCHEMA": (
+        ".transition",
+        "SECTION_TRANSITION_PLAN_SCHEMA",
+    ),
+    "SectionTransitionError": (".transition", "SectionTransitionError"),
+    "SectionTransitionFrame": (".transition", "SectionTransitionFrame"),
+    "SectionTransitionLayer": (".transition", "SectionTransitionLayer"),
+    "SectionTransitionMode": (".transition", "SectionTransitionMode"),
+    "SectionTransitionPlan": (".transition", "SectionTransitionPlan"),
+    "SectionTransitionRole": (".transition", "SectionTransitionRole"),
+    "TopologyTransitionKnot": (".transition", "TopologyTransitionKnot"),
+    "build_section_transition_plan": (
+        ".transition",
+        "build_section_transition_plan",
+    ),
+    "canonical_section_transition_plan_json": (
+        ".transition",
+        "canonical_section_transition_plan_json",
+    ),
+    "sample_section_transition": (
+        ".transition",
+        "sample_section_transition",
     ),
     "GLOBAL_QUADRIC_FRAME_SCHEMA": (
         ".global_occlusion",
@@ -281,6 +308,22 @@ _EXPORTS: Final[dict[str, tuple[str, str]]] = {
     "QuadricManimLimits": (".manim", "QuadricManimLimits"),
     "QuadricManimStyle": (".manim", "QuadricManimStyle"),
     "QuadricOcclusion3D": (".manim", "QuadricOcclusion3D"),
+    "MAX_TRANSITION_INTERVAL_SLOTS": (
+        ".transition_manim",
+        "MAX_TRANSITION_INTERVAL_SLOTS",
+    ),
+    "PreparedSectionTransitionGeometry": (
+        ".transition_manim",
+        "PreparedSectionTransitionGeometry",
+    ),
+    "QuadricSectionTransition3D": (
+        ".transition_manim",
+        "QuadricSectionTransition3D",
+    ),
+    "QuadricSectionTransitionManimError": (
+        ".transition_manim",
+        "QuadricSectionTransitionManimError",
+    ),
 }
 
 __all__ = list(_EXPORTS)

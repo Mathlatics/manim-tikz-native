@@ -131,13 +131,13 @@ SOURCE_PROJECT_BUILD_REVISION = (
     "source-sha256:00579e342012a96443c098c7004be672d265d32fe6f82d66b0c6b11ba64305b7"
 )
 QUADRIC_GEOMETRY_REVISION = (
-    "source-sha256:c9bb34bad4338c2e1afafd55a00757b00045b20976ea2a5c1fa2c5de98d258e3"
+    "source-sha256:6543b2840433d0154aa10b15beefc1c4af46b0ffe22d7d6126357ad9e4cb6114"
 )
 QUADRIC_VISIBILITY_REVISION = (
-    "source-sha256:e32eb299ba108f0c66578e757081355a60567e312adb0dadb5fff6b5d01706c0"
+    "source-sha256:ff08b905bb574d65f4ff0319fa0122bfcfdb51f23b846a4a8e2f403be95b7f85"
 )
 QUADRIC_MANIM_REVISION = (
-    "source-sha256:008b8a35ee56dbc39e574881dbe1c519705c177d8326cc1767691266c024a19c"
+    "source-sha256:7ab8673a50b42d40f272930f2804ab18bb73af734260f1f979d67cc337f061d3"
 )
 CONVEX_SECTION_3D_REVISION = (
     "source-sha256:5cfd664e136caf4f68876ac76f81674d99c15b3b275c3859a84c174d738729b5"
@@ -230,9 +230,10 @@ class TikzNativeComponentRevisionTests(unittest.TestCase):
         self.assertTrue(
             asset["capabilities"]["quadric_section_animation_trace_v1"]
         )
-        self.assertNotIn(
-            "quadric_section_animation_v1",
-            asset["capabilities"],
+        self.assertTrue(
+            asset["capabilities"][
+                "quadric_section_topology_transition_manim_v1"
+            ]
         )
         self.assertTrue(
             asset["capabilities"]["quadric_global_compositing_v1"]
@@ -498,6 +499,37 @@ print(json.dumps({
         baseline = provider_component_revisions()
         mutated = self._probe_copy(
             "@tool/polyhedron_visibility/quadrics/manim.py"
+        )
+        components = mutated["components"]
+        self.assertNotEqual(
+            components[COMPONENT_QUADRIC_MANIM],
+            baseline[COMPONENT_QUADRIC_MANIM],
+        )
+        for component in baseline:
+            if component != COMPONENT_QUADRIC_MANIM:
+                self.assertEqual(components[component], baseline[component])
+
+    def test_editing_quadric_transition_plan_changes_recursive_dependents(self) -> None:
+        baseline = provider_component_revisions()
+        mutated = self._probe_copy(
+            "@tool/polyhedron_visibility/quadrics/transition.py"
+        )
+        components = mutated["components"]
+        changed = {
+            COMPONENT_QUADRIC_GEOMETRY,
+            COMPONENT_QUADRIC_VISIBILITY,
+            COMPONENT_QUADRIC_MANIM,
+        }
+        for component in changed:
+            self.assertNotEqual(components[component], baseline[component])
+        for component in baseline:
+            if component not in changed:
+                self.assertEqual(components[component], baseline[component])
+
+    def test_editing_quadric_transition_manim_changes_only_manim(self) -> None:
+        baseline = provider_component_revisions()
+        mutated = self._probe_copy(
+            "@tool/polyhedron_visibility/quadrics/transition_manim.py"
         )
         components = mutated["components"]
         self.assertNotEqual(

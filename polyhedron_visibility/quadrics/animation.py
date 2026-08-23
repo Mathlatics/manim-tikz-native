@@ -1050,6 +1050,52 @@ def track_quadric_section_animation(
     )
 
 
+def match_tracked_section_frame(
+    reference: TrackedSectionFrame,
+    section: QuadricSectionTrace,
+    *,
+    frame_index: int | None = None,
+    time: float | None = None,
+) -> TrackedSectionFrame:
+    """Match one exact section against a proven same-topology reference.
+
+    The renderer-facing transition layer frequently evaluates a section at a
+    progress value that was not one of the authored schedule samples.  It must
+    still use the schedule's stable component slots rather than trusting the
+    incidental order of freshly classified branches.  This helper exposes the
+    same analytic correspondence used by :func:`track_quadric_section_animation`
+    without recomputing either section.
+
+    A topology change is deliberately rejected here.  The caller must select
+    a reference frame from the correct topology epoch (or use an explicit
+    transition between two epochs).
+    """
+
+    if not isinstance(reference, TrackedSectionFrame):
+        raise TypeError("reference must be a TrackedSectionFrame")
+    if not isinstance(section, QuadricSectionTrace):
+        raise TypeError("section must be a QuadricSectionTrace")
+    signature = SectionTopologySignature.from_trace(section)
+    if not reference.signature.topologically_equivalent(signature):
+        raise BranchContinuityError(
+            "section topology differs from the selected reference frame"
+        )
+    resolved_index = reference.frame_index if frame_index is None else frame_index
+    resolved_time = reference.time if time is None else time
+    if isinstance(resolved_index, bool) or not isinstance(resolved_index, int):
+        raise SectionAnimationError("frame_index must be a non-negative integer")
+    if resolved_index < 0:
+        raise SectionAnimationError("frame_index must be a non-negative integer")
+    return TrackedSectionFrame(
+        frame_index=resolved_index,
+        time=_finite(resolved_time, "frame time"),
+        topology_epoch=reference.topology_epoch,
+        signature=signature,
+        section=section,
+        branches=_continued_mappings(reference, section),
+    )
+
+
 def canonical_quadric_section_animation_json(trace: SectionAnimationTrace) -> str:
     """Return deterministic, strict JSON for caches and regression fixtures."""
 
@@ -1239,6 +1285,7 @@ __all__ = [
     "TrackedSectionBranch",
     "TrackedSectionFrame",
     "canonical_quadric_section_animation_json",
+    "match_tracked_section_frame",
     "track_moving_section_point",
     "track_quadric_section_animation",
 ]

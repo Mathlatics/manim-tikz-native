@@ -10,8 +10,10 @@ All notable changes to this project will be documented in this file.
   semantic segments/arcs/conic branches at exact visibility and projected
   curve-crossing events; provide physical/diagrammatic painter policies, a
   fixed-capacity transactional Cairo binding, rotating-plane topology and
-  moving-point traces, automatic plane-patch fitting, and certified global
-  ordering for a bounded set of strictly separated convex quadrics;
+  moving-point traces, automatic fixed-capacity Manim handoff through exact
+  ellipse/parabola/hyperbola events, automatic plane-patch fitting, and
+  certified global ordering for a bounded set of strictly separated convex
+  quadrics;
 - add a source-authoritative project format and the
   `tikz-native-project build/status/rebuild/clean` CLI: authored TikZ, optional
   motion/Bridge inputs, and render intent now deterministically regenerate

@@ -175,10 +175,11 @@ additional geometric construction, such as an auxiliary plane or line.  If
 two successor branches are equally valid and the author did not choose one,
 the operation fails explicitly.
 
-The Provider capability is consequently named
-`quadric_section_animation_trace_v1`: it promises the renderer-neutral event,
-lineage, and moving-point trace.  It does not claim that one attached Manim
-controller can change its allocated topology automatically.
+The Provider exposes two separate promises.  The existing
+`quadric_section_animation_trace_v1` capability covers renderer-neutral event,
+lineage, and moving-point evidence.  The new
+`quadric_section_topology_transition_manim_v1` capability covers automatic
+Manim handoff at those scheduled events.
 
 ## Public workflow
 
@@ -211,9 +212,48 @@ controller = QuadricOcclusion3D(
 ).attach()
 ```
 
-For a moving plane, pass a callable as `curves`; it may build a fresh immutable
-section trace from the current `ValueTracker` value.  Surface and curve IDs
-must remain unchanged while one controller is attached.
+For a fixed-topology moving plane, pass a callable as `curves`; it may build a
+fresh immutable section trace from the current `ValueTracker` value.  Surface
+and curve IDs must remain unchanged while one `QuadricOcclusion3D` controller
+is attached.
+
+For a rotating plane that changes conic family, use the scheduled transition
+controller:
+
+```python
+from manim import ValueTracker
+from polyhedron_visibility.quadrics import (
+    QuadricSectionTransition3D,
+    track_scheduled_plane_section,
+)
+
+progress = ValueTracker(0.0)
+scheduled = track_scheduled_plane_section("section", cone, plane_motion)
+controller = QuadricSectionTransition3D(
+    self,
+    scheduled=scheduled,
+    progress=progress,
+    projection=view,
+    transition_fraction=0.055,
+).attach()
+
+self.play(progress.animate.set_value(1.0), run_time=6.0)
+controller.restore()
+```
+
+The controller allocates two bounded banks before playback.  An ordinary
+frame uses one bank; near a conic-family event, the live section and the exact
+critical section share the two banks and cross-fade with smoothstep weights.
+Both banks still enter the same surface-visibility calculation and painter
+graph.  Finite trim tangencies that do not change the conic family use an
+instantaneous bank handoff instead of holding a numerically repeated tangency
+root across several display frames.  The analytic schedule itself always
+retains the exact event.
+
+If the schedule was created with an explicit `GeometryContext` or
+`coefficient_tolerance`, pass the same values to
+`QuadricSectionTransition3D`; this keeps live in-between frames on exactly the
+same numerical contract as the scheduled reference frames.
 
 Use `fit_plane_display_patch()` to size the drawn rectangle for an infinite
 mathematical plane.  The returned patch is display metadata only: changing its
@@ -264,6 +304,8 @@ constraint path; that mode does not recompute or recertify supplied relations.
 - adaptive polyline display with no display samples fed back into geometry;
 - transaction-safe, fixed-capacity Cairo Manim binding;
 - analytic rotating-plane schedules, topology records, and moving-point traces;
+- automatic fixed-capacity Manim handoff across ellipse, exact parabola, and
+  hyperbola families;
 - automatic plane-display-patch fitting;
 - global ordering for a bounded set of strictly separated convex quadrics.
 
@@ -278,9 +320,9 @@ isolated environment.
 - The global multi-surface solver requires pairwise strict 3D separation.  It
   rejects touching/intersecting solids and true surface painter cycles rather
   than guessing.  Quadratic surface-cell splitting is not implemented yet.
-- `QuadricOcclusion3D` has fixed topology while attached.  An
-  ellipse-to-parabola-to-hyperbola transition needs an explicit branch
-  handoff/cross-fade at the topology event.
+- `QuadricOcclusion3D` itself has fixed topology while attached.  Use
+  `QuadricSectionTransition3D` for scheduled ellipse/parabola/hyperbola family
+  changes.  Unscheduled or ambiguous topology changes still fail explicitly.
 - Surface proxies are opaque convex silhouettes.  Transparent curved-surface
   refraction, reflection, and physically accurate alpha blending are outside
   this module.
