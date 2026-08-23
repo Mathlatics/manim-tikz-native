@@ -52,6 +52,7 @@ tikz-native = "tikz_native.bridge:main"
 tikz-native-rig-2d = "tikz_native.geometry_rig_bridge:main"
 tikz-native-rig-3d = "tikz_native.geometry_rig_3d_bridge:main"
 tikz-native-source-v3 = "tikz_native.geometry_rig_3d_source_v3_bridge:main"
+tikz-native-project = "tikz_native.source_project:main"
 
 [tool.setuptools]
 include-package-data = true
