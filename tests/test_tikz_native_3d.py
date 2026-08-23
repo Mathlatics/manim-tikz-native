@@ -469,6 +469,50 @@ class TikzNative3DTests(unittest.TestCase):
             [("A", "B"), ("C", "D")],
         )
 
+    def test_3d_circle_and_ellipse_fail_closed_until_a_plane_is_explicit(self) -> None:
+        cases = {
+            "circle": r"\draw (O) circle (1cm);",
+            "ellipse": r"\draw (O) ellipse [x radius=1, y radius=0.5];",
+        }
+        for kind, statement in cases.items():
+            with self.subTest(kind=kind):
+                source = rf"""
+\begin{{tikzpicture}}[space view={{(-0.35,-0.35),(1,0),(0,1)}}]
+  \coordinate (O) at (0,0,0);
+  {statement}
+\end{{tikzpicture}}
+"""
+                picture = compile_document(source_text=source).pictures[0]
+                self.assertFalse([item for item in picture.objects if item.kind == kind])
+                self.assertTrue(picture.unsupported)
+                self.assertIn("explicit semantic plane", picture.unsupported[0])
+
+        dot_source = r"""
+\begin{tikzpicture}[space view={(-0.35,-0.35),(1,0),(0,1)}]
+  \coordinate (O) at (0,0,0);
+  \fill (O) circle (1pt);
+\end{tikzpicture}
+"""
+        dot_picture = compile_document(source_text=dot_source).pictures[0]
+        self.assertFalse(dot_picture.unsupported)
+        self.assertEqual([item.kind for item in dot_picture.objects], ["dot"])
+
+        for name, path_statement in {
+            "circle": r"\path[name path=c] (O) circle (1);",
+            "ellipse": r"\path[name path=e] (O) ellipse [x radius=1, y radius=0.5];",
+        }.items():
+            with self.subTest(named_path=name):
+                source = rf"""
+\begin{{tikzpicture}}[space view={{(-0.35,-0.35),(1,0),(0,1)}}]
+  \coordinate (O) at (0,0,0);
+  {path_statement}
+\end{{tikzpicture}}
+"""
+                picture = compile_document(source_text=source).pictures[0]
+                self.assertFalse(picture.named_paths)
+                self.assertTrue(picture.unsupported)
+                self.assertIn("explicit semantic plane", picture.unsupported[0])
+
     def test_unknown_semantic_prefix_is_not_silently_skipped(self) -> None:
         source = r"""
 \begin{tikzpicture}[space view={(-0.35,-0.35),(1,0),(0,1)}]

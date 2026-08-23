@@ -11,7 +11,12 @@ from manim import ValueTracker, tempconfig
 from jsonschema import Draft202012Validator
 
 from tikz_native import compile_document
-from tikz_native.camera_3d import ISOMETRIC_MATRIX, MultiProjectionCamera
+from tikz_native.camera_3d import (
+    ISOMETRIC_MATRIX,
+    MultiProjectionCamera,
+    ProjectionPreset,
+)
+from tikz_native.projection_3d import matrix_from_tikz_basis
 from tikz_native.manim_renderer_3d import NativeManim3DRenderer
 from tikz_native.motion_3d import (
     MOTION_3D_SCHEMA,
@@ -143,6 +148,43 @@ class TikzNativeMotion3DTests(unittest.TestCase):
         runtime = NativeMotion3DRuntime(cyclic, self.picture, lambda: cyclic.driver.initial)
         with self.assertRaisesRegex(Motion3DConfigError, "dependency cycle"):
             runtime.coordinates()
+
+    def test_projection_preset_is_scale_invariant_finite_and_immutable(self) -> None:
+        for scale in (1.0e-20, 1.0e150):
+            with self.subTest(scale=scale):
+                matrix = np.asarray(
+                    matrix_from_tikz_basis(
+                        (scale, 0.0),
+                        (0.0, scale),
+                        (0.0, 0.0),
+                    ),
+                    dtype=float,
+                )
+                source = matrix.copy()
+                preset = ProjectionPreset("scaled", source)
+                source[0, 0] = 7.0
+                self.assertNotEqual(preset.matrix[0, 0], 7.0)
+                with self.assertRaises(ValueError):
+                    preset.matrix[0, 0] = 9.0
+                np.testing.assert_allclose(preset.matrix, matrix, rtol=0.0, atol=0.0)
+
+    def test_projection_preset_rejects_nonfinite_and_ill_conditioned_state(self) -> None:
+        invalid_matrices = (
+            np.array(((np.nan, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0))),
+            np.array(((1.0, 0.0, 0.0), (1.0, 1.0e-14, 0.0), (0.0, 0.0, 1.0))),
+        )
+        for matrix in invalid_matrices:
+            with self.subTest(matrix=matrix):
+                with self.assertRaisesRegex(ValueError, "finite invertible"):
+                    ProjectionPreset("bad", matrix)
+        with self.assertRaisesRegex(ValueError, "perspective_strength"):
+            ProjectionPreset("bad", np.eye(3), perspective_strength=np.nan)
+        with self.assertRaisesRegex(ValueError, "focal_distance"):
+            ProjectionPreset("bad", np.eye(3), focal_distance=np.inf)
+        with self.assertRaisesRegex(ValueError, "view_center"):
+            ProjectionPreset("bad", np.eye(3), view_center=(0.0, np.nan, 0.0))
+        with self.assertRaisesRegex(ValueError, "principal_point"):
+            ProjectionPreset("bad", np.eye(3), principal_point=(0.0, np.inf))
 
     def test_portable_camera_registers_tikz_view_and_restores_snapshot(self) -> None:
         camera = MultiProjectionCamera(initial_mode="front")

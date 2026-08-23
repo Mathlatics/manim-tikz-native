@@ -84,6 +84,9 @@ class TikzNativeReadableManim3DTests(unittest.TestCase):
             "def restore_geometry_3d_objects(",
         ):
             self.assertIn(required, source)
+        self.assertIn("row_scales = np.max(np.abs(value), axis=1)", source)
+        self.assertIn("abs(determinant) <= 1.0e-12", source)
+        self.assertNotIn("abs(float(np.linalg.det(value))) <= 1e-9", source)
         for forbidden in (
             "import tikz_native",
             "from tikz_native",

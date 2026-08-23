@@ -32,6 +32,19 @@ class SolverError(ValueError):
     """Raised when a frame cannot be solved without guessing."""
 
 
+def _unit_projection_row(row: np.ndarray, *, label: str) -> np.ndarray:
+    """Normalize one finite projection row without overflow or underflow."""
+
+    scale = float(np.max(np.abs(row)))
+    if not np.isfinite(scale) or scale == 0.0:
+        raise SolverError(label)
+    scaled = row / scale
+    length = float(np.linalg.norm(scaled))
+    if not np.isfinite(length) or length == 0.0:
+        raise SolverError(label)
+    return scaled / length
+
+
 def _validated_projection(
     matrix: Sequence[Sequence[float]],
 ) -> tuple[
@@ -41,19 +54,27 @@ def _validated_projection(
     value = np.asarray(matrix, dtype=float)
     if value.shape != (3, 3) or not np.all(np.isfinite(value)):
         raise SolverError("parallel projection matrix must be a finite 3x3 matrix")
-    screen_x = value[0]
-    screen_y = value[1]
+
+    # Validate directions after normalizing each row independently.  Using the
+    # raw cross product makes an otherwise identical projection fail solely
+    # because TikZ or a caller chose very small/large screen units.
+    screen_x = _unit_projection_row(
+        value[0], label="parallel projection screen axes are singular"
+    )
+    screen_y = _unit_projection_row(
+        value[1], label="parallel projection screen axes are singular"
+    )
     direction = np.cross(screen_x, screen_y)
     length = float(np.linalg.norm(direction))
-    row_scale = max(
-        float(np.linalg.norm(screen_x) * np.linalg.norm(screen_y)), 1.0e-300
-    )
-    if length <= 1.0e-12 * row_scale:
+    if not np.isfinite(length) or length <= 1.0e-12:
         raise SolverError("parallel projection screen axes are singular")
     direction /= length
-    depth_norm = float(np.linalg.norm(value[2]))
-    depth_alignment = float(np.dot(direction, value[2]))
-    if depth_norm == 0.0 or abs(depth_alignment) <= 1.0e-12 * depth_norm:
+
+    depth = _unit_projection_row(
+        value[2], label="parallel projection has no usable depth direction"
+    )
+    depth_alignment = float(np.dot(direction, depth))
+    if not np.isfinite(depth_alignment) or abs(depth_alignment) <= 1.0e-12:
         raise SolverError("parallel projection has no usable depth direction")
     if depth_alignment < 0:
         direction *= -1.0

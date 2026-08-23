@@ -4,12 +4,14 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
-- make explicit TikZ 3D basis validation and screen-offset inversion
-  scale-invariant, reject non-finite or ill-conditioned screen directions, and
-  avoid overflow/underflow while deriving the depth row;
+- make TikZ and shared-occlusion 3D projection validation scale-invariant,
+  reject non-finite or ill-conditioned camera state, avoid overflow/underflow
+  while deriving view directions, and make validated camera presets immutable;
 - allocate non-overlapping deterministic painter z bands for distinct
-  source-project hash slots and reject contradictory include/exclude selections
-  at both the source-project and direct 3D-rig boundaries;
+  source-project figure identities and reject contradictory or malformed
+  selections at source-project/direct 3D-rig boundaries;
+- fail closed on 3D circle/ellipse paths that have no explicit semantic
+  supporting plane instead of reporting them as supported until render time;
 - add a source-authoritative project format and the
   `tikz-native-project build/status/rebuild/clean` CLI: authored TikZ, optional
   motion/Bridge inputs, and render intent now deterministically regenerate

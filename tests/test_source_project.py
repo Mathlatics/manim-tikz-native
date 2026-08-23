@@ -201,6 +201,20 @@ class SourceProjectTestCase(unittest.TestCase):
         ):
             load_source_project(project_path)
 
+    def test_selection_rejects_whitespace_ids_and_descending_range(self) -> None:
+        for selection, message in (
+            ({"candidate_id": "   "}, "candidate_id"),
+            ({"include_object_ids": ["   "]}, "include_object_ids"),
+            ({"range": [2.0, 1.0]}, "increasing"),
+        ):
+            with self.subTest(selection=selection):
+                project_path = self.write_project(
+                    bridge=True,
+                    extra={"selection": selection},
+                )
+                with self.assertRaisesRegex(SourceProjectError, message):
+                    load_source_project(project_path)
+
     def test_rejects_persisted_implementation_mode_at_any_depth(self) -> None:
         project_path = self.write_project()
         raw = json.loads(project_path.read_text(encoding="utf-8"))
@@ -382,7 +396,7 @@ class SourceProjectTestCase(unittest.TestCase):
 
     def test_picture_entry_and_selection_have_narrow_invalidation(self) -> None:
         project_path = self.write_project(bridge=True)
-        self.build(project_path)
+        original = self.build(project_path)
 
         raw = json.loads(project_path.read_text(encoding="utf-8"))
         raw["pictureIndex"] = 2
@@ -391,6 +405,7 @@ class SourceProjectTestCase(unittest.TestCase):
         self.assertEqual(
             picture_changed.built, ("shape", "compositing", "generated_source")
         )
+        self.assertNotEqual(picture_changed.painter_z_band, original.painter_z_band)
 
         raw["entryMacro"] = "figureTwo"
         project_path.write_text(json.dumps(raw), encoding="utf-8")
@@ -398,12 +413,14 @@ class SourceProjectTestCase(unittest.TestCase):
         self.assertEqual(
             entry_changed.built, ("shape", "compositing", "generated_source")
         )
+        self.assertNotEqual(entry_changed.painter_z_band, picture_changed.painter_z_band)
 
         raw["selection"] = {"include_object_ids": ["edge.AB"]}
         project_path.write_text(json.dumps(raw), encoding="utf-8")
         selection_changed = self.build(project_path)
         self.assertEqual(selection_changed.reused, ("shape", "compositing"))
         self.assertEqual(selection_changed.built, ("generated_source",))
+        self.assertEqual(selection_changed.painter_z_band, entry_changed.painter_z_band)
 
     def test_hooks_and_bridge_template_change_only_generated_source(self) -> None:
         project_path = self.write_project(hooks=True, bridge=True)

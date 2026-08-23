@@ -119,8 +119,19 @@ class _LocalProjectionState:
 
     def __post_init__(self) -> None:
         matrix = np.asarray(self.entry_matrix, dtype=float)
-        if matrix.shape != (3, 3) or abs(float(np.linalg.det(matrix))) <= 1e-9:
-            raise EmbeddedMotion3DError("TikZ entry projection must be invertible")
+        if matrix.shape != (3, 3) or not np.all(np.isfinite(matrix)):
+            raise EmbeddedMotion3DError("TikZ entry projection must be finite and invertible")
+        row_scales = np.max(np.abs(matrix), axis=1)
+        if np.any(row_scales == 0.0) or not np.all(np.isfinite(row_scales)):
+            raise EmbeddedMotion3DError("TikZ entry projection must be finite and invertible")
+        normalized = matrix / row_scales[:, np.newaxis]
+        row_norms = np.linalg.norm(normalized, axis=1)
+        if np.any(row_norms == 0.0) or not np.all(np.isfinite(row_norms)):
+            raise EmbeddedMotion3DError("TikZ entry projection must be finite and invertible")
+        normalized /= row_norms[:, np.newaxis]
+        determinant = float(np.linalg.det(normalized))
+        if not np.isfinite(determinant) or abs(determinant) <= 1.0e-12:
+            raise EmbeddedMotion3DError("TikZ entry projection must be finite and invertible")
         self.entry_matrix = matrix.copy()
         self.source_matrix = matrix.copy()
         self.target_matrix = matrix.copy()

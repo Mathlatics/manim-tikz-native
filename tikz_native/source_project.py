@@ -662,7 +662,7 @@ def _parse_selection(value: Any) -> dict[str, Any]:
     result: dict[str, Any] = {}
     candidate_id = value.get("candidate_id")
     if candidate_id is not None:
-        if not isinstance(candidate_id, str) or not candidate_id:
+        if not isinstance(candidate_id, str) or not candidate_id.strip():
             raise SourceProjectError("selection.candidate_id must be a non-empty string")
         result["candidate_id"] = candidate_id
     selected_range = value.get("range")
@@ -676,6 +676,8 @@ def _parse_selection(value: Any) -> dict[str, Any]:
             for item in selected_range
         ):
             raise SourceProjectError("selection.range must contain exactly two finite numbers")
+        if float(selected_range[0]) >= float(selected_range[1]):
+            raise SourceProjectError("selection.range must contain increasing values")
         result["range"] = list(selected_range)
     for key in ("include_object_ids", "exclude_object_ids"):
         object_ids = value.get(key)
@@ -683,7 +685,7 @@ def _parse_selection(value: Any) -> dict[str, Any]:
             continue
         if (
             not isinstance(object_ids, list)
-            or any(not isinstance(item, str) or not item for item in object_ids)
+            or any(not isinstance(item, str) or not item.strip() for item in object_ids)
             or len(set(object_ids)) != len(object_ids)
         ):
             raise SourceProjectError(
@@ -854,6 +856,14 @@ def derive_painter_z_band(project: SourceProject, tikz_bytes: bytes | None = Non
     digest.update(tikz_bytes)
     digest.update(b"\0projection\0")
     digest.update(_canonical_json(project.projection))
+    # ``pictureIndex`` and ``entryMacro`` select different semantic figures
+    # from the same TikZ bytes. They therefore need distinct automatic painter
+    # reservations. Motion/paint/selection edits intentionally keep the same
+    # band because they do not change that figure identity.
+    digest.update(b"\0picture-index\0")
+    digest.update(str(project.picture_index).encode("ascii"))
+    digest.update(b"\0entry-macro\0")
+    digest.update(_canonical_json(project.entry_macro))
     offset = (
         int(digest.hexdigest()[:8], 16) % _PAINTER_Z_BAND_SLOT_COUNT
     )
