@@ -265,6 +265,18 @@ def _edge_style(
     hidden_width = float(hidden["line_width_pt"]) * stroke_width_per_pt
     visible_opacity = float(visible.get("opacity", 1.0))
     hidden_opacity = float(hidden.get("opacity", 1.0))
+    visible_cap_style = _cap_style(visible.get("line_cap"))
+    visible_joint_type = _joint_style(visible.get("line_join"))
+    hidden_cap_style = (
+        visible_cap_style
+        if hidden.get("line_cap") is None
+        else _cap_style(hidden.get("line_cap"))
+    )
+    hidden_joint_type = (
+        visible_joint_type
+        if hidden.get("line_join") is None
+        else _joint_style(hidden.get("line_join"))
+    )
     pattern = hidden.get("dash_pattern_pt")
     if pattern is None:
         dash_length, dash_gap = max_projected_length, 0.0
@@ -285,8 +297,8 @@ def _edge_style(
         (0.0, 0.0, 0.0),
         (1.0, 0.0, 0.0),
         buff=0,
-        cap_style=_cap_style(visible.get("line_cap")),
-        joint_type=_joint_style(visible.get("line_join")),
+        cap_style=visible_cap_style,
+        joint_type=visible_joint_type,
     )
     proxy.set_stroke(
         color=str(visible["draw_color"]),
@@ -304,6 +316,8 @@ def _edge_style(
         hidden_width_scale=hidden_width,
         visible_opacity_scale=visible_opacity,
         hidden_opacity_scale=hidden_opacity,
+        hidden_cap_style=hidden_cap_style,
+        hidden_joint_type=hidden_joint_type,
     )
     return proxy, style
 
@@ -633,8 +647,16 @@ def _strip_override(source: str) -> str:
     return source[:start].rstrip() + "\n" + source[end:]
 
 
-def _controller_names(tree: ast.Module) -> tuple[str, ...]:
-    result: set[str] = set()
+def _controller_bindings(tree: ast.Module) -> tuple[int, tuple[str, ...]]:
+    result: list[str] = []
+    call_count = 0
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "install_open_face_visibility_3d"
+        ):
+            call_count += 1
     for node in ast.walk(tree):
         value: ast.AST | None = None
         targets: Sequence[ast.AST] = ()
@@ -648,8 +670,8 @@ def _controller_names(tree: ast.Module) -> tuple[str, ...]:
             continue
         for target in targets:
             if isinstance(target, ast.Name):
-                result.add(target.id)
-    return tuple(sorted(result))
+                result.append(target.id)
+    return call_count, tuple(result)
 
 
 def _rewrite_exact_fades(
@@ -657,9 +679,15 @@ def _rewrite_exact_fades(
     *,
     targets: Sequence[str],
     controller_names: Sequence[str],
+    controller_call_count: int,
 ) -> str:
     if not targets:
         return source
+    if controller_call_count != 1 or len(controller_names) != 1:
+        raise GeneratedOpenFaceVisibility3DError(
+            "whole-figure Fade rewrite requires exactly one directly assigned "
+            "generated controller"
+        )
     tree = ast.parse(source)
     replacements: list[tuple[int, int, bytes]] = []
     encoded = source.encode("utf-8")
@@ -691,10 +719,6 @@ def _rewrite_exact_fades(
             continue
         if first.id not in target_set:
             continue
-        if len(controller_names) != 1:
-            raise GeneratedOpenFaceVisibility3DError(
-                "whole-figure Fade rewrite requires exactly one generated controller binding"
-            )
         replacement = f"{controller_names[0]}.display_mobject".encode("utf-8")
         replacements.append((offset(first), offset(first, True), replacement))
     for start, end, replacement in sorted(replacements, reverse=True):
@@ -800,10 +824,12 @@ def rewrite_legacy_open_face_source(
             "generated source is not the real open-face v3 contract; missing: "
             + ", ".join(missing)
         )
+    controller_call_count, controller_names = _controller_bindings(tree)
     base = _rewrite_exact_fades(
         base,
         targets=tuple(whole_figure_targets),
-        controller_names=_controller_names(tree),
+        controller_names=controller_names,
+        controller_call_count=controller_call_count,
     )
     policy = _normalise_policy(paint_policy)
     band = _normalise_band(preferred_painter_z_band)
@@ -811,7 +837,13 @@ def rewrite_legacy_open_face_source(
         paint_policy=policy,
         painter_z_band=band,
     )
-    compile(rewritten, "<generated-open-face-v3-unified>", "exec")
+    try:
+        compile(rewritten, "<generated-open-face-v3-unified>", "exec")
+    except SyntaxError as exc:
+        raise GeneratedOpenFaceVisibility3DError(
+            "generated v3 source becomes invalid after unified adaptation at "
+            f"line {exc.lineno}: {exc.msg}"
+        ) from exc
     return rewritten
 
 

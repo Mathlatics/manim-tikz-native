@@ -15,7 +15,8 @@ to SVG. Unsupported syntax is reported explicitly.
 
 [中文说明](README.zh-CN.md) · [Public API](docs/public-api.md) ·
 [Automatic occlusion](docs/automatic-occlusion.md) ·
-[Supported TikZ subset](docs/supported-tikz.md)
+[Supported TikZ subset](docs/supported-tikz.md) ·
+[Source-authoritative projects](docs/source-authoritative-projects.md)
 
 ## What it provides
 
@@ -87,6 +88,19 @@ tikz-native-rig-2d health
 tikz-native-rig-3d health
 tikz-native-source-v3 health
 ```
+
+To keep TikZ as the durable source of truth while regenerating disposable
+ShapeAsset, compositing, and Manim-source outputs, use the source-project CLI:
+
+```bash
+tikz-native-project build project.json
+tikz-native-project status project.json
+tikz-native-project rebuild project.json
+tikz-native-project clean project.json
+```
+
+See [source-authoritative-projects.md](docs/source-authoritative-projects.md)
+for the manifest, cache, transaction, and fail-closed rules.
 
 ## First TikZ scene
 
@@ -217,8 +231,10 @@ still exercises real Cairo renders for the automatic-occlusion bindings.
 This repository contains the reusable compiler, Manim runtime, algorithms,
 bridges, schemas, and examples. It deliberately does not contain a PowerPoint
 editor, browser UI, timeline model, ShapeAsset/ShapeState storage, or preview
-cache. Those are application concerns and can consume this package through its
-Python API or JSON bridges.
+cache. It may generate disposable ShapeAsset JSON inside a source project's
+owned output directory, but it does not provide an application ShapeAsset
+database. Applications can consume the package through its Python API, CLI, or
+JSON bridges.
 
 ## Status
 

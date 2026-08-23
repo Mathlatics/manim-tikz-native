@@ -38,6 +38,8 @@ class ResolvedOcclusionStyle:
     background_opacity: float
     cap_style: Any | None
     joint_type: Any | None
+    hidden_cap_style: Any | None = None
+    hidden_joint_type: Any | None = None
 
 
 @dataclass(frozen=True)
@@ -49,6 +51,10 @@ class OcclusionStyle:
     supplied, or final camera-frame Scene coordinates for a custom provider.
     The binding allocates every dashed Line before animation starts, so it must
     know a safe upper bound instead of growing a VGroup inside an updater.
+
+    ``hidden_cap_style`` and ``hidden_joint_type`` apply only to dashed hidden
+    fragments.  ``None`` keeps the historical behavior by inheriting the
+    corresponding style from the visible source stroke.
     """
 
     max_projected_length: float
@@ -60,6 +66,8 @@ class OcclusionStyle:
     hidden_width_scale: float = 0.82
     visible_opacity_scale: float = 1.0
     hidden_opacity_scale: float = 0.78
+    hidden_cap_style: Any | None = None
+    hidden_joint_type: Any | None = None
 
     def __post_init__(self) -> None:
         _positive(self.max_projected_length, "max_projected_length")
@@ -140,6 +148,8 @@ class OcclusionStyle:
         ):
             raise OcclusionStyleError("source stroke style must be finite and non-negative")
         source_color = vector.get_stroke_color()
+        cap_style = getattr(vector, "cap_style", None)
+        joint_type = getattr(vector, "joint_type", None)
         return ResolvedOcclusionStyle(
             visible_color=source_color if self.visible_color is None else self.visible_color,
             hidden_color=source_color if self.hidden_color is None else self.hidden_color,
@@ -150,8 +160,18 @@ class OcclusionStyle:
             background_color=vector.get_stroke_color(background=True),
             background_width=background_width,
             background_opacity=min(1.0, background_opacity),
-            cap_style=getattr(vector, "cap_style", None),
-            joint_type=getattr(vector, "joint_type", None),
+            cap_style=cap_style,
+            joint_type=joint_type,
+            hidden_cap_style=(
+                cap_style
+                if self.hidden_cap_style is None
+                else self.hidden_cap_style
+            ),
+            hidden_joint_type=(
+                joint_type
+                if self.hidden_joint_type is None
+                else self.hidden_joint_type
+            ),
         )
 
 

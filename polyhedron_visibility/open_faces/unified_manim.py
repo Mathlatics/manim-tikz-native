@@ -177,11 +177,26 @@ class _UnifiedFragmentSlot:
             self._hide_line(line)
 
     def apply_static_style(self, style: ResolvedOcclusionStyle) -> None:
+        if style.cap_style is not None:
+            self.solid.set_cap_style(style.cap_style)
+        if style.joint_type is not None:
+            self.solid.joint_type = style.joint_type
+        hidden_cap_style = (
+            style.cap_style
+            if style.hidden_cap_style is None
+            else style.hidden_cap_style
+        )
+        hidden_joint_type = (
+            style.joint_type
+            if style.hidden_joint_type is None
+            else style.hidden_joint_type
+        )
+        for line in self.dashes:
+            if hidden_cap_style is not None:
+                line.set_cap_style(hidden_cap_style)
+            if hidden_joint_type is not None:
+                line.joint_type = hidden_joint_type
         for line in (self.solid, *self.dashes):
-            if style.cap_style is not None:
-                line.set_cap_style(style.cap_style)
-            if style.joint_type is not None:
-                line.joint_type = style.joint_type
             line.set_stroke(
                 color=style.background_color,
                 width=style.background_width,

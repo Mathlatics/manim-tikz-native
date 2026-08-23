@@ -77,8 +77,14 @@ def _style_payload(value: Mapping[str, object]) -> dict[str, object]:
         "opacity": opacity,
         "line_width_pt": width,
         "dash_pattern_pt": dash,
-        "line_cap": str(value.get("lineCap") or "auto"),
-        "line_join": str(value.get("lineJoin") or "auto"),
+        # Preserve absence for hidden styles.  The runtime distinguishes a
+        # missing value (inherit the visible stroke) from an explicit "auto".
+        "line_cap": (
+            str(value["lineCap"] or "auto") if "lineCap" in value else None
+        ),
+        "line_join": (
+            str(value["lineJoin"] or "auto") if "lineJoin" in value else None
+        ),
     }
 
 

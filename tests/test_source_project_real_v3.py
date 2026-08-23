@@ -11,7 +11,15 @@ import unittest
 from unittest import mock
 
 import numpy as np
-from manim import Polygon, Scene, VGroup, ValueTracker, tempconfig
+from manim import (
+    CapStyleType,
+    LineJointType,
+    Polygon,
+    Scene,
+    VGroup,
+    ValueTracker,
+    tempconfig,
+)
 
 from tikz_native.compiler import compile_document
 from tikz_native.geometry_rig_3d import analyze_geometry_rig_3d
@@ -87,6 +95,61 @@ class SourceProjectRealV3Tests(unittest.TestCase):
         self.assertFalse(
             hasattr(figure.group, "_mathppt_open_face_visibility_owner")
         )
+
+    def test_generated_styles_preserve_hidden_cap_join_and_legacy_fallback(self) -> None:
+        scene = Scene()
+        namespace, figure, geometry = self._prepare_source(scene, self.rewritten)
+        bindings = namespace["OPEN_FACE_BINDINGS"]
+        explicit = bindings[0]
+        fallback = bindings[1]
+        explicit["visible_style"] = {
+            **explicit["visible_style"],
+            "line_cap": "butt",
+            "line_join": "miter",
+        }
+        explicit["hidden_style"] = {
+            **explicit["hidden_style"],
+            "line_cap": "round",
+            "line_join": "bevel",
+        }
+        fallback["visible_style"] = {
+            **fallback["visible_style"],
+            "line_cap": "square",
+            "line_join": "bevel",
+        }
+        fallback["hidden_style"] = dict(fallback["hidden_style"])
+        fallback["hidden_style"].pop("line_cap", None)
+        fallback["hidden_style"].pop("line_join", None)
+
+        controller = namespace["install_open_face_visibility_3d"](
+            scene, figure.group, figure.objects, geometry
+        )
+        runtime = controller._unified_runtime
+        assert runtime is not None
+
+        explicit_slots = runtime.path_slots[explicit["source_edge_id"]].fragments
+        self.assertTrue(
+            all(slot.solid.cap_style == CapStyleType.BUTT for slot in explicit_slots)
+        )
+        self.assertTrue(
+            all(
+                line.cap_style == CapStyleType.ROUND
+                and line.joint_type == LineJointType.BEVEL
+                for slot in explicit_slots
+                for line in slot.dashes
+            )
+        )
+        fallback_slots = runtime.path_slots[fallback["source_edge_id"]].fragments
+        self.assertTrue(
+            all(
+                line.cap_style == CapStyleType.SQUARE
+                and line.joint_type == LineJointType.BEVEL
+                for slot in fallback_slots
+                for line in slot.dashes
+            )
+        )
+        namespace["restore_open_face_visibility_3d"](controller)
+        namespace["restore_geometry_3d_objects"](geometry)
 
     def test_two_generated_assets_receive_non_overlapping_scene_bands(self) -> None:
         scene = Scene()

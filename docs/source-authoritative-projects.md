@@ -90,13 +90,43 @@ build-owned output and must not remove authored or unrelated files.
 
 A build reads every authored input into one immutable snapshot, then holds the
 project-directory lock while it constructs a complete sibling staging
-directory. Immediately before publication it re-reads and byte-compares all
-inputs. Only an unchanged snapshot is published. Before publication commits,
-an exception or concurrent source edit leaves the previous output intact. On
-macOS an existing output is exchanged atomically; the portable fallback uses a
-rollback rename and therefore has a brief namespace transition. Cleanup after
-a committed publication is best-effort, so an interrupted filesystem may leave
-an internal `.stage-*` or `.rollback-*` sibling without changing build truth.
+directory. Output-parent components are traversed from the locked project
+directory without following symlinks, and staged/cache files are written through
+held directory descriptors. Path-backed compiler and Bridge inputs use one-file
+system-temporary snapshots whose directory/file identities are held and checked;
+their cleanup never recursively follows a mutable path. Immediately before and
+again inside the reversible publication window, the build byte-compares all
+inputs and staged node digests. Only an unchanged snapshot is published. Before
+publication commits, an exception, failed parent-directory sync, or concurrent
+source edit normally restores the previous output intact. New output names and
+recovery names use no-replace renames, so a concurrently created directory is
+preserved rather than overwritten. On macOS and Linux an existing output is
+exchanged atomically; the portable fallback uses a rollback rename and therefore
+has a brief namespace transition. If the filesystem operation used for rollback
+itself fails, the command reports the exact internal sibling that still contains
+the complete previous output. No inode is silently discarded, but the canonical
+output name may then contain the uncommitted build or be absent and must be
+restored manually before retrying.
+
+All writers that rename the project directory or an ancestor of
+`derivedOutput` must cooperate through the same project-directory lock. The
+builder re-resolves and rechecks the named parent path around publication and
+fails safely on detected replacement, while held directory descriptors keep
+the transaction from escaping to a symlink target. No userspace sequence of
+path checks can make an unrelated process's unsynchronised ancestor rename
+atomic with publication, so such filesystem moves are outside the supported
+concurrency contract.
+
+`clean` first isolates and validates the complete owned output, then atomically
+exchanges it with an empty sibling. Removing that empty directory is the sole
+clean commit point, so a pre-commit failure never deletes only part of the old
+output. Cleanup after a committed build or clean is best-effort. An interrupted
+or concurrently changed filesystem may therefore leave an internal `.stage-*`,
+`.rollback-*`, `.recovery-*`, `.concurrent-*`, or `.discard-*` sibling without
+deleting the concurrent entry. After an ordinary failure the canonical output
+still represents the previous build. After the separately reported double
+rollback failure described above, treat the named recovery sibling—not the
+canonical output name—as the previous build truth until manual recovery.
 
 Depending on the project inputs, the derived directory can contain:
 

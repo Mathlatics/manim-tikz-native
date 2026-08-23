@@ -1067,6 +1067,12 @@ def _edge_occlusion_style(
         hidden_width_scale=hidden_width_pt / visible_width_pt,
         visible_opacity_scale=1.0,
         hidden_opacity_scale=hidden_opacity / visible_opacity,
+        hidden_cap_style=_cap_style(
+            hidden["lineCap"] if "lineCap" in hidden else visible.get("lineCap")
+        ),
+        hidden_joint_type=_joint_style(
+            hidden["lineJoin"] if "lineJoin" in hidden else visible.get("lineJoin")
+        ),
     )
 
 
