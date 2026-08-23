@@ -4,7 +4,6 @@ on:
   push:
     branches:
       - chatgpt/project-audit-20260824
-  pull_request:
 
 permissions:
   contents: write
@@ -83,7 +82,6 @@ jobs:
         run: git diff --check
 
       - name: Publish validated fixes
-        if: github.event_name == 'push'
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
@@ -92,12 +90,14 @@ jobs:
             tests/test_source_project.py \
             tests/test_tikz_native_component_revisions.py \
             tests/test_tikz_native_geometry_rig_3d.py \
+            tests/test_tikz_native_3d.py \
             tikz_native/geometry_rig_3d.py \
+            tikz_native/projection_3d.py \
             tikz_native/source_project.py \
             tikz_native/version.py
           if git diff --cached --quiet; then
             echo "Audited fixes are already committed."
           else
-            git commit -m "fix: prevent painter band and selection conflicts"
+            git commit -m "fix: harden projection and source-project conflicts"
             git push origin HEAD:chatgpt/project-audit-20260824
           fi
