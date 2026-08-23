@@ -45,6 +45,9 @@ COMPONENT_GENERATED_OPEN_FACE_VISIBILITY_3D = (
     "generated_open_face_visibility_3d"
 )
 COMPONENT_SOURCE_PROJECT_BUILD = "source_project_build"
+COMPONENT_QUADRIC_GEOMETRY = "quadric_geometry"
+COMPONENT_QUADRIC_VISIBILITY = "quadric_visibility"
+COMPONENT_QUADRIC_MANIM = "quadric_manim"
 
 
 # Existing manifests are relative to ``tikz_native/``.  New independent
@@ -89,6 +92,9 @@ _PUBLIC_0_1_COMPONENT_REVISIONS: Final[dict[str, str]] = {
     COMPONENT_TIKZ_OPEN_FACE_STATIC_ASSET_3D: "source-sha256:f74e221297d3444a17b9165ae9759ae41ca4cf7bda013333e28ab3b9d157a54e",
     COMPONENT_GENERATED_OPEN_FACE_VISIBILITY_3D: "source-sha256:d3b8917a867f754c586bef39acc1ac387726dbb7ce192f8b61a0053505b63503",
     COMPONENT_SOURCE_PROJECT_BUILD: "source-sha256:00579e342012a96443c098c7004be672d265d32fe6f82d66b0c6b11ba64305b7",
+    COMPONENT_QUADRIC_GEOMETRY: "source-sha256:c9bb34bad4338c2e1afafd55a00757b00045b20976ea2a5c1fa2c5de98d258e3",
+    COMPONENT_QUADRIC_VISIBILITY: "source-sha256:e32eb299ba108f0c66578e757081355a60567e312adb0dadb5fff6b5d01706c0",
+    COMPONENT_QUADRIC_MANIM: "source-sha256:008b8a35ee56dbc39e574881dbe1c519705c177d8326cc1767691266c024a19c",
 }
 
 
@@ -368,6 +374,52 @@ _COMPONENT_DEFINITIONS: Final[dict[str, dict[str, tuple[str, ...]]]] = {
             "schemas/tikz-native-build-manifest-v1.schema.json",
         ),
     },
+    # The finite-quadric package is split into three independently versioned
+    # layers.  The geometry component owns the Manim-neutral authoring and
+    # section-animation contracts; the visibility component owns projected
+    # occlusion and painter ordering; the final component is the only layer
+    # that imports Manim and mutates scene objects.
+    COMPONENT_QUADRIC_GEOMETRY: {
+        "dependencies": (COMPONENT_POLYHEDRON_VISIBILITY,),
+        "files": (
+            "@tool/polyhedron_visibility/quadrics/__init__.py",
+            "@tool/polyhedron_visibility/quadrics/algebra.py",
+            "@tool/polyhedron_visibility/quadrics/animation.py",
+            "@tool/polyhedron_visibility/quadrics/conics.py",
+            "@tool/polyhedron_visibility/quadrics/contract.py",
+            "@tool/polyhedron_visibility/quadrics/curves.py",
+            "@tool/polyhedron_visibility/quadrics/plane_motion.py",
+            "@tool/polyhedron_visibility/quadrics/plane_patch.py",
+            "@tool/polyhedron_visibility/quadrics/roots.py",
+            "@tool/polyhedron_visibility/quadrics/sections.py",
+            "@tool/polyhedron_visibility/quadrics/trace.py",
+        ),
+    },
+    COMPONENT_QUADRIC_VISIBILITY: {
+        "dependencies": (
+            COMPONENT_POLYHEDRON_VISIBILITY,
+            COMPONENT_QUADRIC_GEOMETRY,
+        ),
+        "files": (
+            "@tool/polyhedron_visibility/quadrics/compositing.py",
+            "@tool/polyhedron_visibility/quadrics/critical.py",
+            "@tool/polyhedron_visibility/quadrics/curve_intersections.py",
+            "@tool/polyhedron_visibility/quadrics/global_occlusion.py",
+            "@tool/polyhedron_visibility/quadrics/projection.py",
+            "@tool/polyhedron_visibility/quadrics/visibility.py",
+        ),
+    },
+    COMPONENT_QUADRIC_MANIM: {
+        "dependencies": (
+            COMPONENT_POLYHEDRON_VISIBILITY,
+            COMPONENT_QUADRIC_GEOMETRY,
+            COMPONENT_QUADRIC_VISIBILITY,
+            COMPONENT_MANAGED_PAINTER_BAND,
+        ),
+        "files": (
+            "@tool/polyhedron_visibility/quadrics/manim.py",
+        ),
+    },
 }
 
 
@@ -467,6 +519,15 @@ _DECLARED_IMPLEMENTATION_DIGESTS: Final[dict[str, str]] = {
     ),
     COMPONENT_SOURCE_PROJECT_BUILD: (
         "00579e342012a96443c098c7004be672d265d32fe6f82d66b0c6b11ba64305b7"
+    ),
+    COMPONENT_QUADRIC_GEOMETRY: (
+        "c9bb34bad4338c2e1afafd55a00757b00045b20976ea2a5c1fa2c5de98d258e3"
+    ),
+    COMPONENT_QUADRIC_VISIBILITY: (
+        "e32eb299ba108f0c66578e757081355a60567e312adb0dadb5fff6b5d01706c0"
+    ),
+    COMPONENT_QUADRIC_MANIM: (
+        "008b8a35ee56dbc39e574881dbe1c519705c177d8326cc1767691266c024a19c"
     ),
 }
 
@@ -677,6 +738,9 @@ __all__ = [
     "COMPONENT_MANAGED_PAINTER_BAND",
     "COMPONENT_OPEN_FACE_UNIFIED_MANIM",
     "COMPONENT_POLYHEDRON_VISIBILITY",
+    "COMPONENT_QUADRIC_GEOMETRY",
+    "COMPONENT_QUADRIC_MANIM",
+    "COMPONENT_QUADRIC_VISIBILITY",
     "COMPONENT_REVISION_SCHEMA",
     "COMPONENT_SOURCE_PROJECT_BUILD",
     "COMPONENT_TIKZ_OPEN_FACE_VISIBILITY_3D",

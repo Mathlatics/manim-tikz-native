@@ -43,6 +43,9 @@ from tikz_native.version import (
     COMPONENT_OPEN_FACE_UNIFIED_COMPOSITING,
     COMPONENT_OPEN_FACE_UNIFIED_MANIM,
     COMPONENT_POLYHEDRON_VISIBILITY,
+    COMPONENT_QUADRIC_GEOMETRY,
+    COMPONENT_QUADRIC_MANIM,
+    COMPONENT_QUADRIC_VISIBILITY,
     COMPONENT_SOURCE_PROJECT_BUILD,
     COMPONENT_TIKZ_OPEN_FACE_STATIC_ASSET_3D,
     COMPONENT_TIKZ_CONVEX_SECTION_3D,
@@ -127,6 +130,15 @@ GENERATED_OPEN_FACE_VISIBILITY_3D_REVISION = (
 SOURCE_PROJECT_BUILD_REVISION = (
     "source-sha256:00579e342012a96443c098c7004be672d265d32fe6f82d66b0c6b11ba64305b7"
 )
+QUADRIC_GEOMETRY_REVISION = (
+    "source-sha256:c9bb34bad4338c2e1afafd55a00757b00045b20976ea2a5c1fa2c5de98d258e3"
+)
+QUADRIC_VISIBILITY_REVISION = (
+    "source-sha256:e32eb299ba108f0c66578e757081355a60567e312adb0dadb5fff6b5d01706c0"
+)
+QUADRIC_MANIM_REVISION = (
+    "source-sha256:008b8a35ee56dbc39e574881dbe1c519705c177d8326cc1767691266c024a19c"
+)
 CONVEX_SECTION_3D_REVISION = (
     "source-sha256:5cfd664e136caf4f68876ac76f81674d99c15b3b275c3859a84c174d738729b5"
 )
@@ -168,6 +180,24 @@ class TikzNativeComponentRevisionTests(unittest.TestCase):
         }
         self.assertEqual(actual, declared)
 
+    def test_every_quadric_module_has_exactly_one_component_owner(self) -> None:
+        prefix = "@tool/polyhedron_visibility/quadrics/"
+        owned = [
+            relative
+            for files in provider_component_files().values()
+            for relative in files
+            if relative.startswith(prefix)
+        ]
+        actual = {
+            "@tool/" + path.relative_to(ROOT).as_posix()
+            for path in (VISIBILITY_ROOT / "quadrics").glob("*.py")
+            if path.is_file()
+        }
+        self.assertEqual(set(owned), actual)
+        for relative in actual:
+            with self.subTest(relative=relative):
+                self.assertEqual(owned.count(relative), 1)
+
     def test_bridge_health_uses_the_component_that_owns_its_operation(self) -> None:
         revisions = provider_component_revisions()
         contracts = provider_component_contract_revisions()
@@ -194,9 +224,25 @@ class TikzNativeComponentRevisionTests(unittest.TestCase):
         self.assertTrue(
             asset["capabilities"]["source_authoritative_project_build_v1"]
         )
+        self.assertTrue(
+            asset["capabilities"]["quadric_occlusion_parallel_v1"]
+        )
+        self.assertTrue(
+            asset["capabilities"]["quadric_section_animation_trace_v1"]
+        )
+        self.assertNotIn(
+            "quadric_section_animation_v1",
+            asset["capabilities"],
+        )
+        self.assertTrue(
+            asset["capabilities"]["quadric_global_compositing_v1"]
+        )
         for component in (
             COMPONENT_GENERATED_OPEN_FACE_VISIBILITY_3D,
             COMPONENT_SOURCE_PROJECT_BUILD,
+            COMPONENT_QUADRIC_GEOMETRY,
+            COMPONENT_QUADRIC_VISIBILITY,
+            COMPONENT_QUADRIC_MANIM,
         ):
             self.assertIn(component, revisions)
             self.assertIn(component, contracts)
@@ -290,6 +336,9 @@ class TikzNativeComponentRevisionTests(unittest.TestCase):
                 GENERATED_OPEN_FACE_VISIBILITY_3D_REVISION
             ),
             COMPONENT_SOURCE_PROJECT_BUILD: SOURCE_PROJECT_BUILD_REVISION,
+            COMPONENT_QUADRIC_GEOMETRY: QUADRIC_GEOMETRY_REVISION,
+            COMPONENT_QUADRIC_VISIBILITY: QUADRIC_VISIBILITY_REVISION,
+            COMPONENT_QUADRIC_MANIM: QUADRIC_MANIM_REVISION,
         }
         self.assertEqual(revisions, expected)
         self.assertEqual(len(set(expected.values())), len(expected))
@@ -325,6 +374,9 @@ class TikzNativeComponentRevisionTests(unittest.TestCase):
             COMPONENT_GENERATED_OPEN_FACE_VISIBILITY_3D: (
                 GENERATED_OPEN_FACE_VISIBILITY_3D_REVISION
             ),
+            COMPONENT_QUADRIC_GEOMETRY: QUADRIC_GEOMETRY_REVISION,
+            COMPONENT_QUADRIC_VISIBILITY: QUADRIC_VISIBILITY_REVISION,
+            COMPONENT_QUADRIC_MANIM: QUADRIC_MANIM_REVISION,
         }
         self.assertEqual(
             {component: revisions[component] for component in expected},
@@ -408,6 +460,53 @@ print(json.dumps({
                         )
                     else:
                         self.assertEqual(components[component], baseline[component])
+
+    def test_editing_quadric_geometry_changes_its_recursive_dependents(self) -> None:
+        baseline = provider_component_revisions()
+        mutated = self._probe_copy(
+            "@tool/polyhedron_visibility/quadrics/sections.py"
+        )
+        components = mutated["components"]
+        changed = {
+            COMPONENT_QUADRIC_GEOMETRY,
+            COMPONENT_QUADRIC_VISIBILITY,
+            COMPONENT_QUADRIC_MANIM,
+        }
+        for component in changed:
+            self.assertNotEqual(components[component], baseline[component])
+        for component in baseline:
+            if component not in changed:
+                self.assertEqual(components[component], baseline[component])
+
+    def test_editing_quadric_visibility_changes_visibility_and_manim(self) -> None:
+        baseline = provider_component_revisions()
+        mutated = self._probe_copy(
+            "@tool/polyhedron_visibility/quadrics/visibility.py"
+        )
+        components = mutated["components"]
+        changed = {
+            COMPONENT_QUADRIC_VISIBILITY,
+            COMPONENT_QUADRIC_MANIM,
+        }
+        for component in changed:
+            self.assertNotEqual(components[component], baseline[component])
+        for component in baseline:
+            if component not in changed:
+                self.assertEqual(components[component], baseline[component])
+
+    def test_editing_quadric_manim_changes_only_manim(self) -> None:
+        baseline = provider_component_revisions()
+        mutated = self._probe_copy(
+            "@tool/polyhedron_visibility/quadrics/manim.py"
+        )
+        components = mutated["components"]
+        self.assertNotEqual(
+            components[COMPONENT_QUADRIC_MANIM],
+            baseline[COMPONENT_QUADRIC_MANIM],
+        )
+        for component in baseline:
+            if component != COMPONENT_QUADRIC_MANIM:
+                self.assertEqual(components[component], baseline[component])
 
     def test_editing_2d_codegen_does_not_invalidate_asset_or_3d_runtime(self) -> None:
         baseline = provider_component_revisions()
@@ -514,6 +613,9 @@ print(json.dumps({
             COMPONENT_TIKZ_OPEN_FACE_STATIC_ASSET_3D,
             COMPONENT_NATIVE_MANIM_SOURCE_3D_V3,
             COMPONENT_GENERATED_OPEN_FACE_VISIBILITY_3D,
+            COMPONENT_QUADRIC_GEOMETRY,
+            COMPONENT_QUADRIC_VISIBILITY,
+            COMPONENT_QUADRIC_MANIM,
         }
         for component in changed:
             self.assertNotEqual(components[component], baseline[component])
@@ -672,6 +774,7 @@ print(json.dumps({
             COMPONENT_DERIVED_DIHEDRAL_VISIBILITY,
             COMPONENT_OPEN_FACE_UNIFIED_MANIM,
             COMPONENT_GENERATED_OPEN_FACE_VISIBILITY_3D,
+            COMPONENT_QUADRIC_MANIM,
         }
         for component in changed:
             self.assertNotEqual(components[component], baseline[component])
@@ -795,6 +898,9 @@ print(json.dumps({
                 COMPONENT_COPY_IDENTITY_HANDOFF,
                 COMPONENT_DERIVED_DIHEDRAL_VISIBILITY,
                 COMPONENT_SOURCE_PROJECT_BUILD,
+                COMPONENT_QUADRIC_GEOMETRY,
+                COMPONENT_QUADRIC_VISIBILITY,
+                COMPONENT_QUADRIC_MANIM,
             }:
                 self.assertEqual(components[component], baseline[component])
             else:

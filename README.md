@@ -15,6 +15,7 @@ to SVG. Unsupported syntax is reported explicitly.
 
 [中文说明](README.zh-CN.md) · [Public API](docs/public-api.md) ·
 [Automatic occlusion](docs/automatic-occlusion.md) ·
+[Quadrics and conic sections](docs/quadric-occlusion.md) ·
 [Supported TikZ subset](docs/supported-tikz.md) ·
 [Source-authoritative projects](docs/source-authoritative-projects.md)
 
@@ -40,6 +41,10 @@ to SVG. Unsupported syntax is reported explicitly.
   convex solids, while hidden dashes remain unchanged;
 - automatic line occlusion and face ordering for finite open convex faces and
   articulated hinges;
+- analytic finite spheres, capped cylinders, and one-nappe cones/frusta under
+  parallel projection, including plane sections, front-solid/hidden-dashed
+  conic arcs, projected curve/curve depth ordering, rotating-plane topology
+  schedules, and strictly separated multi-solid painter graphs;
 - a reusable source-to-copy identity handoff: a whole solid or any registered
   face/edge subset keeps explicit semantic lineage, lets the copy own exactly
   coincident pixels, and fades only the paired source primitives back in as
@@ -148,6 +153,14 @@ Articulated open faces / dihedral angle:
 ```bash
 manim -pql examples/open_face_visibility/dihedral_auto_occlusion.py \
   DihedralAutoOcclusionDemo
+```
+
+Quadratic surfaces and conic sections:
+
+```bash
+manim -pql examples/quadrics/quadric_occlusion_demo.py \
+  MovingSphereSectionDemo ObliqueCylinderSectionDemo \
+  ConeSectionFamiliesDemo GlobalQuadricOcclusionDemo
 ```
 
 Independent line and moving plane sections:

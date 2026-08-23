@@ -430,6 +430,39 @@ raises an error. All managed face and stroke source objects must have distinct
 finite authored `z_index` values, and no unrelated drawable may occupy the
 combined managed band.
 
+## Quadratic surfaces and conic sections
+
+`polyhedron_visibility.quadrics` is a lazy public namespace.  Importing its
+renderer-neutral contracts and solvers does not import Manim.  Its main entry
+points are:
+
+- `SphereSpec`, `CylinderSpec`, `ConeSpec`, `SectionPlane`;
+- `compute_quadric_section()` and `section_trace_curves()`;
+- `compute_quadric_visibility()` and
+  `compute_projected_curve_crossings()`;
+- `compute_quadric_compositing()` and
+  `compute_global_quadric_frame()`;
+- `fit_plane_display_patch()`;
+- `compute_plane_motion_schedule()`,
+  `track_scheduled_plane_section()`, and `track_moving_section_point()`;
+- `QuadricOcclusion3D`, `QuadricManimStyle`, and `QuadricManimLimits`.
+
+The Manim binding accepts immutable surface/curve sequences or callbacks that
+return a new sequence for the current frame.  IDs and counts remain fixed for
+the lifetime of an attached controller.  `paint_policy="physical"` omits
+hidden spans; `paint_policy="diagrammatic"` draws them with the hidden dash
+style.  The runtime targets Cairo, preallocates all Mobjects, and commits each
+prepared painter frame transactionally.  Its default
+`surface_order_mode="automatic"` recomputes the certified global frame on each
+update and exposes the committed evidence through `last_global_frame`;
+`surface_order_mode="explicit"` retains the legacy manual-constraint path.
+
+Global ordering accepts a bounded set of pairwise-strictly-separated convex
+spheres, capped finite cylinders, and one-nappe cones/frusta.  Intersecting
+entities and a real cyclic surface order fail explicitly because quadratic
+surface-cell splitting is outside the current contract.  Full details and a
+minimal example are in [quadric-occlusion.md](quadric-occlusion.md).
+
 ## TikZ visibility adapters
 
 - `tikz_native.polyhedron_visibility_3d_adapter.adapt_picture_visibility_3d`

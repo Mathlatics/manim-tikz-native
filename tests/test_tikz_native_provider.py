@@ -91,6 +91,19 @@ class TikzNativeProviderTests(unittest.TestCase):
         self.assertTrue(
             info["capabilities"]["tikz_open_face_visibility_3d_v1"]
         )
+        self.assertTrue(
+            info["capabilities"]["quadric_occlusion_parallel_v1"]
+        )
+        self.assertTrue(
+            info["capabilities"]["quadric_section_animation_trace_v1"]
+        )
+        self.assertNotIn(
+            "quadric_section_animation_v1",
+            info["capabilities"],
+        )
+        self.assertTrue(
+            info["capabilities"]["quadric_global_compositing_v1"]
+        )
         self.assertFalse(info["capabilities"]["dynamic_camera_in_fixed_view"])
 
     def test_two_d_asset_uses_semantic_native_objects(self) -> None:

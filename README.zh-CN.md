@@ -11,6 +11,13 @@ TikZ 图压成一张 SVG 或图片。转换后的直线、面、点、标签仍�
 - 开放凸面：适合二面角、折叠板等不构成封闭多面体的图形，并能处理显式声明的
   铰链共边以及半透明面的前后次序。
 
+现在还提供一套独立的二次曲面模块：在正交投影或一般平行投影下，支持有限
+球体、带端盖圆柱、单叶圆锥和圆台；能解析计算平面截出的圆、椭圆、抛物线、
+双曲线及退化情况，并把语义直线、圆弧、椭圆弧和截口曲线自动切成前方实线与
+后方虚线。曲线与曲线投影相交时，也会根据真实深度建立绘图次序。多个彼此严格
+分离的凸二次曲面可以共同参加同一份全局遮挡；如果实体相交或出现无法证明的
+循环前后关系，模块会明确报错，不会猜测画面。
+
 在闭合凸多面体上，还可以继续加入两类对象：
 
 - 独立直线：自动计算直线进入、穿过和离开实体的位置，实体内部的部分自动画成
@@ -119,6 +126,11 @@ manim -pql \
   examples/derived_dihedral_extraction/derived_dihedral_extraction_demo.py \
   RectangularBoxDihedralDemo TetrahedronDihedralDemo \
   SquarePyramidDihedralDemo RectangularBoxDihedralRoundTripDemo
+
+# 球面、圆柱、圆锥截口，以及多个二次曲面的全局遮挡
+manim -pql examples/quadrics/quadric_occlusion_demo.py \
+  MovingSphereSectionDemo ObliqueCylinderSectionDemo \
+  ConeSectionFamiliesDemo GlobalQuadricOcclusionDemo
 ```
 
 其中往返示例会让高亮复制体完成分离、同步旋转，再重新回到与原形状完全重合的
@@ -137,6 +149,7 @@ SVG 或位图。这样做的目的，是保证动画中的每个对象都可读�
 
 - [公共 API](docs/public-api.md)
 - [自动遮挡](docs/automatic-occlusion.md)
+- [二次曲面与圆锥曲线遮挡](docs/quadric-occlusion.md)
 - [支持的 TikZ 子集](docs/supported-tikz.md)
 - [架构说明](docs/architecture.md)
 
