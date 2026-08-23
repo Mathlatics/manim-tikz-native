@@ -15,9 +15,10 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha }}
 
-      - name: Apply reviewed follow-up patch
+      - name: Apply reviewed follow-up patches
         run: |
           python scripts/temporary_apply_followup_audit_patch.py
+          python scripts/temporary_apply_followup_delta.py
           git diff --check
 
       - name: Install system dependencies
@@ -60,20 +61,25 @@ jobs:
           git add \
             CHANGELOG.md \
             docs/source-authoritative-projects.md \
+            docs/supported-tikz.md \
             polyhedron_visibility/parallel_solver.py \
             tests/test_polyhedron_visibility_solver.py \
             tests/test_source_project.py \
+            tests/test_tikz_native_3d.py \
             tests/test_tikz_native_component_revisions.py \
             tests/test_tikz_native_manim_codegen_3d.py \
+            tests/test_tikz_native_manim_codegen_3d_v2.py \
             tests/test_tikz_native_motion_3d.py \
             tests/test_tikz_native_motion_3d_runtime.py \
             tikz_native/camera_3d.py \
+            tikz_native/compiler.py \
             tikz_native/motion_3d_runtime.py \
             tikz_native/native_manim_codegen_3d.py \
             tikz_native/source_project.py \
             tikz_native/version.py
           git rm .github/workflows/temporary-source-audit.yml
           git rm scripts/temporary_apply_followup_audit_patch.py
+          git rm scripts/temporary_apply_followup_delta.py
           git diff --cached --check
           git commit -m "fix: harden projection validation across 3D runtimes"
           git push origin HEAD:chatgpt/project-audit-20260824
