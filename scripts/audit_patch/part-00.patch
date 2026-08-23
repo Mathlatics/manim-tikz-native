@@ -1,0 +1,204 @@
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index dfb286e..bcf5eec 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
+ 
+ ## Unreleased
+ 
++- make explicit TikZ 3D basis validation and screen-offset inversion
++  scale-invariant, reject non-finite or ill-conditioned screen directions, and
++  avoid overflow/underflow while deriving the depth row;
++- allocate non-overlapping deterministic painter z bands for distinct
++  source-project hash slots and reject contradictory include/exclude selections
++  at both the source-project and direct 3D-rig boundaries;
+ - add a source-authoritative project format and the
+   `tikz-native-project build/status/rebuild/clean` CLI: authored TikZ, optional
+   motion/Bridge inputs, and render intent now deterministically regenerate
+diff --git a/docs/source-authoritative-projects.md b/docs/source-authoritative-projects.md
+index 77462eb..bacd12e 100644
+--- a/docs/source-authoritative-projects.md
++++ b/docs/source-authoritative-projects.md
+@@ -154,6 +154,14 @@ silently reuse an output built under old rules.
+ Use `tikz-native health` to inspect the current component render and contract
+ revisions.
+ 
++When `renderIntent.painterZBand` is omitted, the Provider hashes the TikZ bytes
++and projection into one of 4096 deterministic slots. Each slot reserves a
++1024-wide band and begins 2048 z-index units after the previous slot, so
++different slots cannot overlap even though managed-band bounds are inclusive.
++A true hash-slot collision, or an unrelated authored drawable inside the chosen
++band, still fails closed; set an explicit `painterZBand` to coordinate those
++figures deliberately.
++
+ ## Unified output, not automatic legacy fallback
+ 
+ Source-authoritative builds generate open-face scenes against the current
+diff --git a/tests/test_source_project.py b/tests/test_source_project.py
+index ce2406e..060eecc 100644
+--- a/tests/test_source_project.py
++++ b/tests/test_source_project.py
+@@ -32,6 +32,7 @@ from tikz_native.source_project import (
+     SourceProjectError,
+     build_project,
+     clean_project,
++    derive_painter_z_band,
+     load_source_project,
+     main,
+     provider_component_descriptor,
+@@ -171,6 +172,35 @@ class SourceProjectTestCase(unittest.TestCase):
+         self.assertEqual(project.output_directory.resolve(), (self.root / ".derived").resolve())
+         self.assertFalse(hasattr(project, "compositing_mode"))
+ 
++    def test_derived_painter_bands_do_not_overlap_across_distinct_hash_slots(
++        self,
++    ) -> None:
++        project = load_source_project(self.write_project())
++        first = derive_painter_z_band(project, b"source-0\n")
++        second = derive_painter_z_band(project, b"source-3\n")
++
++        self.assertNotEqual(first, second)
++        self.assertTrue(
++            first.maximum < second.minimum
++            or second.maximum < first.minimum
++        )
++
++    def test_selection_rejects_contradictory_object_ids(self) -> None:
++        project_path = self.write_project(
++            bridge=True,
++            extra={
++                "selection": {
++                    "include_object_ids": ["line.M.N"],
++                    "exclude_object_ids": ["line.M.N"],
++                }
++            },
++        )
++        with self.assertRaisesRegex(
++            SourceProjectError,
++            "includes and excludes the same objects",
++        ):
++            load_source_project(project_path)
++
+     def test_rejects_persisted_implementation_mode_at_any_depth(self) -> None:
+         project_path = self.write_project()
+         raw = json.loads(project_path.read_text(encoding="utf-8"))
+diff --git a/tests/test_tikz_native_3d.py b/tests/test_tikz_native_3d.py
+index 443dfc1..0598608 100644
+--- a/tests/test_tikz_native_3d.py
++++ b/tests/test_tikz_native_3d.py
+@@ -13,8 +13,10 @@ from manim import Dot3D, Line, MathTex, ParametricFunction, Polygon, VGroup
+ from tikz_native import compile_document
+ from tikz_native.manim_renderer_3d import NativeManim3DRenderer
+ from tikz_native.projection_3d import (
++    matrix_from_tikz_basis,
+     matrix_from_tikz_three_d_view,
+     project_point,
++    screen_delta_to_world,
+ )
+ 
+ 
+@@ -83,6 +85,89 @@ class TikzNative3DTests(unittest.TestCase):
+         self.assertAlmostEqual(actual[0], expected_u, places=12)
+         self.assertAlmostEqual(actual[1], expected_v, places=12)
+ 
++    def test_projection_basis_independence_is_scale_invariant(self) -> None:
++        for scale in (1.0e-20, 1.0e150):
++            with self.subTest(scale=scale):
++                matrix = matrix_from_tikz_basis(
++                    (scale, 0.0),
++                    (0.0, scale),
++                    (0.0, 0.0),
++                )
++                np.testing.assert_allclose(
++                    np.asarray(matrix)[:2],
++                    np.array(
++                        [
++                            [scale, 0.0, 0.0],
++                            [0.0, scale, 0.0],
++                        ]
++                    ),
++                    rtol=0.0,
++                    atol=0.0,
++                )
++                np.testing.assert_allclose(
++                    matrix[2],
++                    (0.0, 0.0, 1.0),
++                    rtol=0.0,
++                    atol=1.0e-15,
++                )
++
++    def test_screen_delta_inverse_is_scale_invariant(self) -> None:
++        for scale in (1.0e-20, 1.0e150):
++            with self.subTest(scale=scale):
++                matrix = matrix_from_tikz_basis(
++                    (scale, 0.0),
++                    (0.0, scale),
++                    (0.0, 0.0),
++                )
++                displacement = screen_delta_to_world(
++                    matrix,
++                    2.0 * scale,
++                    -3.0 * scale,
++                )
++                np.testing.assert_allclose(
++                    displacement,
++                    (2.0, -3.0, 0.0),
++                    rtol=1.0e-12,
++                    atol=1.0e-12,
++                )
++
++    def test_screen_delta_inverse_matches_nonorthogonal_row_span(self) -> None:
++        matrix = matrix_from_tikz_basis(
++            (2.0, 1.0),
++            (1.0, 3.0),
++            (0.5, -0.4),
++        )
++        first = np.asarray(matrix[0])
++        second = np.asarray(matrix[1])
++        expected = 0.7 * first - 0.2 * second
++        displacement = screen_delta_to_world(
++            matrix,
++            float(np.dot(first, expected)),
++            float(np.dot(second, expected)),
++        )
++        np.testing.assert_allclose(
++            displacement,
++            expected,
++            rtol=1.0e-12,
++            atol=1.0e-12,
++        )
++
++    def test_nearly_parallel_projection_basis_is_rejected_relatively(self) -> None:
++        with self.assertRaisesRegex(ValueError, "线性相关"):
++            matrix_from_tikz_basis(
++                (1.0, 1.0),
++                (0.0, 1.0e-7),
++                (0.0, 0.0),
++            )
++
++    def test_nonfinite_projection_basis_is_rejected(self) -> None:
++        with self.assertRaisesRegex(ValueError, "有限非零向量"):
++            matrix_from_tikz_basis(
++                (math.nan, 0.0),
++                (0.0, 1.0),
++                (0.0, 0.0),
++            )
++
+     def test_demo_compiles_to_native_semantic_inventory(self) -> None:
+         self.assertFalse(self.picture.unsupported)
+         self.assertEqual(
+diff --git a/tests/test_tikz_native_component_revisions.py b/tests/test_tikz_native_component_revisions.py
+index 66a4ad6..66ce532 100644
+--- a/tests/test_tikz_native_component_revisions.py
++++ b/tests/test_tikz_native_component_revisions.py
+@@ -62,37 +62,37 @@ ROOT = Path(__file__).resolve().parents[1]
+ PACKAGE_ROOT = ROOT / "tikz_native"
+ VISIBILITY_ROOT = ROOT / "polyhedron_visibility"
+ ASSET_REVISION = (
+-    "source-sha256:5599d2a0f6e6c5e561c6b9ea5ee420eae1fc4f21b88d20b13836170cafec54ff"
++    "source-sha256:6a8dc36b8db6ba8fa8ccbd860186d36486ab64b13edb5a5bd50dd0e53f1536a3"
+ )
+ GEOMETRY_RIG_2D_REVISION = (
+-    "source-sha256:2a845be9cdfeffba8c345aaa346b4ac84127ace890dac5d9eda71f1d199f536e"
++    "source-sha256:131b0bd1ea60e9cc9de1b0a33441debe741a65a15ee33bb49d1139a7b5ce501f"
+ )
