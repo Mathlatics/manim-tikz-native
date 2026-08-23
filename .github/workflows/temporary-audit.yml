@@ -4,7 +4,7 @@ on:
   pull_request:
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   audit:
@@ -13,44 +13,11 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
 
-      - name: Apply audited fixes in the working tree
-        run: |
-          python3 - <<'PY'
-          from pathlib import Path
-
-          path = Path("scripts/temporary_apply_audit_fixes.py")
-          text = path.read_text(encoding="utf-8")
-          text = text.replace(
-              "import importlib.util\n",
-              "from types import ModuleType\n",
-              1,
-          )
-          old = '''def _load_version(label: str):
-              version_path = ROOT / "tikz_native/version.py"
-              spec = importlib.util.spec_from_file_location(
-                  f"_tikz_native_audit_version_{label}",
-                  version_path,
-              )
-              if spec is None or spec.loader is None:
-                  raise RuntimeError("cannot load tikz_native/version.py")
-              version = importlib.util.module_from_spec(spec)
-              spec.loader.exec_module(version)
-              return version
-          '''
-          new = '''def _load_version(label: str):
-              version_path = ROOT / "tikz_native/version.py"
-              module = ModuleType(f"_tikz_native_audit_version_{label}")
-              module.__file__ = str(version_path)
-              source = version_path.read_text(encoding="utf-8")
-              exec(compile(source, str(version_path), "exec"), module.__dict__)
-              return module
-          '''
-          if text.count(old) != 1:
-              raise SystemExit("temporary revision loader block was not found exactly once")
-          path.write_text(text.replace(old, new, 1), encoding="utf-8")
-          PY
-          python3 scripts/temporary_apply_audit_fixes.py
+      - name: Create repository source snapshot
+        run: git archive --format=zip --output=repository-source.zip HEAD
 
       - name: Install system dependencies
         run: |
@@ -89,10 +56,10 @@ jobs:
           PYTHONHASHSEED: random
         run: |
           coverage run --branch -m unittest discover -s tests -p "test_*.py"
-          coverage report --show-missing --skip-covered
+          coverage report --show-missing --skip-covered | tee coverage-report.txt
 
       - name: Probe geometry invariants
-        run: python scripts/temporary_geometry_audit.py
+        run: python scripts/temporary_geometry_audit.py | tee geometry-audit.txt
 
       - name: Smoke-test public command entry points
         run: |
@@ -109,28 +76,20 @@ jobs:
         run: |
           ruff check tikz_native polyhedron_visibility tests \
             --select E9,F,B,PIE,PLE,RUF \
-            --output-format concise
+            --output-format concise | tee ruff-report.txt
 
       - name: Check patch whitespace
         run: git diff --check
 
-      - name: Publish validated fixes
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add \
-            docs/source-authoritative-projects.md \
-            tests/test_source_project.py \
-            tests/test_tikz_native_component_revisions.py \
-            tests/test_tikz_native_geometry_rig_3d.py \
-            tests/test_tikz_native_3d.py \
-            tikz_native/geometry_rig_3d.py \
-            tikz_native/projection_3d.py \
-            tikz_native/source_project.py \
-            tikz_native/version.py
-          if git diff --cached --quiet; then
-            echo "Audited fixes are already committed."
-          else
-            git commit -m "fix: harden projection and source-project conflicts"
-            git push origin HEAD:chatgpt/project-audit-20260824
-          fi
+      - name: Upload audit materials
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: repository-audit-materials
+          path: |
+            repository-source.zip
+            coverage-report.txt
+            geometry-audit.txt
+            ruff-report.txt
+          if-no-files-found: warn
+          retention-days: 2
