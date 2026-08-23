@@ -94,8 +94,10 @@ def provider_info(
             "open_convex_face_unified_manim_binding_v1": True,
             "tikz_open_face_visibility_3d_v1": True,
             "tikz_open_face_static_asset_3d_v1": True,
+            "generated_open_face_visibility_3d_v1": True,
             "provider_component_revisions_v1": True,
             "provider_component_contract_revisions_v1": True,
+            "source_authoritative_project_build_v1": True,
             "dynamic_camera_in_fixed_view": False,
         },
     }

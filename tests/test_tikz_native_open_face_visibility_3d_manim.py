@@ -3,16 +3,28 @@ from __future__ import annotations
 import copy
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
 import numpy as np
-from manim import Arc, Line, Polygon, Scene, ValueTracker, tempconfig
+from manim import (
+    Arc,
+    CapStyleType,
+    Line,
+    LineJointType,
+    Polygon,
+    Scene,
+    ValueTracker,
+    tempconfig,
+)
 
 from polyhedron_visibility import OcclusionStyle
 from tikz_native.compiler import compile_document
 from tikz_native.geometry_rig_3d import analyze_geometry_rig_3d
 from tikz_native.open_face_visibility_3d_manim import (
+    _EntryAffineMapper,
+    _edge_occlusion_style,
     TikzNativeOpenFaceVisibility3DManimError,
     bind_picture_open_face_visibility_3d,
 )
@@ -92,6 +104,52 @@ class TikzNativeOpenFaceVisibility3DManimTests(unittest.TestCase):
             style=OcclusionStyle(max_projected_length=max_length),
         )
         return scene, figure, binding
+
+    def test_product_style_mapping_preserves_hidden_cap_join_and_fallback(self) -> None:
+        mapper = _EntryAffineMapper(
+            coefficients=np.eye(3),
+            scene_units_per_coordinate_cm=1.0,
+            scene_units_per_tex_pt=0.05,
+            residual_tolerance=1.0e-7,
+        )
+        visible = {
+            "drawColor": "#112233",
+            "lineWidthPt": 1.0,
+            "lineCap": "square",
+            "lineJoin": "miter",
+        }
+        hidden = {
+            "drawColor": "#445566",
+            "lineWidthPt": 1.0,
+            "dashPatternPt": [2.0, 2.0],
+        }
+        fallback = _edge_occlusion_style(
+            SimpleNamespace(
+                source_edge_id="edge",
+                visible_style=visible,
+                hidden_style=hidden,
+            ),
+            capacity_style=OcclusionStyle(max_projected_length=10.0),
+            mapper=mapper,
+        )
+        self.assertEqual(fallback.hidden_cap_style, CapStyleType.SQUARE)
+        self.assertEqual(fallback.hidden_joint_type, LineJointType.MITER)
+
+        explicit = _edge_occlusion_style(
+            SimpleNamespace(
+                source_edge_id="edge",
+                visible_style=visible,
+                hidden_style={
+                    **hidden,
+                    "lineCap": "round",
+                    "lineJoin": "bevel",
+                },
+            ),
+            capacity_style=OcclusionStyle(max_projected_length=10.0),
+            mapper=mapper,
+        )
+        self.assertEqual(explicit.hidden_cap_style, CapStyleType.ROUND)
+        self.assertEqual(explicit.hidden_joint_type, LineJointType.BEVEL)
 
     def test_real_dihedral_uses_complete_proxies_three_probe_spans_and_exact_restore(self) -> None:
         scene, figure, binding = self._binding()

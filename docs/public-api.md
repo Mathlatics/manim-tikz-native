@@ -30,6 +30,35 @@ Both figures expose an object mapping keyed by stable semantic IDs. Pass a
 custom Manim `TexTemplate` to the renderer when the portable Fandol/Latin
 Modern defaults are not suitable.
 
+## Source-authoritative project builds
+
+Keep the TikZ file, optional motion and Bridge template, render intent, and any
+hooks paired with that Bridge template as the authored project. Rebuild
+ShapeAssets, compositing plans, and generated Manim source as disposable
+outputs with:
+
+```bash
+tikz-native-project build project.json
+tikz-native-project status project.json
+tikz-native-project rebuild project.json
+tikz-native-project clean project.json
+```
+
+The equivalent module entry is `python -m tikz_native.source_project`. Both
+entry points load the same single module. The manifest never stores a legacy or
+unified implementation choice: new generated open-face output uses the current
+unified adapter and fails closed instead of automatically falling back to
+legacy behavior.
+
+The CLI keeps stdout machine-readable: every non-error result emits one
+`tikz-native-project-command-result/v1` JSON document and sends build logs to
+stderr. `status` exits with 0 for a fresh project and 1 for missing or stale
+derived output; both return JSON. Invalid input or an execution failure exits
+with 2, leaves stdout empty, and writes the explanation to stderr.
+
+See [Source-authoritative projects](source-authoritative-projects.md) for the
+manifest, derived-output ownership, and component-revision rules.
+
 ## Ordinary Manim automatic occlusion
 
 Closed convex polyhedron:
@@ -429,11 +458,13 @@ tikz-native
 tikz-native-rig-2d
 tikz-native-rig-3d
 tikz-native-source-v3
+tikz-native-project
 ```
 
-Each command supports `health`. The run operations accept strict versioned JSON
-requests; refer to `tikz_native/schemas/` and the bridge module constants for
-the exact request and response contracts.
+The four Bridge commands support `health`; `tikz-native-project` instead exposes
+`build`, `status`, `rebuild`, and `clean`. Bridge run operations accept strict
+versioned JSON requests; refer to `tikz_native/schemas/` and the bridge module
+constants for the exact request and response contracts.
 
 ## Lifecycle rules
 

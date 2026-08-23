@@ -405,6 +405,7 @@ class OpenFaceOcclusion3D(ManimOcclusionBinding):
         unified_binding_scale_limits: OpenFaceUnifiedBindingScaleLimits = (
             OPEN_FACE_UNIFIED_BINDING_SCALE_LIMITS
         ),
+        stroke_styles: Mapping[str, OcclusionStyle] | None = None,
     ) -> None:
         if not isinstance(model, OpenFaceVisibilityModel):
             raise OcclusionBindingError("model must be an OpenFaceVisibilityModel")
@@ -469,6 +470,7 @@ class OpenFaceOcclusion3D(ManimOcclusionBinding):
                 style=style,
                 painter_z_band=painter_z_band,
                 scale_limits=unified_binding_scale_limits,
+                stroke_styles=stroke_styles,
             )
             self._unified_update_driver = VMobject()
             for updater in tuple(self.overlay_root.updaters):
@@ -494,6 +496,16 @@ class OpenFaceOcclusion3D(ManimOcclusionBinding):
         if self._unified_runtime is not None:
             return self._unified_runtime.display_mobject
         return self.overlay_root
+
+    def set_painter_z_band(self, value: tuple[float, float]) -> None:
+        """Reconfigure the unified band between detach and reattach cycles."""
+
+        if self.attached or self._unified_runtime is None:
+            raise OcclusionBindingError(
+                "painter z band can only change on a restored unified binding"
+            )
+        self._unified_runtime.set_painter_z_band(value)
+        self.painter_z_band = value
 
     def _display_positions(
         self,

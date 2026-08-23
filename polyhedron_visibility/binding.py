@@ -287,12 +287,28 @@ class _StrokeSlots:
         )
 
     def apply_static_style(self, style: ResolvedOcclusionStyle) -> None:
-        lines = [*self.visible, *(line for slot in self.hidden for line in slot)]
-        for line in lines:
+        hidden_lines = [line for slot in self.hidden for line in slot]
+        for line in self.visible:
             if style.cap_style is not None:
                 line.set_cap_style(style.cap_style)
             if style.joint_type is not None:
                 line.joint_type = style.joint_type
+        hidden_cap_style = (
+            style.cap_style
+            if style.hidden_cap_style is None
+            else style.hidden_cap_style
+        )
+        hidden_joint_type = (
+            style.joint_type
+            if style.hidden_joint_type is None
+            else style.hidden_joint_type
+        )
+        for line in hidden_lines:
+            if hidden_cap_style is not None:
+                line.set_cap_style(hidden_cap_style)
+            if hidden_joint_type is not None:
+                line.joint_type = hidden_joint_type
+        for line in (*self.visible, *hidden_lines):
             line.set_stroke(
                 color=style.background_color,
                 width=style.background_width,

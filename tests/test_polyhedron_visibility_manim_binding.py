@@ -100,6 +100,7 @@ class _Fixture:
         *,
         max_projected_length: float = 6.0,
         project_display: bool = False,
+        style: OcclusionStyle | None = None,
     ) -> None:
         self.scene = scene
         self.face = Polygon(
@@ -148,10 +149,14 @@ class _Fixture:
             stroke_bindings={"probe": self.source},
             projection=ParallelProjection(projection),
             display_point_provider=display_point if project_display else None,
-            style=OcclusionStyle(
-                max_projected_length=max_projected_length,
-                dash_length=0.12,
-                dash_gap=0.08,
+            style=(
+                style
+                if style is not None
+                else OcclusionStyle(
+                    max_projected_length=max_projected_length,
+                    dash_length=0.12,
+                    dash_gap=0.08,
+                )
             ),
         )
 
@@ -230,6 +235,55 @@ class AutoOcclusion3DManimTests(unittest.TestCase):
             float(fixture.source.get_stroke_opacity(background=True)),
             0.44,
         )
+
+    def test_hidden_cap_and_join_can_differ_from_visible_slots(self) -> None:
+        fixture = _Fixture(
+            _InstantScene(),
+            style=OcclusionStyle(
+                max_projected_length=6.0,
+                dash_length=0.12,
+                dash_gap=0.08,
+                hidden_cap_style=CapStyleType.ROUND,
+                hidden_joint_type=LineJointType.BEVEL,
+            ),
+        )
+        fixture.source.set_cap_style(CapStyleType.BUTT)
+        fixture.source.joint_type = LineJointType.MITER
+        controller = fixture.controller.attach()
+
+        slots = controller._slots["probe"]
+        self.assertTrue(
+            all(line.cap_style == CapStyleType.BUTT for line in slots.visible)
+        )
+        self.assertTrue(
+            all(line.joint_type == LineJointType.MITER for line in slots.visible)
+        )
+        self.assertTrue(
+            all(
+                line.cap_style == CapStyleType.ROUND
+                and line.joint_type == LineJointType.BEVEL
+                for group in slots.hidden
+                for line in group
+            )
+        )
+        controller.restore()
+
+    def test_hidden_cap_and_join_default_to_visible_slots(self) -> None:
+        fixture = _Fixture(_InstantScene())
+        fixture.source.set_cap_style(CapStyleType.SQUARE)
+        fixture.source.joint_type = LineJointType.BEVEL
+        controller = fixture.controller.attach()
+
+        slots = controller._slots["probe"]
+        self.assertTrue(
+            all(
+                line.cap_style == CapStyleType.SQUARE
+                and line.joint_type == LineJointType.BEVEL
+                for group in slots.hidden
+                for line in group
+            )
+        )
+        controller.restore()
 
     def test_gradient_strokes_fail_closed_before_source_or_scene_mutation(self) -> None:
         for background in (False, True):

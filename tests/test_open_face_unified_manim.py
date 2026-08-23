@@ -9,7 +9,9 @@ import numpy as np
 from manim import (
     BLACK,
     RED,
+    CapStyleType,
     Line,
+    LineJointType,
     Polygon,
     Scene,
     ThreeDScene,
@@ -31,6 +33,7 @@ class _UnifiedFixture:
         paint_policy: str = "diagrammatic",
         shared_source_z: bool = True,
         fixed_display: bool = False,
+        style: OcclusionStyle | None = None,
     ) -> None:
         self.scene = scene
         self.positions = {
@@ -78,10 +81,14 @@ class _UnifiedFixture:
                 if fixed_display
                 else None
             ),
-            style=OcclusionStyle(
-                max_projected_length=8.0,
-                dash_length=0.20,
-                dash_gap=0.10,
+            style=(
+                style
+                if style is not None
+                else OcclusionStyle(
+                    max_projected_length=8.0,
+                    dash_length=0.20,
+                    dash_gap=0.10,
+                )
             ),
             compositing_mode="unified",
             paint_policy=paint_policy,
@@ -140,6 +147,65 @@ class OpenFaceUnifiedManimTests(unittest.TestCase):
         controller.restore()
         self.assertEqual(fixture.face.get_fill_opacity(), 1.0)
         self.assertEqual(fixture.path.get_stroke_opacity(), 1.0)
+
+    def test_hidden_cap_and_join_can_differ_from_visible_slots(self) -> None:
+        fixture = _UnifiedFixture(
+            Scene(),
+            style=OcclusionStyle(
+                max_projected_length=8.0,
+                dash_length=0.20,
+                dash_gap=0.10,
+                hidden_cap_style=CapStyleType.ROUND,
+                hidden_joint_type=LineJointType.BEVEL,
+            ),
+        )
+        fixture.path.set_cap_style(CapStyleType.BUTT)
+        fixture.path.joint_type = LineJointType.MITER
+        controller = fixture.controller.attach()
+        runtime = controller._unified_runtime
+        assert runtime is not None
+
+        slots = runtime.path_slots["probe"].fragments
+        self.assertTrue(
+            all(slot.solid.cap_style == CapStyleType.BUTT for slot in slots)
+        )
+        self.assertTrue(
+            all(slot.solid.joint_type == LineJointType.MITER for slot in slots)
+        )
+        self.assertTrue(
+            all(
+                line.cap_style == CapStyleType.ROUND
+                for slot in slots
+                for line in slot.dashes
+            )
+        )
+        self.assertTrue(
+            all(
+                line.joint_type == LineJointType.BEVEL
+                for slot in slots
+                for line in slot.dashes
+            )
+        )
+        controller.restore()
+
+    def test_hidden_cap_and_join_default_to_visible_slots(self) -> None:
+        fixture = _UnifiedFixture(Scene())
+        fixture.path.set_cap_style(CapStyleType.SQUARE)
+        fixture.path.joint_type = LineJointType.BEVEL
+        controller = fixture.controller.attach()
+        runtime = controller._unified_runtime
+        assert runtime is not None
+
+        slots = runtime.path_slots["probe"].fragments
+        self.assertTrue(
+            all(
+                line.cap_style == CapStyleType.SQUARE
+                and line.joint_type == LineJointType.BEVEL
+                for slot in slots
+                for line in slot.dashes
+            )
+        )
+        controller.restore()
 
     def test_unrelated_drawable_in_explicit_band_fails_before_hiding(self) -> None:
         scene = Scene()

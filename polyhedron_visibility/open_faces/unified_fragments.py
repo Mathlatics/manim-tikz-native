@@ -155,8 +155,12 @@ def compute_path_fragments(
             for value in (span.start, span.end)
         ]
         boundaries[stroke.source_edge_id] = raw
+        # Visibility boundaries are the semantic partition of the path.  A
+        # numerically-near painter event may add more ordering information,
+        # but it must never move a fragment across that partition.  Give the
+        # visibility trace the highest priority inside each tolerance cluster.
         priorities[stroke.source_edge_id] = {
-            value: (3 if value in {0.0, 1.0} else 1) for value in raw
+            value: (5 if value in {0.0, 1.0} else 4) for value in raw
         }
 
     # A visibility interval does not capture every painter event.  Add finite

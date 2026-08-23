@@ -4,6 +4,14 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+- add a source-authoritative project format and the
+  `tikz-native-project build/status/rebuild/clean` CLI: authored TikZ, optional
+  motion/Bridge inputs, and render intent now deterministically regenerate
+  disposable ShapeAsset, compositing, generated-Manim, and build-manifest
+  outputs; cache reuse is component-revision scoped, authoritative JSON is
+  strict, unified OpenFace generation fails closed, hidden stroke cap/join
+  styles survive every binding path, and descriptor-based staged publication,
+  rollback, and clean transactions preserve concurrent or unknown files;
 - route the production closed-polyhedron `AutoOcclusion3D` solver through the
   shared `GeometryContext`, topology, and visibility layers while preserving
   the frozen v1 trace schema and interval classification;

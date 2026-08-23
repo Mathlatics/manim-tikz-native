@@ -75,6 +75,19 @@ python -m pip install -e ".[test]"
 
 另外需要安装 XeLaTeX、TikZ、Fandol 字体、Latin Modern 字体和 FFmpeg。
 
+如果希望始终以 TikZ 源码为准，并可重复生成临时的 ShapeAsset、统一合成计划和
+Manim Python 源码，可以使用源码项目命令：
+
+```bash
+tikz-native-project build project.json
+tikz-native-project status project.json
+tikz-native-project rebuild project.json
+tikz-native-project clean project.json
+```
+
+项目清单、缓存失效、事务保护和失败关闭规则见
+[源码权威项目说明](docs/source-authoritative-projects.md)。
+
 ## 主要示例
 
 ```bash
@@ -127,5 +140,6 @@ SVG 或位图。这样做的目的，是保证动画中的每个对象都可读�
 - [支持的 TikZ 子集](docs/supported-tikz.md)
 - [架构说明](docs/architecture.md)
 
-本仓库只提供可复用的 Manim 模块，不包含网页编辑器、PPT、时间线、ShapeAsset 或
-ShapeState 数据。
+本仓库只提供可复用的 Manim 模块，不包含网页编辑器、PPT、时间线、ShapeAsset
+数据库或 ShapeState 数据。源码项目命令会在专用输出目录中生成可随时重建的
+ShapeAsset JSON，但不会管理应用层的素材库。
