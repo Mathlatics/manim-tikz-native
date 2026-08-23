@@ -56,6 +56,9 @@ jobs:
           coverage run --branch -m unittest discover -s tests -p "test_*.py"
           coverage report --show-missing --skip-covered
 
+      - name: Probe geometry invariants
+        run: python scripts/temporary_geometry_audit.py
+
       - name: Smoke-test public command entry points
         run: |
           tikz-native --help >/dev/null
