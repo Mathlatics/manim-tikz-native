@@ -19,9 +19,11 @@ controller = scene_builder.controller(
 )
 ```
 
-This protects existing scenes which depend on authored face and line z-indices.
-TikZ-native persistence and generated-source selection remain separate follow-up
-work; this binding does not reinterpret old assets.
+This protects existing hand-authored scenes which depend on authored face and
+line z-indices. Source-authoritative projects use a different boundary: their
+generated output explicitly selects unified mode and fails closed if the current
+binding is unavailable. They never persist or automatically fall back to legacy
+mode. See [Source-authoritative projects](source-authoritative-projects.md).
 
 ## Reserved painter band
 
@@ -67,5 +69,7 @@ do not cancel opacity animations.
 ## Scope
 
 The binding supports Cairo, parallel projection, finite convex open faces,
-straight semantic paths, and fixed topology. Persisted TikZ-native mode and a
-self-contained generated-source runtime remain follow-up product work.
+straight semantic paths, and fixed topology. The source-project layer treats
+generated runtime code as disposable and records its adapter revision in the
+derived build manifest; the generated runtime must still satisfy these binding
+constraints.

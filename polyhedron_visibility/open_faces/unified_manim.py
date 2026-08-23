@@ -255,20 +255,23 @@ class _UnifiedPathSlots:
 
 def _capacity_for_model(
     model: OpenFaceVisibilityModel,
-    style: OcclusionStyle,
+    styles: Mapping[str, OcclusionStyle],
     limits: OpenFaceUnifiedBindingScaleLimits,
 ) -> dict[str, _FragmentCapacity]:
     face_count = len(model.faces)
     path_count = len(model.strokes)
-    dash_capacity = int(ceil(style.max_projected_length / style.dash_period)) + 2
-    if dash_capacity > limits.max_dashes_per_fragment:
-        raise OpenFaceUnifiedManimError(
-            f"unified open-face dashes_per_fragment={dash_capacity} exceeds limit "
-            f"{limits.max_dashes_per_fragment}"
-        )
     result: dict[str, _FragmentCapacity] = {}
     total_fragments = 0
+    total_dashes = 0
+    total_fragment_mobjects = 0
     for stroke in model.strokes:
+        style = styles[stroke.source_edge_id]
+        dash_capacity = int(ceil(style.max_projected_length / style.dash_period)) + 2
+        if dash_capacity > limits.max_dashes_per_fragment:
+            raise OpenFaceUnifiedManimError(
+                f"path {stroke.source_edge_id!r} dashes_per_fragment="
+                f"{dash_capacity} exceeds limit {limits.max_dashes_per_fragment}"
+            )
         occluder_count = sum(
             1
             for face in model.faces
@@ -290,12 +293,13 @@ def _capacity_for_model(
             dash_capacity,
         )
         total_fragments += fragment_capacity
+        total_dashes += fragment_capacity * dash_capacity
+        total_fragment_mobjects += fragment_capacity * (dash_capacity + 3)
     if total_fragments > limits.max_total_fragments:
         raise OpenFaceUnifiedManimError(
             f"unified open-face fragment slots={total_fragments} exceeds limit "
             f"{limits.max_total_fragments}"
         )
-    total_dashes = total_fragments * dash_capacity
     if total_dashes > limits.max_total_dash_lines:
         raise OpenFaceUnifiedManimError(
             f"unified open-face dash lines={total_dashes} exceeds limit "
@@ -305,7 +309,7 @@ def _capacity_for_model(
         face_count
         + 1  # face root
         + path_count  # one root per source path
-        + total_fragments * (dash_capacity + 3)
+        + total_fragment_mobjects
         + 2  # display root and opacity sentinel
     )
     if total_mobjects > limits.max_total_mobjects:
@@ -396,6 +400,7 @@ class OpenFaceUnifiedManimRuntime:
         scale_limits: OpenFaceUnifiedBindingScaleLimits = (
             OPEN_FACE_UNIFIED_BINDING_SCALE_LIMITS
         ),
+        stroke_styles: Mapping[str, OcclusionStyle] | None = None,
     ) -> None:
         if set(stroke_sources) != set(model.stroke_map):
             raise OpenFaceUnifiedManimError("unified stroke source identities mismatch")
@@ -406,7 +411,16 @@ class OpenFaceUnifiedManimRuntime:
         self.stroke_sources = dict(stroke_sources)
         self.face_sources = dict(face_sources)
         self.style = style
-        self.capacities = _capacity_for_model(model, style, scale_limits)
+        self.stroke_styles = (
+            {stroke.source_edge_id: style for stroke in model.strokes}
+            if stroke_styles is None
+            else dict(stroke_styles)
+        )
+        if set(self.stroke_styles) != set(model.stroke_map) or not all(
+            isinstance(value, OcclusionStyle) for value in self.stroke_styles.values()
+        ):
+            raise OpenFaceUnifiedManimError("unified stroke style identities mismatch")
+        self.capacities = _capacity_for_model(model, self.stroke_styles, scale_limits)
         self.path_slots = {
             path_id: _UnifiedPathSlots(self.capacities[path_id])
             for path_id in sorted(self.capacities)
@@ -425,7 +439,15 @@ class OpenFaceUnifiedManimRuntime:
             managed_roots=(self.root,),
         )
         self._resolved_styles: dict[str, ResolvedOcclusionStyle] = {}
+        self._styles_configured = False
         self._last_frame: OpenFaceUnifiedCompositingFrame | None = None
+
+    def set_painter_z_band(self, value: tuple[float, float]) -> None:
+        if self._last_frame is not None:
+            raise OpenFaceUnifiedManimError(
+                "painter z band can only change while the runtime is restored"
+            )
+        self._band = ManagedPainterBand(z_band=value, managed_roots=(self.root,))
 
     @property
     def display_mobject(self) -> ManagedDisplayGroup:
@@ -437,12 +459,13 @@ class OpenFaceUnifiedManimRuntime:
 
     def configure_styles(self) -> dict[str, ResolvedOcclusionStyle]:
         resolved = {
-            path_id: self.style.resolve_for(source)
+            path_id: self.stroke_styles[path_id].resolve_for(source)
             for path_id, source in self.stroke_sources.items()
         }
         for path_id, slots in self.path_slots.items():
             slots.apply_static_style(resolved[path_id])
         self._resolved_styles = resolved
+        self._styles_configured = True
         return resolved
 
     def configure_band(self, containers: Sequence[list[object]]) -> None:
@@ -465,7 +488,7 @@ class OpenFaceUnifiedManimRuntime:
         display_positions: Mapping[str, np.ndarray],
         containers: Sequence[list[object]],
     ) -> PreparedOpenFaceUnifiedManimFrame:
-        if not self._resolved_styles:
+        if not self._styles_configured:
             raise OpenFaceUnifiedManimError("unified path styles are not configured")
         self.configure_band(containers)
         by_path: dict[str, list[PaintPathFragment]] = {}
@@ -501,7 +524,7 @@ class OpenFaceUnifiedManimRuntime:
                     display_start=display_start,
                     display_end=display_end,
                     capacity=self.capacities[path_id],
-                    style=self.style,
+                    style=self.stroke_styles[path_id],
                 )
                 prepared_values.append(prepared)
                 slot = slots.fragments[index]

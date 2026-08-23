@@ -28,18 +28,30 @@
       "$ref": "#/$defs/relativePath"
     },
     "derivedOutput": {
-      "$ref": "#/$defs/relativePath",
+      "$ref": "#/$defs/derivedOutputPath",
       "default": ".tikz-native/derived"
+    },
+    "pictureIndex": {
+      "type": "integer",
+      "minimum": 1,
+      "default": 1
+    },
+    "entryMacro": {
+      "type": ["string", "null"]
+    },
+    "selection": {
+      "$ref": "#/$defs/selection"
     },
     "renderIntent": {
       "type": "object",
       "properties": {
         "paintPolicy": {
-          "type": "string",
-          "minLength": 1,
-          "default": "source"
+          "enum": ["diagrammatic", "physical"],
+          "default": "diagrammatic"
         },
-        "projection": true,
+        "projection": {
+          "$ref": "#/$defs/authorValue"
+        },
         "painterZBand": {
           "oneOf": [
             {
@@ -77,14 +89,81 @@
       "additionalProperties": false
     }
   },
+  "dependentRequired": {
+    "hooksSource": ["bridgeRequestTemplate"],
+    "selection": ["bridgeRequestTemplate"]
+  },
   "additionalProperties": false,
   "$defs": {
+    "authorObject": {
+      "type": "object",
+      "propertyNames": {
+        "not": {
+          "pattern": "^(?:[Cc][Oo][Mm][Pp][Oo][Ss][Ii][Tt][Ii][Nn][Gg]|[Ii][Mm][Pp][Ll][Ee][Mm][Ee][Nn][Tt][Aa][Tt][Ii][Oo][Nn])[^A-Za-z0-9]*[Mm][Oo][Dd][Ee]$"
+        }
+      },
+      "additionalProperties": {
+        "$ref": "#/$defs/authorValue"
+      }
+    },
+    "authorValue": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/authorObject"
+        },
+        {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/authorValue"
+          }
+        },
+        {
+          "type": ["string", "number", "boolean", "null"]
+        }
+      ]
+    },
+    "selection": {
+      "type": "object",
+      "properties": {
+        "candidate_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "range": {
+          "type": "array",
+          "prefixItems": [
+            {"type": "number"},
+            {"type": "number"}
+          ],
+          "minItems": 2,
+          "maxItems": 2
+        },
+        "include_object_ids": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {"type": "string", "minLength": 1}
+        },
+        "exclude_object_ids": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {"type": "string", "minLength": 1}
+        }
+      },
+      "additionalProperties": false
+    },
+    "derivedOutputPath": {
+      "allOf": [
+        {"$ref": "#/$defs/relativePath"},
+        {"not": {"pattern": "^\\.(?:[\\\\/]+\\.)*[\\\\/]*$"}}
+      ]
+    },
     "relativePath": {
       "type": "string",
       "minLength": 1,
-      "not": {
-        "pattern": "^(?:/|[A-Za-z]:[\\\\/])"
-      }
+      "allOf": [
+        {"not": {"pattern": "^(?:/|[A-Za-z]:[\\\\/])"}},
+        {"not": {"pattern": "(?:^|[\\\\/])\\.\\.(?:$|[\\\\/])"}}
+      ]
     }
   }
 }

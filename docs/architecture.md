@@ -4,6 +4,11 @@
 application integration separate.
 
 ```text
+source-project manifest (authored inputs and render intent)
+        │
+        ├──► optional motion / hooks / Bridge request template
+        │
+        ▼
 restricted TikZ source
         │
         ▼
@@ -22,6 +27,9 @@ versioned JSON bridges                 polyhedron_visibility
                                                ├── convex-section solver
                                                ├── source/copy identity handoff
                                                └── derived-dihedral compositor
+
+source-project build ──► disposable ShapeAsset / compositing / Manim source
+                     └─► build manifest with node keys + used revision set
 ```
 
 ## Packages
@@ -73,10 +81,16 @@ its dependency graph actually includes that solver. Persisted integrations can
 also compare contract revisions, which only change when saved author data can
 no longer be read safely.
 
+The `source_project_build` component owns the source-project orchestrator and
+its two persisted JSON contracts. Generated open-face runtime adaptation has a
+separate component so its changes invalidate generated source without forcing a
+ShapeAsset rebuild. See [Source-authoritative projects](source-authoritative-projects.md).
+
 Run `tikz-native health` to inspect these identities.
 
 ## Application boundary
 
-The repository does not define a browser editor, presentation model, timeline,
-or persistence layer. Applications should treat compiler output, editable
+The repository does not define a browser editor, presentation model, or
+timeline. Its source-project manifest is an author-data boundary, not an
+application database. Applications should treat compiler output, editable
 author data, preview media, and final rendered media as separate layers.

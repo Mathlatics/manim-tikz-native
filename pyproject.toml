@@ -52,6 +52,8 @@ tikz-native = "tikz_native.bridge:main"
 tikz-native-rig-2d = "tikz_native.geometry_rig_bridge:main"
 tikz-native-rig-3d = "tikz_native.geometry_rig_3d_bridge:main"
 tikz-native-source-v3 = "tikz_native.geometry_rig_3d_source_v3_bridge:main"
+# Keep the project CLI on the single module.  A same-named package would shadow
+# this implementation during normal imports and make source and wheel behavior diverge.
 tikz-native-project = "tikz_native.source_project:main"
 
 [tool.setuptools]
@@ -63,6 +65,8 @@ include = ["tikz_native*", "polyhedron_visibility*"]
 
 [tool.setuptools.package-data]
 tikz_native = [
+  # Public source-project and build-manifest contracts are covered by this
+  # schema glob and must remain available through importlib.resources.
   "schemas/*.json",
   "examples/*.tex",
   "subset_v0_1.json",

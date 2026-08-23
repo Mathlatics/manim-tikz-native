@@ -28,6 +28,7 @@ from tikz_native.version import (
     COMPONENT_DERIVED_DIHEDRAL_VISIBILITY,
     COMPONENT_EMBEDDED_MOTION_3D,
     COMPONENT_FACE_DEPTH_CUE_3D,
+    COMPONENT_GENERATED_OPEN_FACE_VISIBILITY_3D,
     COMPONENT_GEOMETRY_RIG_2D,
     COMPONENT_GEOMETRY_RIG_3D,
     COMPONENT_MOTION_PREVIEW_2D,
@@ -42,6 +43,7 @@ from tikz_native.version import (
     COMPONENT_OPEN_FACE_UNIFIED_COMPOSITING,
     COMPONENT_OPEN_FACE_UNIFIED_MANIM,
     COMPONENT_POLYHEDRON_VISIBILITY,
+    COMPONENT_SOURCE_PROJECT_BUILD,
     COMPONENT_TIKZ_OPEN_FACE_STATIC_ASSET_3D,
     COMPONENT_TIKZ_CONVEX_SECTION_3D,
     COMPONENT_TIKZ_OPEN_FACE_VISIBILITY_3D,
@@ -84,7 +86,7 @@ NATIVE_SOURCE_3D_V2_REVISION = (
     "source-sha256:3783dd61ed9c86d89f0b45c403c3af4a9b5cf5181bb7d771133cfa3cb35a7912"
 )
 NATIVE_SOURCE_3D_V3_REVISION = (
-    "source-sha256:d33d8795d231e0c99e44db61a862e6c87447b95da8a11f0fd708a52e90fa4c64"
+    "source-sha256:00ccfef527ce259ef10a7998b4ef39048c205e0f22af80291b71c5aaa68b129a"
 )
 EMBEDDED_MOTION_3D_REVISION = (
     "source-sha256:ff40797b718cd31fe04dd8443fffedfdeffb46648f20b026eba5bdd7c871996f"
@@ -102,22 +104,28 @@ TIKZ_POLYHEDRON_VISIBILITY_3D_REVISION = (
     "source-sha256:863161f0ef24eb4a363bff3af367562d746adedf7d49e7f764c408c19611b411"
 )
 OPEN_FACE_VISIBILITY_REVISION = (
-    "source-sha256:1419679cd66976bfb4dd9956c8a20818a8bda87ed069b175b8d3a1fcc8523d43"
+    "source-sha256:78a50f87a77a2c84da9a44c3f8accb31fe4ae4239ed80b17cba46e6ef12f9641"
 )
 OPEN_FACE_UNIFIED_COMPOSITING_REVISION = (
-    "source-sha256:b701aca6bc8cc939fd39ea54d2b2e263180e1ba2fd73d632bf78f1ee920a2f43"
+    "source-sha256:5632c736e53d3bbb908be95afbbc4850bae67aef6fd812f110ead004b345856f"
 )
 MANAGED_PAINTER_BAND_REVISION = (
     "source-sha256:21190d33f2bb0590442645937e4ef19ab860022b07c28a39a02cfd2107ce2480"
 )
 OPEN_FACE_UNIFIED_MANIM_REVISION = (
-    "source-sha256:1d32ae2700d3213eba486c8950f4d50bf668dbb8c912c774110443ba0f3c06fa"
+    "source-sha256:e47888543e74ee39f8da53271b9ada9680ef3cfd2f3a676cbf8a7b25547c40a3"
 )
 TIKZ_OPEN_FACE_VISIBILITY_3D_REVISION = (
-    "source-sha256:5a6d831a85b58cd30e6b6620424f4e6208548f5d9337ff4b45638f61693d5aa0"
+    "source-sha256:92629b986c18489ab17ac5a6e4fd61a1a26e8b519f15254ab1f1d6b8afc1ea85"
 )
 TIKZ_OPEN_FACE_STATIC_ASSET_3D_REVISION = (
-    "source-sha256:21cafaeaba8b9a8f2c4949b444e86b02c845ba17729be7b695efee73ae0b59a2"
+    "source-sha256:686ebb38ccacc3f315cdbf73cfc8eb2b49251464d2b92d3e57517cafb055fe9d"
+)
+GENERATED_OPEN_FACE_VISIBILITY_3D_REVISION = (
+    "source-sha256:ef582c6214b5e9bee7d031b3d78cc571c548ac5106249af6fa1e28bfbaf5cf4c"
+)
+SOURCE_PROJECT_BUILD_REVISION = (
+    "source-sha256:c8d26e88d7da7fa1420105226c34c3f744ab3800c4ee0ecadf3b111bc60b1c40"
 )
 CONVEX_SECTION_3D_REVISION = (
     "source-sha256:9d5181e204fabc08f709e8a25a878773c3e4c1f06e53997bfb9a98e1e3aa271e"
@@ -180,6 +188,18 @@ class TikzNativeComponentRevisionTests(unittest.TestCase):
         self.assertTrue(
             asset["capabilities"]["open_convex_face_unified_manim_binding_v1"]
         )
+        self.assertTrue(
+            asset["capabilities"]["generated_open_face_visibility_3d_v1"]
+        )
+        self.assertTrue(
+            asset["capabilities"]["source_authoritative_project_build_v1"]
+        )
+        for component in (
+            COMPONENT_GENERATED_OPEN_FACE_VISIBILITY_3D,
+            COMPONENT_SOURCE_PROJECT_BUILD,
+        ):
+            self.assertIn(component, revisions)
+            self.assertIn(component, contracts)
         self.assertEqual(
             motion_2d["revision"], revisions[COMPONENT_MOTION_PREVIEW_2D]
         )
@@ -266,6 +286,10 @@ class TikzNativeComponentRevisionTests(unittest.TestCase):
             COMPONENT_TIKZ_OPEN_FACE_STATIC_ASSET_3D: (
                 TIKZ_OPEN_FACE_STATIC_ASSET_3D_REVISION
             ),
+            COMPONENT_GENERATED_OPEN_FACE_VISIBILITY_3D: (
+                GENERATED_OPEN_FACE_VISIBILITY_3D_REVISION
+            ),
+            COMPONENT_SOURCE_PROJECT_BUILD: SOURCE_PROJECT_BUILD_REVISION,
         }
         self.assertEqual(revisions, expected)
         self.assertEqual(len(set(expected.values())), len(expected))
@@ -297,6 +321,9 @@ class TikzNativeComponentRevisionTests(unittest.TestCase):
             ),
             COMPONENT_TIKZ_OPEN_FACE_STATIC_ASSET_3D: (
                 TIKZ_OPEN_FACE_STATIC_ASSET_3D_REVISION
+            ),
+            COMPONENT_GENERATED_OPEN_FACE_VISIBILITY_3D: (
+                GENERATED_OPEN_FACE_VISIBILITY_3D_REVISION
             ),
         }
         self.assertEqual(
@@ -354,6 +381,34 @@ print(json.dumps({
             )
             return json.loads(completed.stdout)
 
+    def test_editing_generated_source_adapter_changes_only_its_component(self) -> None:
+        baseline = provider_component_revisions()
+        mutated = self._probe_copy("generated_open_face_visibility_3d.py")
+        components = mutated["components"]
+        for component in baseline:
+            if component == COMPONENT_GENERATED_OPEN_FACE_VISIBILITY_3D:
+                self.assertNotEqual(components[component], baseline[component])
+            else:
+                self.assertEqual(components[component], baseline[component])
+
+    def test_editing_source_project_contract_changes_only_its_component(self) -> None:
+        baseline = provider_component_revisions()
+        for path in (
+            "source_project.py",
+            "schemas/tikz-native-source-project-v1.schema.json",
+            "schemas/tikz-native-build-manifest-v1.schema.json",
+        ):
+            with self.subTest(path=path):
+                mutated = self._probe_copy(path)
+                components = mutated["components"]
+                for component in baseline:
+                    if component == COMPONENT_SOURCE_PROJECT_BUILD:
+                        self.assertNotEqual(
+                            components[component], baseline[component]
+                        )
+                    else:
+                        self.assertEqual(components[component], baseline[component])
+
     def test_editing_2d_codegen_does_not_invalidate_asset_or_3d_runtime(self) -> None:
         baseline = provider_component_revisions()
         mutated = self._probe_copy("native_manim_codegen_2d.py")
@@ -393,6 +448,7 @@ print(json.dumps({
                 COMPONENT_NATIVE_MANIM_SOURCE_3D,
                 COMPONENT_NATIVE_MANIM_SOURCE_3D_V2,
                 COMPONENT_NATIVE_MANIM_SOURCE_3D_V3,
+                COMPONENT_GENERATED_OPEN_FACE_VISIBILITY_3D,
             }:
                 continue
             self.assertEqual(components[component], baseline[component])
@@ -414,6 +470,7 @@ print(json.dumps({
             if component in {
                 COMPONENT_NATIVE_MANIM_SOURCE_3D_V2,
                 COMPONENT_NATIVE_MANIM_SOURCE_3D_V3,
+                COMPONENT_GENERATED_OPEN_FACE_VISIBILITY_3D,
             }:
                 continue
             self.assertEqual(components[component], baseline[component])
@@ -428,7 +485,10 @@ print(json.dumps({
             baseline[COMPONENT_NATIVE_MANIM_SOURCE_3D_V3],
         )
         for component in baseline:
-            if component == COMPONENT_NATIVE_MANIM_SOURCE_3D_V3:
+            if component in {
+                COMPONENT_NATIVE_MANIM_SOURCE_3D_V3,
+                COMPONENT_GENERATED_OPEN_FACE_VISIBILITY_3D,
+            }:
                 continue
             self.assertEqual(components[component], baseline[component])
 
@@ -453,6 +513,7 @@ print(json.dumps({
             COMPONENT_TIKZ_OPEN_FACE_VISIBILITY_3D,
             COMPONENT_TIKZ_OPEN_FACE_STATIC_ASSET_3D,
             COMPONENT_NATIVE_MANIM_SOURCE_3D_V3,
+            COMPONENT_GENERATED_OPEN_FACE_VISIBILITY_3D,
         }
         for component in changed:
             self.assertNotEqual(components[component], baseline[component])
@@ -571,6 +632,7 @@ print(json.dumps({
             COMPONENT_TIKZ_OPEN_FACE_VISIBILITY_3D,
             COMPONENT_TIKZ_OPEN_FACE_STATIC_ASSET_3D,
             COMPONENT_NATIVE_MANIM_SOURCE_3D_V3,
+            COMPONENT_GENERATED_OPEN_FACE_VISIBILITY_3D,
         }
         for component in changed:
             self.assertNotEqual(components[component], baseline[component])
@@ -589,6 +651,7 @@ print(json.dumps({
         changed = {
             COMPONENT_OPEN_FACE_UNIFIED_COMPOSITING,
             COMPONENT_OPEN_FACE_UNIFIED_MANIM,
+            COMPONENT_GENERATED_OPEN_FACE_VISIBILITY_3D,
         }
         for component in changed:
             self.assertNotEqual(components[component], baseline[component])
@@ -608,6 +671,7 @@ print(json.dumps({
             COMPONENT_MANAGED_PAINTER_BAND,
             COMPONENT_DERIVED_DIHEDRAL_VISIBILITY,
             COMPONENT_OPEN_FACE_UNIFIED_MANIM,
+            COMPONENT_GENERATED_OPEN_FACE_VISIBILITY_3D,
         }
         for component in changed:
             self.assertNotEqual(components[component], baseline[component])
@@ -627,8 +691,15 @@ print(json.dumps({
             components[COMPONENT_OPEN_FACE_UNIFIED_MANIM],
             baseline[COMPONENT_OPEN_FACE_UNIFIED_MANIM],
         )
+        self.assertNotEqual(
+            components[COMPONENT_GENERATED_OPEN_FACE_VISIBILITY_3D],
+            baseline[COMPONENT_GENERATED_OPEN_FACE_VISIBILITY_3D],
+        )
         for component in baseline:
-            if component == COMPONENT_OPEN_FACE_UNIFIED_MANIM:
+            if component in {
+                COMPONENT_OPEN_FACE_UNIFIED_MANIM,
+                COMPONENT_GENERATED_OPEN_FACE_VISIBILITY_3D,
+            }:
                 continue
             self.assertEqual(components[component], baseline[component])
 
@@ -656,6 +727,7 @@ print(json.dumps({
                 COMPONENT_TIKZ_OPEN_FACE_VISIBILITY_3D,
                 COMPONENT_TIKZ_OPEN_FACE_STATIC_ASSET_3D,
                 COMPONENT_NATIVE_MANIM_SOURCE_3D_V3,
+                COMPONENT_GENERATED_OPEN_FACE_VISIBILITY_3D,
             }:
                 continue
             self.assertEqual(components[component], baseline[component])
@@ -682,6 +754,7 @@ print(json.dumps({
                 COMPONENT_TIKZ_OPEN_FACE_VISIBILITY_3D,
                 COMPONENT_TIKZ_OPEN_FACE_STATIC_ASSET_3D,
                 COMPONENT_NATIVE_MANIM_SOURCE_3D_V3,
+                COMPONENT_GENERATED_OPEN_FACE_VISIBILITY_3D,
             }:
                 continue
             self.assertEqual(components[component], baseline[component])
@@ -696,7 +769,11 @@ print(json.dumps({
             baseline[COMPONENT_TIKZ_OPEN_FACE_STATIC_ASSET_3D],
         )
         for component in baseline:
-            if component == COMPONENT_TIKZ_OPEN_FACE_STATIC_ASSET_3D:
+            if component in {
+                COMPONENT_TIKZ_OPEN_FACE_STATIC_ASSET_3D,
+                COMPONENT_NATIVE_MANIM_SOURCE_3D_V3,
+                COMPONENT_GENERATED_OPEN_FACE_VISIBILITY_3D,
+            }:
                 continue
             self.assertEqual(components[component], baseline[component])
 
@@ -717,6 +794,7 @@ print(json.dumps({
                 COMPONENT_CONVEX_SECTION_3D,
                 COMPONENT_COPY_IDENTITY_HANDOFF,
                 COMPONENT_DERIVED_DIHEDRAL_VISIBILITY,
+                COMPONENT_SOURCE_PROJECT_BUILD,
             }:
                 self.assertEqual(components[component], baseline[component])
             else:

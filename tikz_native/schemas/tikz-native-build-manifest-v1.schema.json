@@ -10,6 +10,7 @@
     "provider",
     "project",
     "inputs",
+    "authoringIntent",
     "renderIntent",
     "componentRevisions",
     "nodes"
@@ -34,8 +35,16 @@
           "const": "source_project_build"
         },
         "revision": {
-          "type": "integer",
-          "minimum": 0
+          "oneOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "type": "integer",
+              "minimum": 0
+            }
+          ]
         },
         "capabilities": {
           "type": "array",
@@ -57,7 +66,36 @@
       "minLength": 1
     },
     "inputs": {
-      "type": "object"
+      "type": "object",
+      "required": ["tikzSource"],
+      "properties": {
+        "tikzSource": {"$ref": "#/$defs/input"},
+        "motionJson": {"$ref": "#/$defs/input"},
+        "hooksSource": {"$ref": "#/$defs/input"},
+        "bridgeRequestTemplate": {"$ref": "#/$defs/input"}
+      },
+      "additionalProperties": false
+    },
+    "authoringIntent": {
+      "type": "object",
+      "required": [
+        "pictureIndex",
+        "entryMacro",
+        "selection"
+      ],
+      "properties": {
+        "pictureIndex": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "entryMacro": {
+          "type": ["string", "null"]
+        },
+        "selection": {
+          "$ref": "#/$defs/selection"
+        }
+      },
+      "additionalProperties": false
     },
     "renderIntent": {
       "type": "object",
@@ -68,8 +106,7 @@
       ],
       "properties": {
         "paintPolicy": {
-          "type": "string",
-          "minLength": 1
+          "enum": ["diagrammatic", "physical"]
         },
         "projection": true,
         "painterZBand": {
@@ -90,9 +127,17 @@
     },
     "componentRevisions": {
       "type": "object",
+      "required": [
+        "source_project_build",
+        "asset_compiler",
+        "open_face_unified_compositing",
+        "managed_painter_band"
+      ],
       "additionalProperties": {
-        "type": "integer",
-        "minimum": 0
+        "oneOf": [
+          {"type": "string", "minLength": 1},
+          {"type": "integer", "minimum": 0}
+        ]
       }
     },
     "nodes": {
@@ -103,23 +148,156 @@
       ],
       "properties": {
         "shape": {
-          "$ref": "#/$defs/node"
+          "allOf": [
+            {"$ref": "#/$defs/node"},
+            {"properties": {"output": {"const": "shape-asset.json"}}}
+          ]
         },
         "motion": {
-          "$ref": "#/$defs/node"
+          "allOf": [
+            {"$ref": "#/$defs/node"},
+            {"properties": {"output": {"const": "motion-asset.json"}}}
+          ]
         },
         "compositing": {
-          "$ref": "#/$defs/node"
+          "allOf": [
+            {"$ref": "#/$defs/node"},
+            {"properties": {"output": {"const": "unified-compositing.json"}}}
+          ]
         },
         "generated_source": {
-          "$ref": "#/$defs/node"
+          "allOf": [
+            {"$ref": "#/$defs/node"},
+            {"properties": {"output": {"const": "generated_scene.py"}}}
+          ]
         }
       },
       "additionalProperties": false
     }
   },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "nodes": {"required": ["generated_source"]}
+        }
+      },
+      "then": {
+        "properties": {
+          "componentRevisions": {
+            "required": ["generated_open_face_visibility_3d"]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {"inputs": {"required": ["motionJson"]}}
+      },
+      "then": {
+        "properties": {"nodes": {"required": ["motion"]}}
+      }
+    },
+    {
+      "if": {
+        "properties": {"nodes": {"required": ["motion"]}}
+      },
+      "then": {
+        "properties": {"inputs": {"required": ["motionJson"]}}
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "inputs": {"required": ["bridgeRequestTemplate"]}
+        }
+      },
+      "then": {
+        "properties": {"nodes": {"required": ["generated_source"]}}
+      }
+    },
+    {
+      "if": {
+        "properties": {"nodes": {"required": ["generated_source"]}}
+      },
+      "then": {
+        "properties": {
+          "inputs": {"required": ["bridgeRequestTemplate"]}
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {"inputs": {"required": ["hooksSource"]}}
+      },
+      "then": {
+        "properties": {
+          "inputs": {"required": ["bridgeRequestTemplate"]}
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "authoringIntent": {
+            "properties": {"selection": {"minProperties": 1}}
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "inputs": {"required": ["bridgeRequestTemplate"]}
+        }
+      }
+    }
+  ],
   "additionalProperties": false,
   "$defs": {
+    "input": {
+      "type": "object",
+      "required": ["path", "sha256"],
+      "properties": {
+        "path": {
+          "type": "string",
+          "minLength": 1,
+          "allOf": [
+            {"not": {"pattern": "^(?:/|[A-Za-z]:[\\\\/])"}},
+            {"not": {"pattern": "(?:^|[\\\\/])\\.\\.(?:$|[\\\\/])"}}
+          ]
+        },
+        "sha256": {"$ref": "#/$defs/sha256"}
+      },
+      "additionalProperties": false
+    },
+    "selection": {
+      "type": "object",
+      "properties": {
+        "candidate_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "range": {
+          "type": "array",
+          "prefixItems": [
+            {"type": "number"},
+            {"type": "number"}
+          ],
+          "minItems": 2,
+          "maxItems": 2
+        },
+        "include_object_ids": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {"type": "string", "minLength": 1}
+        },
+        "exclude_object_ids": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {"type": "string", "minLength": 1}
+        }
+      },
+      "additionalProperties": false
+    },
     "sha256": {
       "type": "string",
       "pattern": "^[0-9a-f]{64}$"
