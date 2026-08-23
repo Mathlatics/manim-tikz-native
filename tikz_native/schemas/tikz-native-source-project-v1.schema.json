@@ -1,0 +1,90 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mathlatics.github.io/manim-tikz-native/schemas/tikz-native-source-project-v1.schema.json",
+  "title": "TikZ Native source-authoritative project",
+  "description": "User-authored inputs and render intent. Generated artifacts and compositor implementation modes are deliberately excluded.",
+  "type": "object",
+  "required": [
+    "schemaVersion",
+    "tikzSource"
+  ],
+  "properties": {
+    "$schema": {
+      "type": "string"
+    },
+    "schemaVersion": {
+      "const": "tikz-native-source-project/v1"
+    },
+    "tikzSource": {
+      "$ref": "#/$defs/relativePath"
+    },
+    "motionJson": {
+      "$ref": "#/$defs/relativePath"
+    },
+    "hooksSource": {
+      "$ref": "#/$defs/relativePath"
+    },
+    "bridgeRequestTemplate": {
+      "$ref": "#/$defs/relativePath"
+    },
+    "derivedOutput": {
+      "$ref": "#/$defs/relativePath",
+      "default": ".tikz-native/derived"
+    },
+    "renderIntent": {
+      "type": "object",
+      "properties": {
+        "paintPolicy": {
+          "type": "string",
+          "minLength": 1,
+          "default": "source"
+        },
+        "projection": true,
+        "painterZBand": {
+          "oneOf": [
+            {
+              "type": "array",
+              "prefixItems": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "number"
+                }
+              ],
+              "minItems": 2,
+              "maxItems": 2
+            },
+            {
+              "type": "object",
+              "required": [
+                "min",
+                "max"
+              ],
+              "properties": {
+                "min": {
+                  "type": "number"
+                },
+                "max": {
+                  "type": "number"
+                }
+              },
+              "additionalProperties": false
+            }
+          ]
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "relativePath": {
+      "type": "string",
+      "minLength": 1,
+      "not": {
+        "pattern": "^(?:/|[A-Za-z]:[\\\\/])"
+      }
+    }
+  }
+}
