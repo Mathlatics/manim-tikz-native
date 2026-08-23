@@ -15,7 +15,42 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Apply audited fixes in the working tree
-        run: python3 scripts/temporary_apply_audit_fixes.py
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path("scripts/temporary_apply_audit_fixes.py")
+          text = path.read_text(encoding="utf-8")
+          text = text.replace(
+              "import importlib.util\n",
+              "from types import ModuleType\n",
+              1,
+          )
+          old = '''def _load_version(label: str):
+              version_path = ROOT / "tikz_native/version.py"
+              spec = importlib.util.spec_from_file_location(
+                  f"_tikz_native_audit_version_{label}",
+                  version_path,
+              )
+              if spec is None or spec.loader is None:
+                  raise RuntimeError("cannot load tikz_native/version.py")
+              version = importlib.util.module_from_spec(spec)
+              spec.loader.exec_module(version)
+              return version
+          '''
+          new = '''def _load_version(label: str):
+              version_path = ROOT / "tikz_native/version.py"
+              module = ModuleType(f"_tikz_native_audit_version_{label}")
+              module.__file__ = str(version_path)
+              source = version_path.read_text(encoding="utf-8")
+              exec(compile(source, str(version_path), "exec"), module.__dict__)
+              return module
+          '''
+          if text.count(old) != 1:
+              raise SystemExit("temporary revision loader block was not found exactly once")
+          path.write_text(text.replace(old, new, 1), encoding="utf-8")
+          PY
+          python3 scripts/temporary_apply_audit_fixes.py
 
       - name: Install system dependencies
         run: |
