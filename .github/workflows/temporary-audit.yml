@@ -1,9 +1,7 @@
 name: Temporary deep audit
 
 on:
-  push:
-    branches:
-      - chatgpt/project-audit-20260824
+  pull_request:
 
 permissions:
   contents: write
