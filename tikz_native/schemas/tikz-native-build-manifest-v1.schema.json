@@ -1,0 +1,149 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mathlatics.github.io/manim-tikz-native/schemas/tikz-native-build-manifest-v1.schema.json",
+  "title": "TikZ Native derived build manifest",
+  "description": "Deterministic fingerprints for disposable artifacts built from a source-authoritative project.",
+  "type": "object",
+  "required": [
+    "schemaVersion",
+    "sourceProjectSchemaVersion",
+    "provider",
+    "project",
+    "inputs",
+    "renderIntent",
+    "componentRevisions",
+    "nodes"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": "tikz-native-build-manifest/v1"
+    },
+    "sourceProjectSchemaVersion": {
+      "const": "tikz-native-source-project/v1"
+    },
+    "provider": {
+      "type": "object",
+      "required": [
+        "name",
+        "revision",
+        "capabilities",
+        "owns"
+      ],
+      "properties": {
+        "name": {
+          "const": "source_project_build"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "capabilities": {
+          "type": "array",
+          "contains": {
+            "const": "source_authoritative_project_build_v1"
+          }
+        },
+        "owns": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "project": {
+      "type": "string",
+      "minLength": 1
+    },
+    "inputs": {
+      "type": "object"
+    },
+    "renderIntent": {
+      "type": "object",
+      "required": [
+        "paintPolicy",
+        "projection",
+        "painterZBand"
+      ],
+      "properties": {
+        "paintPolicy": {
+          "type": "string",
+          "minLength": 1
+        },
+        "projection": true,
+        "painterZBand": {
+          "type": "array",
+          "prefixItems": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "number"
+            }
+          ],
+          "minItems": 2,
+          "maxItems": 2
+        }
+      },
+      "additionalProperties": false
+    },
+    "componentRevisions": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "integer",
+        "minimum": 0
+      }
+    },
+    "nodes": {
+      "type": "object",
+      "required": [
+        "shape",
+        "compositing"
+      ],
+      "properties": {
+        "shape": {
+          "$ref": "#/$defs/node"
+        },
+        "motion": {
+          "$ref": "#/$defs/node"
+        },
+        "compositing": {
+          "$ref": "#/$defs/node"
+        },
+        "generated_source": {
+          "$ref": "#/$defs/node"
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "node": {
+      "type": "object",
+      "required": [
+        "key",
+        "output",
+        "sha256"
+      ],
+      "properties": {
+        "key": {
+          "$ref": "#/$defs/sha256"
+        },
+        "output": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sha256": {
+          "$ref": "#/$defs/sha256"
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}
