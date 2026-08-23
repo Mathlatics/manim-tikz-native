@@ -7,6 +7,24 @@ permissions:
   contents: read
 
 jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Create repository source snapshot
+        run: git archive --format=zip --output=repository-source.zip HEAD
+
+      - name: Upload repository source snapshot
+        uses: actions/upload-artifact@v4
+        with:
+          name: repository-source
+          path: repository-source.zip
+          if-no-files-found: error
+          retention-days: 2
+
   audit:
     runs-on: ubuntu-latest
     timeout-minutes: 45
@@ -15,9 +33,6 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.event.pull_request.head.sha }}
-
-      - name: Create repository source snapshot
-        run: git archive --format=zip --output=repository-source.zip HEAD
 
       - name: Install system dependencies
         run: |
@@ -81,13 +96,12 @@ jobs:
       - name: Check patch whitespace
         run: git diff --check
 
-      - name: Upload audit materials
+      - name: Upload audit reports
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: repository-audit-materials
+          name: repository-audit-reports
           path: |
-            repository-source.zip
             coverage-report.txt
             geometry-audit.txt
             ruff-report.txt
