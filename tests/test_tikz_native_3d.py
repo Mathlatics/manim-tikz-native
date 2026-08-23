@@ -13,8 +13,10 @@ from manim import Dot3D, Line, MathTex, ParametricFunction, Polygon, VGroup
 from tikz_native import compile_document
 from tikz_native.manim_renderer_3d import NativeManim3DRenderer
 from tikz_native.projection_3d import (
+    matrix_from_tikz_basis,
     matrix_from_tikz_three_d_view,
     project_point,
+    screen_delta_to_world,
 )
 
 
@@ -82,6 +84,89 @@ class TikzNative3DTests(unittest.TestCase):
         )
         self.assertAlmostEqual(actual[0], expected_u, places=12)
         self.assertAlmostEqual(actual[1], expected_v, places=12)
+
+    def test_projection_basis_independence_is_scale_invariant(self) -> None:
+        for scale in (1.0e-20, 1.0e150):
+            with self.subTest(scale=scale):
+                matrix = matrix_from_tikz_basis(
+                    (scale, 0.0),
+                    (0.0, scale),
+                    (0.0, 0.0),
+                )
+                np.testing.assert_allclose(
+                    np.asarray(matrix)[:2],
+                    np.array(
+                        [
+                            [scale, 0.0, 0.0],
+                            [0.0, scale, 0.0],
+                        ]
+                    ),
+                    rtol=0.0,
+                    atol=0.0,
+                )
+                np.testing.assert_allclose(
+                    matrix[2],
+                    (0.0, 0.0, 1.0),
+                    rtol=0.0,
+                    atol=1.0e-15,
+                )
+
+    def test_screen_delta_inverse_is_scale_invariant(self) -> None:
+        for scale in (1.0e-20, 1.0e150):
+            with self.subTest(scale=scale):
+                matrix = matrix_from_tikz_basis(
+                    (scale, 0.0),
+                    (0.0, scale),
+                    (0.0, 0.0),
+                )
+                displacement = screen_delta_to_world(
+                    matrix,
+                    2.0 * scale,
+                    -3.0 * scale,
+                )
+                np.testing.assert_allclose(
+                    displacement,
+                    (2.0, -3.0, 0.0),
+                    rtol=1.0e-12,
+                    atol=1.0e-12,
+                )
+
+    def test_screen_delta_inverse_matches_nonorthogonal_row_span(self) -> None:
+        matrix = matrix_from_tikz_basis(
+            (2.0, 1.0),
+            (1.0, 3.0),
+            (0.5, -0.4),
+        )
+        first = np.asarray(matrix[0])
+        second = np.asarray(matrix[1])
+        expected = 0.7 * first - 0.2 * second
+        displacement = screen_delta_to_world(
+            matrix,
+            float(np.dot(first, expected)),
+            float(np.dot(second, expected)),
+        )
+        np.testing.assert_allclose(
+            displacement,
+            expected,
+            rtol=1.0e-12,
+            atol=1.0e-12,
+        )
+
+    def test_nearly_parallel_projection_basis_is_rejected_relatively(self) -> None:
+        with self.assertRaisesRegex(ValueError, "线性相关"):
+            matrix_from_tikz_basis(
+                (1.0, 1.0),
+                (0.0, 1.0e-7),
+                (0.0, 0.0),
+            )
+
+    def test_nonfinite_projection_basis_is_rejected(self) -> None:
+        with self.assertRaisesRegex(ValueError, "有限非零向量"):
+            matrix_from_tikz_basis(
+                (math.nan, 0.0),
+                (0.0, 1.0),
+                (0.0, 0.0),
+            )
 
     def test_demo_compiles_to_native_semantic_inventory(self) -> None:
         self.assertFalse(self.picture.unsupported)

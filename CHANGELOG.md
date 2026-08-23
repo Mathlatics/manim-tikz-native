@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+- make explicit TikZ 3D basis validation and screen-offset inversion
+  scale-invariant, reject non-finite or ill-conditioned screen directions, and
+  avoid overflow/underflow while deriving the depth row;
+- allocate non-overlapping deterministic painter z bands for distinct
+  source-project hash slots and reject contradictory include/exclude selections
+  at both the source-project and direct 3D-rig boundaries;
 - add a source-authoritative project format and the
   `tikz-native-project build/status/rebuild/clean` CLI: authored TikZ, optional
   motion/Bridge inputs, and render intent now deterministically regenerate

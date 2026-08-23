@@ -154,6 +154,14 @@ silently reuse an output built under old rules.
 Use `tikz-native health` to inspect the current component render and contract
 revisions.
 
+When `renderIntent.painterZBand` is omitted, the Provider hashes the TikZ bytes
+and projection into one of 4096 deterministic slots. Each slot reserves a
+1024-wide band and begins 2048 z-index units after the previous slot, so
+different slots cannot overlap even though managed-band bounds are inclusive.
+A true hash-slot collision, or an unrelated authored drawable inside the chosen
+band, still fails closed; set an explicit `painterZBand` to coordinate those
+figures deliberately.
+
 ## Unified output, not automatic legacy fallback
 
 Source-authoritative builds generate open-face scenes against the current

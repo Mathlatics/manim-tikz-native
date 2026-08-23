@@ -57,6 +57,12 @@ _FORBIDDEN_MANIFEST_KEYS = {
     "implementationmode",
 }
 
+_PAINTER_Z_BAND_BASE = 10_000.0
+_PAINTER_Z_BAND_WIDTH = 1024.0
+_PAINTER_Z_BAND_GAP = 1024.0
+_PAINTER_Z_BAND_STRIDE = _PAINTER_Z_BAND_WIDTH + _PAINTER_Z_BAND_GAP
+_PAINTER_Z_BAND_SLOT_COUNT = 4096
+
 
 class SourceProjectError(ValueError):
     """Raised when a source project is invalid or unsafe."""
@@ -684,6 +690,15 @@ def _parse_selection(value: Any) -> dict[str, Any]:
                 f"selection.{key} must contain unique non-empty strings"
             )
         result[key] = list(object_ids)
+    contradictory_ids = sorted(
+        set(result.get("include_object_ids", ()))
+        & set(result.get("exclude_object_ids", ()))
+    )
+    if contradictory_ids:
+        raise SourceProjectError(
+            "selection includes and excludes the same objects: "
+            + ", ".join(contradictory_ids)
+        )
     return result
 
 
@@ -839,9 +854,15 @@ def derive_painter_z_band(project: SourceProject, tikz_bytes: bytes | None = Non
     digest.update(tikz_bytes)
     digest.update(b"\0projection\0")
     digest.update(_canonical_json(project.projection))
-    offset = int(digest.hexdigest()[:8], 16) % 4096
-    minimum = float(10_000 + offset * 2)
-    return PainterZBand(minimum, minimum + 1024.0)
+    offset = (
+        int(digest.hexdigest()[:8], 16) % _PAINTER_Z_BAND_SLOT_COUNT
+    )
+    # Managed-band bounds are inclusive. Distinct hash slots therefore need a
+    # stride greater than the complete band width, rather than merely distinct
+    # starting z-indices. A true hash collision still fails closed in the Scene
+    # binding and can be resolved with an explicit painterZBand override.
+    minimum = _PAINTER_Z_BAND_BASE + offset * _PAINTER_Z_BAND_STRIDE
+    return PainterZBand(minimum, minimum + _PAINTER_Z_BAND_WIDTH)
 
 
 def _normalise_compiler_result(value: Any) -> Any:

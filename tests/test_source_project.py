@@ -32,6 +32,7 @@ from tikz_native.source_project import (
     SourceProjectError,
     build_project,
     clean_project,
+    derive_painter_z_band,
     load_source_project,
     main,
     provider_component_descriptor,
@@ -170,6 +171,35 @@ class SourceProjectTestCase(unittest.TestCase):
         )
         self.assertEqual(project.output_directory.resolve(), (self.root / ".derived").resolve())
         self.assertFalse(hasattr(project, "compositing_mode"))
+
+    def test_derived_painter_bands_do_not_overlap_across_distinct_hash_slots(
+        self,
+    ) -> None:
+        project = load_source_project(self.write_project())
+        first = derive_painter_z_band(project, b"source-0\n")
+        second = derive_painter_z_band(project, b"source-3\n")
+
+        self.assertNotEqual(first, second)
+        self.assertTrue(
+            first.maximum < second.minimum
+            or second.maximum < first.minimum
+        )
+
+    def test_selection_rejects_contradictory_object_ids(self) -> None:
+        project_path = self.write_project(
+            bridge=True,
+            extra={
+                "selection": {
+                    "include_object_ids": ["line.M.N"],
+                    "exclude_object_ids": ["line.M.N"],
+                }
+            },
+        )
+        with self.assertRaisesRegex(
+            SourceProjectError,
+            "includes and excludes the same objects",
+        ):
+            load_source_project(project_path)
 
     def test_rejects_persisted_implementation_mode_at_any_depth(self) -> None:
         project_path = self.write_project()

@@ -713,6 +713,12 @@ def _binding_records(
         raise GeometryRig3DError(
             "selection references unknown object IDs: " + ", ".join(unknown)
         )
+    overlap = sorted(include_ids & exclude_ids)
+    if overlap:
+        raise GeometryRig3DError(
+            "selection includes and excludes the same objects: "
+            + ", ".join(overlap)
+        )
     occlusion_member_ids = {
         object_id
         for relation in picture.occlusion_relations
