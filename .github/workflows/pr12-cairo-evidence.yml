@@ -7,6 +7,12 @@ on:
     paths:
       - diagnostics/pr12_cairo_evidence/**
       - .github/workflows/pr12-cairo-evidence.yml
+  pull_request:
+    branches:
+      - main
+    paths:
+      - diagnostics/pr12_cairo_evidence/**
+      - .github/workflows/pr12-cairo-evidence.yml
   workflow_dispatch:
 
 permissions:
@@ -42,7 +48,8 @@ jobs:
       - name: Verify production baseline
         shell: bash
         run: |
-          test "$(git rev-parse HEAD^)" = "a7811bf4f7d4adbf2e4078e30d647b40bea6693a" || true
+          git merge-base --is-ancestor \
+            a7811bf4f7d4adbf2e4078e30d647b40bea6693a HEAD
           python - <<'PY'
           import manim
           from polyhedron_visibility.quadrics.manim import QuadricOcclusion3D
