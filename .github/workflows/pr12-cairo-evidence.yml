@@ -25,6 +25,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Install system dependencies
         run: |
@@ -50,6 +52,9 @@ jobs:
         run: |
           git merge-base --is-ancestor \
             a7811bf4f7d4adbf2e4078e30d647b40bea6693a HEAD
+          git diff --quiet \
+            a7811bf4f7d4adbf2e4078e30d647b40bea6693a HEAD -- \
+            polyhedron_visibility/quadrics
           python - <<'PY'
           import manim
           from polyhedron_visibility.quadrics.manim import QuadricOcclusion3D
