@@ -174,6 +174,47 @@ _EXPORTS: Final[dict[str, tuple[str, str]]] = {
         ".compositing",
         "compute_quadric_compositing",
     ),
+    "PlaneDepthRole": (".section_compositing", "PlaneDepthRole"),
+    "QUADRIC_SECTION_COMPOSITING_LIMITS": (
+        ".section_compositing",
+        "QUADRIC_SECTION_COMPOSITING_LIMITS",
+    ),
+    "QUADRIC_SECTION_COMPOSITING_SCHEMA": (
+        ".section_compositing",
+        "QUADRIC_SECTION_COMPOSITING_SCHEMA",
+    ),
+    "QuadricPlaneFragment": (
+        ".section_compositing",
+        "QuadricPlaneFragment",
+    ),
+    "QuadricSectionCompositingError": (
+        ".section_compositing",
+        "QuadricSectionCompositingError",
+    ),
+    "QuadricSectionCompositingFrame": (
+        ".section_compositing",
+        "QuadricSectionCompositingFrame",
+    ),
+    "QuadricSectionCompositingLimits": (
+        ".section_compositing",
+        "QuadricSectionCompositingLimits",
+    ),
+    "QuadricSectionPaintItems": (
+        ".section_compositing",
+        "QuadricSectionPaintItems",
+    ),
+    "canonical_quadric_section_compositing_json": (
+        ".section_compositing",
+        "canonical_quadric_section_compositing_json",
+    ),
+    "compute_quadric_section_compositing": (
+        ".section_compositing",
+        "compute_quadric_section_compositing",
+    ),
+    "quadric_plane_fragment_contours": (
+        ".section_compositing",
+        "quadric_plane_fragment_contours",
+    ),
     "BranchCapacityPlan": (".animation", "BranchCapacityPlan"),
     "BranchContinuityError": (".animation", "BranchContinuityError"),
     "MAX_SECTION_BRANCH_SLOTS": (".animation", "MAX_SECTION_BRANCH_SLOTS"),
@@ -302,6 +343,7 @@ _EXPORTS: Final[dict[str, tuple[str, str]]] = {
         "verify_strict_quadric_separation",
     ),
     "PreparedQuadricManimFrame": (".manim", "PreparedQuadricManimFrame"),
+    "DEFAULT_QUADRIC_VIEW": (".manim", "DEFAULT_QUADRIC_VIEW"),
     "QUADRIC_MANIM_LIMITS": (".manim", "QUADRIC_MANIM_LIMITS"),
     "QuadricManimCapacityError": (".manim", "QuadricManimCapacityError"),
     "QuadricManimError": (".manim", "QuadricManimError"),

@@ -181,7 +181,7 @@ class MultiProjectionCamera(ThreeDCamera):
 
     def __init__(
         self,
-        initial_mode: str = "front",
+        initial_mode: str = "oblique",
         presets: Mapping[str, ProjectionPreset] | None = None,
         **kwargs,
     ) -> None:

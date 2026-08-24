@@ -145,6 +145,22 @@ class QuadricManimBindingTests(unittest.TestCase):
     def tearDown(self) -> None:
         self.config.__exit__(None, None, None)
 
+    def test_default_projection_is_true_isometric_with_vertical_world_z(self) -> None:
+        controller = QuadricOcclusion3D(
+            Scene(),
+            surfaces=(SphereSpec("sphere", (0.0, 0.0, 0.0), 1.0),),
+            curves=(),
+            limits=_limits(max_curves=1),
+        )
+        matrix = controller._resolve_view().matrix
+
+        np.testing.assert_allclose(matrix @ matrix.T, np.identity(3), atol=1e-12)
+        projected_axes = matrix[:2]
+        lengths = np.linalg.norm(projected_axes, axis=0)
+        np.testing.assert_allclose(lengths, np.full(3, lengths[0]), atol=1e-12)
+        self.assertAlmostEqual(float(matrix[0, 2]), 0.0, places=12)
+        self.assertGreater(float(matrix[1, 2]), 0.0)
+
     def test_curve_display_subdivision_is_stable_after_large_translation(
         self,
     ) -> None:

@@ -11,7 +11,11 @@ from manim import ValueTracker, tempconfig
 from jsonschema import Draft202012Validator
 
 from tikz_native import compile_document
-from tikz_native.camera_3d import ISOMETRIC_MATRIX, MultiProjectionCamera
+from tikz_native.camera_3d import (
+    ISOMETRIC_MATRIX,
+    OBLIQUE_MATRIX,
+    MultiProjectionCamera,
+)
 from tikz_native.manim_renderer_3d import NativeManim3DRenderer
 from tikz_native.motion_3d import (
     MOTION_3D_SCHEMA,
@@ -167,6 +171,14 @@ class TikzNativeMotion3DTests(unittest.TestCase):
         )
         np.testing.assert_allclose(
             camera.get_view_center(), original.view_center, atol=1e-12
+        )
+
+    def test_portable_camera_defaults_to_classroom_oblique_dimetric(self) -> None:
+        camera = MultiProjectionCamera()
+
+        self.assertEqual(camera.current_mode, "oblique")
+        np.testing.assert_allclose(
+            camera.get_projection_matrix(), OBLIQUE_MATRIX, atol=1e-12
         )
 
     def test_binding_and_occlusion_keep_native_object_identity(self) -> None:

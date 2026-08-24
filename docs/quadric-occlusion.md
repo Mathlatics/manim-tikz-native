@@ -186,7 +186,6 @@ Manim handoff at those scheduled events.
 The shortest static section workflow is:
 
 ```python
-from polyhedron_visibility.parallel_solver import ParallelView
 from polyhedron_visibility.quadrics import (
     QuadricOcclusion3D,
     SectionPlane,
@@ -199,18 +198,39 @@ sphere = SphereSpec("sphere", (0, 0, 0), 2)
 plane = SectionPlane("cut", (0.4, 0, 0), (1, 0.3, 0.2))
 trace = compute_quadric_section("section", sphere, plane)
 curves = section_trace_curves(trace)
-view = ParallelView.from_matrix(
-    ((1, 0, 0.32), (0, 1, 0.18), (0, 0, 1))
-)
 
 controller = QuadricOcclusion3D(
     self,
     surfaces=(sphere,),
     curves=curves,
-    projection=view,
+    section_plane=plane,
     paint_policy="diagrammatic",
 ).attach()
 ```
+
+The omitted projection is the true orthographic isometric preset.  It is the
+quadric/conic classroom default: equal projected axis scales, no screen shear,
+and a vertical world-z cone axis.  Supply a `ParallelView` or a 3-by-3
+matrix only when the scene deliberately needs another parallel view.
+
+With `section_plane=plane`, the finite display patch no longer sits at one
+manually chosen z-index.  The renderer-neutral section compositor replaces the
+smooth projected solid by a far and a near projection sheet, then adaptively
+partitions the patch into four depth roles: outside the silhouette, behind the
+solid, between the two sheets, and in front of the solid.  These roles, the
+plane outline, and all analytic curve fragments enter one deterministic
+far-to-near painter graph.  The Cairo binding merges adjacent cells into
+continuous compound contours before drawing, so adaptive calculation does not
+produce a visible triangle mesh.
+
+The section boundary is guarded by the exact restricted quadric, not only by
+coarse display samples.  A small ellipse close to tangency therefore still
+causes refinement; features smaller than `section_max_screen_error` may be
+represented by the containing display cell, but are never silently treated as
+a large uniform region.  The mode currently supports exactly one finite convex
+sphere, capped cylinder, or single-nappe cone/frustum and one non-edge-on
+cutting plane.  Multiple intersecting quadrics remain a separate unsupported
+problem and fail closed.
 
 For a fixed-topology moving plane, pass a callable as `curves`; it may build a
 fresh immutable section trace from the current `ValueTracker` value.  Surface
@@ -233,7 +253,6 @@ controller = QuadricSectionTransition3D(
     self,
     scheduled=scheduled,
     progress=progress,
-    projection=view,
     transition_fraction=0.055,
 ).attach()
 
@@ -249,6 +268,11 @@ graph.  Finite trim tangencies that do not change the conic family use an
 instantaneous bank handoff instead of holding a numerically repeated tangency
 root across several display frames.  The analytic schedule itself always
 retains the exact event.
+
+The transition controller displays and unifies the moving cutting plane by
+default.  Its plane patch is fitted again from the same immutable surface and
+current plane, while the renderer identities remain fixed.  Pass
+`show_plane=False` only for a curve-only presentation.
 
 If the schedule was created with an explicit `GeometryContext` or
 `coefficient_tolerance`, pass the same values to

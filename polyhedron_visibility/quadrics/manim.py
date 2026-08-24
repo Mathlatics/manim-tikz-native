@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from dataclasses import dataclass
-from math import isfinite
+from math import isfinite, sqrt
 from typing import Callable, Iterator, Mapping, Sequence
 
 import numpy as np
@@ -35,6 +35,7 @@ from ..painter_band import (
     ManagedPainterBandError,
     PreparedPainterBand,
 )
+from ..geometry import GeometryContext, ResolvedGeometryContext
 from ..parallel_solver import ParallelView, SolverError
 from ..style import OcclusionStyle
 from ..visibility import VisibilityKind
@@ -46,7 +47,13 @@ from .compositing import (
     SurfaceConstraintInput,
     compute_quadric_compositing,
 )
-from .contract import ConeSpec, CylinderSpec, SphereSpec
+from .contract import (
+    ConeSpec,
+    CylinderSpec,
+    PlaneDisplayPatchSpec,
+    SectionPlane,
+    SphereSpec,
+)
 from .curve_intersections import (
     ProjectedCurveIntersectionError,
     compute_projected_curve_crossings,
@@ -63,6 +70,16 @@ from .projection import (
     ProjectionSubdivisionError,
     build_opaque_projection_proxy,
 )
+from .plane_patch import PlanePatchFitError, fit_plane_display_patch
+from .section_compositing import (
+    PlaneDepthRole,
+    QUADRIC_SECTION_COMPOSITING_LIMITS,
+    QuadricSectionCompositingError,
+    QuadricSectionCompositingFrame,
+    QuadricSectionCompositingLimits,
+    compute_quadric_section_compositing,
+    quadric_plane_fragment_contours,
+)
 from .visibility import compute_quadric_visibility
 
 QuadricSurfaceSpec = SphereSpec | CylinderSpec | ConeSpec
@@ -72,10 +89,23 @@ CurveInput = Sequence[AnalyticCurve3D] | Callable[[], Sequence[AnalyticCurve3D]]
 CurveOpacityInput = (
     Mapping[str, float] | Callable[[], Mapping[str, float]] | None
 )
+SectionPlaneInput = SectionPlane | Callable[[], SectionPlane] | None
+PlanePatchInput = (
+    PlaneDisplayPatchSpec | Callable[[], PlaneDisplayPatchSpec] | None
+)
 ProjectionInput = (
     ParallelView
     | Sequence[Sequence[float]]
     | Callable[[object], ParallelView | Sequence[Sequence[float]]]
+)
+
+
+DEFAULT_QUADRIC_VIEW = ParallelView.from_matrix(
+    (
+        (-1.0 / sqrt(2.0), 1.0 / sqrt(2.0), 0.0),
+        (-1.0 / sqrt(6.0), -1.0 / sqrt(6.0), 2.0 / sqrt(6.0)),
+        (1.0 / sqrt(3.0), 1.0 / sqrt(3.0), 1.0 / sqrt(3.0)),
+    )
 )
 
 
@@ -135,6 +165,11 @@ class QuadricManimStyle:
     joint_type: object | None = None
     hidden_cap_style: object | None = None
     hidden_joint_type: object | None = None
+    section_plane_fill_color: object = "#63C7B2"
+    section_plane_fill_opacity: float = 0.15
+    section_plane_stroke_color: object = "#2C8C7A"
+    section_plane_stroke_width: float = 1.4
+    section_plane_stroke_opacity: float = 0.65
 
     def __post_init__(self) -> None:
         for name in (
@@ -147,6 +182,9 @@ class QuadricManimStyle:
             "hidden_curve_opacity",
             "background_width",
             "background_opacity",
+            "section_plane_fill_opacity",
+            "section_plane_stroke_width",
+            "section_plane_stroke_opacity",
         ):
             object.__setattr__(self, name, _non_negative(getattr(self, name), name))
         object.__setattr__(
@@ -159,6 +197,8 @@ class QuadricManimStyle:
             "visible_curve_opacity",
             "hidden_curve_opacity",
             "background_opacity",
+            "section_plane_fill_opacity",
+            "section_plane_stroke_opacity",
         ):
             if getattr(self, name) > 1.0:
                 raise ValueError(f"{name} must not exceed 1")
@@ -243,6 +283,14 @@ class _PreparedSurface:
 
 
 @dataclass(frozen=True, slots=True)
+class _PreparedSectionLayers:
+    frame: QuadricSectionCompositingFrame
+    surface_points: np.ndarray
+    plane_polygons: Mapping[PlaneDepthRole, tuple[np.ndarray, ...]]
+    plane_outline_points: np.ndarray
+
+
+@dataclass(frozen=True, slots=True)
 class _PreparedNumericFrame:
     frame: QuadricCompositingFrame
     global_frame: GlobalQuadricFrame | None
@@ -251,6 +299,8 @@ class _PreparedNumericFrame:
     curve_opacities: Mapping[str, float]
     fragment_slot_maps: Mapping[str, Mapping[str, int]]
     item_mobjects: Mapping[str, Mobject]
+    painter_draw_order: tuple[str, ...]
+    section_layers: _PreparedSectionLayers | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -267,6 +317,13 @@ class PreparedQuadricManimFrame:
         """Return the automatic global evidence prepared with this frame."""
 
         return self.numeric.global_frame
+
+    @property
+    def section_frame(self) -> QuadricSectionCompositingFrame | None:
+        """Return the prepared plane/surface split, when section mode is active."""
+
+        layers = self.numeric.section_layers
+        return None if layers is None else layers.frame
 
 
 @dataclass(slots=True)
@@ -355,6 +412,27 @@ def _hide_vmobject(value: VMobject) -> None:
     value.set_fill(opacity=0.0)
     value.set_stroke(opacity=0.0)
     value.set_stroke(opacity=0.0, background=True)
+
+
+def _set_closed_subpaths(
+    value: VMobject,
+    polygons: Sequence[np.ndarray],
+) -> None:
+    """Replace one fixed VMobject with any number of closed polygon subpaths."""
+
+    value.clear_points()
+    for raw in polygons:
+        points = np.asarray(raw, dtype=float)
+        if points.ndim != 2 or points.shape[1:] != (3,) or len(points) < 3:
+            raise QuadricManimError(
+                "section display polygons must contain finite three-dimensional points"
+            )
+        if not np.all(np.isfinite(points)):
+            raise QuadricManimError(
+                "section display polygons must contain finite three-dimensional points"
+            )
+        value.start_new_path(points[0])
+        value.add_points_as_corners((*points[1:], points[0]))
 
 
 class _CurveFragmentSlot:
@@ -657,21 +735,35 @@ class QuadricOcclusion3D:
         *,
         surfaces: SurfaceInput,
         curves: CurveInput,
-        projection: ProjectionInput,
+        projection: ProjectionInput | None = None,
         paint_policy: QuadricPaintPolicy | str = QuadricPaintPolicy.DIAGRAMMATIC,
         style: QuadricManimStyle = QuadricManimStyle(),
         limits: QuadricManimLimits = QUADRIC_MANIM_LIMITS,
         max_chord_error: float = 1.0e-3,
+        context: GeometryContext | ResolvedGeometryContext | None = None,
         painter_z_band: tuple[float, float] = (20.0, 30.0),
         surface_constraints: Sequence[SurfaceConstraintInput] = (),
         surface_order_mode: str = "automatic",
         allocated_curve_ids: Sequence[str] | None = None,
         curve_opacities: CurveOpacityInput = None,
+        section_plane: SectionPlaneInput = None,
+        section_patch: PlanePatchInput = None,
+        section_patch_margin: float = 0.08,
+        section_max_screen_error: float = 0.08,
+        section_compositing_limits: QuadricSectionCompositingLimits = (
+            QUADRIC_SECTION_COMPOSITING_LIMITS
+        ),
     ) -> None:
         if not isinstance(style, QuadricManimStyle):
             raise TypeError("style must be a QuadricManimStyle")
         if not isinstance(limits, QuadricManimLimits):
             raise TypeError("limits must be a QuadricManimLimits")
+        if context is not None and not isinstance(
+            context, (GeometryContext, ResolvedGeometryContext)
+        ):
+            raise TypeError(
+                "context must be a GeometryContext or ResolvedGeometryContext"
+            )
         try:
             policy = QuadricPaintPolicy(paint_policy)
         except (TypeError, ValueError) as exc:
@@ -682,26 +774,65 @@ class QuadricOcclusion3D:
             raise QuadricManimError(
                 "surface_order_mode must be 'automatic' or 'explicit'"
             )
+        if section_patch is not None and section_plane is None:
+            raise QuadricManimError(
+                "section_patch requires section_plane"
+            )
+        if not isinstance(
+            section_compositing_limits, QuadricSectionCompositingLimits
+        ):
+            raise TypeError(
+                "section_compositing_limits must be a "
+                "QuadricSectionCompositingLimits"
+            )
         self.scene = scene
         self._surface_input = surfaces
         self._curve_input = curves
-        self._projection_input = projection
+        self._projection_input = (
+            DEFAULT_QUADRIC_VIEW if projection is None else projection
+        )
         self.paint_policy = policy
         self.style = style
         self.limits = limits
         self.max_chord_error = _positive(max_chord_error, "max_chord_error")
+        self.context = context
         self.surface_constraints = tuple(surface_constraints)
         self.surface_order_mode = surface_order_mode
         self._curve_opacity_input = curve_opacities
+        self._section_plane_input = section_plane
+        self._section_patch_input = section_patch
+        self.section_patch_margin = _non_negative(
+            section_patch_margin, "section_patch_margin"
+        )
+        self.section_max_screen_error = _positive(
+            section_max_screen_error, "section_max_screen_error"
+        )
+        self.section_compositing_limits = section_compositing_limits
+        self._section_enabled = section_plane is not None
         self._attached = False
         self._fixed_frame_camera: ThreeDCamera | None = None
         self._last_frame: QuadricCompositingFrame | None = None
         self._last_global_frame: GlobalQuadricFrame | None = None
+        self._last_section_frame: QuadricSectionCompositingFrame | None = None
 
         initial_surfaces = self._resolve_surfaces()
         initial_curves = self._resolve_curves()
         self._surface_ids = tuple(item.surface_id for item in initial_surfaces)
         initial_curve_ids = tuple(item.curve_id for item in initial_curves)
+        if self._section_enabled and len(initial_surfaces) != 1:
+            raise QuadricManimError(
+                "section compositing requires exactly one finite convex quadric"
+            )
+        if self._section_enabled:
+            initial_plane = self._resolve_section_plane()
+            initial_patch = self._resolve_section_patch(
+                initial_surfaces[0], initial_plane
+            )
+            self._section_plane_id: str | None = initial_plane.plane_id
+            self._section_patch_id: str | None = initial_patch.patch_id
+        else:
+            self._section_plane_id = None
+            self._section_patch_id = None
         self._allow_curve_subset = allocated_curve_ids is not None
         if allocated_curve_ids is None:
             self._curve_ids = initial_curve_ids
@@ -734,6 +865,7 @@ class QuadricOcclusion3D:
 
         estimated_mobjects = (
             len(self._surface_ids)
+            + (7 if self._section_enabled else 0)
             + 1
             + len(self._curve_ids)
             * (
@@ -762,12 +894,19 @@ class QuadricOcclusion3D:
         self._fragment_slot_maps: dict[str, dict[str, int]] = {
             curve_id: {} for curve_id in self._curve_ids
         }
+        self._section_slots = (
+            tuple(VMobject() for _index in range(7))
+            if self._section_enabled
+            else ()
+        )
         surface_root = VGroup(*self._surface_slots)
+        section_root = VGroup(*self._section_slots)
         curve_root = VGroup(*(self._curve_slots[key].root for key in self._curve_ids))
         self._opacity_sentinel = Line((0, 0, 0), (1.0e-9, 0, 0), buff=0)
         self._opacity_sentinel.set_stroke(width=0.0, opacity=1.0)
         self.root = _ManagedQuadricDisplayGroup(
             surface_root,
+            section_root,
             curve_root,
             opacity_sentinel=self._opacity_sentinel,
         )
@@ -798,6 +937,55 @@ class QuadricOcclusion3D:
             self._curve_input() if callable(self._curve_input) else self._curve_input
         )
         return _curve_items(value)
+
+    def _resolve_section_plane(self) -> SectionPlane:
+        source = self._section_plane_input
+        value = source() if callable(source) else source
+        if not isinstance(value, SectionPlane):
+            raise QuadricManimError(
+                "section_plane must resolve to a SectionPlane"
+            )
+        expected = getattr(self, "_section_plane_id", None)
+        if expected is not None and value.plane_id != expected:
+            raise QuadricManimError(
+                "section_plane identity changed while the controller was active"
+            )
+        return value
+
+    def _resolve_section_patch(
+        self,
+        surface: QuadricSurfaceSpec,
+        plane: SectionPlane,
+    ) -> PlaneDisplayPatchSpec:
+        source = self._section_patch_input
+        if source is None:
+            try:
+                value = fit_plane_display_patch(
+                    f"{plane.plane_id}:auto-display-patch",
+                    plane,
+                    (surface,),
+                    margin_ratio=self.section_patch_margin,
+                ).patch
+            except PlanePatchFitError as exc:
+                raise QuadricManimError(
+                    f"automatic section-plane patch fitting failed: {exc}"
+                ) from exc
+        else:
+            value = source() if callable(source) else source
+        if not isinstance(value, PlaneDisplayPatchSpec):
+            raise QuadricManimError(
+                "section_patch must resolve to a PlaneDisplayPatchSpec"
+            )
+        if value.plane_id != plane.plane_id:
+            raise QuadricManimError(
+                "section_patch plane_id does not match section_plane"
+            )
+        expected = getattr(self, "_section_patch_id", None)
+        if expected is not None and value.patch_id != expected:
+            raise QuadricManimError(
+                "section_patch identity changed while the controller was active"
+            )
+        return value
 
     def _resolve_view(self) -> ParallelView:
         value = (
@@ -905,6 +1093,7 @@ class QuadricOcclusion3D:
                     curves,
                     surfaces,
                     view,
+                    context=self.context,
                     paint_policy=self.paint_policy,
                     curve_styles=(compositor_style if curves else None),
                     max_chord_error=self.max_chord_error,
@@ -936,7 +1125,12 @@ class QuadricOcclusion3D:
                 raise QuadricManimCapacityError(str(exc)) from exc
             except ProjectionProxyError as exc:
                 raise QuadricManimError(str(exc)) from exc
-            visibility = compute_quadric_visibility(curves, surfaces, view)
+            visibility = compute_quadric_visibility(
+                curves,
+                surfaces,
+                view,
+                context=self.context,
+            )
             active_intervals = None
             if self.paint_policy is QuadricPaintPolicy.PHYSICAL:
                 active_intervals = {
@@ -973,16 +1167,84 @@ class QuadricOcclusion3D:
 
         surface_plans: list[_PreparedSurface] = []
         item_mobjects: dict[str, Mobject] = {}
-        for item in frame.surface_items:
-            slot_index = self._surface_slot_by_id[item.surface_id]
-            points = np.asarray(
-                [(x, y, 0.0) for x, y in item.proxy.boundary_points],
+        section_layers: _PreparedSectionLayers | None = None
+        painter_draw_order = frame.draw_order
+        if self._section_enabled:
+            surface = surfaces[0]
+            plane = self._resolve_section_plane()
+            patch = self._resolve_section_patch(surface, plane)
+            try:
+                section_frame = compute_quadric_section_compositing(
+                    frame,
+                    surface,
+                    plane,
+                    patch,
+                    view,
+                    context=self.context,
+                    max_screen_error=self.section_max_screen_error,
+                    limits=self.section_compositing_limits,
+                )
+            except QuadricSectionCompositingError as exc:
+                raise QuadricManimError(
+                    f"quadric section compositing failed: {exc}"
+                ) from exc
+            surface_points = np.asarray(
+                [
+                    (x, y, 0.0)
+                    for x, y in section_frame.surface_proxy.boundary_points
+                ],
                 dtype=float,
             )
-            surface_plans.append(
-                _PreparedSurface(item.item_id, item.surface_id, slot_index, points)
+            plane_contours = quadric_plane_fragment_contours(section_frame)
+            plane_polygons = {
+                role: tuple(
+                    np.asarray([(x, y, 0.0) for x, y in contour], dtype=float)
+                    for contour in plane_contours[role]
+                )
+                for role in PlaneDepthRole
+            }
+            patch_corners = patch.corners(plane)
+            plane_outline_points = np.asarray(
+                [
+                    (
+                        float((view.matrix @ np.asarray(point, dtype=float))[0]),
+                        float((view.matrix @ np.asarray(point, dtype=float))[1]),
+                        0.0,
+                    )
+                    for point in (*patch_corners, patch_corners[0])
+                ],
+                dtype=float,
             )
-            item_mobjects[item.item_id] = self._surface_slots[slot_index]
+            section_layers = _PreparedSectionLayers(
+                section_frame,
+                surface_points,
+                plane_polygons,
+                plane_outline_points,
+            )
+            if len(self._section_slots) != len(section_frame.paint_items.ordered):
+                raise QuadricManimCapacityError(
+                    "section painter slot count changed after allocation"
+                )
+            item_mobjects.update(
+                {
+                    item_id: self._section_slots[index]
+                    for index, item_id in enumerate(
+                        section_frame.paint_items.ordered
+                    )
+                }
+            )
+            painter_draw_order = section_frame.draw_order
+        else:
+            for item in frame.surface_items:
+                slot_index = self._surface_slot_by_id[item.surface_id]
+                points = np.asarray(
+                    [(x, y, 0.0) for x, y in item.proxy.boundary_points],
+                    dtype=float,
+                )
+                surface_plans.append(
+                    _PreparedSurface(item.item_id, item.surface_id, slot_index, points)
+                )
+                item_mobjects[item.item_id] = self._surface_slots[slot_index]
 
         curve_map = {curve.curve_id: curve for curve in curves}
         by_curve: dict[str, list[QuadricCurvePaintFragment]] = {
@@ -1045,7 +1307,7 @@ class QuadricOcclusion3D:
                 )
             prepared_by_curve[curve_id] = tuple(values)
 
-        if set(item_mobjects) != set(frame.draw_order):
+        if set(item_mobjects) != set(painter_draw_order):
             raise QuadricManimError(
                 "prepared Manim items do not cover compositor draw_order"
             )
@@ -1057,6 +1319,8 @@ class QuadricOcclusion3D:
             curve_opacities,
             next_maps,
             item_mobjects,
+            tuple(painter_draw_order),
+            section_layers,
         )
 
     def _prepare_painter(
@@ -1068,7 +1332,7 @@ class QuadricOcclusion3D:
                 sources={"quadric:reservation": self._update_driver},
             )
             painter = self._band.prepare(
-                draw_order=numeric.frame.draw_order,
+                draw_order=numeric.painter_draw_order,
                 item_mobjects=numeric.item_mobjects,
             )
         except ManagedPainterBandError as exc:
@@ -1094,6 +1358,69 @@ class QuadricOcclusion3D:
             color=self.style.surface_stroke_color,
             width=self.style.surface_stroke_width,
             opacity=self.style.surface_stroke_opacity * opacity,
+        )
+
+    def _apply_section_layers(
+        self,
+        prepared: _PreparedSectionLayers,
+        opacity: float,
+    ) -> None:
+        if len(self._section_slots) != 7:
+            raise QuadricManimCapacityError(
+                "section painter slots were not allocated"
+            )
+        (
+            plane_behind,
+            surface_back,
+            plane_outside,
+            plane_between,
+            surface_front,
+            plane_front,
+            plane_outline,
+        ) = self._section_slots
+
+        surface_back.set_points_as_corners(prepared.surface_points)
+        surface_front.set_points_as_corners(prepared.surface_points)
+        combined_surface_opacity = min(
+            1.0,
+            self.style.surface_fill_opacity * opacity,
+        )
+        sheet_opacity = 1.0 - sqrt(max(0.0, 1.0 - combined_surface_opacity))
+        surface_back.set_fill(
+            color=self.style.surface_fill_color,
+            opacity=sheet_opacity,
+        )
+        surface_back.set_stroke(opacity=0.0)
+        surface_front.set_fill(
+            color=self.style.surface_fill_color,
+            opacity=sheet_opacity,
+        )
+        surface_front.set_stroke(
+            color=self.style.surface_stroke_color,
+            width=self.style.surface_stroke_width,
+            opacity=self.style.surface_stroke_opacity * opacity,
+        )
+
+        role_slots = {
+            PlaneDepthRole.BEHIND_SURFACE: plane_behind,
+            PlaneDepthRole.OUTSIDE_PROJECTION: plane_outside,
+            PlaneDepthRole.BETWEEN_SURFACE_SHEETS: plane_between,
+            PlaneDepthRole.IN_FRONT_OF_SURFACE: plane_front,
+        }
+        for role, slot in role_slots.items():
+            _set_closed_subpaths(slot, prepared.plane_polygons[role])
+            slot.set_fill(
+                color=self.style.section_plane_fill_color,
+                opacity=self.style.section_plane_fill_opacity * opacity,
+            )
+            slot.set_stroke(opacity=0.0)
+
+        plane_outline.set_points_as_corners(prepared.plane_outline_points)
+        plane_outline.set_fill(opacity=0.0)
+        plane_outline.set_stroke(
+            color=self.style.section_plane_stroke_color,
+            width=self.style.section_plane_stroke_width,
+            opacity=self.style.section_plane_stroke_opacity * opacity,
         )
 
     def _apply_curve_fragment(
@@ -1174,15 +1501,23 @@ class QuadricOcclusion3D:
         }
         previous_frame = self._last_frame
         previous_global_frame = self._last_global_frame
+        previous_section_frame = self._last_section_frame
         opacity = self.root.opacity_multiplier
         try:
             for slot in self._surface_slots:
+                _hide_vmobject(slot)
+            for slot in self._section_slots:
                 _hide_vmobject(slot)
             for slots in self._curve_slots.values():
                 for slot in slots.fragments:
                     slot.hide()
             for surface in prepared.numeric.surfaces:
                 self._apply_surface(surface, opacity)
+            if prepared.numeric.section_layers is not None:
+                self._apply_section_layers(
+                    prepared.numeric.section_layers,
+                    opacity,
+                )
             for curve_id, fragments in prepared.numeric.fragments.items():
                 for fragment in fragments:
                     self._apply_curve_fragment(
@@ -1197,12 +1532,14 @@ class QuadricOcclusion3D:
             }
             self._last_frame = prepared.frame
             self._last_global_frame = prepared.global_frame
+            self._last_section_frame = prepared.section_frame
         except Exception:
             _restore_root(root_state)
             self._band.restore_active_state(band_state)
             self._fragment_slot_maps = previous_maps
             self._last_frame = previous_frame
             self._last_global_frame = previous_global_frame
+            self._last_section_frame = previous_section_frame
             raise
 
     @property
@@ -1222,6 +1559,12 @@ class QuadricOcclusion3D:
         """Return the last committed automatic global frame and its evidence."""
 
         return self._last_global_frame
+
+    @property
+    def last_section_frame(self) -> QuadricSectionCompositingFrame | None:
+        """Return the last committed plane/surface split and painter trace."""
+
+        return self._last_section_frame
 
     @property
     def active_painter_z_indices(self) -> dict[str, float]:
@@ -1261,6 +1604,7 @@ class QuadricOcclusion3D:
         }
         previous_frame = self._last_frame
         previous_global_frame = self._last_global_frame
+        previous_section_frame = self._last_section_frame
         self.root.reset_opacity()
         try:
             # Cairo caches every mobject before the first time-aware updater as
@@ -1281,6 +1625,7 @@ class QuadricOcclusion3D:
             self._fragment_slot_maps = previous_maps
             self._last_frame = previous_frame
             self._last_global_frame = previous_global_frame
+            self._last_section_frame = previous_section_frame
             self._remove_fixed_frame()
             self._remove_owned_identities()
             self._band.restore()
@@ -1337,12 +1682,15 @@ class QuadricOcclusion3D:
         self._remove_owned_identities()
         for slot in self._surface_slots:
             _hide_vmobject(slot)
+        for slot in self._section_slots:
+            _hide_vmobject(slot)
         for slots in self._curve_slots.values():
             for slot in slots.fragments:
                 slot.hide()
         self._fragment_slot_maps = {curve_id: {} for curve_id in self._curve_ids}
         self._last_frame = None
         self._last_global_frame = None
+        self._last_section_frame = None
         self._band.restore()
         self.root.reset_opacity()
         self._invalidate_cairo_static_image()
@@ -1377,6 +1725,7 @@ class QuadricOcclusion3D:
 
 
 __all__ = [
+    "DEFAULT_QUADRIC_VIEW",
     "PreparedQuadricManimFrame",
     "QUADRIC_MANIM_LIMITS",
     "QuadricManimCapacityError",

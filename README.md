@@ -10,6 +10,13 @@ objects. Keep named geometry editable, drive it with `ValueTracker`, and add
 projection-aware hidden-line removal for closed convex polyhedra or articulated
 open faces such as a dihedral angle.
 
+The ordinary multi-projection camera defaults to the classroom cabinet-oblique
+(`斜二测`) preset.  Its occlusion binding still takes the matching projection
+explicitly, so calculation and display cannot silently diverge.  Quadrics and
+conic-section Manim controllers default to a true orthographic isometric view,
+which keeps a world-z cone axis vertical and does not add screen shear.
+Compiled TikZ keeps its authored projection.
+
 This project does **not** convert arbitrary TikZ and does not silently fall back
 to SVG. Unsupported syntax is reported explicitly.
 
@@ -44,8 +51,10 @@ to SVG. Unsupported syntax is reported explicitly.
 - analytic finite spheres, capped cylinders, and one-nappe cones/frusta under
   parallel projection, including plane sections, front-solid/hidden-dashed
   conic arcs, projected curve/curve depth ordering, rotating-plane topology
-  schedules, automatic ellipse/parabola/hyperbola Manim handoff, and strictly
-  separated multi-solid painter graphs;
+  schedules, automatic ellipse/parabola/hyperbola Manim handoff, strictly
+  separated multi-solid painter graphs, and seam-free local compositing of one
+  cutting plane through one quadric using rear/between/front plane regions and
+  two smooth surface sheets;
 - a reusable source-to-copy identity handoff: a whole solid or any registered
   face/edge subset keeps explicit semantic lineage, lets the copy own exactly
   coincident pixels, and fades only the paired source primitives back in as

@@ -24,6 +24,7 @@ from .animation import (
     match_tracked_section_frame,
 )
 from .compositing import QuadricPaintPolicy, SurfaceConstraintInput
+from .contract import SectionPlane
 from .curves import ParametricConicBranch
 from .manim import (
     QUADRIC_MANIM_LIMITS,
@@ -33,6 +34,10 @@ from .manim import (
     QuadricManimLimits,
     QuadricManimStyle,
     QuadricOcclusion3D,
+)
+from .section_compositing import (
+    QUADRIC_SECTION_COMPOSITING_LIMITS,
+    QuadricSectionCompositingLimits,
 )
 from .plane_motion import ScheduledSectionAnimation
 from .sections import compute_quadric_section
@@ -142,7 +147,7 @@ class QuadricSectionTransition3D:
         *,
         scheduled: ScheduledSectionAnimation,
         progress: ProgressInput,
-        projection: ProjectionInput,
+        projection: ProjectionInput | None = None,
         transition_fraction: float = 0.04,
         transition_mode: SectionTransitionMode | str = SectionTransitionMode.CROSSFADE,
         paint_policy: QuadricPaintPolicy | str = QuadricPaintPolicy.DIAGRAMMATIC,
@@ -153,6 +158,12 @@ class QuadricSectionTransition3D:
         surface_constraints: Sequence[SurfaceConstraintInput] = (),
         context: GeometryContext | ResolvedGeometryContext | None = None,
         coefficient_tolerance: float | None = None,
+        show_plane: bool = True,
+        plane_patch_margin: float = 0.08,
+        section_max_screen_error: float = 0.08,
+        section_compositing_limits: QuadricSectionCompositingLimits = (
+            QUADRIC_SECTION_COMPOSITING_LIMITS
+        ),
     ) -> None:
         if not isinstance(scheduled, ScheduledSectionAnimation):
             raise TypeError("scheduled must be a ScheduledSectionAnimation")
@@ -172,6 +183,9 @@ class QuadricSectionTransition3D:
             )
         self.context = context
         self.coefficient_tolerance = coefficient_tolerance
+        if not isinstance(show_plane, bool):
+            raise TypeError("show_plane must be a bool")
+        self.show_plane = show_plane
         self._allocated_curve_ids = _allocated_curve_ids(self.plan.section_id)
         self._cache_progress: float | None = None
         self._cache_geometry: PreparedSectionTransitionGeometry | None = None
@@ -188,9 +202,19 @@ class QuadricSectionTransition3D:
             style=style,
             limits=limits,
             max_chord_error=max_chord_error,
+            context=context,
             painter_z_band=painter_z_band,
             surface_constraints=surface_constraints,
             surface_order_mode="automatic",
+            section_plane=(self._active_plane if show_plane else None),
+            section_patch_margin=plane_patch_margin,
+            section_max_screen_error=section_max_screen_error,
+            section_compositing_limits=section_compositing_limits,
+        )
+
+    def _active_plane(self) -> SectionPlane:
+        return self.scheduled.schedule.motion.plane_at(
+            _progress_value(self.progress_source)
         )
 
     def _resolve_geometry(self) -> PreparedSectionTransitionGeometry:

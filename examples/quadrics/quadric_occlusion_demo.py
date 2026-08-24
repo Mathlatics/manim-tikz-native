@@ -17,7 +17,7 @@ from __future__ import annotations
 from math import pi, sqrt
 
 import numpy as np
-from manim import DOWN, UP, Polygon, Scene, Text, ValueTracker, smooth
+from manim import DOWN, UP, Scene, Text, ValueTracker, smooth
 
 from polyhedron_visibility.parallel_solver import ParallelView
 from polyhedron_visibility.quadrics.contract import (
@@ -28,6 +28,7 @@ from polyhedron_visibility.quadrics.contract import (
 )
 from polyhedron_visibility.quadrics.curves import SegmentCurve
 from polyhedron_visibility.quadrics.manim import (
+    DEFAULT_QUADRIC_VIEW,
     QuadricManimStyle,
     QuadricOcclusion3D,
 )
@@ -35,7 +36,6 @@ from polyhedron_visibility.quadrics.plane_motion import (
     AxisAnglePlaneMotion,
     track_scheduled_plane_section,
 )
-from polyhedron_visibility.quadrics.plane_patch import fit_plane_display_patch
 from polyhedron_visibility.quadrics.sections import compute_quadric_section
 from polyhedron_visibility.quadrics.trace import section_trace_curves
 from polyhedron_visibility.quadrics.transition_manim import (
@@ -43,7 +43,7 @@ from polyhedron_visibility.quadrics.transition_manim import (
 )
 
 
-DEMO_VIEW = ParallelView.from_matrix(
+GLOBAL_VIEW = ParallelView.from_matrix(
     (
         (1.0, 0.0, 0.32),
         (0.0, 1.0, 0.18),
@@ -51,13 +51,16 @@ DEMO_VIEW = ParallelView.from_matrix(
     )
 )
 
-CONE_VIEW = ParallelView.from_matrix(
-    (
-        (1.0, 0.0, 0.15),
-        (0.0, 0.45, 0.85),
-        (0.0, -0.85, 0.45),
-    )
-)
+QUADRIC_VIEW = DEFAULT_QUADRIC_VIEW
+
+
+def _screen_zoom(view: ParallelView, factor: float) -> ParallelView:
+    matrix = view.matrix
+    matrix[:2] *= factor
+    return ParallelView.from_matrix(matrix)
+
+
+TRANSITION_VIEW = _screen_zoom(QUADRIC_VIEW, 0.85)
 
 
 def _style(
@@ -116,7 +119,6 @@ class MovingSphereSectionDemo(Scene):
             self,
             surfaces=(sphere,),
             curves=curves,
-            projection=DEMO_VIEW,
             paint_policy="diagrammatic",
             style=_style(fill_color="#3976B8"),
             max_chord_error=0.008,
@@ -162,7 +164,6 @@ class ObliqueCylinderSectionDemo(Scene):
             self,
             surfaces=(cylinder,),
             curves=curves,
-            projection=DEMO_VIEW,
             paint_policy="diagrammatic",
             style=_style(fill_color="#277D6A"),
             max_chord_error=0.008,
@@ -184,10 +185,16 @@ class ConeSectionFamiliesDemo(Scene):
             "ellipse / parabola / hyperbola are solved analytically, then clipped",
         )
         centers = (-4.25, 0.0, 4.25)
+        screen_right = QUADRIC_VIEW.matrix[0]
         surfaces = tuple(
             ConeSpec(
                 f"cone-{index}",
-                (center, -0.75, -1.45),
+                tuple(
+                    float(value)
+                    for value in (
+                        center * screen_right + np.asarray((0.0, 0.0, -1.45))
+                    )
+                ),
                 (0.0, 0.0, 1.0),
                 pi / 6.0,
                 (0.0, 2.9),
@@ -219,7 +226,6 @@ class ConeSectionFamiliesDemo(Scene):
             self,
             surfaces=surfaces,
             curves=tuple(curves),
-            projection=CONE_VIEW,
             paint_policy="diagrammatic",
             style=_style(fill_color="#7756A8"),
             max_chord_error=0.01,
@@ -243,9 +249,10 @@ class ConeSectionTopologyTransitionDemo(Scene):
             "Automatic conic-family handoff",
             "ellipse → exact parabola → hyperbola, with continuous occlusion",
         )
+        vertical_shift = -0.90
         cone = ConeSpec(
             "transition-cone",
-            (0.0, 0.0, -1.5),
+            (0.0, 0.0, -1.5 + vertical_shift),
             (0.0, 0.0, 1.0),
             pi / 6.0,
             (0.0, 4.0),
@@ -255,11 +262,11 @@ class ConeSectionTopologyTransitionDemo(Scene):
             "transition-plane-motion",
             SectionPlane(
                 "transition-plane",
-                (0.0, 0.0, 0.2),
+                (0.0, 0.0, 0.2 + vertical_shift),
                 (0.0, 0.0, 1.0),
                 u_axis=(1.0, 0.0, 0.0),
             ),
-            (0.0, 0.0, 0.2),
+            (0.0, 0.0, 0.2 + vertical_shift),
             (0.0, 1.0, 0.0),
             0.72,
             1.35,
@@ -268,49 +275,6 @@ class ConeSectionTopologyTransitionDemo(Scene):
             "transition-section", cone, motion
         )
         progress = ValueTracker(0.0)
-
-        def projected_patch_points() -> np.ndarray:
-            plane = motion.plane_at(progress.get_value())
-            fitted = fit_plane_display_patch(
-                "transition-plane-patch", plane, (cone,), margin_ratio=0.08
-            )
-            u_axis, v_axis, _normal = plane.basis
-            center = (
-                np.asarray(plane.point, dtype=float)
-                + fitted.patch.center_coordinates[0] * u_axis
-                + fitted.patch.center_coordinates[1] * v_axis
-            )
-            corners = tuple(
-                center
-                + sign_u * fitted.patch.half_width * u_axis
-                + sign_v * fitted.patch.half_height * v_axis
-                for sign_u, sign_v in ((-1, -1), (1, -1), (1, 1), (-1, 1))
-            )
-            return np.asarray(
-                [
-                    (
-                        float((CONE_VIEW.matrix @ point)[0]),
-                        float((CONE_VIEW.matrix @ point)[1]),
-                        0.0,
-                    )
-                    for point in corners
-                ],
-                dtype=float,
-            )
-
-        initial_patch = projected_patch_points()
-        plane_patch = Polygon(*initial_patch)
-        plane_patch.set_fill("#63C7B2", opacity=0.15)
-        plane_patch.set_stroke("#2C8C7A", width=1.4, opacity=0.65)
-        plane_patch.set_z_index(19.0)
-
-        def update_patch(value: Polygon, dt: float) -> None:
-            del dt
-            points = projected_patch_points()
-            value.set_points_as_corners(np.vstack((points, points[0])))
-
-        plane_patch.add_updater(update_patch)
-        self.add(plane_patch)
 
         labels = tuple(
             Text(name, font_size=20, color="#6B4F1D").move_to((x, -3.25, 0.0))
@@ -322,7 +286,7 @@ class ConeSectionTopologyTransitionDemo(Scene):
             self,
             scheduled=scheduled,
             progress=progress,
-            projection=CONE_VIEW,
+            projection=TRANSITION_VIEW,
             transition_fraction=0.055,
             paint_policy="diagrammatic",
             style=_style(fill_color="#5275A8", fill_opacity=0.76),
@@ -350,7 +314,6 @@ class ConeSectionTopologyTransitionDemo(Scene):
         self.wait(0.7)
         for label in labels:
             label.clear_updaters()
-        plane_patch.clear_updaters()
         controller.restore()
 
 
@@ -382,7 +345,7 @@ class GlobalQuadricOcclusionDemo(Scene):
             self,
             surfaces=surfaces,
             curves=curves,
-            projection=DEMO_VIEW,
+            projection=GLOBAL_VIEW,
             paint_policy="diagrammatic",
             style=_style(fill_color="#3E79A8"),
             max_chord_error=0.008,

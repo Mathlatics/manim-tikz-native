@@ -14,6 +14,7 @@ from polyhedron_visibility.parallel_solver import ParallelView
 from polyhedron_visibility.quadrics.contract import ConeSpec, SectionPlane, SphereSpec
 from polyhedron_visibility.quadrics.curves import SegmentCurve
 from polyhedron_visibility.quadrics.manim import (
+    DEFAULT_QUADRIC_VIEW,
     QuadricManimCapacityError,
     QuadricManimLimits,
     QuadricManimStyle,
@@ -158,6 +159,20 @@ class AllocatedCurveBankTests(unittest.TestCase):
 
 
 class QuadricSectionTransitionControllerTests(unittest.TestCase):
+    def test_transition_controller_inherits_isometric_quadric_default(self) -> None:
+        controller = QuadricSectionTransition3D(
+            Scene(),
+            scheduled=_scheduled(),
+            progress=0.25,
+            limits=_limits(),
+        )
+
+        np.testing.assert_allclose(
+            controller._controller._resolve_view().matrix,
+            DEFAULT_QUADRIC_VIEW.matrix,
+            atol=1.0e-12,
+        )
+
     def test_explicit_geometry_context_is_shared_by_live_frames(self) -> None:
         context = GeometryContext(screen_tolerance=1.0e-4)
         base = _scheduled()
@@ -176,6 +191,7 @@ class QuadricSectionTransitionControllerTests(unittest.TestCase):
             limits=_limits(),
         ).attach()
         self.assertIs(controller.context, context)
+        self.assertIs(controller.controller.context, context)
         controller.update()
         controller.restore()
 
