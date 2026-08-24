@@ -18,6 +18,28 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            dvisvgm \
+            ffmpeg \
+            libcairo2-dev \
+            libpango1.0-dev \
+            pkg-config \
+            poppler-utils \
+            texlive-fonts-recommended \
+            texlive-lang-chinese \
+            texlive-latex-extra \
+            texlive-xetex
+
+      - name: Verify renderer toolchain
+        run: |
+          command -v xelatex
+          command -v dvisvgm
+          command -v ffmpeg
+          command -v pdftoppm
+
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
@@ -28,25 +50,12 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -e ".[test]"
 
-      - name: Probe quadric component revisions
-        run: |
-          python - <<'PY'
-          from tikz_native.version import (
-              COMPONENT_QUADRIC_MANIM,
-              COMPONENT_QUADRIC_VISIBILITY,
-              provider_component_implementation_revisions,
-          )
+      - name: Run tests
+        run: python -m unittest discover -s tests -p "test_*.py"
 
-          revisions = provider_component_implementation_revisions()
-          print(
-              "QUADRIC_VISIBILITY_IMPLEMENTATION="
-              + revisions[COMPONENT_QUADRIC_VISIBILITY],
-              flush=True,
-          )
-          print(
-              "QUADRIC_MANIM_IMPLEMENTATION="
-              + revisions[COMPONENT_QUADRIC_MANIM],
-              flush=True,
-          )
-          PY
-          exit 1
+      - name: Build distributions
+        if: matrix.python-version == '3.12'
+        run: |
+          python -m pip install build twine
+          python -m build
+          python -m twine check dist/*
