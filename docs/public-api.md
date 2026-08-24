@@ -69,6 +69,7 @@ from polyhedron_visibility import (
     OcclusionStyle,
     ParallelProjection,
 )
+from tikz_native.camera_3d import OBLIQUE_MATRIX
 
 visibility = OcclusionScene3D("solid")
 visibility.vertex("A", lambda: point_a())
@@ -79,7 +80,7 @@ visibility.stroke("AB", "A", "B", line_ab)
 
 controller = visibility.controller(
     scene,
-    projection=ParallelProjection.identity(),
+    projection=ParallelProjection(OBLIQUE_MATRIX),
     style=OcclusionStyle(max_projected_length=8.0),
 )
 with controller.session():
@@ -101,11 +102,18 @@ controller = DepthCuedAutoOcclusion3D(
     position_provider=current_positions,
     stroke_bindings=edge_lines,
     face_fill_bindings=face_polygons,
-    projection=ParallelProjection.identity(),
+    projection=ParallelProjection(OBLIQUE_MATRIX),
     style=OcclusionStyle(max_projected_length=8.0),
     face_style=FaceDepthCueStyle(),
 )
 ```
+
+`OBLIQUE_MATRIX` is the classroom `斜二测` view with a 45-degree,
+half-scale receding axis and matches the default `MultiProjectionCamera`.
+The occlusion binding keeps its `ParallelProjection` argument explicit so
+its depth calculation cannot silently differ from the camera.  Pass any other
+explicit 3-by-3 parallel-projection source when needed.  TikZ adapters are
+source-authoritative and keep the projection compiled from the TikZ picture.
 
 Every managed face must be one fill-only native `Polygon` with one solid fill
 and a distinct authored z-index; visible boundaries belong in the registered
@@ -429,6 +437,69 @@ stroke; exceeding that author-time capacity keeps the last-good frame and
 raises an error. All managed face and stroke source objects must have distinct
 finite authored `z_index` values, and no unrelated drawable may occupy the
 combined managed band.
+
+## Quadratic surfaces and conic sections
+
+`polyhedron_visibility.quadrics` is a lazy public namespace.  Importing its
+renderer-neutral contracts and solvers does not import Manim.  Its main entry
+points are:
+
+- `SphereSpec`, `CylinderSpec`, `ConeSpec`, `SectionPlane`;
+- `compute_quadric_section()` and `section_trace_curves()`;
+- `compute_quadric_visibility()` and
+  `compute_projected_curve_crossings()`;
+- `compute_quadric_compositing()` and
+  `compute_global_quadric_frame()`;
+- `compute_quadric_section_compositing()` and
+  `quadric_plane_fragment_contours()`;
+- `fit_plane_display_patch()`;
+- `compute_plane_motion_schedule()`,
+  `track_scheduled_plane_section()`, and `track_moving_section_point()`;
+- `build_section_transition_plan()` and
+  `QuadricSectionTransition3D`;
+- `QuadricOcclusion3D`, `QuadricManimStyle`, and `QuadricManimLimits`.
+
+The Manim binding accepts immutable surface/curve sequences or callbacks that
+return a new sequence for the current frame.  IDs and counts remain fixed for
+the lifetime of an attached controller.  `paint_policy="physical"` omits
+hidden spans; `paint_policy="diagrammatic"` draws them with the hidden dash
+style.  The runtime targets Cairo, preallocates all Mobjects, and commits each
+prepared painter frame transactionally.  Its default
+`surface_order_mode="automatic"` recomputes the certified global frame on each
+update and exposes the committed evidence through `last_global_frame`;
+`surface_order_mode="explicit"` retains the legacy manual-constraint path.
+Pass `section_plane=plane` to place one finite display patch, the two projected
+surface sheets, the section curves, and every visible/hidden curve fragment in
+one painter graph.  The patch is adaptively split into regions behind the
+solid, between its far and near sheets, in front of the solid, or outside its
+projection.  The Manim layer merges those cells back into continuous compound
+contours, so the geometric subdivision does not leave triangle seams.  No
+Mobject is created during an update, and `last_section_frame` exposes the
+committed renderer-neutral split.
+When `projection` is omitted, both `QuadricOcclusion3D` and
+`QuadricSectionTransition3D` use a true orthographic isometric view.  Its
+screen basis is orthonormal, all three world axes have equal projected scale,
+and world-z is vertical on screen.  Pass `ParallelView.from_matrix(...)` to
+override it for a deliberate general parallel view.
+
+`QuadricSectionTransition3D` is the topology-changing companion to
+`QuadricOcclusion3D`.  It consumes a `ScheduledSectionAnimation` and a
+normalized progress source, reserves two banks of curve slots once, and uses
+the exact analytic event frames to hand off ellipse, parabola, and hyperbola
+families.  Cross-fading curves from both banks stay inside one ordinary
+quadric visibility solve and one painter graph.  The updater therefore neither
+creates nor removes Manim objects, and sampling the same progress gives the
+same result in forward or reverse playback.
+Its cutting plane is shown and unified by default; use `show_plane=False` only
+when a scene intentionally wants the section curve without a displayed plane.
+
+Global ordering accepts a bounded set of pairwise-strictly-separated convex
+spheres, capped finite cylinders, and one-nappe cones/frusta.  Intersecting
+entities and a real cyclic surface order fail explicitly because
+quadric-to-quadric surface-cell splitting is outside the current contract.
+That restriction does not apply to the supported one-quadric/one-cutting-plane
+compositor described above.  Full details and a minimal example are in
+[quadric-occlusion.md](quadric-occlusion.md).
 
 ## TikZ visibility adapters
 

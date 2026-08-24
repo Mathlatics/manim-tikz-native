@@ -45,6 +45,9 @@ COMPONENT_GENERATED_OPEN_FACE_VISIBILITY_3D = (
     "generated_open_face_visibility_3d"
 )
 COMPONENT_SOURCE_PROJECT_BUILD = "source_project_build"
+COMPONENT_QUADRIC_GEOMETRY = "quadric_geometry"
+COMPONENT_QUADRIC_VISIBILITY = "quadric_visibility"
+COMPONENT_QUADRIC_MANIM = "quadric_manim"
 
 
 # Existing manifests are relative to ``tikz_native/``.  New independent
@@ -72,8 +75,8 @@ _PUBLIC_0_1_COMPONENT_REVISIONS: Final[dict[str, str]] = {
     COMPONENT_NATIVE_MANIM_SOURCE_3D: "source-sha256:177257d74cd12ddcb7b87920610f9a300cda8dd2bd52604f9007bc838d7d5278",
     COMPONENT_NATIVE_MANIM_SOURCE_3D_V2: "source-sha256:3783dd61ed9c86d89f0b45c403c3af4a9b5cf5181bb7d771133cfa3cb35a7912",
     COMPONENT_NATIVE_MANIM_SOURCE_3D_V3: "source-sha256:6050f4132e08d8424ecfe596684b78cb625f806a47c903e691999cf796a616fd",
-    COMPONENT_EMBEDDED_MOTION_3D: "source-sha256:ff40797b718cd31fe04dd8443fffedfdeffb46648f20b026eba5bdd7c871996f",
-    COMPONENT_MOTION_PREVIEW_3D: "source-sha256:5885811c00904f41fc3b3f46c31bd21f81bfe697d617794743ce7dd90517c4ed",
+    COMPONENT_EMBEDDED_MOTION_3D: "source-sha256:c8eaf866ddb03e78ac5a6b2ee7953fc8a1663cfe11299298aac72b9761cdbfa6",
+    COMPONENT_MOTION_PREVIEW_3D: "source-sha256:5ac22e8e5b01c4ce5449f8eb1f314f436e23d6b4e992444084de905d51e02d4b",
     COMPONENT_POLYHEDRON_VISIBILITY: "source-sha256:745b8cb5b9cb832b4ce6c831094d961cbec7d506ec9110dd4f47e042b7a0799b",
     COMPONENT_FACE_DEPTH_CUE_3D: "source-sha256:65b662f5503915686c0a2b9829f6dbb04b0ca0cda74bb049adde3442898001ff",
     COMPONENT_CONVEX_SECTION_3D: "source-sha256:5cfd664e136caf4f68876ac76f81674d99c15b3b275c3859a84c174d738729b5",
@@ -89,6 +92,9 @@ _PUBLIC_0_1_COMPONENT_REVISIONS: Final[dict[str, str]] = {
     COMPONENT_TIKZ_OPEN_FACE_STATIC_ASSET_3D: "source-sha256:f74e221297d3444a17b9165ae9759ae41ca4cf7bda013333e28ab3b9d157a54e",
     COMPONENT_GENERATED_OPEN_FACE_VISIBILITY_3D: "source-sha256:d3b8917a867f754c586bef39acc1ac387726dbb7ce192f8b61a0053505b63503",
     COMPONENT_SOURCE_PROJECT_BUILD: "source-sha256:00579e342012a96443c098c7004be672d265d32fe6f82d66b0c6b11ba64305b7",
+    COMPONENT_QUADRIC_GEOMETRY: "source-sha256:c9d65a2ea38e5218217e890578fd7c4192384afb30a788f4a3594c495b10f4c2",
+    COMPONENT_QUADRIC_VISIBILITY: "source-sha256:8633bb960bc9eda6895f94489be78345f04043b4f1c2026cf1919342ab1d373e",
+    COMPONENT_QUADRIC_MANIM: "source-sha256:980be63ffe8c22f5f26cc34ee0893731436340e73de2a9b9b1990be0b4e13194",
 }
 
 
@@ -368,6 +374,55 @@ _COMPONENT_DEFINITIONS: Final[dict[str, dict[str, tuple[str, ...]]]] = {
             "schemas/tikz-native-build-manifest-v1.schema.json",
         ),
     },
+    # The finite-quadric package is split into three independently versioned
+    # layers.  The geometry component owns the Manim-neutral authoring and
+    # section-animation contracts; the visibility component owns projected
+    # occlusion and painter ordering; the final component is the only layer
+    # that imports Manim and mutates scene objects.
+    COMPONENT_QUADRIC_GEOMETRY: {
+        "dependencies": (COMPONENT_POLYHEDRON_VISIBILITY,),
+        "files": (
+            "@tool/polyhedron_visibility/quadrics/__init__.py",
+            "@tool/polyhedron_visibility/quadrics/algebra.py",
+            "@tool/polyhedron_visibility/quadrics/animation.py",
+            "@tool/polyhedron_visibility/quadrics/conics.py",
+            "@tool/polyhedron_visibility/quadrics/contract.py",
+            "@tool/polyhedron_visibility/quadrics/curves.py",
+            "@tool/polyhedron_visibility/quadrics/plane_motion.py",
+            "@tool/polyhedron_visibility/quadrics/plane_patch.py",
+            "@tool/polyhedron_visibility/quadrics/roots.py",
+            "@tool/polyhedron_visibility/quadrics/sections.py",
+            "@tool/polyhedron_visibility/quadrics/trace.py",
+            "@tool/polyhedron_visibility/quadrics/transition.py",
+        ),
+    },
+    COMPONENT_QUADRIC_VISIBILITY: {
+        "dependencies": (
+            COMPONENT_POLYHEDRON_VISIBILITY,
+            COMPONENT_QUADRIC_GEOMETRY,
+        ),
+        "files": (
+            "@tool/polyhedron_visibility/quadrics/compositing.py",
+            "@tool/polyhedron_visibility/quadrics/critical.py",
+            "@tool/polyhedron_visibility/quadrics/curve_intersections.py",
+            "@tool/polyhedron_visibility/quadrics/global_occlusion.py",
+            "@tool/polyhedron_visibility/quadrics/projection.py",
+            "@tool/polyhedron_visibility/quadrics/section_compositing.py",
+            "@tool/polyhedron_visibility/quadrics/visibility.py",
+        ),
+    },
+    COMPONENT_QUADRIC_MANIM: {
+        "dependencies": (
+            COMPONENT_POLYHEDRON_VISIBILITY,
+            COMPONENT_QUADRIC_GEOMETRY,
+            COMPONENT_QUADRIC_VISIBILITY,
+            COMPONENT_MANAGED_PAINTER_BAND,
+        ),
+        "files": (
+            "@tool/polyhedron_visibility/quadrics/manim.py",
+            "@tool/polyhedron_visibility/quadrics/transition_manim.py",
+        ),
+    },
 }
 
 
@@ -418,10 +473,10 @@ _DECLARED_IMPLEMENTATION_DIGESTS: Final[dict[str, str]] = {
         "6050f4132e08d8424ecfe596684b78cb625f806a47c903e691999cf796a616fd"
     ),
     COMPONENT_EMBEDDED_MOTION_3D: (
-        "ff40797b718cd31fe04dd8443fffedfdeffb46648f20b026eba5bdd7c871996f"
+        "c8eaf866ddb03e78ac5a6b2ee7953fc8a1663cfe11299298aac72b9761cdbfa6"
     ),
     COMPONENT_MOTION_PREVIEW_3D: (
-        "5885811c00904f41fc3b3f46c31bd21f81bfe697d617794743ce7dd90517c4ed"
+        "5ac22e8e5b01c4ce5449f8eb1f314f436e23d6b4e992444084de905d51e02d4b"
     ),
     COMPONENT_POLYHEDRON_VISIBILITY: (
         "745b8cb5b9cb832b4ce6c831094d961cbec7d506ec9110dd4f47e042b7a0799b"
@@ -467,6 +522,15 @@ _DECLARED_IMPLEMENTATION_DIGESTS: Final[dict[str, str]] = {
     ),
     COMPONENT_SOURCE_PROJECT_BUILD: (
         "00579e342012a96443c098c7004be672d265d32fe6f82d66b0c6b11ba64305b7"
+    ),
+    COMPONENT_QUADRIC_GEOMETRY: (
+        "c9d65a2ea38e5218217e890578fd7c4192384afb30a788f4a3594c495b10f4c2"
+    ),
+    COMPONENT_QUADRIC_VISIBILITY: (
+        "8633bb960bc9eda6895f94489be78345f04043b4f1c2026cf1919342ab1d373e"
+    ),
+    COMPONENT_QUADRIC_MANIM: (
+        "980be63ffe8c22f5f26cc34ee0893731436340e73de2a9b9b1990be0b4e13194"
     ),
 }
 
@@ -677,6 +741,9 @@ __all__ = [
     "COMPONENT_MANAGED_PAINTER_BAND",
     "COMPONENT_OPEN_FACE_UNIFIED_MANIM",
     "COMPONENT_POLYHEDRON_VISIBILITY",
+    "COMPONENT_QUADRIC_GEOMETRY",
+    "COMPONENT_QUADRIC_MANIM",
+    "COMPONENT_QUADRIC_VISIBILITY",
     "COMPONENT_REVISION_SCHEMA",
     "COMPONENT_SOURCE_PROJECT_BUILD",
     "COMPONENT_TIKZ_OPEN_FACE_VISIBILITY_3D",

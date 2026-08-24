@@ -11,6 +11,31 @@ TikZ 图压成一张 SVG 或图片。转换后的直线、面、点、标签仍�
 - 开放凸面：适合二面角、折叠板等不构成封闭多面体的图形，并能处理显式声明的
   铰链共边以及半透明面的前后次序。
 
+普通多面体使用的多投影相机默认采用教材常用的斜二测画法：退行轴按二分之一
+缩短；遮挡控制器仍要求作者显式传入同一投影，避免计算和实际画面悄悄不一致。
+二次曲面和圆锥曲线的 Manim 控制器默认采用无剪切的正等测投影，并让世界坐标
+中的竖直轴在画面中保持竖直。作者仍可显式传入其他平行投影；从 TikZ 编译的
+图形则继续以 TikZ 源码中写明的投影为准。
+
+现在还提供一套独立的二次曲面模块：在正交投影或一般平行投影下，支持有限
+球体、带端盖圆柱、单叶圆锥和圆台；能解析计算平面截出的圆、椭圆、抛物线、
+双曲线及退化情况，并把语义直线、圆弧、椭圆弧和截口曲线自动切成前方实线与
+后方虚线。曲线与曲线投影相交时，也会根据真实深度建立绘图次序。多个彼此严格
+分离的凸二次曲面可以共同参加同一份全局遮挡；如果实体相交或出现无法证明的
+循环前后关系，模块会明确报错，不会猜测画面。
+
+当旋转截平面使圆锥截线依次变成椭圆、抛物线和双曲线时，Manim 控制器会自动
+使用两组预先建立的曲线槽位交接画面。临界位置使用解析计算得到的真正抛物线，
+前后短暂交叉淡化；所有曲线始终进入同一套曲面遮挡和绘图排序，不会在动画中途
+临时创建、删除或冒充另一种数学分支。
+
+二次曲面现在也支持“一个有限凸二次曲面 + 一个截平面”的统一绘图。工具会把
+屏幕中的平面分成实体后方、远近曲面之间、实体前方和投影外部四类区域，再把
+远侧曲面、这些平面区域、近侧曲面、平面边框以及截口实线/虚线放进同一份从后
+到前的图层关系。计算时使用自适应小三角形保证边界精度，真正交给 Manim 绘制
+前又会合并成连续轮廓，因此不会显示内部三角网格的拼接线。接近相切时的小截口
+还会由解析二次型主动触发细分，不依赖“刚好采样到”才出现。
+
 在闭合凸多面体上，还可以继续加入两类对象：
 
 - 独立直线：自动计算直线进入、穿过和离开实体的位置，实体内部的部分自动画成
@@ -119,6 +144,12 @@ manim -pql \
   examples/derived_dihedral_extraction/derived_dihedral_extraction_demo.py \
   RectangularBoxDihedralDemo TetrahedronDihedralDemo \
   SquarePyramidDihedralDemo RectangularBoxDihedralRoundTripDemo
+
+# 球面、圆柱、圆锥截口，以及多个二次曲面的全局遮挡
+manim -pql examples/quadrics/quadric_occlusion_demo.py \
+  MovingSphereSectionDemo ObliqueCylinderSectionDemo \
+  ConeSectionFamiliesDemo ConeSectionTopologyTransitionDemo \
+  GlobalQuadricOcclusionDemo
 ```
 
 其中往返示例会让高亮复制体完成分离、同步旋转，再重新回到与原形状完全重合的
@@ -137,6 +168,7 @@ SVG 或位图。这样做的目的，是保证动画中的每个对象都可读�
 
 - [公共 API](docs/public-api.md)
 - [自动遮挡](docs/automatic-occlusion.md)
+- [二次曲面与圆锥曲线遮挡](docs/quadric-occlusion.md)
 - [支持的 TikZ 子集](docs/supported-tikz.md)
 - [架构说明](docs/architecture.md)
 

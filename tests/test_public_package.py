@@ -2,12 +2,24 @@ from __future__ import annotations
 
 from importlib import resources
 from pathlib import Path
+import subprocess
+import sys
 import tomllib
 import unittest
 
 import tikz_native
 from polyhedron_visibility import OcclusionScene3D
 from polyhedron_visibility.open_faces import OpenFaceScene3D
+from polyhedron_visibility.quadrics import (
+    ConeSpec,
+    CylinderSpec,
+    QuadricSectionTransition3D,
+    SectionPlane,
+    SectionTransitionPlan,
+    SphereSpec,
+    build_section_transition_plan,
+    compute_quadric_section,
+)
 from tikz_native.manim_renderer import DEFAULT_TEX_TEMPLATE
 
 
@@ -36,6 +48,37 @@ class PublicPackageTests(unittest.TestCase):
         ):
             with self.subTest(name=name):
                 self.assertTrue(callable(getattr(tikz_native, name)))
+
+    def test_renderer_neutral_quadric_entry_points_import(self) -> None:
+        self.assertEqual(SphereSpec.__name__, "SphereSpec")
+        self.assertEqual(CylinderSpec.__name__, "CylinderSpec")
+        self.assertEqual(ConeSpec.__name__, "ConeSpec")
+        self.assertEqual(SectionPlane.__name__, "SectionPlane")
+        self.assertEqual(SectionTransitionPlan.__name__, "SectionTransitionPlan")
+        self.assertEqual(
+            QuadricSectionTransition3D.__name__, "QuadricSectionTransition3D"
+        )
+        self.assertTrue(callable(build_section_transition_plan))
+        self.assertTrue(callable(compute_quadric_section))
+
+        completed = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                (
+                    "import sys; from polyhedron_visibility.quadrics import "
+                    "SectionTransitionPlan, build_section_transition_plan; "
+                    "assert SectionTransitionPlan.__name__; "
+                    "assert callable(build_section_transition_plan); "
+                    "assert 'manim' not in sys.modules"
+                ),
+            ],
+            cwd=ROOT,
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
 
     def test_default_tex_template_has_no_machine_specific_font_path(self) -> None:
         preamble = DEFAULT_TEX_TEMPLATE.preamble

@@ -4,6 +4,24 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+- use the classroom oblique-dimetric (`斜二测`) preset as the default
+  multi-projection camera for ordinary polyhedra and a true orthographic
+  isometric preset as the default Manim projection for quadrics and conic
+  sections; explicit authored TikZ and caller-supplied projection matrices
+  continue to take precedence;
+- add analytic finite sphere, capped-cylinder, and one-nappe cone/frustum
+  contracts under general parallel projection; solve and finitely trim circle,
+  ellipse, parabola, hyperbola, and degenerate plane sections; partition
+  semantic segments/arcs/conic branches at exact visibility and projected
+  curve-crossing events; provide physical/diagrammatic painter policies, a
+  fixed-capacity transactional Cairo binding, rotating-plane topology and
+  moving-point traces, automatic fixed-capacity Manim handoff through exact
+  ellipse/parabola/hyperbola events, automatic plane-patch fitting, and
+  certified global ordering for a bounded set of strictly separated convex
+  quadrics; add one-quadric/one-cutting-plane local compositing with adaptive
+  rear/between/front patch partitioning, near-tangent feature guarding,
+  seam-free contour merging, one managed painter band, fixed Manim identities,
+  and transactional last-good-frame rollback;
 - add a source-authoritative project format and the
   `tikz-native-project build/status/rebuild/clean` CLI: authored TikZ, optional
   motion/Bridge inputs, and render intent now deterministically regenerate
