@@ -1,0 +1,120 @@
+name: PR 12 Cairo keyframes
+
+on:
+  push:
+    branches:
+      - diagnostics/pr12-cairo-evidence
+    paths:
+      - .github/workflows/pr12-cairo-keyframes.yml
+      - diagnostics/pr12_cairo_evidence/scene.py
+      - diagnostics/pr12_cairo_evidence/analyze.py
+  pull_request:
+    branches:
+      - main
+    paths:
+      - .github/workflows/pr12-cairo-keyframes.yml
+      - diagnostics/pr12_cairo_evidence/scene.py
+      - diagnostics/pr12_cairo_evidence/analyze.py
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  render-keyframes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            ffmpeg \
+            libcairo2-dev \
+            libpango1.0-dev \
+            pkg-config
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install project
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[test]"
+
+      - name: Verify production baseline
+        run: |
+          git merge-base --is-ancestor \
+            a7811bf4f7d4adbf2e4078e30d647b40bea6693a HEAD
+          git diff --quiet \
+            a7811bf4f7d4adbf2e4078e30d647b40bea6693a HEAD -- \
+            polyhedron_visibility/quadrics
+
+      - name: Render Cairo keyframes
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="$GITHUB_WORKSPACE/pr12-cairo-keyframes"
+          mkdir -p "$root/keyframes"
+          states=(mainly_behind intersects near_tangent exact_parabola mainly_front)
+          for mode in translucent opaque; do
+            for state in "${states[@]}"; do
+              media="$RUNNER_TEMP/pr12-keyframe-${mode}-${state}"
+              PR12_DIAGNOSTIC_MODE="$mode" \
+              PR12_DIAGNOSTIC_STATE="$state" \
+                python -m manim \
+                  --renderer cairo \
+                  --disable_caching \
+                  -r 960,540 \
+                  --fps 24 \
+                  -s \
+                  --format png \
+                  --media_dir "$media" \
+                  diagnostics/pr12_cairo_evidence/scene.py \
+                  CairoConeDiagnosticStill \
+                  -o "${mode}_${state}"
+              rendered="$(find "$media" -type f -name '*.png' -print -quit)"
+              test -n "$rendered"
+              cp "$rendered" "$root/keyframes/${mode}_${state}.png"
+            done
+          done
+          media="$RUNNER_TEMP/pr12-keyframe-surface-only"
+          PR12_DIAGNOSTIC_MODE=surface_only \
+          PR12_DIAGNOSTIC_STATE=exact_parabola \
+            python -m manim \
+              --renderer cairo \
+              --disable_caching \
+              -r 960,540 \
+              --fps 24 \
+              -s \
+              --format png \
+              --media_dir "$media" \
+              diagnostics/pr12_cairo_evidence/scene.py \
+              CairoConeDiagnosticStill \
+              -o surface_only_exact_parabola
+          rendered="$(find "$media" -type f -name '*.png' -print -quit)"
+          test -n "$rendered"
+          cp "$rendered" "$root/keyframes/surface_only_exact_parabola.png"
+
+      - name: Analyze actual Cairo pixels
+        run: |
+          python diagnostics/pr12_cairo_evidence/analyze.py \
+            --artifact-dir "$GITHUB_WORKSPACE/pr12-cairo-keyframes"
+
+      - name: Inventory evidence
+        run: |
+          find pr12-cairo-keyframes -type f -printf '%P\t%s bytes\n' | sort
+          sed -n '1,260p' pr12-cairo-keyframes/report.md
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pr12-cairo-keyframes-evidence
+          path: pr12-cairo-keyframes
+          if-no-files-found: error
+          retention-days: 30
