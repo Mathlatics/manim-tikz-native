@@ -7,14 +7,14 @@ on:
     paths:
       - .github/workflows/pr12-cairo-video-fallback.yml
       - diagnostics/pr12_cairo_evidence/scene.py
-      - diagnostics/pr12_cairo_evidence/video_fast.py
+      - diagnostics/pr12_cairo_evidence/video_stepped.py
   pull_request:
     branches:
       - main
     paths:
       - .github/workflows/pr12-cairo-video-fallback.yml
       - diagnostics/pr12_cairo_evidence/scene.py
-      - diagnostics/pr12_cairo_evidence/video_fast.py
+      - diagnostics/pr12_cairo_evidence/video_stepped.py
   workflow_dispatch:
 
 permissions:
@@ -23,7 +23,7 @@ permissions:
 jobs:
   render-videos:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
         with:
@@ -56,7 +56,7 @@ jobs:
             a7811bf4f7d4adbf2e4078e30d647b40bea6693a HEAD -- \
             polyhedron_visibility/quadrics
 
-      - name: Render compact production-updater motion evidence
+      - name: Render nine-frame production-updater motion evidence
         shell: bash
         run: |
           set -euo pipefail
@@ -69,17 +69,17 @@ jobs:
                 --renderer cairo \
                 --disable_caching \
                 -r 640,360 \
-                --fps 6 \
+                --fps 3 \
                 --media_dir "$media" \
-                diagnostics/pr12_cairo_evidence/video_fast.py \
-                CairoConeDiagnosticVideoFast \
-                -o "pr12_${mode}_6fps"
+                diagnostics/pr12_cairo_evidence/video_stepped.py \
+                CairoConeDiagnosticVideoStepped \
+                -o "pr12_${mode}_stepped"
             rendered="$(find "$media" -type f -name '*.mp4' -print -quit)"
             test -n "$rendered"
-            cp "$rendered" "$root/videos/pr12_${mode}_6fps.mp4"
+            cp "$rendered" "$root/videos/pr12_${mode}_stepped.mp4"
             ffprobe -v error -show_streams -show_format -of json \
-              "$root/videos/pr12_${mode}_6fps.mp4" \
-              > "$root/ffprobe/pr12_${mode}_6fps.json"
+              "$root/videos/pr12_${mode}_stepped.mp4" \
+              > "$root/ffprobe/pr12_${mode}_stepped.json"
           done
 
       - uses: actions/upload-artifact@v4
