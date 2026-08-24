@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from dataclasses import fields, replace
+import inspect
 import unittest
 
 import numpy as np
@@ -18,6 +20,7 @@ from polyhedron_visibility.quadrics.plane_patch import fit_plane_display_patch
 from polyhedron_visibility.quadrics.projection import build_opaque_projection_proxy
 from polyhedron_visibility.quadrics.section_compositing import (
     PlaneDepthRole,
+    canonical_quadric_section_compositing_json,
     compute_quadric_section_compositing,
 )
 from polyhedron_visibility.quadrics.visibility import compute_quadric_visibility
@@ -50,6 +53,50 @@ def _limits() -> QuadricManimLimits:
 
 
 class QuadricOutlineGeometryTests(unittest.TestCase):
+    def test_outline_fragments_are_part_of_frame_value_identity(self) -> None:
+        sphere = SphereSpec("sphere", (0.0, 0.0, 0.0), 1.0)
+        plane = SectionPlane(
+            "cut",
+            (0.0, 0.0, 0.0),
+            (0.7, 0.0, 1.0),
+            u_axis=(0.0, 1.0, 0.0),
+        )
+        patch = fit_plane_display_patch(
+            "cut-patch",
+            plane,
+            (sphere,),
+            margin_ratio=0.1,
+        ).patch
+        frame = compute_quadric_section_compositing(
+            _sphere_frame(sphere),
+            sphere,
+            plane,
+            patch,
+            IDENTITY_VIEW,
+        )
+
+        self.assertIn(
+            "plane_outline_fragments",
+            {item.name for item in fields(type(frame))},
+        )
+        first, *remaining = frame.plane_outline_fragments
+        changed_outline = tuple(
+            sorted(
+                (
+                    replace(first, fragment_id=f"{first.fragment_id}-changed"),
+                    *remaining,
+                ),
+                key=lambda item: item.fragment_id,
+            )
+        )
+        changed = replace(frame, plane_outline_fragments=changed_outline)
+
+        self.assertNotEqual(frame, changed)
+        self.assertNotEqual(
+            canonical_quadric_section_compositing_json(frame),
+            canonical_quadric_section_compositing_json(changed),
+        )
+
     def test_tilted_patch_outline_is_exactly_partitioned_by_depth(self) -> None:
         sphere = SphereSpec("sphere", (0.0, 0.0, 0.0), 1.0)
         plane = SectionPlane(
@@ -158,6 +205,15 @@ class QuadricOutlineManimTests(unittest.TestCase):
 
     def tearDown(self) -> None:
         self.config.__exit__(None, None, None)
+
+    def test_public_controller_signature_remains_explicit(self) -> None:
+        signature = inspect.signature(QuadricOcclusion3D)
+        self.assertEqual(
+            tuple(signature.parameters)[:3],
+            ("scene", "surfaces", "curves"),
+        )
+        self.assertNotIn("args", signature.parameters)
+        self.assertNotIn("kwargs", signature.parameters)
 
     def test_outline_roles_bind_to_distinct_fixed_slots(self) -> None:
         sphere = SphereSpec("sphere", (0.0, 0.0, 0.0), 1.0)

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib
 import json
 import os
 from pathlib import Path
@@ -8,6 +9,8 @@ import subprocess
 import sys
 from tempfile import TemporaryDirectory
 import unittest
+
+import tikz_native.version as version_module
 
 from tikz_native.geometry_rig_3d_bridge import (
     _bridge_provider_info as geometry_rig_3d_provider_info,
@@ -134,10 +137,10 @@ QUADRIC_GEOMETRY_REVISION = (
     "source-sha256:c9d65a2ea38e5218217e890578fd7c4192384afb30a788f4a3594c495b10f4c2"
 )
 QUADRIC_VISIBILITY_REVISION = (
-    "source-sha256:70c2c21e28f1cee03e834244006da779b4e4936dc7ec13aaa67e6f0005fea213"
+    "source-sha256:8633bb960bc9eda6895f94489be78345f04043b4f1c2026cf1919342ab1d373e"
 )
 QUADRIC_MANIM_REVISION = (
-    "source-sha256:c6b0d8517089b60f5ec6156ab1ee4bcbfb2131629fba31a136ca6f5b3512c63c"
+    "source-sha256:980be63ffe8c22f5f26cc34ee0893731436340e73de2a9b9b1990be0b4e13194"
 )
 CONVEX_SECTION_3D_REVISION = (
     "source-sha256:5cfd664e136caf4f68876ac76f81674d99c15b3b275c3859a84c174d738729b5"
@@ -160,6 +163,20 @@ def _owned_tool_path(relative: str) -> str:
 
 
 class TikzNativeComponentRevisionTests(unittest.TestCase):
+    def test_reloading_version_registry_is_idempotent(self) -> None:
+        baseline_files = version_module.provider_component_files()
+        baseline_revisions = version_module.provider_component_revisions()
+
+        reloaded = version_module
+        for _index in range(3):
+            reloaded = importlib.reload(reloaded)
+
+        self.assertEqual(reloaded.provider_component_files(), baseline_files)
+        self.assertEqual(
+            reloaded.provider_component_revisions(),
+            baseline_revisions,
+        )
+
     def test_every_provider_source_or_schema_has_an_explicit_component_owner(self) -> None:
         declared = {
             _owned_tool_path(relative)
