@@ -229,15 +229,15 @@ SECTION_PARTITION_CASES = _section_partition_cases()
 
 
 _FROZEN_OUTLINE_DIGESTS = {
-    "sphere_oblique": "dc3fd773cf510550791efabba38ee8a52845176e7b047fba734bba4c25b45687",
-    "sphere_near_tangent": "ce0b92cd005ed8e5921e75be9a27b865493d9e138043f968eb8f7b6b8986bb88",
-    "cylinder_side_section": "6b4c85023b9cb4e94db91732e6c65c827bfff909bdfc0bf15e10963c9c442900",
-    "cylinder_through_caps": "7328cd00e1be4e619dddbd820e5a308580f1788e396e204b98af2dff08f0f62b",
-    "cone_ellipse": "ca9e9ffd748f10ca6d9056123ad883f9bbce7d6fc7d577d2fd9099ac5f17bcb4",
-    "cone_near_tangent": "00a8ebf387f41b62d264658e3e8747accb4dbbc8337347617176915b29a32fdf",
-    "cone_exact_parabola": "0ea7a01e5e162a6c093222c11b3c32ad6763b9ae3ffb1a94d236d6da1dc063cb",
-    "cone_hyperbola_like_finite_branch": "207a2ee7752efda4d01f859629785932d1730b45bac84c530f46057d4f2913b7",
-    "cone_through_finite_cap": "50ffcedff3fbbb6ecfd71f64850810a10d60b4e6d9bf180f541895ced432ac50",
+    "sphere_oblique": "58b888af2387baf7c7e7daad74f460adfa00a46f55fc3e2dea7bcbb76aefca44",
+    "sphere_near_tangent": "0ae95e2aea8199c88fd7ce02dc49e67ea053544c8710cb5a40e018e1b1d30032",
+    "cylinder_side_section": "092e27177b1eed3d2c8010ee0b8d9af2b8f5d08bf0df1d6800d43747b94d4638",
+    "cylinder_through_caps": "ed93dd2280a5c0bb5d5d6c69863c53db6507fa3c9efae9c4efc381858fc8b903",
+    "cone_ellipse": "ea54aa779dccb156b384750aba8c37e4d09007c1f026e68412a74fa2d9ea8e83",
+    "cone_near_tangent": "3f8d7d1ffe5d0cf3736c76ca5323eb2d1de2c7a778d66c383936c5eed730abaf",
+    "cone_exact_parabola": "2c6b4399737d5a1dcf315ab691b46b08ef12725f2594cb57b1eb4d02ebe1e204",
+    "cone_hyperbola_like_finite_branch": "fe1ebf3daae5502adaa6b11ac83cf8609c7f7307043316bd451c23cba94bfeda",
+    "cone_through_finite_cap": "4ac98ee7d82a8fa31151de2bcea22e4ffc8589960501ed5e90a82e1239e8ced2",
 }
 
 
@@ -1498,9 +1498,18 @@ class QuadricSectionBoundaryPartitionContractTests(unittest.TestCase):
     def test_outline_four_role_partition_remains_frozen(self) -> None:
         observed: dict[str, str] = {}
         for case in SECTION_PARTITION_CASES:
+            # Freeze the semantic edge/role partition at the geometry
+            # tolerance scale.  Hashing raw derived world/screen floats makes
+            # this contract depend on platform-specific BLAS root noise.
             payload = json.dumps(
                 [
-                    item.to_dict()
+                    [
+                        item.fragment_id,
+                        item.role.value,
+                        item.edge_index,
+                        round(item.interval.start, 8),
+                        round(item.interval.end, 8),
+                    ]
                     for item in self.frames[case.name].plane_outline_fragments
                 ],
                 sort_keys=True,
