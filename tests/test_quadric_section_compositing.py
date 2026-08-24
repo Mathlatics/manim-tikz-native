@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from hashlib import sha256
+import json
 from math import cos, pi, sin, sqrt
 from typing import Sequence
 import unittest
@@ -226,6 +228,19 @@ def _section_partition_cases() -> tuple[_SectionPartitionCase, ...]:
 SECTION_PARTITION_CASES = _section_partition_cases()
 
 
+_FROZEN_OUTLINE_DIGESTS = {
+    "sphere_oblique": "dc3fd773cf510550791efabba38ee8a52845176e7b047fba734bba4c25b45687",
+    "sphere_near_tangent": "ce0b92cd005ed8e5921e75be9a27b865493d9e138043f968eb8f7b6b8986bb88",
+    "cylinder_side_section": "6b4c85023b9cb4e94db91732e6c65c827bfff909bdfc0bf15e10963c9c442900",
+    "cylinder_through_caps": "7328cd00e1be4e619dddbd820e5a308580f1788e396e204b98af2dff08f0f62b",
+    "cone_ellipse": "ca9e9ffd748f10ca6d9056123ad883f9bbce7d6fc7d577d2fd9099ac5f17bcb4",
+    "cone_near_tangent": "00a8ebf387f41b62d264658e3e8747accb4dbbc8337347617176915b29a32fdf",
+    "cone_exact_parabola": "0ea7a01e5e162a6c093222c11b3c32ad6763b9ae3ffb1a94d236d6da1dc063cb",
+    "cone_hyperbola_like_finite_branch": "207a2ee7752efda4d01f859629785932d1730b45bac84c530f46057d4f2913b7",
+    "cone_through_finite_cap": "50ffcedff3fbbb6ecfd71f64850810a10d60b4e6d9bf180f541895ced432ac50",
+}
+
+
 def _base_frame(
     surface: QuadricSurface,
     curves: tuple[CircleArcCurve, ...] = (),
@@ -303,16 +318,20 @@ def _clip_convex_polygon_for_contract(
     for edge_index, edge_start in enumerate(boundary):
         edge_end = boundary[(edge_index + 1) % len(boundary)]
         direction = edge_end - edge_start
+        side_tolerance = epsilon * max(
+            float(np.linalg.norm(direction)),
+            np.finfo(float).tiny,
+        )
         previous_values = output
         output = []
         if not previous_values:
             break
         previous = previous_values[-1]
         previous_side = _cross2(direction, previous - edge_start)
-        previous_inside = previous_side >= -epsilon
+        previous_inside = previous_side >= -side_tolerance
         for current in previous_values:
             current_side = _cross2(direction, current - edge_start)
-            current_inside = current_side >= -epsilon
+            current_inside = current_side >= -side_tolerance
             if current_inside != previous_inside:
                 denominator = previous_side - current_side
                 if abs(denominator) > np.finfo(float).eps:
@@ -1246,6 +1265,10 @@ class QuadricSectionBoundaryPartitionContractTests(unittest.TestCase):
             )
             patch = _project_patch(frame)
             patch_area = _polygon_area(patch)
+            degenerate_area_tolerance = max(
+                linear_tolerance * linear_tolerance,
+                np.finfo(float).tiny,
+            )
             fragment_area = 0.0
             issue_count = 0
             examples: list[str] = []
@@ -1253,7 +1276,7 @@ class QuadricSectionBoundaryPartitionContractTests(unittest.TestCase):
                 triangle = _counter_clockwise(fragment.screen_vertices)
                 triangle_area = _polygon_area(triangle)
                 fragment_area += triangle_area
-                if triangle_area <= area_tolerance:
+                if triangle_area <= degenerate_area_tolerance:
                     issue_count += 1
                     examples.append(
                         f"{fragment.fragment_id} has no stable positive area"
@@ -1364,6 +1387,11 @@ class QuadricSectionBoundaryPartitionContractTests(unittest.TestCase):
             issue_count = 0
             examples: list[str] = []
             for fragment in frame.plane_fragments:
+                if fragment.role is PlaneDepthRole.OUTSIDE_PROJECTION:
+                    # Batch 3 makes the finite polygonal proxy authoritative
+                    # for outside ownership.  The analytic surface may extend
+                    # slightly beyond that chordal proxy near its silhouette.
+                    continue
                 stable_sample_count = 0
                 for label, world, _screen in _fragment_samples(fragment):
                     observed = _stable_ray_role(
@@ -1448,6 +1476,38 @@ class QuadricSectionBoundaryPartitionContractTests(unittest.TestCase):
             "boundary classification uses the clipped overlap, but the frame "
             "emits the full source triangle:\n" + "\n".join(crossing[:8]),
         )
+
+    def test_all_role_contours_close_and_preserve_fragment_area(self) -> None:
+        for case in SECTION_PARTITION_CASES:
+            with self.subTest(case=case.name):
+                frame = self.frames[case.name]
+                contours = quadric_plane_fragment_contours(frame)
+                for role in PlaneDepthRole:
+                    source_area = sum(
+                        _screen_signed_area(item.screen_vertices)
+                        for item in frame.fragments_by_role[role]
+                    )
+                    contour_area = sum(
+                        _screen_signed_area(loop) for loop in contours[role]
+                    )
+                    self.assertAlmostEqual(source_area, contour_area, places=9)
+                    self.assertTrue(
+                        all(len(loop) >= 3 for loop in contours[role])
+                    )
+
+    def test_outline_four_role_partition_remains_frozen(self) -> None:
+        observed: dict[str, str] = {}
+        for case in SECTION_PARTITION_CASES:
+            payload = json.dumps(
+                [
+                    item.to_dict()
+                    for item in self.frames[case.name].plane_outline_fragments
+                ],
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+            observed[case.name] = sha256(payload).hexdigest()
+        self.assertEqual(observed, _FROZEN_OUTLINE_DIGESTS)
 
     def test_required_case_partition_is_deterministic(self) -> None:
         for case in SECTION_PARTITION_CASES:

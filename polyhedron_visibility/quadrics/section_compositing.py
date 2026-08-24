@@ -764,16 +764,16 @@ class _CanonicalVertexRegistry:
         if candidates:
             return min(candidates, key=lambda item: item.stable_token)
 
-        snapped = self._grid_step * np.asarray(key, dtype=float)
+        canonical = np.asarray(coordinates, dtype=float)
         world = (
             self._plane_origin
-            + snapped[0] * self._plane_u
-            + snapped[1] * self._plane_v
+            + canonical[0] * self._plane_u
+            + canonical[1] * self._plane_v
         )
-        screen = self._screen_origin + self._screen_basis @ snapped
+        screen = self._screen_origin + self._screen_basis @ canonical
         vertex = _PlanePartitionVertex(
             stable_token=f"vertex:{key[0]}:{key[1]}",
-            plane_coordinates=(float(snapped[0]), float(snapped[1])),
+            plane_coordinates=(float(canonical[0]), float(canonical[1])),
             world_point=tuple(float(value) for value in world),  # type: ignore[arg-type]
             screen_point=tuple(float(value) for value in screen),  # type: ignore[arg-type]
         )
@@ -1953,7 +1953,6 @@ def compute_quadric_section_compositing(
         )
     if _signed_area(proxy_polygon) < 0.0:
         proxy_polygon.reverse()
-    proxy_clipper = _prepare_convex_clipper(proxy_polygon, screen_epsilon)
     classification_cache: dict[tuple[float, float], PlaneDepthRole] = {}
     classification_count = 0
     ray_direction = np.asarray(view.view_direction, dtype=float)
@@ -1986,6 +1985,30 @@ def compute_quadric_section_compositing(
         float(screen_singular_values[-1]),
         np.finfo(float).tiny,
     )
+    plane_origin = np.asarray(plane.point, dtype=float)
+    partition_registry = _CanonicalVertexRegistry(
+        plane_origin=plane_origin,
+        plane_u=plane_u,
+        plane_v=plane_v,
+        screen_origin=screen_origin,
+        screen_basis=screen_basis,
+        coordinate_epsilon=coordinate_epsilon,
+    )
+    partition_proxy = _make_plane_partition_polygon(
+        f"proxy:{surface.surface_id}",
+        tuple(
+            partition_registry.register(
+                inverse_screen_basis
+                @ (np.asarray(point, dtype=float) - screen_origin)
+            )
+            for point in proxy_polygon
+        ),
+        coordinate_epsilon,
+    )
+    if partition_proxy is None:
+        raise QuadricSectionCompositingError(
+            "quadric projection proxy has no stable plane partition"
+        )
     axial_mapping: tuple[np.ndarray, float, float, float] | None = None
     if isinstance(surface, (CylinderSpec, ConeSpec)):
         axial_origin = np.asarray(
@@ -2084,24 +2107,131 @@ def compute_quadric_section_compositing(
                 f"{limits.max_plane_fragments} plane fragments"
             )
 
+    def partition_triangle(
+        world: np.ndarray,
+        path: str,
+    ) -> tuple[
+        _PlanePartitionPolygon,
+        tuple[_PlanePartitionPolygon, ...],
+        tuple[_PlanePartitionPolygon, ...],
+    ]:
+        source = _make_plane_partition_polygon(
+            f"plane:{plane.plane_id}:cell:{path}",
+            tuple(
+                partition_registry.register(
+                    (
+                        float(np.dot(point - plane_origin, plane_u)),
+                        float(np.dot(point - plane_origin, plane_v)),
+                    )
+                )
+                for point in np.asarray(world, dtype=float)
+            ),
+            coordinate_epsilon,
+        )
+        if source is None:
+            raise QuadricSectionCompositingError(
+                f"plane partition cell {path!r} has no stable area"
+            )
+        inside, outside = _partition_triangle_by_convex_proxy(
+            source,
+            partition_proxy,
+            partition_registry,
+            coordinate_epsilon,
+        )
+        return source, inside, outside
+
+    def append_partitioned_leaf(
+        source: _PlanePartitionPolygon,
+        inside: Sequence[_PlanePartitionPolygon],
+        outside: Sequence[_PlanePartitionPolygon],
+        path: str,
+        depth: int,
+        inside_role: PlaneDepthRole | None,
+    ) -> None:
+        emissions: list[
+            tuple[PlaneDepthRole, _PlanePartitionPolygon]
+        ] = []
+        for polygon in outside:
+            emissions.extend(
+                (PlaneDepthRole.OUTSIDE_PROJECTION, triangle)
+                for triangle in _triangulate_plane_partition_polygon(
+                    polygon,
+                    coordinate_epsilon,
+                )
+            )
+        if inside_role is not None:
+            for polygon in inside:
+                emissions.extend(
+                    (inside_role, triangle)
+                    for triangle in _triangulate_plane_partition_polygon(
+                        polygon,
+                        coordinate_epsilon,
+                    )
+                )
+        if not emissions:
+            raise QuadricSectionCompositingError(
+                f"plane partition cell {path!r} emitted no stable triangle"
+            )
+        emissions.sort(
+            key=lambda item: (item[0].value, item[1].stable_token)
+        )
+        source_tokens = tuple(
+            vertex.stable_token for vertex in source.vertices
+        )
+        if (
+            len(emissions) == 1
+            and tuple(
+                vertex.stable_token for vertex in emissions[0][1].vertices
+            )
+            == source_tokens
+        ):
+            fragment_path = path
+            role, triangle = emissions[0]
+            append_leaf(
+                np.asarray(
+                    tuple(vertex.world_point for vertex in triangle.vertices),
+                    dtype=float,
+                ),
+                fragment_path,
+                depth,
+                role,
+            )
+            return
+        for index, (role, triangle) in enumerate(emissions):
+            append_leaf(
+                np.asarray(
+                    tuple(vertex.world_point for vertex in triangle.vertices),
+                    dtype=float,
+                ),
+                f"{path}.partition.{index:04d}",
+                depth,
+                role,
+            )
+
     def visit(world: np.ndarray, path: str, depth: int) -> None:
         screen = np.asarray(world @ view.matrix[:2].T, dtype=float)
-        overlap = _clip_convex_polygon(screen, proxy_clipper, screen_epsilon)
-        if len(overlap) < 3 or abs(_signed_area(overlap)) <= screen_epsilon**2:
+        source, inside, outside = partition_triangle(world, path)
+        if not inside:
             if depth < limits.minimum_subdivision_depth:
                 for index, child in enumerate(_subdivide_triangle(world)):
                     visit(child, f"{path}.{index}", depth + 1)
             else:
-                append_leaf(
-                    world,
+                append_partitioned_leaf(
+                    source,
+                    inside,
+                    outside,
                     path,
                     depth,
-                    PlaneDepthRole.OUTSIDE_PROJECTION,
+                    None,
                 )
             return
 
-        samples = [*overlap]
-        samples.append(np.mean(overlap, axis=0))
+        inside_screen = [
+            np.asarray(vertex.screen_point, dtype=float)
+            for vertex in inside[0].vertices
+        ]
+        samples = [*inside_screen]
+        samples.append(np.mean(inside_screen, axis=0))
         roles = {classify(np.asarray(point, dtype=float)) for point in samples}
         projected_diameter = max(
             float(np.linalg.norm(screen[first] - screen[second]))
@@ -2111,7 +2241,7 @@ def compute_quadric_section_compositing(
         uniform = len(roles) == 1
         if uniform and next(iter(roles)) is not PlaneDepthRole.BETWEEN_SURFACE_SHEETS:
             uniform = not _plane_cell_may_meet_solid(
-                overlap,
+                inside_screen,
                 inverse_screen_basis,
                 screen_origin,
                 restricted_surface,
@@ -2121,10 +2251,24 @@ def compute_quadric_section_compositing(
                 implicit_epsilon,
             )
         if depth >= limits.minimum_subdivision_depth and uniform:
-            append_leaf(world, path, depth, next(iter(roles)))
+            append_partitioned_leaf(
+                source,
+                inside,
+                outside,
+                path,
+                depth,
+                next(iter(roles)),
+            )
             return
         if projected_diameter <= error:
-            append_leaf(world, path, depth, classify(np.mean(overlap, axis=0)))
+            append_partitioned_leaf(
+                source,
+                inside,
+                outside,
+                path,
+                depth,
+                classify(np.mean(inside_screen, axis=0)),
+            )
             return
         if depth >= limits.maximum_subdivision_depth:
             raise QuadricSectionCompositingError(
