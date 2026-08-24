@@ -15,6 +15,12 @@ from ._manim_impl import *  # noqa: F401,F403
 from .section_compositing import PlaneDepthRole, QuadricSectionCompositingFrame
 
 
+# Keep the public dependency name patchable. The inherited implementation reads
+# its own module globals, so each preparation synchronizes this public hook into
+# the private implementation module before any fallible production work begins.
+compute_global_quadric_frame = _impl.compute_global_quadric_frame
+
+
 def _set_open_subpaths(value: VMobject, paths: Sequence[np.ndarray]) -> None:
     """Replace one fixed VMobject with independently open polyline subpaths."""
 
@@ -78,6 +84,7 @@ class QuadricOcclusion3D(_impl.QuadricOcclusion3D):
         )
 
     def _prepare_numeric(self) -> object:
+        _impl.compute_global_quadric_frame = compute_global_quadric_frame
         numeric = super()._prepare_numeric()
         prepared = numeric.section_layers
         if prepared is None:
