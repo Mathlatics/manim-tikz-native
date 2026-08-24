@@ -1,0 +1,88 @@
+name: PR 12 Cairo video fallback
+
+on:
+  push:
+    branches:
+      - diagnostics/pr12-cairo-evidence
+    paths:
+      - .github/workflows/pr12-cairo-video-fallback.yml
+      - diagnostics/pr12_cairo_evidence/scene.py
+  pull_request:
+    branches:
+      - main
+    paths:
+      - .github/workflows/pr12-cairo-video-fallback.yml
+      - diagnostics/pr12_cairo_evidence/scene.py
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  render-videos:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            ffmpeg \
+            libcairo2-dev \
+            libpango1.0-dev \
+            pkg-config
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install project
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[test]"
+
+      - name: Verify production baseline
+        run: |
+          git merge-base --is-ancestor \
+            a7811bf4f7d4adbf2e4078e30d647b40bea6693a HEAD
+          git diff --quiet \
+            a7811bf4f7d4adbf2e4078e30d647b40bea6693a HEAD -- \
+            polyhedron_visibility/quadrics
+
+      - name: Render low-sampling motion evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="$GITHUB_WORKSPACE/pr12-cairo-video-fallback"
+          mkdir -p "$root/videos" "$root/ffprobe"
+          for mode in translucent opaque; do
+            media="$RUNNER_TEMP/pr12-fallback-${mode}"
+            PR12_DIAGNOSTIC_MODE="$mode" \
+              python -m manim \
+                --renderer cairo \
+                --disable_caching \
+                -r 640,360 \
+                --fps 6 \
+                --media_dir "$media" \
+                diagnostics/pr12_cairo_evidence/scene.py \
+                CairoConeDiagnosticVideo \
+                -o "pr12_${mode}_6fps"
+            rendered="$(find "$media" -type f -name '*.mp4' -print -quit)"
+            test -n "$rendered"
+            cp "$rendered" "$root/videos/pr12_${mode}_6fps.mp4"
+            ffprobe -v error -show_streams -show_format -of json \
+              "$root/videos/pr12_${mode}_6fps.mp4" \
+              > "$root/ffprobe/pr12_${mode}_6fps.json"
+          done
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pr12-cairo-video-fallback
+          path: pr12-cairo-video-fallback
+          if-no-files-found: error
+          retention-days: 30
