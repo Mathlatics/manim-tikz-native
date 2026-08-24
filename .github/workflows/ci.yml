@@ -1,55 +1,61 @@
-name: Update frozen quadric revisions
+name: CI
 
 on:
   push:
-    branches:
-      - codex/quadrics-v1
-    paths:
-      - .github/workflows/ci.yml
+  pull_request:
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  update-snapshot:
+  test:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
+
     steps:
       - uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            dvisvgm \
+            ffmpeg \
+            libcairo2-dev \
+            libpango1.0-dev \
+            pkg-config \
+            poppler-utils \
+            texlive-fonts-recommended \
+            texlive-lang-chinese \
+            texlive-latex-extra \
+            texlive-xetex
+
+      - name: Verify renderer toolchain
+        run: |
+          command -v xelatex
+          command -v dvisvgm
+          command -v ffmpeg
+          command -v pdftoppm
+
+      - uses: actions/setup-python@v5
         with:
-          ref: codex/quadrics-v1
-          fetch-depth: 1
+          python-version: ${{ matrix.python-version }}
+          cache: pip
 
-      - name: Update frozen component identities
-        shell: bash
+      - name: Install package
         run: |
-          python - <<'PY'
-          from pathlib import Path
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[test]"
 
-          path = Path("tests/test_tikz_native_component_revisions.py")
-          text = path.read_text(encoding="utf-8")
-          replacements = {
-              "0867601c1e5ed7df180ce64ee825844a688d942a325df5b77bca6b1734ed1525":
-                  "70c2c21e28f1cee03e834244006da779b4e4936dc7ec13aaa67e6f0005fea213",
-              "db0e6167bbd0fd472cb83eaa48629b936a995a331cfd12c17fabf7b345cbff0e":
-                  "c6b0d8517089b60f5ec6156ab1ee4bcbfb2131629fba31a136ca6f5b3512c63c",
-          }
-          for old, new in replacements.items():
-              count = text.count(old)
-              if count != 1:
-                  raise RuntimeError(
-                      f"expected one frozen digest {old}, found {count}"
-                  )
-              text = text.replace(old, new)
-          path.write_text(text, encoding="utf-8")
-          PY
-          git diff --check
-          python -m py_compile tests/test_tikz_native_component_revisions.py
+      - name: Run tests
+        run: python -m unittest discover -s tests -p "test_*.py"
 
-      - name: Commit snapshot update
-        shell: bash
+      - name: Build distributions
+        if: matrix.python-version == '3.12'
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add tests/test_tikz_native_component_revisions.py
-          git commit -m "test: freeze updated quadric component identities"
-          git push origin HEAD:codex/quadrics-v1
+          python -m pip install build twine
+          python -m build
+          python -m twine check dist/*
