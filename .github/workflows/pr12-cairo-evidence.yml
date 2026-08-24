@@ -120,8 +120,8 @@ jobs:
               python -m manim \
                 --renderer cairo \
                 --disable_caching \
-                -r 960,540 \
-                --fps 24 \
+                -r 720,405 \
+                --fps 12 \
                 --media_dir "$media" \
                 diagnostics/pr12_cairo_evidence/scene.py \
                 CairoConeDiagnosticVideo \
