@@ -20,10 +20,11 @@ No renderer object is created here.
 
 from __future__ import annotations
 
+from collections import Counter
 from dataclasses import dataclass
 from enum import Enum
 import json
-from math import copysign, gcd, isfinite, sqrt
+from math import atan2, copysign, floor, isfinite, sqrt, tau
 from typing import Callable, Sequence
 
 import numpy as np
@@ -489,166 +490,83 @@ class QuadricSectionCompositingFrame:
 def quadric_plane_fragment_contours(
     frame: QuadricSectionCompositingFrame,
 ) -> dict[PlaneDepthRole, tuple[tuple[tuple[float, float], ...], ...]]:
-    """Merge adaptive triangles into a few renderer-friendly boundary loops.
+    """Merge plane fragments into deterministic renderer-friendly loops.
 
-    Every subdivision vertex lies on one dyadic lattice in the plane patch.
-    Splitting coarse edges into primitive lattice segments lets shared internal
-    edges cancel exactly, including T-junctions between different refinement
-    depths.  The returned loop winding is preserved so Cairo can represent
-    holes without drawing thousands of individual triangles.
+    Fragment vertices are canonicalized in plane coordinates before directed
+    edges are cancelled.  Residual edges are noded at arbitrary collinear
+    vertices, so clipped points and T-junctions no longer need to belong to the
+    old dyadic refinement lattice.  Winding is preserved for holes.
     """
 
     if not isinstance(frame, QuadricSectionCompositingFrame):
         raise TypeError("frame must be a QuadricSectionCompositingFrame")
-    maximum_depth = max(
-        (item.subdivision_depth for item in frame.plane_fragments),
-        default=0,
-    )
-    denominator = 1 << maximum_depth
-    minimum_u = frame.patch.center_coordinates[0] - frame.patch.half_width
-    minimum_v = frame.patch.center_coordinates[1] - frame.patch.half_height
-    width = 2.0 * frame.patch.half_width
-    height = 2.0 * frame.patch.half_height
     plane_u, plane_v, _normal = frame.plane.basis
     plane_origin = np.asarray(frame.plane.point, dtype=float)
     projection_matrix = np.asarray(
         frame.base_frame.visibility.projection_matrix,
         dtype=float,
     )
-    screen_origin = projection_matrix[:2] @ np.asarray(
-        frame.plane.point,
-        dtype=float,
-    )
+    screen_origin = projection_matrix[:2] @ plane_origin
     screen_basis = np.column_stack(
         (
             projection_matrix[:2] @ plane_u,
             projection_matrix[:2] @ plane_v,
         )
     )
-
-    def lattice(point: Sequence[float]) -> tuple[int, int]:
-        delta = np.asarray(point, dtype=float) - plane_origin
-        u = float(np.dot(delta, plane_u))
-        v = float(np.dot(delta, plane_v))
-        raw_i = (u - minimum_u) * denominator / width
-        raw_j = (v - minimum_v) * denominator / height
-        i, j = int(round(raw_i)), int(round(raw_j))
-        if abs(raw_i - i) > 1.0e-6 or abs(raw_j - j) > 1.0e-6:
-            raise QuadricSectionCompositingError(
-                "adaptive plane fragment escaped its dyadic patch lattice"
+    coordinate_scale = max(
+        abs(frame.patch.center_coordinates[0]) + frame.patch.half_width,
+        abs(frame.patch.center_coordinates[1]) + frame.patch.half_height,
+        np.finfo(float).tiny,
+    )
+    coordinate_epsilon = max(
+        np.finfo(float).eps * 4096.0 * coordinate_scale,
+        np.finfo(float).tiny,
+    )
+    registry = _CanonicalVertexRegistry(
+        plane_origin=plane_origin,
+        plane_u=plane_u,
+        plane_v=plane_v,
+        screen_origin=screen_origin,
+        screen_basis=screen_basis,
+        coordinate_epsilon=coordinate_epsilon,
+    )
+    polygons_by_role: dict[PlaneDepthRole, list[_PlanePartitionPolygon]] = {
+        role: [] for role in PlaneDepthRole
+    }
+    for fragment in frame.plane_fragments:
+        vertices = []
+        for point in fragment.world_vertices:
+            delta = np.asarray(point, dtype=float) - plane_origin
+            vertices.append(
+                registry.register(
+                    (
+                        float(np.dot(delta, plane_u)),
+                        float(np.dot(delta, plane_v)),
+                    )
+                )
             )
-        return i, j
+        polygon = _make_plane_partition_polygon(
+            fragment.fragment_id,
+            vertices,
+            coordinate_epsilon,
+        )
+        if polygon is None:
+            raise QuadricSectionCompositingError(
+                f"plane fragment {fragment.fragment_id!r} has no stable area"
+            )
+        polygons_by_role[fragment.role].append(polygon)
 
-    def screen(point: tuple[int, int]) -> tuple[float, float]:
-        u = minimum_u + width * point[0] / denominator
-        v = minimum_v + height * point[1] / denominator
-        result = screen_origin + screen_basis @ np.asarray((u, v), dtype=float)
-        return float(result[0]), float(result[1])
-
-    result: dict[PlaneDepthRole, tuple[tuple[tuple[float, float], ...], ...]] = {}
+    result: dict[
+        PlaneDepthRole,
+        tuple[tuple[tuple[float, float], ...], ...],
+    ] = {}
     for role in PlaneDepthRole:
-        edges: dict[tuple[tuple[int, int], tuple[int, int]], int] = {}
-        for fragment in frame.plane_fragments:
-            if fragment.role is not role:
-                continue
-            vertices = tuple(lattice(point) for point in fragment.world_vertices)
-            for start, end in zip(vertices, (*vertices[1:], vertices[0])):
-                delta_i = end[0] - start[0]
-                delta_j = end[1] - start[1]
-                steps = gcd(abs(delta_i), abs(delta_j))
-                if steps == 0:
-                    raise QuadricSectionCompositingError(
-                        "plane fragment contains a zero-length lattice edge"
-                    )
-                step = (delta_i // steps, delta_j // steps)
-                current = start
-                for _index in range(steps):
-                    following = (current[0] + step[0], current[1] + step[1])
-                    reverse = (following, current)
-                    if edges.get(reverse, 0):
-                        edges[reverse] -= 1
-                        if edges[reverse] == 0:
-                            del edges[reverse]
-                    else:
-                        key = (current, following)
-                        edges[key] = edges.get(key, 0) + 1
-                    current = following
-        if any(count != 1 for count in edges.values()):
-            raise QuadricSectionCompositingError(
-                "plane fragment boundary contains duplicate directed edges"
-            )
-        outgoing: dict[tuple[int, int], set[tuple[int, int]]] = {}
-        incoming: dict[tuple[int, int], set[tuple[int, int]]] = {}
-        remaining = set(edges)
-        for start, end in remaining:
-            outgoing.setdefault(start, set()).add(end)
-            incoming.setdefault(end, set()).add(start)
-        if set(outgoing) != set(incoming):
-            raise QuadricSectionCompositingError(
-                "plane fragment union produced an open boundary"
-            )
-        loops: list[tuple[tuple[int, int], ...]] = []
-        while remaining:
-            first_edge = min(remaining)
-            start, current = first_edge
-            remaining.remove(first_edge)
-            values = [start, current]
-            while current != start:
-                candidates = sorted(
-                    end for end in outgoing.get(current, ())
-                    if (current, end) in remaining
-                )
-                if not candidates:
-                    raise QuadricSectionCompositingError(
-                        "plane fragment union produced an open contour"
-                    )
-                following = candidates[0]
-                remaining.remove((current, following))
-                values.append(following)
-                current = following
-                if len(values) > len(edges) + 2:
-                    raise QuadricSectionCompositingError(
-                        "plane fragment contour traversal did not close"
-                    )
-            values.pop()
-            simplified: list[tuple[int, int]] = []
-            for value in values:
-                simplified.append(value)
-                while len(simplified) >= 3:
-                    first, middle, last = simplified[-3:]
-                    if (
-                        (middle[0] - first[0]) * (last[1] - middle[1])
-                        - (middle[1] - first[1]) * (last[0] - middle[0])
-                    ) != 0:
-                        break
-                    simplified.pop(-2)
-            changed = True
-            while changed and len(simplified) >= 3:
-                changed = False
-                first, middle, last = simplified[-2], simplified[-1], simplified[0]
-                if (
-                    (middle[0] - first[0]) * (last[1] - middle[1])
-                    - (middle[1] - first[1]) * (last[0] - middle[0])
-                ) == 0:
-                    simplified.pop()
-                    changed = True
-                if len(simplified) < 3:
-                    break
-                first, middle, last = simplified[-1], simplified[0], simplified[1]
-                if (
-                    (middle[0] - first[0]) * (last[1] - middle[1])
-                    - (middle[1] - first[1]) * (last[0] - middle[0])
-                ) == 0:
-                    simplified.pop(0)
-                    changed = True
-            if len(simplified) < 3:
-                raise QuadricSectionCompositingError(
-                    "plane fragment contour has no stable area"
-                )
-            loops.append(tuple(simplified))
-        loops.sort()
+        loops = _plane_partition_polygon_contours(
+            polygons_by_role[role],
+            coordinate_epsilon,
+        )
         result[role] = tuple(
-            tuple(screen(point) for point in loop) for loop in loops
+            tuple(vertex.screen_point for vertex in loop) for loop in loops
         )
     return result
 
@@ -676,6 +594,731 @@ def _signed_area(points: Sequence[np.ndarray]) -> float:
         _cross2(points[index], points[(index + 1) % len(points)])
         for index in range(len(points))
     )
+
+
+@dataclass(frozen=True, slots=True)
+class _PlanePartitionVertex:
+    """One private, canonical vertex shared by all plane partition pieces."""
+
+    stable_token: str
+    plane_coordinates: tuple[float, float]
+    world_point: tuple[float, float, float]
+    screen_point: tuple[float, float]
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.stable_token, str) or not self.stable_token:
+            raise QuadricSectionCompositingError(
+                "plane partition vertex token must be non-empty"
+            )
+        if len(self.plane_coordinates) != 2 or not all(
+            isfinite(value) for value in self.plane_coordinates
+        ):
+            raise QuadricSectionCompositingError(
+                "plane partition coordinates must contain two finite values"
+            )
+        if len(self.world_point) != 3 or not all(
+            isfinite(value) for value in self.world_point
+        ):
+            raise QuadricSectionCompositingError(
+                "plane partition world point must contain three finite values"
+            )
+        if len(self.screen_point) != 2 or not all(
+            isfinite(value) for value in self.screen_point
+        ):
+            raise QuadricSectionCompositingError(
+                "plane partition screen point must contain two finite values"
+            )
+
+
+@dataclass(frozen=True, slots=True)
+class _PlanePartitionPolygon:
+    """One private convex polygon with stable vertex and polygon identity."""
+
+    stable_token: str
+    vertices: tuple[_PlanePartitionVertex, ...]
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.stable_token, str) or not self.stable_token:
+            raise QuadricSectionCompositingError(
+                "plane partition polygon token must be non-empty"
+            )
+        if len(self.vertices) < 3 or not all(
+            isinstance(item, _PlanePartitionVertex) for item in self.vertices
+        ):
+            raise QuadricSectionCompositingError(
+                "plane partition polygon must contain at least three vertices"
+            )
+        tokens = tuple(item.stable_token for item in self.vertices)
+        if len(tokens) != len(set(tokens)):
+            raise QuadricSectionCompositingError(
+                "plane partition polygon vertices must be unique"
+            )
+
+
+class _CanonicalVertexRegistry:
+    """Create deterministic plane/world/screen vertices on one tolerance grid."""
+
+    __slots__ = (
+        "_coordinate_epsilon",
+        "_grid_step",
+        "_plane_origin",
+        "_plane_u",
+        "_plane_v",
+        "_screen_origin",
+        "_screen_basis",
+        "_vertices",
+    )
+
+    def __init__(
+        self,
+        *,
+        plane_origin: Sequence[float],
+        plane_u: Sequence[float],
+        plane_v: Sequence[float],
+        screen_origin: Sequence[float],
+        screen_basis: Sequence[Sequence[float]],
+        coordinate_epsilon: float,
+    ) -> None:
+        epsilon = float(coordinate_epsilon)
+        if not isfinite(epsilon) or epsilon <= 0.0:
+            raise QuadricSectionCompositingError(
+                "canonical vertex epsilon must be finite and positive"
+            )
+        origin = np.asarray(plane_origin, dtype=float)
+        plane_first = np.asarray(plane_u, dtype=float)
+        plane_second = np.asarray(plane_v, dtype=float)
+        projected_origin = np.asarray(screen_origin, dtype=float)
+        projected_basis = np.asarray(screen_basis, dtype=float)
+        if (
+            origin.shape != (3,)
+            or plane_first.shape != (3,)
+            or plane_second.shape != (3,)
+            or projected_origin.shape != (2,)
+            or projected_basis.shape != (2, 2)
+            or not all(
+                np.all(np.isfinite(value))
+                for value in (
+                    origin,
+                    plane_first,
+                    plane_second,
+                    projected_origin,
+                    projected_basis,
+                )
+            )
+        ):
+            raise QuadricSectionCompositingError(
+                "canonical vertex registry requires finite plane projection data"
+            )
+        if (
+            float(np.linalg.norm(plane_first)) <= epsilon
+            or float(np.linalg.norm(plane_second)) <= epsilon
+        ):
+            raise QuadricSectionCompositingError(
+                "canonical vertex plane basis must be non-degenerate"
+            )
+        self._coordinate_epsilon = epsilon
+        self._grid_step = epsilon / sqrt(2.0)
+        self._plane_origin = origin
+        self._plane_u = plane_first
+        self._plane_v = plane_second
+        self._screen_origin = projected_origin
+        self._screen_basis = projected_basis
+        self._vertices: dict[tuple[int, int], _PlanePartitionVertex] = {}
+
+    @property
+    def coordinate_epsilon(self) -> float:
+        return self._coordinate_epsilon
+
+    def register(
+        self,
+        plane_coordinates: Sequence[float],
+    ) -> _PlanePartitionVertex:
+        try:
+            coordinates = tuple(float(value) for value in plane_coordinates)
+        except (TypeError, ValueError, OverflowError) as exc:
+            raise QuadricSectionCompositingError(
+                "canonical plane vertex must contain two finite values"
+            ) from exc
+        if len(coordinates) != 2 or not all(isfinite(value) for value in coordinates):
+            raise QuadricSectionCompositingError(
+                "canonical plane vertex must contain two finite values"
+            )
+        key = tuple(
+            int(round(float(value) / self._grid_step)) for value in coordinates
+        )
+        candidates: list[_PlanePartitionVertex] = []
+        for first_offset in (-1, 0, 1):
+            for second_offset in (-1, 0, 1):
+                candidate = self._vertices.get(
+                    (key[0] + first_offset, key[1] + second_offset)
+                )
+                if candidate is None:
+                    continue
+                delta_u = candidate.plane_coordinates[0] - coordinates[0]
+                delta_v = candidate.plane_coordinates[1] - coordinates[1]
+                if (
+                    delta_u * delta_u + delta_v * delta_v
+                    <= self._coordinate_epsilon * self._coordinate_epsilon
+                ):
+                    candidates.append(candidate)
+        if candidates:
+            return min(candidates, key=lambda item: item.stable_token)
+
+        snapped = self._grid_step * np.asarray(key, dtype=float)
+        world = (
+            self._plane_origin
+            + snapped[0] * self._plane_u
+            + snapped[1] * self._plane_v
+        )
+        screen = self._screen_origin + self._screen_basis @ snapped
+        vertex = _PlanePartitionVertex(
+            stable_token=f"vertex:{key[0]}:{key[1]}",
+            plane_coordinates=(float(snapped[0]), float(snapped[1])),
+            world_point=tuple(float(value) for value in world),  # type: ignore[arg-type]
+            screen_point=tuple(float(value) for value in screen),  # type: ignore[arg-type]
+        )
+        self._vertices[key] = vertex
+        return vertex
+
+    def interpolate(
+        self,
+        first: _PlanePartitionVertex,
+        second: _PlanePartitionVertex,
+        ratio: float,
+    ) -> _PlanePartitionVertex:
+        if not isinstance(first, _PlanePartitionVertex) or not isinstance(
+            second, _PlanePartitionVertex
+        ):
+            raise TypeError("canonical interpolation requires partition vertices")
+        value = float(ratio)
+        if not isfinite(value) or not -self._coordinate_epsilon <= value <= (
+            1.0 + self._coordinate_epsilon
+        ):
+            raise QuadricSectionCompositingError(
+                "canonical intersection ratio lies outside its source edge"
+            )
+        value = min(1.0, max(0.0, value))
+        first_coordinates = np.asarray(first.plane_coordinates, dtype=float)
+        second_coordinates = np.asarray(second.plane_coordinates, dtype=float)
+        return self.register(
+            first_coordinates + value * (second_coordinates - first_coordinates)
+        )
+
+
+def _partition_signed_area(vertices: Sequence[_PlanePartitionVertex]) -> float:
+    return 0.5 * sum(
+        vertices[index].plane_coordinates[0]
+        * vertices[(index + 1) % len(vertices)].plane_coordinates[1]
+        - vertices[index].plane_coordinates[1]
+        * vertices[(index + 1) % len(vertices)].plane_coordinates[0]
+        for index in range(len(vertices))
+    )
+
+
+def _partition_vertex_is_collinear(
+    first: _PlanePartitionVertex,
+    middle: _PlanePartitionVertex,
+    last: _PlanePartitionVertex,
+    epsilon: float,
+) -> bool:
+    first_u, first_v = first.plane_coordinates
+    middle_u, middle_v = middle.plane_coordinates
+    last_u, last_v = last.plane_coordinates
+    span_u = last_u - first_u
+    span_v = last_v - first_v
+    middle_delta_u = middle_u - first_u
+    middle_delta_v = middle_v - first_v
+    length_squared = span_u * span_u + span_v * span_v
+    length = sqrt(length_squared)
+    if length <= epsilon:
+        return True
+    distance = abs(span_u * middle_delta_v - span_v * middle_delta_u) / length
+    if distance > epsilon:
+        return False
+    parameter = (
+        middle_delta_u * span_u + middle_delta_v * span_v
+    ) / length_squared
+    return -epsilon / length <= parameter <= 1.0 + epsilon / length
+
+
+def _make_plane_partition_polygon(
+    stable_token: str,
+    vertices: Sequence[_PlanePartitionVertex],
+    coordinate_epsilon: float,
+) -> _PlanePartitionPolygon | None:
+    """Normalize one convex polygon to fixed winding and starting vertex."""
+
+    values: list[_PlanePartitionVertex] = []
+    for vertex in vertices:
+        if not isinstance(vertex, _PlanePartitionVertex):
+            raise TypeError("plane partition polygons require canonical vertices")
+        if not values or values[-1].stable_token != vertex.stable_token:
+            values.append(vertex)
+    if len(values) > 1 and values[0].stable_token == values[-1].stable_token:
+        values.pop()
+    changed = True
+    while changed and len(values) >= 3:
+        changed = False
+        for index in range(len(values)):
+            if _partition_vertex_is_collinear(
+                values[index - 1],
+                values[index],
+                values[(index + 1) % len(values)],
+                coordinate_epsilon,
+            ):
+                values.pop(index)
+                changed = True
+                break
+    if len(values) < 3:
+        return None
+    area = _partition_signed_area(values)
+    area_epsilon = coordinate_epsilon * coordinate_epsilon
+    if abs(area) <= area_epsilon:
+        return None
+    if area < 0.0:
+        values.reverse()
+    start_index = min(
+        range(len(values)),
+        key=lambda index: (
+            values[index].stable_token,
+            values[index].plane_coordinates,
+        ),
+    )
+    ordered = values[start_index:] + values[:start_index]
+    return _PlanePartitionPolygon(stable_token, tuple(ordered))
+
+
+def _split_convex_polygon_by_half_plane(
+    polygon: _PlanePartitionPolygon,
+    boundary_start: _PlanePartitionVertex,
+    boundary_end: _PlanePartitionVertex,
+    registry: _CanonicalVertexRegistry,
+    coordinate_epsilon: float,
+    *,
+    boundary_token: str | None = None,
+) -> tuple[_PlanePartitionPolygon | None, _PlanePartitionPolygon | None]:
+    """Split one convex polygon into the left and right of a directed line."""
+
+    if not isinstance(polygon, _PlanePartitionPolygon):
+        raise TypeError("polygon must be a _PlanePartitionPolygon")
+    if not isinstance(registry, _CanonicalVertexRegistry):
+        raise TypeError("registry must be a _CanonicalVertexRegistry")
+    start = np.asarray(boundary_start.plane_coordinates, dtype=float)
+    end = np.asarray(boundary_end.plane_coordinates, dtype=float)
+    direction = end - start
+    length = float(np.linalg.norm(direction))
+    if length <= coordinate_epsilon:
+        raise QuadricSectionCompositingError(
+            "plane partition boundary must have positive length"
+        )
+    threshold = coordinate_epsilon * length
+
+    def signed(vertex: _PlanePartitionVertex) -> float:
+        return _cross2(
+            direction,
+            np.asarray(vertex.plane_coordinates, dtype=float) - start,
+        )
+
+    def side(value: float) -> int:
+        if value > threshold:
+            return 1
+        if value < -threshold:
+            return -1
+        return 0
+
+    inside: list[_PlanePartitionVertex] = []
+    outside: list[_PlanePartitionVertex] = []
+    vertices = polygon.vertices
+    for index, current in enumerate(vertices):
+        following = vertices[(index + 1) % len(vertices)]
+        current_value = signed(current)
+        following_value = signed(following)
+        current_side = side(current_value)
+        following_side = side(following_value)
+        if current_side >= 0:
+            inside.append(current)
+        if current_side <= 0:
+            outside.append(current)
+        if current_side * following_side < 0:
+            denominator = current_value - following_value
+            if abs(denominator) <= np.finfo(float).tiny:
+                raise QuadricSectionCompositingError(
+                    "plane partition crossing has no stable intersection"
+                )
+            intersection = registry.interpolate(
+                current,
+                following,
+                current_value / denominator,
+            )
+            inside.append(intersection)
+            outside.append(intersection)
+
+    token = boundary_token or (
+        f"{boundary_start.stable_token}->{boundary_end.stable_token}"
+    )
+    return (
+        _make_plane_partition_polygon(
+            f"{polygon.stable_token}|{token}:inside",
+            inside,
+            coordinate_epsilon,
+        ),
+        _make_plane_partition_polygon(
+            f"{polygon.stable_token}|{token}:outside",
+            outside,
+            coordinate_epsilon,
+        ),
+    )
+
+
+def _partition_triangle_by_convex_proxy(
+    triangle: _PlanePartitionPolygon,
+    proxy: _PlanePartitionPolygon,
+    registry: _CanonicalVertexRegistry,
+    coordinate_epsilon: float,
+) -> tuple[
+    tuple[_PlanePartitionPolygon, ...],
+    tuple[_PlanePartitionPolygon, ...],
+]:
+    """Return the complete inside and outside partition of one triangle."""
+
+    if len(triangle.vertices) != 3:
+        raise QuadricSectionCompositingError(
+            "convex proxy partition input must be a triangle"
+        )
+    current: _PlanePartitionPolygon | None = triangle
+    outside: list[_PlanePartitionPolygon] = []
+    for edge_index, boundary_start in enumerate(proxy.vertices):
+        if current is None:
+            break
+        boundary_end = proxy.vertices[(edge_index + 1) % len(proxy.vertices)]
+        current, rejected = _split_convex_polygon_by_half_plane(
+            current,
+            boundary_start,
+            boundary_end,
+            registry,
+            coordinate_epsilon,
+            boundary_token=f"proxy-edge:{edge_index:04d}",
+        )
+        if rejected is not None:
+            outside.append(rejected)
+    inside = () if current is None else (current,)
+    return inside, tuple(outside)
+
+
+def _triangulate_plane_partition_polygon(
+    polygon: _PlanePartitionPolygon,
+    coordinate_epsilon: float,
+) -> tuple[_PlanePartitionPolygon, ...]:
+    """Triangulate one canonical convex polygon with stable fan identities."""
+
+    result: list[_PlanePartitionPolygon] = []
+    anchor = polygon.vertices[0]
+    for index in range(1, len(polygon.vertices) - 1):
+        triangle = _make_plane_partition_polygon(
+            f"{polygon.stable_token}:triangle:{index - 1:04d}",
+            (anchor, polygon.vertices[index], polygon.vertices[index + 1]),
+            coordinate_epsilon,
+        )
+        if triangle is not None:
+            result.append(triangle)
+    return tuple(result)
+
+
+def _cancel_opposite_partition_edges(
+    edges: Counter[tuple[str, str]],
+) -> Counter[tuple[str, str]]:
+    result: Counter[tuple[str, str]] = Counter()
+    pairs = {tuple(sorted(edge)) for edge in edges}
+    for first, second in sorted(pairs):
+        balance = edges[(first, second)] - edges[(second, first)]
+        if balance > 0:
+            result[(first, second)] = balance
+        elif balance < 0:
+            result[(second, first)] = -balance
+    return result
+
+
+def _plane_partition_polygon_contours(
+    polygons: Sequence[_PlanePartitionPolygon],
+    coordinate_epsilon: float,
+) -> tuple[tuple[_PlanePartitionVertex, ...], ...]:
+    """Union canonical polygons by noding and cancelling directed edges."""
+
+    if not polygons:
+        return ()
+    vertices: dict[str, _PlanePartitionVertex] = {}
+    raw_edges: Counter[tuple[str, str]] = Counter()
+    for polygon in sorted(polygons, key=lambda item: item.stable_token):
+        if not isinstance(polygon, _PlanePartitionPolygon):
+            raise TypeError("contour union requires plane partition polygons")
+        for vertex in polygon.vertices:
+            existing = vertices.get(vertex.stable_token)
+            if existing is not None:
+                delta_u = (
+                    existing.plane_coordinates[0] - vertex.plane_coordinates[0]
+                )
+                delta_v = (
+                    existing.plane_coordinates[1] - vertex.plane_coordinates[1]
+                )
+                if (
+                    delta_u * delta_u + delta_v * delta_v
+                    > coordinate_epsilon * coordinate_epsilon
+                ):
+                    raise QuadricSectionCompositingError(
+                        "canonical plane vertex token refers to two positions"
+                    )
+            vertices[vertex.stable_token] = vertex
+        for start, end in zip(
+            polygon.vertices,
+            (*polygon.vertices[1:], polygon.vertices[0]),
+        ):
+            if start.stable_token == end.stable_token:
+                raise QuadricSectionCompositingError(
+                    "plane partition polygon contains a zero-length edge"
+                )
+            raw_edges[(start.stable_token, end.stable_token)] += 1
+
+    residual = _cancel_opposite_partition_edges(raw_edges)
+    residual_vertices = {
+        token
+        for edge in residual
+        for token in edge
+    }
+    residual_positions = {
+        token: vertices[token].plane_coordinates for token in residual_vertices
+    }
+    minimum_corner = (
+        min(point[0] for point in residual_positions.values()),
+        min(point[1] for point in residual_positions.values()),
+    )
+    maximum_corner = (
+        max(point[0] for point in residual_positions.values()),
+        max(point[1] for point in residual_positions.values()),
+    )
+    maximum_extent = max(
+        maximum_corner[0] - minimum_corner[0],
+        maximum_corner[1] - minimum_corner[1],
+        coordinate_epsilon,
+    )
+    grid_cell_size = max(
+        coordinate_epsilon * 32.0,
+        maximum_extent / max(sqrt(len(residual_vertices)), 1.0),
+    )
+
+    def grid_cell(point: tuple[float, float]) -> tuple[int, int]:
+        return (
+            floor((point[0] - minimum_corner[0]) / grid_cell_size),
+            floor((point[1] - minimum_corner[1]) / grid_cell_size),
+        )
+
+    vertex_grid: dict[tuple[int, int], set[str]] = {}
+    for token, point in residual_positions.items():
+        vertex_grid.setdefault(grid_cell(point), set()).add(token)
+
+    def segment_grid_cells(
+        start: tuple[float, float],
+        end: tuple[float, float],
+    ) -> tuple[tuple[int, int], ...]:
+        """Traverse the uniform vertex grid along one residual segment."""
+
+        current_x, current_y = grid_cell(start)
+        target_x, target_y = grid_cell(end)
+        cells = [(current_x, current_y)]
+        direction_x = end[0] - start[0]
+        direction_y = end[1] - start[1]
+        if current_x == target_x and current_y == target_y:
+            return tuple(cells)
+
+        if direction_x > 0.0:
+            step_x = 1
+            next_x = minimum_corner[0] + (current_x + 1) * grid_cell_size
+            maximum_x = (next_x - start[0]) / direction_x
+            delta_x = grid_cell_size / direction_x
+        elif direction_x < 0.0:
+            step_x = -1
+            next_x = minimum_corner[0] + current_x * grid_cell_size
+            maximum_x = (next_x - start[0]) / direction_x
+            delta_x = -grid_cell_size / direction_x
+        else:
+            step_x = 0
+            maximum_x = float("inf")
+            delta_x = float("inf")
+
+        if direction_y > 0.0:
+            step_y = 1
+            next_y = minimum_corner[1] + (current_y + 1) * grid_cell_size
+            maximum_y = (next_y - start[1]) / direction_y
+            delta_y = grid_cell_size / direction_y
+        elif direction_y < 0.0:
+            step_y = -1
+            next_y = minimum_corner[1] + current_y * grid_cell_size
+            maximum_y = (next_y - start[1]) / direction_y
+            delta_y = -grid_cell_size / direction_y
+        else:
+            step_y = 0
+            maximum_y = float("inf")
+            delta_y = float("inf")
+
+        maximum_steps = abs(target_x - current_x) + abs(target_y - current_y) + 2
+        while (current_x, current_y) != (target_x, target_y):
+            if len(cells) > maximum_steps:
+                raise QuadricSectionCompositingError(
+                    "plane partition spatial traversal did not reach its endpoint"
+                )
+            comparison_epsilon = (
+                np.finfo(float).eps
+                * max(1.0, abs(maximum_x), abs(maximum_y))
+                if isfinite(maximum_x) and isfinite(maximum_y)
+                else 0.0
+            )
+            if maximum_x < maximum_y - comparison_epsilon:
+                current_x += step_x
+                maximum_x += delta_x
+            elif maximum_y < maximum_x - comparison_epsilon:
+                current_y += step_y
+                maximum_y += delta_y
+            else:
+                current_x += step_x
+                current_y += step_y
+                maximum_x += delta_x
+                maximum_y += delta_y
+            cells.append((current_x, current_y))
+        return tuple(cells)
+
+    primitive_edges: Counter[tuple[str, str]] = Counter()
+    for (start_token, end_token), multiplicity in sorted(residual.items()):
+        start = residual_positions[start_token]
+        end = residual_positions[end_token]
+        direction_u = end[0] - start[0]
+        direction_v = end[1] - start[1]
+        length_squared = direction_u * direction_u + direction_v * direction_v
+        length = sqrt(max(0.0, length_squared))
+        if length <= coordinate_epsilon:
+            raise QuadricSectionCompositingError(
+                "plane partition contour contains a zero-length edge"
+            )
+        points: list[tuple[float, str]] = [(0.0, start_token), (1.0, end_token)]
+        parameter_epsilon = coordinate_epsilon / length
+        candidate_tokens: set[str] = set()
+        for cell_x, cell_y in segment_grid_cells(start, end):
+            for x_offset in (-1, 0, 1):
+                for y_offset in (-1, 0, 1):
+                    candidate_tokens.update(
+                        vertex_grid.get(
+                            (cell_x + x_offset, cell_y + y_offset),
+                            (),
+                        )
+                    )
+        for token in sorted(candidate_tokens):
+            if token in (start_token, end_token):
+                continue
+            point = residual_positions[token]
+            point_u = point[0] - start[0]
+            point_v = point[1] - start[1]
+            parameter = (
+                point_u * direction_u + point_v * direction_v
+            ) / length_squared
+            if not parameter_epsilon < parameter < 1.0 - parameter_epsilon:
+                continue
+            distance = abs(direction_u * point_v - direction_v * point_u) / length
+            if distance <= coordinate_epsilon:
+                points.append((parameter, token))
+        points.sort(key=lambda item: (item[0], item[1]))
+        node_tokens: list[str] = []
+        for _parameter, token in points:
+            if not node_tokens or token != node_tokens[-1]:
+                node_tokens.append(token)
+        for first, second in zip(node_tokens, node_tokens[1:]):
+            primitive_edges[(first, second)] += multiplicity
+
+    boundary_edges = _cancel_opposite_partition_edges(primitive_edges)
+    if any(count != 1 for count in boundary_edges.values()):
+        raise QuadricSectionCompositingError(
+            "plane fragment boundary contains duplicate directed edges"
+        )
+    remaining = set(boundary_edges)
+    outgoing: dict[str, set[str]] = {}
+    incoming: dict[str, set[str]] = {}
+    for start, end in remaining:
+        outgoing.setdefault(start, set()).add(end)
+        incoming.setdefault(end, set()).add(start)
+    if set(outgoing) != set(incoming) or any(
+        len(outgoing[token]) != len(incoming[token]) for token in set(outgoing)
+    ):
+        raise QuadricSectionCompositingError(
+            "plane fragment union produced an open boundary"
+        )
+
+    loops: list[tuple[_PlanePartitionVertex, ...]] = []
+    while remaining:
+        start, current = min(remaining)
+        previous = start
+        remaining.remove((start, current))
+        tokens = [start, current]
+        while current != start:
+            candidates = sorted(
+                candidate
+                for candidate in outgoing.get(current, ())
+                if (current, candidate) in remaining
+            )
+            if not candidates:
+                raise QuadricSectionCompositingError(
+                    "plane fragment union produced an open contour"
+                )
+            previous_point = vertices[previous].plane_coordinates
+            current_point = vertices[current].plane_coordinates
+            incoming_direction = (
+                current_point[0] - previous_point[0],
+                current_point[1] - previous_point[1],
+            )
+
+            def turn_key(candidate: str) -> tuple[float, str]:
+                candidate_point = vertices[candidate].plane_coordinates
+                outgoing_direction = (
+                    candidate_point[0] - current_point[0],
+                    candidate_point[1] - current_point[1],
+                )
+                angle = atan2(
+                    incoming_direction[0] * outgoing_direction[1]
+                    - incoming_direction[1] * outgoing_direction[0],
+                    incoming_direction[0] * outgoing_direction[0]
+                    + incoming_direction[1] * outgoing_direction[1],
+                )
+                if angle < 0.0:
+                    angle += tau
+                return angle, candidate
+
+            following = min(candidates, key=turn_key)
+            remaining.remove((current, following))
+            previous, current = current, following
+            tokens.append(current)
+            if len(tokens) > len(boundary_edges) + 2:
+                raise QuadricSectionCompositingError(
+                    "plane fragment contour traversal did not close"
+                )
+        tokens.pop()
+        changed = True
+        while changed and len(tokens) >= 3:
+            changed = False
+            for index in range(len(tokens)):
+                if _partition_vertex_is_collinear(
+                    vertices[tokens[index - 1]],
+                    vertices[tokens[index]],
+                    vertices[tokens[(index + 1) % len(tokens)]],
+                    coordinate_epsilon,
+                ):
+                    tokens.pop(index)
+                    changed = True
+                    break
+        if len(tokens) < 3:
+            raise QuadricSectionCompositingError(
+                "plane fragment contour has no stable area"
+            )
+        start_index = min(range(len(tokens)), key=tokens.__getitem__)
+        tokens = tokens[start_index:] + tokens[:start_index]
+        loops.append(tuple(vertices[token] for token in tokens))
+    loops.sort(key=lambda loop: tuple(vertex.stable_token for vertex in loop))
+    return tuple(loops)
 
 
 def _prepare_convex_clipper(

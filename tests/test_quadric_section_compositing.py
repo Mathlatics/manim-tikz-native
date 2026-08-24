@@ -24,12 +24,20 @@ from polyhedron_visibility.quadrics.plane_patch import fit_plane_display_patch
 from polyhedron_visibility.quadrics.projection import build_opaque_projection_proxy
 from polyhedron_visibility.quadrics.section_compositing import (
     PlaneDepthRole,
+    QuadricPlaneFragment,
     QuadricSectionCompositingError,
     QuadricSectionCompositingLimits,
     canonical_quadric_section_compositing_json,
     compute_quadric_section_compositing,
     quadric_plane_fragment_contours,
+    _CanonicalVertexRegistry,
+    _make_plane_partition_polygon,
+    _PlanePartitionPolygon,
+    _partition_triangle_by_convex_proxy,
+    _plane_partition_polygon_contours,
+    _split_convex_polygon_by_half_plane,
     _surface_ray_solver,
+    _triangulate_plane_partition_polygon,
 )
 from polyhedron_visibility.quadrics.sections import compute_quadric_section
 from polyhedron_visibility.quadrics.visibility import compute_quadric_visibility
@@ -524,6 +532,406 @@ def _stable_ray_role(
         )
     }
     return next(iter(roles)) if len(roles) == 1 else None
+
+
+_PARTITION_EPSILON = 1.0e-10
+
+
+def _partition_registry() -> _CanonicalVertexRegistry:
+    return _CanonicalVertexRegistry(
+        plane_origin=(0.0, 0.0, 0.0),
+        plane_u=(1.0, 0.0, 0.0),
+        plane_v=(0.0, 1.0, 0.0),
+        screen_origin=(0.0, 0.0),
+        screen_basis=((1.0, 0.0), (0.0, 1.0)),
+        coordinate_epsilon=_PARTITION_EPSILON,
+    )
+
+
+def _partition_polygon(
+    registry: _CanonicalVertexRegistry,
+    token: str,
+    coordinates: Sequence[Sequence[float]],
+):
+    polygon = _make_plane_partition_polygon(
+        token,
+        tuple(registry.register(point) for point in coordinates),
+        _PARTITION_EPSILON,
+    )
+    if polygon is None:
+        raise AssertionError(f"test polygon {token!r} is degenerate")
+    return polygon
+
+
+def _partition_polygon_coordinates(polygon) -> tuple[tuple[float, float], ...]:
+    return tuple(vertex.plane_coordinates for vertex in polygon.vertices)
+
+
+def _partition_polygon_area(polygon) -> float:
+    return _polygon_area(_partition_polygon_coordinates(polygon))
+
+
+def _partition_loop_signed_area(loop) -> float:
+    return _screen_signed_area(
+        tuple(vertex.plane_coordinates for vertex in loop)
+    )
+
+
+class PlanePartitionInfrastructureTests(unittest.TestCase):
+    """Batch-2 tests for private renderer-neutral partition primitives."""
+
+    def assert_complete_proxy_partition(
+        self,
+        triangle,
+        proxy,
+        inside,
+        outside,
+    ) -> None:
+        pieces = (*inside, *outside)
+        source_area = _partition_polygon_area(triangle)
+        restored_area = sum(_partition_polygon_area(item) for item in pieces)
+        self.assertAlmostEqual(source_area, restored_area, places=8)
+        for first_index, first in enumerate(pieces):
+            first_coordinates = _partition_polygon_coordinates(first)
+            for second in pieces[first_index + 1 :]:
+                overlap = _clip_convex_polygon_for_contract(
+                    first_coordinates,
+                    _partition_polygon_coordinates(second),
+                    _PARTITION_EPSILON,
+                )
+                self.assertLessEqual(_polygon_area(overlap), 1.0e-9)
+
+        proxy_coordinates = _partition_polygon_coordinates(proxy)
+        for polygon in inside:
+            overlap = _clip_convex_polygon_for_contract(
+                _partition_polygon_coordinates(polygon),
+                proxy_coordinates,
+                _PARTITION_EPSILON,
+            )
+            self.assertAlmostEqual(
+                _partition_polygon_area(polygon),
+                _polygon_area(overlap),
+                places=8,
+            )
+        for polygon in outside:
+            overlap = _clip_convex_polygon_for_contract(
+                _partition_polygon_coordinates(polygon),
+                proxy_coordinates,
+                _PARTITION_EPSILON,
+            )
+            self.assertLessEqual(_polygon_area(overlap), 1.0e-9)
+
+        for polygon in pieces:
+            triangles = _triangulate_plane_partition_polygon(
+                polygon,
+                _PARTITION_EPSILON,
+            )
+            self.assertTrue(triangles)
+            self.assertAlmostEqual(
+                _partition_polygon_area(polygon),
+                sum(_partition_polygon_area(item) for item in triangles),
+                places=8,
+            )
+            self.assertTrue(
+                all(
+                    _screen_signed_area(
+                        _partition_polygon_coordinates(item)
+                    ) > 0.0
+                    for item in triangles
+                )
+            )
+
+    def test_half_plane_split_preserves_area_and_intersection_identity(self) -> None:
+        registry = _partition_registry()
+        subject = _partition_polygon(
+            registry,
+            "subject",
+            ((-1.0, -1.0), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0)),
+        )
+        boundary_start = registry.register((0.0, -2.0))
+        boundary_end = registry.register((0.0, 2.0))
+        inside, outside = _split_convex_polygon_by_half_plane(
+            subject,
+            boundary_start,
+            boundary_end,
+            registry,
+            _PARTITION_EPSILON,
+            boundary_token="vertical",
+        )
+        self.assertIsNotNone(inside)
+        self.assertIsNotNone(outside)
+        assert inside is not None and outside is not None
+        self.assertAlmostEqual(
+            _partition_polygon_area(subject),
+            _partition_polygon_area(inside) + _partition_polygon_area(outside),
+            places=9,
+        )
+        overlap = _clip_convex_polygon_for_contract(
+            _partition_polygon_coordinates(inside),
+            _partition_polygon_coordinates(outside),
+            _PARTITION_EPSILON,
+        )
+        self.assertLessEqual(_polygon_area(overlap), 1.0e-9)
+        shared = {
+            item.stable_token for item in inside.vertices
+        } & {
+            item.stable_token for item in outside.vertices
+        }
+        self.assertEqual(len(shared), 2)
+        inside_vertices = {
+            item.stable_token: item for item in inside.vertices
+        }
+        outside_vertices = {
+            item.stable_token: item for item in outside.vertices
+        }
+        for token in shared:
+            self.assertIs(inside_vertices[token], outside_vertices[token])
+            vertex = inside_vertices[token]
+            self.assertAlmostEqual(vertex.plane_coordinates[0], 0.0, places=9)
+            self.assertEqual(vertex.world_point[2], 0.0)
+            self.assertEqual(vertex.world_point[:2], vertex.screen_point)
+
+    def test_triangle_proxy_partition_covers_all_geometric_cases(self) -> None:
+        cases = (
+            (
+                "fully-outside",
+                ((2.0, 0.0), (3.0, 0.0), (2.0, 1.0)),
+                False,
+            ),
+            (
+                "fully-inside",
+                ((-0.5, -0.5), (0.5, -0.5), (0.0, 0.5)),
+                True,
+            ),
+            (
+                "edge-crossing",
+                ((-0.5, -0.5), (0.5, -0.5), (1.8, 0.3)),
+                True,
+            ),
+            (
+                "corner-entering",
+                ((0.8, 0.8), (2.2, 0.8), (0.8, 2.2)),
+                True,
+            ),
+            (
+                "proxy-inside-triangle",
+                ((-4.0, -3.0), (4.0, -3.0), (0.0, 5.0)),
+                True,
+            ),
+        )
+        for name, coordinates, expects_inside in cases:
+            with self.subTest(case=name):
+                registry = _partition_registry()
+                proxy = _partition_polygon(
+                    registry,
+                    "proxy",
+                    ((-1.0, -1.0), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0)),
+                )
+                triangle = _partition_polygon(registry, name, coordinates)
+                inside, outside = _partition_triangle_by_convex_proxy(
+                    triangle,
+                    proxy,
+                    registry,
+                    _PARTITION_EPSILON,
+                )
+                self.assertEqual(bool(inside), expects_inside)
+                self.assert_complete_proxy_partition(
+                    triangle,
+                    proxy,
+                    inside,
+                    outside,
+                )
+                if name == "fully-inside":
+                    self.assertFalse(outside)
+                if name == "fully-outside":
+                    self.assertFalse(inside)
+                if name == "proxy-inside-triangle":
+                    self.assertEqual(len(inside), 1)
+                    self.assertAlmostEqual(
+                        _partition_polygon_area(inside[0]),
+                        _partition_polygon_area(proxy),
+                        places=8,
+                    )
+                    self.assertGreaterEqual(len(outside), 3)
+
+                repeated_registry = _partition_registry()
+                repeated_proxy = _partition_polygon(
+                    repeated_registry,
+                    "proxy",
+                    ((-1.0, -1.0), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0)),
+                )
+                repeated_triangle = _partition_polygon(
+                    repeated_registry,
+                    name,
+                    coordinates,
+                )
+                self.assertEqual(
+                    (inside, outside),
+                    _partition_triangle_by_convex_proxy(
+                        repeated_triangle,
+                        repeated_proxy,
+                        repeated_registry,
+                        _PARTITION_EPSILON,
+                    ),
+                )
+
+    def test_polygon_triangulation_is_stable_and_drops_degenerate_fans(self) -> None:
+        registry = _partition_registry()
+        polygon = _partition_polygon(
+            registry,
+            "pentagon",
+            (
+                (-1.2, -0.1),
+                (-0.4, -1.1),
+                (0.9, -0.7),
+                (1.1, 0.6),
+                (-0.2, 1.2),
+            ),
+        )
+        first = _triangulate_plane_partition_polygon(
+            polygon,
+            _PARTITION_EPSILON,
+        )
+        second = _triangulate_plane_partition_polygon(
+            polygon,
+            _PARTITION_EPSILON,
+        )
+        self.assertEqual(first, second)
+        self.assertEqual(len(first), 3)
+        self.assertEqual(
+            tuple(item.stable_token for item in first),
+            tuple(
+                f"pentagon:triangle:{index:04d}" for index in range(3)
+            ),
+        )
+        self.assertAlmostEqual(
+            _partition_polygon_area(polygon),
+            sum(_partition_polygon_area(item) for item in first),
+            places=8,
+        )
+
+        near_collinear = _PlanePartitionPolygon(
+            "near-collinear",
+            (
+                registry.register((0.0, 0.0)),
+                registry.register((1.0, 0.0)),
+                registry.register((2.0, 1.0e-12)),
+                registry.register((2.0, 1.0)),
+            ),
+        )
+        stable_only = _triangulate_plane_partition_polygon(
+            near_collinear,
+            _PARTITION_EPSILON,
+        )
+        self.assertEqual(len(stable_only), 1)
+        self.assertEqual(
+            stable_only[0].stable_token,
+            "near-collinear:triangle:0001",
+        )
+
+    def test_contour_union_nodes_arbitrary_t_junctions(self) -> None:
+        registry = _partition_registry()
+        polygons = (
+            _partition_polygon(
+                registry,
+                "left",
+                ((0.1, 0.2), (0.73, 0.2), (0.73, 1.91), (0.1, 1.91)),
+            ),
+            _partition_polygon(
+                registry,
+                "right-lower",
+                ((0.73, 0.2), (2.37, 0.2), (2.37, 0.83), (0.73, 0.83)),
+            ),
+            _partition_polygon(
+                registry,
+                "right-upper",
+                ((0.73, 0.83), (2.37, 0.83), (2.37, 1.91), (0.73, 1.91)),
+            ),
+        )
+        loops = _plane_partition_polygon_contours(
+            polygons,
+            _PARTITION_EPSILON,
+        )
+        self.assertEqual(len(loops), 1)
+        self.assertEqual(len(loops[0]), 4)
+        self.assertAlmostEqual(
+            _partition_loop_signed_area(loops[0]),
+            (2.37 - 0.1) * (1.91 - 0.2),
+            places=8,
+        )
+
+    def test_contour_union_preserves_hole_winding(self) -> None:
+        registry = _partition_registry()
+        ring = (
+            _partition_polygon(
+                registry,
+                "bottom",
+                ((0.0, 0.0), (3.0, 0.0), (3.0, 1.0), (0.0, 1.0)),
+            ),
+            _partition_polygon(
+                registry,
+                "right",
+                ((2.0, 1.0), (3.0, 1.0), (3.0, 2.0), (2.0, 2.0)),
+            ),
+            _partition_polygon(
+                registry,
+                "top",
+                ((0.0, 2.0), (3.0, 2.0), (3.0, 3.0), (0.0, 3.0)),
+            ),
+            _partition_polygon(
+                registry,
+                "left",
+                ((0.0, 1.0), (1.0, 1.0), (1.0, 2.0), (0.0, 2.0)),
+            ),
+        )
+        loops = _plane_partition_polygon_contours(ring, _PARTITION_EPSILON)
+        self.assertEqual(len(loops), 2)
+        signed_areas = sorted(_partition_loop_signed_area(item) for item in loops)
+        self.assertAlmostEqual(signed_areas[0], -1.0, places=8)
+        self.assertAlmostEqual(signed_areas[1], 9.0, places=8)
+        self.assertAlmostEqual(sum(signed_areas), 8.0, places=8)
+
+    def test_contour_union_keeps_disjoint_regions_and_normalizes_winding(self) -> None:
+        registry = _partition_registry()
+        polygons = (
+            _partition_polygon(
+                registry,
+                "first-clockwise",
+                ((0.0, 0.0), (0.0, 1.0), (1.0, 1.0), (1.0, 0.0)),
+            ),
+            _partition_polygon(
+                registry,
+                "second",
+                ((2.0, 0.0), (3.0, 0.0), (3.0, 1.0), (2.0, 1.0)),
+            ),
+        )
+        first = _plane_partition_polygon_contours(
+            polygons,
+            _PARTITION_EPSILON,
+        )
+        second = _plane_partition_polygon_contours(
+            polygons,
+            _PARTITION_EPSILON,
+        )
+        self.assertEqual(first, second)
+        self.assertEqual(len(first), 2)
+        self.assertEqual(tuple(len(item) for item in first), (4, 4))
+        self.assertEqual(
+            tuple(round(_partition_loop_signed_area(item), 8) for item in first),
+            (1.0, 1.0),
+        )
+
+    def test_public_fragment_contract_is_unchanged(self) -> None:
+        self.assertEqual(
+            tuple(QuadricPlaneFragment.__dataclass_fields__),
+            (
+                "fragment_id",
+                "role",
+                "world_vertices",
+                "screen_vertices",
+                "subdivision_depth",
+            ),
+        )
 
 
 class QuadricSectionCompositingTests(unittest.TestCase):
