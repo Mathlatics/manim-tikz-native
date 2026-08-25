@@ -145,6 +145,12 @@ always records visible and hidden spans.  In physical mode a hidden fragment
 is not painted.  In diagrammatic mode it is painted with the hidden dashed
 style above the opaque proxy that would physically hide it.
 
+That diagrammatic dashed stroke is a teaching overlay.  It deliberately sits
+above the surface and plane painter layers so the learner can see the hidden
+construction.  It is not a simulation of light passing through a transparent
+material.  Select the physical policy when the hidden curve must contribute no
+pixels at all.
+
 All active surface proxies and curve fragments participate in one complete
 far-to-near painter graph and one managed z band.  Projected curve/curve
 crossings are solved analytically and split the painter relations at the true
@@ -161,6 +167,48 @@ dash slots.
 An updater prepares and validates a complete frame, snapshots the current
 display state, applies it transactionally, and restores the previous frame if
 anything fails.  It never creates a Mobject inside an updater.
+
+### Certified boundary-error plane fragments
+
+Projection-outside pieces are physically cut away from the
+projection-interior polygon.  Inside that polygon, the finite-surface ray
+solver remains authoritative for the `behind`, `between`, and `front`
+boundaries, including finite cylinder and cone caps.
+
+Curved role boundaries are represented by a circumscribed tangent envelope.
+For every neighboring pair of analytic conic samples, the compositor combines
+the endpoint-tangent triangle distance with an analytic second-derivative
+interpolation remainder.  This is a conservative upper bound for the
+screen-space separation between the emitted envelope and the true boundary;
+finite cap boundaries remain exact.
+
+`section_max_screen_error` bounds that separation.  Away from its certified
+boundary band, every fragment agrees with the true `PlaneDepthRole`, and no
+fragment may span the stable interiors of two different roles.  A fragment
+touching the approximated curve may enter either adjacent true region only
+inside the certified band; the contract does not claim exact curved geometry.
+If the configured subdivision limit cannot prove this bound, frame preparation
+fails before any Manim object is changed instead of assigning a mixed polygon
+from its centre point.
+
+### Coincident front/back projection sheets
+
+The curved solid is represented in the section painter graph by two complete,
+coincident copies of the same projected silhouette: a back alpha sheet and a
+front alpha sheet.  They are painter-order surrogates that let the four plane
+roles be placed before, between, or after the solid.  They are not tessellated
+samples of the physical rear and front curved surfaces and do not encode a
+per-pixel curved-surface depth.
+
+For a requested silhouette opacity `a`, each sheet uses
+
+```text
+sheet_alpha = 1 - sqrt(1 - a),
+```
+
+so Cairo `OVER` compositing of the two coincident sheets restores exactly `a`.
+This model preserves the existing opaque-solid visibility contract; it does
+not claim physically accurate transparent-surface rendering.
 
 ## Dynamic continuity
 
@@ -180,6 +228,25 @@ The Provider exposes two separate promises.  The existing
 lineage, and moving-point evidence.  The new
 `quadric_section_topology_transition_manim_v1` capability covers automatic
 Manim handoff at those scheduled events.
+
+### Cairo continuity regression
+
+The release regression renders `mainly_behind`, `intersects`, `near_tangent`,
+`exact_parabola`, and `mainly_front` with both opaque and translucent fills.
+Its fill-only fixtures suppress the authored section-curve and plane-outline
+ink.  Eroded role masks then remove the silhouette, true depth-role boundaries,
+patch edge, and frame border before any interior pixel is judged.  Within the
+remaining safe role interiors, pixels must match the corresponding Cairo
+`OVER` stack and no background-coloured seam may remain.  A separate
+surface-only exact-parabola frame verifies that the two coincident sheets still
+restore the authored silhouette opacity.
+
+The continuous rotating-plane regression samples the Cairo frames on both
+sides of the exact parabolic event.  It requires fixed Manim identities,
+unchanged relative section-layer order, bounded fragment/ray capacity, no seam
+flash, and continuous role masks without a one-frame near-tangent block jump.
+An additional real movie test exercises the complete ellipse/parabola/
+hyperbola transition through Manim's normal render lifecycle.
 
 ## Public workflow
 
@@ -223,14 +290,15 @@ far-to-near painter graph.  The Cairo binding merges adjacent cells into
 continuous compound contours before drawing, so adaptive calculation does not
 produce a visible triangle mesh.
 
-The section boundary is guarded by the exact restricted quadric, not only by
-coarse display samples.  A small ellipse close to tangency therefore still
-causes refinement; features smaller than `section_max_screen_error` may be
-represented by the containing display cell, but are never silently treated as
-a large uniform region.  The mode currently supports exactly one finite convex
-sphere, capped cylinder, or single-nappe cone/frustum and one non-edge-on
-cutting plane.  Multiple intersecting quadrics remain a separate unsupported
-problem and fail closed.
+The support-quadric restriction supplies analytic boundary candidates and
+near-tangent feature detection, but the finite-surface ray solver is the final
+role authority.  A small section close to tangency therefore still causes
+refinement.  Its curved boundary may be approximated within
+`section_max_screen_error`, but emitted fragments are cut along that
+approximation and may not span both sides.  The mode currently supports exactly
+one finite convex sphere, capped cylinder, or single-nappe cone/frustum and one
+non-edge-on cutting plane.  Multiple intersecting quadrics remain a separate
+unsupported problem and fail closed.
 
 For a fixed-topology moving plane, pass a callable as `curves`; it may build a
 fresh immutable section trace from the current `ValueTracker` value.  Surface
@@ -326,6 +394,8 @@ constraint path; that mode does not recompute or recertify supplied relations.
 - opaque-solid visibility in physical and diagrammatic policies;
 - analytic projected curve/curve crossings and depth order;
 - adaptive polyline display with no display samples fed back into geometry;
+- boundary-conforming outside/behind/between/front cutting with
+  `section_max_screen_error` limited to boundary-approximation error;
 - transaction-safe, fixed-capacity Cairo Manim binding;
 - analytic rotating-plane schedules, topology records, and moving-point traces;
 - automatic fixed-capacity Manim handoff across ellipse, exact parabola, and
@@ -335,9 +405,10 @@ constraint path; that mode does not recompute or recertify supplied relations.
 
 The regression suite exercises scales from `1e-6` through `1e6`, large common
 world translations, equivalent scaled projection rows, repeated updates, Fade
-lifecycle, and real Cairo rendering.  Release validation additionally builds
-the wheel and sdist, checks their metadata, and installs the wheel in an
-isolated environment.
+lifecycle, ten masked five-state Cairo keyframes, a surface-only opacity frame,
+and a continuously moving Cairo section near the parabolic event.  Release
+validation additionally builds the wheel and sdist, checks their metadata, and
+installs the wheel in an isolated environment.
 
 ## Deliberate limitations
 
@@ -347,9 +418,10 @@ isolated environment.
 - `QuadricOcclusion3D` itself has fixed topology while attached.  Use
   `QuadricSectionTransition3D` for scheduled ellipse/parabola/hyperbola family
   changes.  Unscheduled or ambiguous topology changes still fail explicitly.
-- Surface proxies are opaque convex silhouettes.  Transparent curved-surface
-  refraction, reflection, and physically accurate alpha blending are outside
-  this module.
+- Visibility still treats each surface proxy as an opaque convex silhouette.
+  The coincident front/back alpha sheets are a painter-order display model;
+  transparent curved-surface refraction, reflection, and physically accurate
+  alpha blending are outside this module.
 - General free-form surfaces and perspective cameras are outside this
   contract.
 

@@ -1216,7 +1216,12 @@ class QuadricOcclusion3D:
                 ],
                 dtype=float,
             )
-            plane_contours = quadric_plane_fragment_contours(section_frame)
+            try:
+                plane_contours = quadric_plane_fragment_contours(section_frame)
+            except QuadricSectionCompositingError as exc:
+                raise QuadricManimError(
+                    f"quadric section contour compositing failed: {exc}"
+                ) from exc
             plane_polygons = {
                 role: tuple(
                     np.asarray([(x, y, 0.0) for x, y in contour], dtype=float)

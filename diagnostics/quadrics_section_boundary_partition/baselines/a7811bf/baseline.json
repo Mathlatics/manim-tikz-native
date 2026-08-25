@@ -1,0 +1,1041 @@
+{
+  "fixedMobjectIdentity": {
+    "semantics": "Python id values are process-local; the baseline records family size/topology and proves that every allocated identity is unchanged across all five updates.",
+    "slotIdentityCount": 18740,
+    "slotTopologySha256": "29f608a318132ab3e1ea38aa2ee12359fbdcc1d0294e17de884b5c74289fbc0b",
+    "stableAcrossAllStates": true
+  },
+  "initialReferences": [
+    {
+      "bytes": 10256,
+      "name": "report.md",
+      "sha256": "7afad6406a45a12d77da4bd6a018eead4f3560aa26752056c903c0b40f665ccc"
+    },
+    {
+      "bytes": 76519,
+      "name": "evidence.json",
+      "sha256": "9e970c790b83ccfce89d8776c576bf655ebab8943795941219752f8c2742c112"
+    },
+    {
+      "bytes": 131598,
+      "name": "seam_evidence_contact_v2.png",
+      "sha256": "4d7ca554632168edc3529dd483e1343707b550e8da0837375b31f1ca69824c62"
+    }
+  ],
+  "pixelMethod": {
+    "boundaryErosionPixels": 3,
+    "frameSize": [
+      14.222222222222221,
+      8.0
+    ],
+    "imageSize": [
+      960,
+      540
+    ],
+    "renderer": "Manim Cairo",
+    "rgbErrorThreshold": 8.0,
+    "styles": [
+      "opaque_fill",
+      "translucent_fill"
+    ]
+  },
+  "productionDiff": "empty",
+  "productionWorkingTree": "clean",
+  "records": [
+    {
+      "cairo": {
+        "opaque_fill": {
+          "acceptedRgbPalette": [
+            [
+              247,
+              249,
+              252
+            ],
+            [
+              255,
+              122,
+              47
+            ],
+            [
+              52,
+              120,
+              200
+            ]
+          ],
+          "boundaryErosionPixels": 3,
+          "imageSize": [
+            960,
+            540
+          ],
+          "perRole": {
+            "behind": {
+              "nominalRoleRgb": [
+                52,
+                120,
+                200
+              ],
+              "safeInteriorPixelCount": 53833,
+              "seamPixelCount": 389
+            },
+            "between": {
+              "nominalRoleRgb": [
+                52,
+                120,
+                200
+              ],
+              "safeInteriorPixelCount": 106,
+              "seamPixelCount": 0
+            },
+            "front": {
+              "nominalRoleRgb": [
+                255,
+                122,
+                47
+              ],
+              "safeInteriorPixelCount": 0,
+              "seamPixelCount": 0
+            },
+            "outside": {
+              "nominalRoleRgb": [
+                255,
+                122,
+                47
+              ],
+              "safeInteriorPixelCount": 11917,
+              "seamPixelCount": 0
+            }
+          },
+          "rgbErrorThreshold": 8.0,
+          "safeInteriorPixelCount": 65856,
+          "seamPixelCount": 389
+        },
+        "translucent_fill": {
+          "acceptedRgbPalette": [
+            [
+              247,
+              249,
+              252
+            ],
+            [
+              250,
+              203,
+              178
+            ],
+            [
+              178,
+              204,
+              234
+            ],
+            [
+              180,
+              174,
+              186
+            ],
+            [
+              206,
+              174,
+              166
+            ],
+            [
+              134,
+              174,
+              222
+            ],
+            [
+              135,
+              155,
+              191
+            ],
+            [
+              152,
+              155,
+              178
+            ],
+            [
+              177,
+              155,
+              159
+            ]
+          ],
+          "boundaryErosionPixels": 3,
+          "imageSize": [
+            960,
+            540
+          ],
+          "perRole": {
+            "behind": {
+              "nominalRoleRgb": [
+                135,
+                155,
+                191
+              ],
+              "safeInteriorPixelCount": 53833,
+              "seamPixelCount": 358
+            },
+            "between": {
+              "nominalRoleRgb": [
+                152,
+                155,
+                178
+              ],
+              "safeInteriorPixelCount": 106,
+              "seamPixelCount": 0
+            },
+            "front": {
+              "nominalRoleRgb": [
+                177,
+                155,
+                159
+              ],
+              "safeInteriorPixelCount": 0,
+              "seamPixelCount": 0
+            },
+            "outside": {
+              "nominalRoleRgb": [
+                250,
+                203,
+                178
+              ],
+              "safeInteriorPixelCount": 11917,
+              "seamPixelCount": 0
+            }
+          },
+          "rgbErrorThreshold": 8.0,
+          "safeInteriorPixelCount": 65856,
+          "seamPixelCount": 358
+        }
+      },
+      "canonicalJson": {
+        "bytes": 212251,
+        "gzipBytes": 22184,
+        "gzipSha256": "141af625547d8577cd7b022269dd48a6baed1a1ab255ac01f21b0d54711a2bfb",
+        "path": "canonical/mainly_behind.json.gz",
+        "sha256": "0834bdbc1eb1f2f10849f1c8ad6c37da826251ed471c57fc36a93a1c86171902"
+      },
+      "changedSlotIdentityIndices": [],
+      "planeFragmentCount": 422,
+      "planeOutlineFragmentCount": 6,
+      "rayClassificationCount": 874,
+      "roleScreenAreas": {
+        "behind": 12.806784628647275,
+        "between": 0.0699911372794562,
+        "front": 0.014341441439047958,
+        "outside": 3.1752196498897294
+      },
+      "slotIdentityStable": true,
+      "state": "mainly_behind",
+      "stateDefinition": {
+        "description": "plane patch predominantly behind the finite cone",
+        "name": "mainly_behind",
+        "normal": [
+          0.7173560908995228,
+          0.0,
+          0.6967067093471654
+        ],
+        "point": [
+          -0.6062177826491071,
+          -0.6062177826491071,
+          -1.4062177826491071
+        ]
+      }
+    },
+    {
+      "cairo": {
+        "opaque_fill": {
+          "acceptedRgbPalette": [
+            [
+              247,
+              249,
+              252
+            ],
+            [
+              255,
+              122,
+              47
+            ],
+            [
+              52,
+              120,
+              200
+            ]
+          ],
+          "boundaryErosionPixels": 3,
+          "imageSize": [
+            960,
+            540
+          ],
+          "perRole": {
+            "behind": {
+              "nominalRoleRgb": [
+                52,
+                120,
+                200
+              ],
+              "safeInteriorPixelCount": 26686,
+              "seamPixelCount": 270
+            },
+            "between": {
+              "nominalRoleRgb": [
+                52,
+                120,
+                200
+              ],
+              "safeInteriorPixelCount": 15434,
+              "seamPixelCount": 0
+            },
+            "front": {
+              "nominalRoleRgb": [
+                255,
+                122,
+                47
+              ],
+              "safeInteriorPixelCount": 786,
+              "seamPixelCount": 0
+            },
+            "outside": {
+              "nominalRoleRgb": [
+                255,
+                122,
+                47
+              ],
+              "safeInteriorPixelCount": 18676,
+              "seamPixelCount": 0
+            }
+          },
+          "rgbErrorThreshold": 8.0,
+          "safeInteriorPixelCount": 61582,
+          "seamPixelCount": 270
+        },
+        "translucent_fill": {
+          "acceptedRgbPalette": [
+            [
+              247,
+              249,
+              252
+            ],
+            [
+              250,
+              203,
+              178
+            ],
+            [
+              178,
+              204,
+              234
+            ],
+            [
+              180,
+              174,
+              186
+            ],
+            [
+              206,
+              174,
+              166
+            ],
+            [
+              134,
+              174,
+              222
+            ],
+            [
+              135,
+              155,
+              191
+            ],
+            [
+              152,
+              155,
+              178
+            ],
+            [
+              177,
+              155,
+              159
+            ]
+          ],
+          "boundaryErosionPixels": 3,
+          "imageSize": [
+            960,
+            540
+          ],
+          "perRole": {
+            "behind": {
+              "nominalRoleRgb": [
+                135,
+                155,
+                191
+              ],
+              "safeInteriorPixelCount": 26686,
+              "seamPixelCount": 242
+            },
+            "between": {
+              "nominalRoleRgb": [
+                152,
+                155,
+                178
+              ],
+              "safeInteriorPixelCount": 15434,
+              "seamPixelCount": 0
+            },
+            "front": {
+              "nominalRoleRgb": [
+                177,
+                155,
+                159
+              ],
+              "safeInteriorPixelCount": 786,
+              "seamPixelCount": 57
+            },
+            "outside": {
+              "nominalRoleRgb": [
+                250,
+                203,
+                178
+              ],
+              "safeInteriorPixelCount": 18676,
+              "seamPixelCount": 0
+            }
+          },
+          "rgbErrorThreshold": 8.0,
+          "safeInteriorPixelCount": 61582,
+          "seamPixelCount": 299
+        }
+      },
+      "canonicalJson": {
+        "bytes": 1427078,
+        "gzipBytes": 132508,
+        "gzipSha256": "6eafaa69108dc1cdb1ae87c670a3155053805dd16ec45146d31c4f9e3eba1dfa",
+        "path": "canonical/intersects.json.gz",
+        "sha256": "720b2cc7743e462a40ed59326b460aeab6bf8a2508a5af0c97fe4170c904163a"
+      },
+      "changedSlotIdentityIndices": [],
+      "planeFragmentCount": 3107,
+      "planeOutlineFragmentCount": 6,
+      "rayClassificationCount": 6059,
+      "roleScreenAreas": {
+        "behind": 6.8331645667985494,
+        "between": 3.80386201436367,
+        "front": 0.4596928429440017,
+        "outside": 5.183437374152689
+      },
+      "slotIdentityStable": true,
+      "state": "intersects",
+      "stateDefinition": {
+        "description": "ordinary oblique intersection with all local depth roles",
+        "name": "intersects",
+        "normal": [
+          0.8075581004051143,
+          0.0,
+          0.5897880250310984
+        ],
+        "point": [
+          -0.1732050807568877,
+          -0.1732050807568877,
+          -0.8732050807568876
+        ]
+      }
+    },
+    {
+      "cairo": {
+        "opaque_fill": {
+          "acceptedRgbPalette": [
+            [
+              247,
+              249,
+              252
+            ],
+            [
+              255,
+              122,
+              47
+            ],
+            [
+              52,
+              120,
+              200
+            ]
+          ],
+          "boundaryErosionPixels": 3,
+          "imageSize": [
+            960,
+            540
+          ],
+          "perRole": {
+            "behind": {
+              "nominalRoleRgb": [
+                52,
+                120,
+                200
+              ],
+              "safeInteriorPixelCount": 27133,
+              "seamPixelCount": 311
+            },
+            "between": {
+              "nominalRoleRgb": [
+                52,
+                120,
+                200
+              ],
+              "safeInteriorPixelCount": 8052,
+              "seamPixelCount": 0
+            },
+            "front": {
+              "nominalRoleRgb": [
+                255,
+                122,
+                47
+              ],
+              "safeInteriorPixelCount": 154,
+              "seamPixelCount": 0
+            },
+            "outside": {
+              "nominalRoleRgb": [
+                255,
+                122,
+                47
+              ],
+              "safeInteriorPixelCount": 25119,
+              "seamPixelCount": 0
+            }
+          },
+          "rgbErrorThreshold": 8.0,
+          "safeInteriorPixelCount": 60458,
+          "seamPixelCount": 311
+        },
+        "translucent_fill": {
+          "acceptedRgbPalette": [
+            [
+              247,
+              249,
+              252
+            ],
+            [
+              250,
+              203,
+              178
+            ],
+            [
+              178,
+              204,
+              234
+            ],
+            [
+              180,
+              174,
+              186
+            ],
+            [
+              206,
+              174,
+              166
+            ],
+            [
+              134,
+              174,
+              222
+            ],
+            [
+              135,
+              155,
+              191
+            ],
+            [
+              152,
+              155,
+              178
+            ],
+            [
+              177,
+              155,
+              159
+            ]
+          ],
+          "boundaryErosionPixels": 3,
+          "imageSize": [
+            960,
+            540
+          ],
+          "perRole": {
+            "behind": {
+              "nominalRoleRgb": [
+                135,
+                155,
+                191
+              ],
+              "safeInteriorPixelCount": 27133,
+              "seamPixelCount": 289
+            },
+            "between": {
+              "nominalRoleRgb": [
+                152,
+                155,
+                178
+              ],
+              "safeInteriorPixelCount": 8052,
+              "seamPixelCount": 0
+            },
+            "front": {
+              "nominalRoleRgb": [
+                177,
+                155,
+                159
+              ],
+              "safeInteriorPixelCount": 154,
+              "seamPixelCount": 23
+            },
+            "outside": {
+              "nominalRoleRgb": [
+                250,
+                203,
+                178
+              ],
+              "safeInteriorPixelCount": 25119,
+              "seamPixelCount": 0
+            }
+          },
+          "rgbErrorThreshold": 8.0,
+          "safeInteriorPixelCount": 60458,
+          "seamPixelCount": 312
+        }
+      },
+      "canonicalJson": {
+        "bytes": 1384882,
+        "gzipBytes": 117175,
+        "gzipSha256": "599e2f0a18bad51a794f7acbbc28817ea55c126a1225ebe5b94ece206078ab27",
+        "path": "canonical/near_tangent.json.gz",
+        "sha256": "a935b20fd9ae6214bc6fc619920670d4aa1c2ea0ea25d783c15711dc879597bd"
+      },
+      "changedSlotIdentityIndices": [],
+      "planeFragmentCount": 3020,
+      "planeOutlineFragmentCount": 6,
+      "rayClassificationCount": 5821,
+      "roleScreenAreas": {
+        "behind": 6.997013031990674,
+        "between": 2.1616073352573526,
+        "front": 0.13311593194522692,
+        "outside": 6.715393454866221
+      },
+      "slotIdentityStable": true,
+      "state": "near_tangent",
+      "stateDefinition": {
+        "description": "generator-parallel plane close to the tangent-plane limit",
+        "name": "near_tangent",
+        "normal": [
+          0.8660254037844386,
+          0.0,
+          0.5000000000000001
+        ],
+        "point": [
+          0.08660254037844387,
+          0.0,
+          -2.2
+        ]
+      }
+    },
+    {
+      "cairo": {
+        "opaque_fill": {
+          "acceptedRgbPalette": [
+            [
+              247,
+              249,
+              252
+            ],
+            [
+              255,
+              122,
+              47
+            ],
+            [
+              52,
+              120,
+              200
+            ]
+          ],
+          "boundaryErosionPixels": 3,
+          "imageSize": [
+            960,
+            540
+          ],
+          "perRole": {
+            "behind": {
+              "nominalRoleRgb": [
+                52,
+                120,
+                200
+              ],
+              "safeInteriorPixelCount": 9539,
+              "seamPixelCount": 112
+            },
+            "between": {
+              "nominalRoleRgb": [
+                52,
+                120,
+                200
+              ],
+              "safeInteriorPixelCount": 18976,
+              "seamPixelCount": 0
+            },
+            "front": {
+              "nominalRoleRgb": [
+                255,
+                122,
+                47
+              ],
+              "safeInteriorPixelCount": 8012,
+              "seamPixelCount": 0
+            },
+            "outside": {
+              "nominalRoleRgb": [
+                255,
+                122,
+                47
+              ],
+              "safeInteriorPixelCount": 24140,
+              "seamPixelCount": 0
+            }
+          },
+          "rgbErrorThreshold": 8.0,
+          "safeInteriorPixelCount": 60667,
+          "seamPixelCount": 112
+        },
+        "translucent_fill": {
+          "acceptedRgbPalette": [
+            [
+              247,
+              249,
+              252
+            ],
+            [
+              250,
+              203,
+              178
+            ],
+            [
+              178,
+              204,
+              234
+            ],
+            [
+              180,
+              174,
+              186
+            ],
+            [
+              206,
+              174,
+              166
+            ],
+            [
+              134,
+              174,
+              222
+            ],
+            [
+              135,
+              155,
+              191
+            ],
+            [
+              152,
+              155,
+              178
+            ],
+            [
+              177,
+              155,
+              159
+            ]
+          ],
+          "boundaryErosionPixels": 3,
+          "imageSize": [
+            960,
+            540
+          ],
+          "perRole": {
+            "behind": {
+              "nominalRoleRgb": [
+                135,
+                155,
+                191
+              ],
+              "safeInteriorPixelCount": 9539,
+              "seamPixelCount": 102
+            },
+            "between": {
+              "nominalRoleRgb": [
+                152,
+                155,
+                178
+              ],
+              "safeInteriorPixelCount": 18976,
+              "seamPixelCount": 0
+            },
+            "front": {
+              "nominalRoleRgb": [
+                177,
+                155,
+                159
+              ],
+              "safeInteriorPixelCount": 8012,
+              "seamPixelCount": 176
+            },
+            "outside": {
+              "nominalRoleRgb": [
+                250,
+                203,
+                178
+              ],
+              "safeInteriorPixelCount": 24140,
+              "seamPixelCount": 0
+            }
+          },
+          "rgbErrorThreshold": 8.0,
+          "safeInteriorPixelCount": 60667,
+          "seamPixelCount": 278
+        }
+      },
+      "canonicalJson": {
+        "bytes": 1650412,
+        "gzipBytes": 137926,
+        "gzipSha256": "5a953b2dd223955acbeba130728d084b7978c1436ccb9aa68687ac1f51aa7046",
+        "path": "canonical/exact_parabola.json.gz",
+        "sha256": "aee533e885e45027da182073bf31ec916328de51a9b3996e2f81a588acce62fc"
+      },
+      "changedSlotIdentityIndices": [],
+      "planeFragmentCount": 3602,
+      "planeOutlineFragmentCount": 6,
+      "rayClassificationCount": 6919,
+      "roleScreenAreas": {
+        "behind": 2.5691374865428864,
+        "between": 4.64098316126836,
+        "front": 2.316705714679769,
+        "outside": 6.480303391568449
+      },
+      "slotIdentityStable": true,
+      "state": "exact_parabola",
+      "stateDefinition": {
+        "description": "regular exact parabolic section",
+        "name": "exact_parabola",
+        "normal": [
+          0.8660254037844386,
+          0.0,
+          0.5000000000000001
+        ],
+        "point": [
+          0.8140638795573721,
+          0.10392304845413262,
+          -1.7360769515458672
+        ]
+      }
+    },
+    {
+      "cairo": {
+        "opaque_fill": {
+          "acceptedRgbPalette": [
+            [
+              247,
+              249,
+              252
+            ],
+            [
+              255,
+              122,
+              47
+            ],
+            [
+              52,
+              120,
+              200
+            ]
+          ],
+          "boundaryErosionPixels": 3,
+          "imageSize": [
+            960,
+            540
+          ],
+          "perRole": {
+            "behind": {
+              "nominalRoleRgb": [
+                52,
+                120,
+                200
+              ],
+              "safeInteriorPixelCount": 5366,
+              "seamPixelCount": 90
+            },
+            "between": {
+              "nominalRoleRgb": [
+                52,
+                120,
+                200
+              ],
+              "safeInteriorPixelCount": 15705,
+              "seamPixelCount": 0
+            },
+            "front": {
+              "nominalRoleRgb": [
+                255,
+                122,
+                47
+              ],
+              "safeInteriorPixelCount": 15527,
+              "seamPixelCount": 0
+            },
+            "outside": {
+              "nominalRoleRgb": [
+                255,
+                122,
+                47
+              ],
+              "safeInteriorPixelCount": 19614,
+              "seamPixelCount": 0
+            }
+          },
+          "rgbErrorThreshold": 8.0,
+          "safeInteriorPixelCount": 56212,
+          "seamPixelCount": 90
+        },
+        "translucent_fill": {
+          "acceptedRgbPalette": [
+            [
+              247,
+              249,
+              252
+            ],
+            [
+              250,
+              203,
+              178
+            ],
+            [
+              178,
+              204,
+              234
+            ],
+            [
+              180,
+              174,
+              186
+            ],
+            [
+              206,
+              174,
+              166
+            ],
+            [
+              134,
+              174,
+              222
+            ],
+            [
+              135,
+              155,
+              191
+            ],
+            [
+              152,
+              155,
+              178
+            ],
+            [
+              177,
+              155,
+              159
+            ]
+          ],
+          "boundaryErosionPixels": 3,
+          "imageSize": [
+            960,
+            540
+          ],
+          "perRole": {
+            "behind": {
+              "nominalRoleRgb": [
+                135,
+                155,
+                191
+              ],
+              "safeInteriorPixelCount": 5366,
+              "seamPixelCount": 85
+            },
+            "between": {
+              "nominalRoleRgb": [
+                152,
+                155,
+                178
+              ],
+              "safeInteriorPixelCount": 15705,
+              "seamPixelCount": 0
+            },
+            "front": {
+              "nominalRoleRgb": [
+                177,
+                155,
+                159
+              ],
+              "safeInteriorPixelCount": 15527,
+              "seamPixelCount": 205
+            },
+            "outside": {
+              "nominalRoleRgb": [
+                250,
+                203,
+                178
+              ],
+              "safeInteriorPixelCount": 19614,
+              "seamPixelCount": 0
+            }
+          },
+          "rgbErrorThreshold": 8.0,
+          "safeInteriorPixelCount": 56212,
+          "seamPixelCount": 290
+        }
+      },
+      "canonicalJson": {
+        "bytes": 1592568,
+        "gzipBytes": 144440,
+        "gzipSha256": "a3529c54a824a689a6296d28d6f88d6944269017a617e487029e481667a502a7",
+        "path": "canonical/mainly_front.json.gz",
+        "sha256": "ebab821d4b2db71e14d850e895449dfcbdbd04d63201fd460f33af2e4f439322"
+      },
+      "changedSlotIdentityIndices": [],
+      "planeFragmentCount": 3464,
+      "planeOutlineFragmentCount": 8,
+      "rayClassificationCount": 6598,
+      "roleScreenAreas": {
+        "behind": 1.5038862809554534,
+        "between": 3.866940083588381,
+        "front": 4.261640179076825,
+        "outside": 5.3585884885029405
+      },
+      "slotIdentityStable": true,
+      "state": "mainly_front",
+      "stateDefinition": {
+        "description": "plane patch predominantly in front of the finite cone",
+        "name": "mainly_front",
+        "normal": [
+          0.9320390859672263,
+          0.0,
+          0.3623577544766736
+        ],
+        "point": [
+          0.6062177826491071,
+          0.6062177826491071,
+          -0.19378221735089296
+        ]
+      }
+    }
+  ],
+  "requiredAncestor": "a7811bf4f7d4adbf2e4078e30d647b40bea6693a",
+  "schema": "manim-quadric-section-boundary-baseline/v1",
+  "sourceCommit": "a7811bf4f7d4adbf2e4078e30d647b40bea6693a",
+  "states": [
+    "mainly_behind",
+    "intersects",
+    "near_tangent",
+    "exact_parabola",
+    "mainly_front"
+  ]
+}
