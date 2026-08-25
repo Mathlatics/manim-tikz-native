@@ -8,6 +8,7 @@ from unittest.mock import patch
 import numpy as np
 
 from manim import Mobject, Scene, tempconfig
+from manim.utils.color import color_to_rgb
 
 from polyhedron_visibility.parallel_solver import ParallelView
 from polyhedron_visibility.quadrics.compositing import QuadricPaintPolicy
@@ -19,7 +20,9 @@ from polyhedron_visibility.quadrics.contract import (
     SphereSpec,
 )
 from polyhedron_visibility.quadrics.manim import (
+    QuadricBoundaryStyle,
     QuadricManimCapacityError,
+    QuadricManimError,
     QuadricManimLimits,
     QuadricManimStyle,
     QuadricOcclusion3D,
@@ -225,6 +228,185 @@ class UnifiedBoundaryManimTests(unittest.TestCase):
                     max_boundary_sources=1,
                 ),
             )
+        self.assertEqual(tuple(scene.mobjects), before)
+
+    def test_generator_style_ids_resolve_to_distinct_fixed_strokes(self) -> None:
+        cylinder = CylinderSpec(
+            "cylinder",
+            (0.0, 0.0, -1.0),
+            (0.0, 0.0, 1.0),
+            1.0,
+            (0.0, 2.0),
+            radial_axis=(1.0, 0.0, 0.0),
+        )
+        custom = {
+            "style:red": QuadricBoundaryStyle(
+                visible_color="#E53935",
+                visible_width=5.5,
+                hidden_color="#B71C1C",
+                hidden_width=3.0,
+            ),
+            "style:blue": QuadricBoundaryStyle(
+                visible_color="#1E88E5",
+                visible_width=2.25,
+                hidden_color="#0D47A1",
+                hidden_width=1.5,
+            ),
+        }
+        controller = QuadricOcclusion3D(
+            Scene(),
+            surfaces=(cylinder,),
+            curves=(),
+            projection=SIDE_VIEW,
+            paint_policy="physical",
+            boundary_visibility_mode="unified",
+            include_surface_boundaries=False,
+            generator_boundaries=(
+                GeneratorBoundarySpec(
+                    "red-generator",
+                    "cylinder",
+                    pi / 4.0,
+                    style_id="style:red",
+                ),
+                GeneratorBoundarySpec(
+                    "blue-generator",
+                    "cylinder",
+                    3.0 * pi / 4.0,
+                    style_id="style:blue",
+                ),
+            ),
+            boundary_styles=custom,
+            limits=limits(),
+        ).attach()
+        identities = controller.slot_identities()
+        frame = controller.last_boundary_frame
+        assert frame is not None
+
+        for source_id, style_id in (
+            ("red-generator", "style:red"),
+            ("blue-generator", "style:blue"),
+        ):
+            fragment = next(
+                item
+                for item in frame.fragments
+                if item.source_id == source_id and item.painted
+            )
+            self.assertEqual(fragment.style_id, style_id)
+            slot_index = controller._fragment_slot_maps[source_id][fragment.item_id]
+            solid = controller._curve_slots[source_id].fragments[slot_index].solid
+            expected = custom[style_id]
+            np.testing.assert_allclose(
+                solid.stroke_rgbas[0, :3],
+                color_to_rgb(expected.visible_color),
+                atol=1.0e-12,
+            )
+            self.assertAlmostEqual(
+                float(solid.get_stroke_width()), expected.visible_width
+            )
+
+        with patch.object(
+            Mobject,
+            "__init__",
+            side_effect=AssertionError("style update allocated a Mobject"),
+        ):
+            controller.update()
+        self.assertEqual(controller.slot_identities(), identities)
+        controller.restore()
+
+    def test_unknown_generator_style_fails_before_scene_ownership(self) -> None:
+        scene = Scene()
+        before = tuple(scene.mobjects)
+        with self.assertRaisesRegex(
+            QuadricManimError,
+            "unknown boundary styles: style:missing",
+        ):
+            QuadricOcclusion3D(
+                scene,
+                surfaces=(
+                    CylinderSpec(
+                        "cylinder",
+                        (0.0, 0.0, -1.0),
+                        (0.0, 0.0, 1.0),
+                        1.0,
+                        (0.0, 2.0),
+                        radial_axis=(1.0, 0.0, 0.0),
+                    ),
+                ),
+                curves=(),
+                projection=SIDE_VIEW,
+                boundary_visibility_mode="unified",
+                include_surface_boundaries=False,
+                generator_boundaries=(
+                    GeneratorBoundarySpec(
+                        "generator",
+                        "cylinder",
+                        pi / 4.0,
+                        style_id="style:missing",
+                    ),
+                ),
+                limits=limits(),
+            )
+        self.assertEqual(tuple(scene.mobjects), before)
+
+    def test_boundary_style_registry_has_an_explicit_count_limit(self) -> None:
+        with self.assertRaisesRegex(
+            QuadricManimCapacityError,
+            "boundary style count 5 exceeds fixed limit 4",
+        ):
+            QuadricOcclusion3D(
+                Scene(),
+                surfaces=(SphereSpec("sphere", (0.0, 0.0, 0.0), 1.0),),
+                curves=(),
+                projection=VIEW,
+                boundary_visibility_mode="unified",
+                limits=replace(limits(), max_boundary_styles=4),
+            )
+
+    def test_custom_dash_style_capacity_fails_before_scene_ownership(self) -> None:
+        scene = Scene()
+        before = tuple(scene.mobjects)
+        controller = QuadricOcclusion3D(
+            scene,
+            surfaces=(
+                CylinderSpec(
+                    "cylinder",
+                    (0.0, 0.0, -1.0),
+                    (0.0, 0.0, 1.0),
+                    1.0,
+                    (0.0, 2.0),
+                    radial_axis=(1.0, 0.0, 0.0),
+                ),
+            ),
+            curves=(),
+            projection=SIDE_VIEW,
+            paint_policy="diagrammatic",
+            boundary_visibility_mode="unified",
+            include_surface_boundaries=False,
+            generator_boundaries=(
+                GeneratorBoundarySpec(
+                    "rear-generator",
+                    "cylinder",
+                    3.0 * pi / 2.0,
+                    style_id="style:dense-dash",
+                ),
+            ),
+            boundary_styles={
+                "style:dense-dash": QuadricBoundaryStyle(
+                    dash_length=0.01,
+                    dash_gap=0.0,
+                )
+            },
+            limits=replace(
+                limits(),
+                max_dashes_per_fragment=8,
+                max_total_mobjects=3000,
+            ),
+        )
+        with self.assertRaisesRegex(
+            QuadricManimCapacityError,
+            "dash count exceeds fixed slot capacity 8",
+        ):
+            controller.attach()
         self.assertEqual(tuple(scene.mobjects), before)
 
     def test_unified_apply_failure_restores_boundary_frame_slots_and_z(self) -> None:

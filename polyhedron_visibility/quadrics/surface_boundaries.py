@@ -56,6 +56,11 @@ class GeneratorBoundarySpec:
             if not isfinite(lower) or not isfinite(upper) or lower >= upper:
                 raise ValueError("axial_interval must be finite and increasing")
             object.__setattr__(self, "axial_interval", (lower, upper))
+        style_id = self.style_id
+        if style_id is not None:
+            if not isinstance(style_id, str) or not style_id.strip():
+                raise ValueError("style_id must be a non-empty string")
+            object.__setattr__(self, "style_id", style_id.strip())
         object.__setattr__(self, "boundary_id", self.boundary_id.strip())
         object.__setattr__(self, "surface_id", self.surface_id.strip())
         object.__setattr__(self, "azimuth", value % tau)

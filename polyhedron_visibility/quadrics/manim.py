@@ -15,6 +15,7 @@ from __future__ import annotations
 from contextlib import contextmanager
 from dataclasses import dataclass
 from math import isfinite, sqrt
+from types import MappingProxyType
 from typing import Callable, Iterator, Mapping, Sequence
 
 import numpy as np
@@ -168,6 +169,53 @@ def _non_negative(value: object, label: str) -> float:
 
 
 @dataclass(frozen=True, slots=True)
+class QuadricBoundaryStyle:
+    """One immutable visible/hidden stroke pair in the boundary registry."""
+
+    visible_color: object = WHITE
+    visible_width: float = 3.0
+    visible_opacity: float = 1.0
+    hidden_color: object = WHITE
+    hidden_width: float = 2.4
+    hidden_opacity: float = 0.78
+    dash_length: float = 0.08
+    dash_gap: float = 0.06
+    background_color: object = WHITE
+    background_width: float = 0.0
+    background_opacity: float = 0.0
+    cap_style: object | None = None
+    joint_type: object | None = None
+    hidden_cap_style: object | None = None
+    hidden_joint_type: object | None = None
+
+    def __post_init__(self) -> None:
+        for name in (
+            "visible_width",
+            "visible_opacity",
+            "hidden_width",
+            "hidden_opacity",
+            "background_width",
+            "background_opacity",
+        ):
+            object.__setattr__(self, name, _non_negative(getattr(self, name), name))
+        object.__setattr__(
+            self, "dash_length", _positive(self.dash_length, "dash_length")
+        )
+        object.__setattr__(self, "dash_gap", _non_negative(self.dash_gap, "dash_gap"))
+        for name in (
+            "visible_opacity",
+            "hidden_opacity",
+            "background_opacity",
+        ):
+            if getattr(self, name) > 1.0:
+                raise ValueError(f"{name} must not exceed 1")
+
+    @property
+    def dash_period(self) -> float:
+        return self.dash_length + self.dash_gap
+
+
+@dataclass(frozen=True, slots=True)
 class QuadricManimStyle:
     """Static display style for one managed quadric painter graph."""
 
@@ -264,6 +312,7 @@ class QuadricManimLimits:
     max_projected_length: float = 16.0
     max_total_mobjects: int = 100000
     max_boundary_sources: int = 64
+    max_boundary_styles: int = 64
 
     def __post_init__(self) -> None:
         for name in (
@@ -275,6 +324,7 @@ class QuadricManimLimits:
             "max_dashes_per_fragment",
             "max_total_mobjects",
             "max_boundary_sources",
+            "max_boundary_styles",
         ):
             value = getattr(self, name)
             if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
@@ -287,6 +337,105 @@ class QuadricManimLimits:
 
 
 QUADRIC_MANIM_LIMITS = QuadricManimLimits()
+
+
+def _boundary_style_from_curve_style(
+    style: QuadricManimStyle,
+) -> QuadricBoundaryStyle:
+    return QuadricBoundaryStyle(
+        visible_color=style.visible_curve_color,
+        visible_width=style.visible_curve_width,
+        visible_opacity=style.visible_curve_opacity,
+        hidden_color=style.hidden_curve_color,
+        hidden_width=style.hidden_curve_width,
+        hidden_opacity=style.hidden_curve_opacity,
+        dash_length=style.dash_length,
+        dash_gap=style.dash_gap,
+        background_color=style.background_color,
+        background_width=style.background_width,
+        background_opacity=style.background_opacity,
+        cap_style=style.cap_style,
+        joint_type=style.joint_type,
+        hidden_cap_style=style.hidden_cap_style,
+        hidden_joint_type=style.hidden_joint_type,
+    )
+
+
+def _boundary_style_from_base_stroke(
+    style: QuadricManimStyle,
+    *,
+    color: object,
+    width: float,
+    opacity: float,
+) -> QuadricBoundaryStyle:
+    hidden_width_ratio = (
+        style.hidden_curve_width / style.visible_curve_width
+        if style.visible_curve_width > 0.0
+        else 0.82
+    )
+    return QuadricBoundaryStyle(
+        visible_color=color,
+        visible_width=width,
+        visible_opacity=opacity,
+        hidden_color=color,
+        hidden_width=width * hidden_width_ratio,
+        hidden_opacity=opacity * style.hidden_curve_opacity,
+        dash_length=style.dash_length,
+        dash_gap=style.dash_gap,
+        background_color=style.background_color,
+        background_width=style.background_width,
+        background_opacity=style.background_opacity,
+        cap_style=style.cap_style,
+        joint_type=style.joint_type,
+        hidden_cap_style=style.hidden_cap_style,
+        hidden_joint_type=style.hidden_joint_type,
+    )
+
+
+def _boundary_style_registry(
+    base_style: QuadricManimStyle,
+    custom_styles: Mapping[str, QuadricBoundaryStyle] | None,
+    limits: QuadricManimLimits,
+) -> Mapping[str, QuadricBoundaryStyle]:
+    curve_style = _boundary_style_from_curve_style(base_style)
+    surface_style = _boundary_style_from_base_stroke(
+        base_style,
+        color=base_style.surface_stroke_color,
+        width=base_style.surface_stroke_width,
+        opacity=base_style.surface_stroke_opacity,
+    )
+    section_style = _boundary_style_from_base_stroke(
+        base_style,
+        color=base_style.section_plane_stroke_color,
+        width=base_style.section_plane_stroke_width,
+        opacity=base_style.section_plane_stroke_opacity,
+    )
+    result: dict[str, QuadricBoundaryStyle] = {
+        "style:curve": curve_style,
+        "style:section-outline": section_style,
+        "style:surface-boundary": surface_style,
+        "style:surface-silhouette": surface_style,
+        "style:teaching-boundary": curve_style,
+    }
+    if custom_styles is not None:
+        if not isinstance(custom_styles, Mapping):
+            raise TypeError("boundary_styles must be a mapping")
+        for raw_style_id, value in custom_styles.items():
+            if not isinstance(raw_style_id, str) or not raw_style_id.strip():
+                raise QuadricManimError(
+                    "boundary_styles keys must be non-empty style identities"
+                )
+            if not isinstance(value, QuadricBoundaryStyle):
+                raise TypeError(
+                    "boundary_styles values must be QuadricBoundaryStyle objects"
+                )
+            result[raw_style_id.strip()] = value
+    if len(result) > limits.max_boundary_styles:
+        raise QuadricManimCapacityError(
+            f"boundary style count {len(result)} exceeds fixed limit "
+            f"{limits.max_boundary_styles}"
+        )
+    return MappingProxyType(result)
 
 
 @dataclass(frozen=True, slots=True)
@@ -306,6 +455,7 @@ class _PreparedCurveFragment:
 class _PreparedBoundaryFragment:
     fragment: QuadricBoundaryPaintFragment
     source: QuadricBoundarySource
+    style: QuadricBoundaryStyle
     slot_index: int
     points: np.ndarray
     dashes: tuple[_PreparedDash, ...]
@@ -931,6 +1081,7 @@ class QuadricOcclusion3D:
         projection: ProjectionInput | None = None,
         paint_policy: QuadricPaintPolicy | str = QuadricPaintPolicy.DIAGRAMMATIC,
         style: QuadricManimStyle = QuadricManimStyle(),
+        boundary_styles: Mapping[str, QuadricBoundaryStyle] | None = None,
         limits: QuadricManimLimits = QUADRIC_MANIM_LIMITS,
         max_chord_error: float = 1.0e-3,
         context: GeometryContext | ResolvedGeometryContext | None = None,
@@ -1011,6 +1162,25 @@ class QuadricOcclusion3D:
         self.paint_policy = policy
         self.style = style
         self.limits = limits
+        self.boundary_styles = _boundary_style_registry(
+            style,
+            boundary_styles,
+            limits,
+        )
+        if boundary_visibility_mode == "unified":
+            unknown_generator_styles = sorted(
+                {
+                    spec.style_id
+                    for spec in generators
+                    if spec.style_id is not None
+                    and spec.style_id not in self.boundary_styles
+                }
+            )
+            if unknown_generator_styles:
+                raise QuadricManimError(
+                    "generator boundaries reference unknown boundary styles: "
+                    + ", ".join(unknown_generator_styles)
+                )
         self.max_chord_error = _positive(max_chord_error, "max_chord_error")
         self.context = context
         self.surface_constraints = tuple(surface_constraints)
@@ -1345,6 +1515,28 @@ class QuadricOcclusion3D:
             if item_id not in result:
                 result[item_id] = next(free)
         return result
+
+    def _boundary_style_for_source(
+        self,
+        source: QuadricBoundarySource,
+    ) -> QuadricBoundaryStyle:
+        style_id = source.style_id
+        if style_id is None:
+            if source.semantic_kind is BoundarySemanticKind.DISPLAY_FRAME:
+                style_id = "style:section-outline"
+            elif source.semantic_kind is BoundarySemanticKind.TRUE_SILHOUETTE:
+                style_id = "style:surface-silhouette"
+            elif source.semantic_kind is BoundarySemanticKind.SURFACE_BOUNDARY:
+                style_id = "style:surface-boundary"
+            else:
+                style_id = "style:curve"
+        try:
+            return self.boundary_styles[style_id]
+        except KeyError as exc:
+            raise QuadricManimError(
+                f"boundary source {source.source_id!r} references unknown "
+                f"style_id {style_id!r}"
+            ) from exc
 
     def _boundary_sources_for_frame(
         self,
@@ -1703,6 +1895,7 @@ class QuadricOcclusion3D:
         }
         for source_id in sorted(by_source):
             source = source_map[source_id]
+            boundary_style = self._boundary_style_for_source(source)
             fragments = tuple(
                 sorted(by_source[source_id], key=lambda item: item.item_id)
             )
@@ -1745,8 +1938,8 @@ class QuadricOcclusion3D:
                             source_points,
                             fragment.interval.start,
                         ),
-                        dash_length=self.style.dash_length,
-                        dash_gap=self.style.dash_gap,
+                        dash_length=boundary_style.dash_length,
+                        dash_gap=boundary_style.dash_gap,
                         capacity=self.limits.max_dashes_per_fragment,
                     )
                     if fragment.render_intent is BoundaryRenderIntent.DASHED
@@ -1757,6 +1950,7 @@ class QuadricOcclusion3D:
                     _PreparedBoundaryFragment(
                         fragment,
                         source,
+                        boundary_style,
                         slot_index,
                         points,
                         dashes,
@@ -2174,45 +2368,13 @@ class QuadricOcclusion3D:
         prepared: _PreparedBoundaryFragment,
         opacity: float,
     ) -> tuple[object, float, float]:
-        semantic = prepared.source.semantic_kind
         hidden = prepared.fragment.render_intent is BoundaryRenderIntent.DASHED
-        if semantic is BoundarySemanticKind.DISPLAY_FRAME:
-            color = self.style.section_plane_stroke_color
-            width = self.style.section_plane_stroke_width
-            base_opacity = self.style.section_plane_stroke_opacity
-        elif semantic in {
-            BoundarySemanticKind.SURFACE_BOUNDARY,
-            BoundarySemanticKind.TRUE_SILHOUETTE,
-        }:
-            color = self.style.surface_stroke_color
-            width = self.style.surface_stroke_width
-            base_opacity = self.style.surface_stroke_opacity
-        else:
-            color = (
-                self.style.hidden_curve_color
-                if hidden
-                else self.style.visible_curve_color
-            )
-            width = (
-                self.style.hidden_curve_width
-                if hidden
-                else self.style.visible_curve_width
-            )
-            base_opacity = (
-                self.style.hidden_curve_opacity
-                if hidden
-                else self.style.visible_curve_opacity
-            )
-            return color, width, base_opacity * opacity
-        if hidden:
-            ratio = (
-                self.style.hidden_curve_width / self.style.visible_curve_width
-                if self.style.visible_curve_width > 0.0
-                else 0.82
-            )
-            width *= ratio
-            base_opacity *= self.style.hidden_curve_opacity
-        return color, width, base_opacity * opacity
+        style = prepared.style
+        return (
+            style.hidden_color if hidden else style.visible_color,
+            style.hidden_width if hidden else style.visible_width,
+            (style.hidden_opacity if hidden else style.visible_opacity) * opacity,
+        )
 
     def _apply_boundary_fragment(
         self,
@@ -2224,6 +2386,7 @@ class QuadricOcclusion3D:
         color, width, stroke_opacity = self._boundary_stroke_style(
             prepared, opacity
         )
+        style = prepared.style
         if prepared.fragment.render_intent is BoundaryRenderIntent.SOLID:
             slot.solid.set_points_as_corners(prepared.points)
             slot.solid.set_fill(opacity=0.0)
@@ -2231,15 +2394,15 @@ class QuadricOcclusion3D:
                 color=color, width=width, opacity=stroke_opacity
             )
             slot.solid.set_stroke(
-                color=self.style.background_color,
-                width=self.style.background_width,
-                opacity=self.style.background_opacity * opacity,
+                color=style.background_color,
+                width=style.background_width,
+                opacity=style.background_opacity * opacity,
                 background=True,
             )
-            if self.style.cap_style is not None:
-                slot.solid.set_cap_style(self.style.cap_style)
-            if self.style.joint_type is not None:
-                slot.solid.joint_type = self.style.joint_type
+            if style.cap_style is not None:
+                slot.solid.set_cap_style(style.cap_style)
+            if style.joint_type is not None:
+                slot.solid.joint_type = style.joint_type
             for dash in slot.dashes:
                 _hide_vmobject(dash)
             return
@@ -2254,20 +2417,20 @@ class QuadricOcclusion3D:
                 color=color, width=width, opacity=stroke_opacity
             )
             dash.set_stroke(
-                color=self.style.background_color,
-                width=self.style.background_width,
-                opacity=self.style.background_opacity * opacity,
+                color=style.background_color,
+                width=style.background_width,
+                opacity=style.background_opacity * opacity,
                 background=True,
             )
             cap = (
-                self.style.cap_style
-                if self.style.hidden_cap_style is None
-                else self.style.hidden_cap_style
+                style.cap_style
+                if style.hidden_cap_style is None
+                else style.hidden_cap_style
             )
             joint = (
-                self.style.joint_type
-                if self.style.hidden_joint_type is None
-                else self.style.hidden_joint_type
+                style.joint_type
+                if style.hidden_joint_type is None
+                else style.hidden_joint_type
             )
             if cap is not None:
                 dash.set_cap_style(cap)
@@ -2614,6 +2777,7 @@ __all__ = [
     "DEFAULT_QUADRIC_VIEW",
     "PreparedQuadricManimFrame",
     "QUADRIC_MANIM_LIMITS",
+    "QuadricBoundaryStyle",
     "QuadricManimCapacityError",
     "QuadricManimError",
     "QuadricManimLimits",

@@ -415,6 +415,7 @@ _EXPORTS: Final[dict[str, tuple[str, str]]] = {
     "QuadricManimError": (".manim", "QuadricManimError"),
     "QuadricManimLimits": (".manim", "QuadricManimLimits"),
     "QuadricManimStyle": (".manim", "QuadricManimStyle"),
+    "QuadricBoundaryStyle": (".manim", "QuadricBoundaryStyle"),
     "QuadricOcclusion3D": (".manim", "QuadricOcclusion3D"),
     "MAX_TRANSITION_INTERVAL_SLOTS": (
         ".transition_manim",

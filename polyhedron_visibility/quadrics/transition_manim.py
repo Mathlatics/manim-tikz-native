@@ -29,6 +29,7 @@ from .curves import ParametricConicBranch
 from .manim import (
     QUADRIC_MANIM_LIMITS,
     ProjectionInput,
+    QuadricBoundaryStyle,
     QuadricManimCapacityError,
     QuadricManimError,
     QuadricManimLimits,
@@ -157,6 +158,7 @@ class QuadricSectionTransition3D:
         transition_mode: SectionTransitionMode | str = SectionTransitionMode.CROSSFADE,
         paint_policy: QuadricPaintPolicy | str = QuadricPaintPolicy.DIAGRAMMATIC,
         style: QuadricManimStyle = QuadricManimStyle(),
+        boundary_styles: Mapping[str, QuadricBoundaryStyle] | None = None,
         limits: QuadricManimLimits = QUADRIC_MANIM_LIMITS,
         max_chord_error: float = 1.0e-3,
         painter_z_band: tuple[float, float] = (20.0, 30.0),
@@ -212,6 +214,7 @@ class QuadricSectionTransition3D:
             projection=projection,
             paint_policy=paint_policy,
             style=style,
+            boundary_styles=boundary_styles,
             limits=limits,
             max_chord_error=max_chord_error,
             context=context,

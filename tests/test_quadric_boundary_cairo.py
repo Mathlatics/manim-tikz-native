@@ -17,16 +17,19 @@ from polyhedron_visibility.quadrics.boundary_compositing import (
 from polyhedron_visibility.quadrics.compositing import QuadricPaintPolicy
 from polyhedron_visibility.quadrics.contract import (
     ConeSpec,
+    CylinderSpec,
     PlaneDisplayPatchSpec,
     SectionPlane,
     SphereSpec,
 )
 from polyhedron_visibility.quadrics.curves import SegmentCurve
 from polyhedron_visibility.quadrics.manim import (
+    QuadricBoundaryStyle,
     QuadricManimLimits,
     QuadricManimStyle,
     QuadricOcclusion3D,
 )
+from polyhedron_visibility.quadrics.surface_boundaries import GeneratorBoundarySpec
 from polyhedron_visibility.visibility import VisibilityKind
 
 
@@ -258,6 +261,91 @@ def _first_hidden_plane_dash(controller: QuadricOcclusion3D):
 
 @unittest.skipUnless(CAIRO_AVAILABLE, "Manim Cairo renderer is unavailable")
 class UnifiedBoundaryCairoTests(unittest.TestCase):
+    def test_generator_style_ids_produce_distinct_cairo_pixels(self) -> None:
+        with tempconfig(
+            {
+                "renderer": "cairo",
+                "pixel_width": WIDTH,
+                "pixel_height": HEIGHT,
+                "frame_rate": 8,
+                "write_to_movie": False,
+                "save_last_frame": False,
+                "disable_caching": True,
+            }
+        ):
+            cylinder = CylinderSpec(
+                "style-cylinder",
+                (0.0, 0.0, -1.0),
+                (0.0, 0.0, 1.0),
+                1.0,
+                (0.0, 2.0),
+                radial_axis=(1.0, 0.0, 0.0),
+            )
+            side_view = ParallelView.from_matrix(
+                (
+                    (1.0, 0.0, 0.0),
+                    (0.0, 0.0, -1.0),
+                    (0.0, 1.0, 0.0),
+                )
+            )
+            scene = Scene()
+            scene.camera.background_color = "#000000"
+            controller = QuadricOcclusion3D(
+                scene,
+                surfaces=(cylinder,),
+                curves=(),
+                projection=side_view,
+                paint_policy="physical",
+                style=QuadricManimStyle(
+                    surface_fill_opacity=0.0,
+                    surface_stroke_opacity=0.0,
+                ),
+                boundary_styles={
+                    "style:red": QuadricBoundaryStyle(
+                        visible_color="#FF2020",
+                        visible_width=10.0,
+                    ),
+                    "style:blue": QuadricBoundaryStyle(
+                        visible_color="#2080FF",
+                        visible_width=10.0,
+                    ),
+                },
+                limits=_limits(),
+                max_chord_error=0.008,
+                boundary_visibility_mode="unified",
+                include_surface_boundaries=False,
+                generator_boundaries=(
+                    GeneratorBoundarySpec(
+                        "red-generator",
+                        cylinder.surface_id,
+                        pi / 4.0,
+                        style_id="style:red",
+                    ),
+                    GeneratorBoundarySpec(
+                        "blue-generator",
+                        cylinder.surface_id,
+                        3.0 * pi / 4.0,
+                        style_id="style:blue",
+                    ),
+                ),
+            ).attach()
+            try:
+                pixels = _capture_pixels(scene)
+                _row, _column, red = _nearest_ink_pixel(
+                    pixels,
+                    (2.0 ** -0.5, 0.0),
+                    _hex_rgb("#FF2020"),
+                )
+                _row, _column, blue = _nearest_ink_pixel(
+                    pixels,
+                    (-2.0 ** -0.5, 0.0),
+                    _hex_rgb("#2080FF"),
+                )
+                self.assertGreater(red[0], red[2] + 120.0)
+                self.assertGreater(blue[2], blue[0] + 120.0)
+            finally:
+                controller.restore()
+
     def test_visible_curve_is_between_front_sheet_and_front_plane(self) -> None:
         with tempconfig(
             {

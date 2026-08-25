@@ -489,6 +489,7 @@ explicit teaching generators.
 ```python
 from polyhedron_visibility.quadrics import (
     GeneratorBoundarySpec,
+    QuadricBoundaryStyle,
     QuadricOcclusion3D,
 )
 
@@ -499,11 +500,31 @@ controller = QuadricOcclusion3D(
     section_plane=plane,
     paint_policy="depth_aware_diagrammatic",
     boundary_visibility_mode="unified",
+    boundary_styles={
+        "style:emphasis": QuadricBoundaryStyle(
+            visible_color="#E53935",
+            visible_width=4.5,
+            hidden_color="#B71C1C",
+            hidden_width=3.0,
+            dash_length=0.10,
+            dash_gap=0.07,
+        ),
+    },
     generator_boundaries=(
-        GeneratorBoundarySpec("teaching-generator", cone.surface_id, 0.42),
+        GeneratorBoundarySpec(
+            "teaching-generator",
+            cone.surface_id,
+            0.42,
+            style_id="style:emphasis",
+        ),
     ),
 ).attach()
 ```
+
+The controller snapshots this registry during construction. Frame updates only
+resolve an existing `style_id` and mutate preallocated solid/dash slots; they
+never add a style or create a Mobject. Unknown IDs, too many registered styles,
+and a dash pattern that exceeds `max_dashes_per_fragment` raise explicitly.
 
 The three painter policies have one meaning for every semantic boundary:
 

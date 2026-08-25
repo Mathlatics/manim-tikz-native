@@ -61,6 +61,22 @@ IDENTITY_VIEW = ParallelView.from_matrix(np.eye(3))
 
 
 class QuadricBoundaryContractTests(unittest.TestCase):
+    def test_generator_style_identity_is_canonical_and_non_empty(self) -> None:
+        spec = GeneratorBoundarySpec(
+            "generator",
+            "cone",
+            0.4,
+            style_id="  style:accent  ",
+        )
+        self.assertEqual(spec.style_id, "style:accent")
+        with self.assertRaisesRegex(ValueError, "style_id must be"):
+            GeneratorBoundarySpec(
+                "invalid",
+                "cone",
+                0.4,
+                style_id="   ",
+            )
+
     def test_hidden_free_curve_behind_between_plane_uses_back_sheet_lower_bound(
         self,
     ) -> None:

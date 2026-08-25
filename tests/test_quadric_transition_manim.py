@@ -16,6 +16,7 @@ from polyhedron_visibility.quadrics.contract import ConeSpec, SectionPlane, Sphe
 from polyhedron_visibility.quadrics.curves import SegmentCurve
 from polyhedron_visibility.quadrics.manim import (
     DEFAULT_QUADRIC_VIEW,
+    QuadricBoundaryStyle,
     QuadricManimCapacityError,
     QuadricManimLimits,
     QuadricManimStyle,
@@ -160,6 +161,21 @@ class AllocatedCurveBankTests(unittest.TestCase):
 
 
 class QuadricSectionTransitionControllerTests(unittest.TestCase):
+    def test_boundary_style_registry_is_forwarded_to_inner_controller(self) -> None:
+        accent = QuadricBoundaryStyle(visible_color="#E53935")
+        controller = QuadricSectionTransition3D(
+            Scene(),
+            scheduled=_scheduled(),
+            progress=ValueTracker(0.0),
+            projection=VIEW,
+            boundary_visibility_mode="unified",
+            boundary_styles={"style:curve": accent},
+            limits=_limits(max_total_mobjects=30000),
+        )
+        self.assertIs(
+            controller.controller.boundary_styles["style:curve"], accent
+        )
+
     def test_transition_controller_inherits_isometric_quadric_default(self) -> None:
         controller = QuadricSectionTransition3D(
             Scene(),

@@ -457,7 +457,8 @@ points are:
   `track_scheduled_plane_section()`, and `track_moving_section_point()`;
 - `build_section_transition_plan()` and
   `QuadricSectionTransition3D`;
-- `QuadricOcclusion3D`, `QuadricManimStyle`, and `QuadricManimLimits`.
+- `QuadricOcclusion3D`, `QuadricManimStyle`, `QuadricBoundaryStyle`, and
+  `QuadricManimLimits`.
 
 The Manim binding accepts immutable surface/curve sequences or callbacks that
 return a new sequence for the current frame.  IDs and counts remain fixed for
@@ -472,6 +473,11 @@ Mobjects, and commits each prepared painter frame transactionally.  Its default
 `surface_order_mode="automatic"` recomputes the certified global frame on each
 update and exposes the committed evidence through `last_global_frame`;
 `surface_order_mode="explicit"` retains the legacy manual-constraint path.
+In unified mode, `boundary_styles={style_id: QuadricBoundaryStyle(...)}` is an
+immutable renderer-level registry. A `GeneratorBoundarySpec.style_id` must
+resolve in that registry; unknown identities and fixed dash-slot overflow fail
+before a frame is committed. Built-in IDs preserve the historical curve,
+surface-boundary, silhouette, and section-outline appearance.
 Pass `section_plane=plane` to place one finite display patch, the two projected
 surface sheets, the section curves, and every visible/hidden curve fragment in
 one painter graph.  The patch is adaptively split into regions behind the
