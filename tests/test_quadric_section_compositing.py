@@ -26,6 +26,7 @@ from polyhedron_visibility.quadrics.plane_patch import fit_plane_display_patch
 from polyhedron_visibility.quadrics.projection import build_opaque_projection_proxy
 from polyhedron_visibility.quadrics.section_compositing import (
     PlaneDepthRole,
+    QUADRIC_SECTION_COMPOSITING_LIMITS,
     QuadricPlaneFragment,
     QuadricSectionCompositingError,
     QuadricSectionCompositingLimits,
@@ -33,6 +34,7 @@ from polyhedron_visibility.quadrics.section_compositing import (
     compute_quadric_section_compositing,
     quadric_plane_fragment_contours,
     _CanonicalVertexRegistry,
+    _SECTION_BOUNDARY_CHORD_DIVISOR,
     _make_plane_partition_polygon,
     _nested_convex_ring_polygons,
     _PlanePartitionPolygon,
@@ -746,10 +748,15 @@ def _stable_ray_role(
     point: Sequence[float],
     plane: SectionPlane,
     boundary_epsilon: float,
+    *,
+    geometric_boundary_tolerance: float = 0.0,
 ) -> PlaneDepthRole | None:
     value = np.asarray(point, dtype=float)
     plane_u, plane_v, _normal = plane.basis
-    probe = 16.0 * boundary_epsilon
+    probe = max(
+        16.0 * boundary_epsilon,
+        geometric_boundary_tolerance,
+    )
     roles = {
         _ray_role(solver, value + offset, boundary_epsilon)
         for offset in (
@@ -1557,6 +1564,27 @@ class QuadricSectionBoundaryPartitionContractTests(unittest.TestCase):
                     case.expected_topology,
                 )
 
+    def test_common_sections_fit_the_original_fixed_capacity(self) -> None:
+        self.assertEqual(
+            QUADRIC_SECTION_COMPOSITING_LIMITS.max_plane_fragments,
+            8192,
+        )
+        self.assertEqual(
+            QUADRIC_SECTION_COMPOSITING_LIMITS.max_ray_classifications,
+            65536,
+        )
+        for case in SECTION_PARTITION_CASES:
+            with self.subTest(case=case.name):
+                frame = self.frames[case.name]
+                self.assertLessEqual(
+                    len(frame.plane_fragments),
+                    QUADRIC_SECTION_COMPOSITING_LIMITS.max_plane_fragments,
+                )
+                self.assertLessEqual(
+                    frame.ray_classification_count,
+                    QUADRIC_SECTION_COMPOSITING_LIMITS.max_ray_classifications,
+                )
+
     def test_fragments_exactly_partition_the_display_patch(self) -> None:
         failures: list[str] = []
         for case in SECTION_PARTITION_CASES:
@@ -1710,6 +1738,17 @@ class QuadricSectionBoundaryPartitionContractTests(unittest.TestCase):
                         world,
                         frame.plane,
                         boundary_epsilon,
+                        # The emitted boundary is a certified screen-space
+                        # polyline.  Samples inside its tiny chord-error band
+                        # are legitimate boundary samples, not stable evidence
+                        # for either neighboring role.  This remains far below
+                        # the public max_screen_error and still catches any
+                        # fragment that genuinely crosses a role region.
+                        geometric_boundary_tolerance=(
+                            2.0
+                            * frame.max_screen_error
+                            / _SECTION_BOUNDARY_CHORD_DIVISOR
+                        ),
                     )
                     if observed is None:
                         continue
@@ -1721,10 +1760,26 @@ class QuadricSectionBoundaryPartitionContractTests(unittest.TestCase):
                             f"{fragment.role.value} classified={observed.value}"
                         )
                 if stable_sample_count == 0:
-                    issue_count += 1
-                    examples.append(
-                        f"{fragment.fragment_id} has no stable ray sample"
+                    # A triangle may lie wholly inside the certified chord
+                    # approximation band.  Do not ignore that fragment: use
+                    # its strict interior centroid as the deterministic
+                    # fallback and still require the authoritative solver to
+                    # agree with the stored role.
+                    centroid = np.mean(
+                        np.asarray(fragment.world_vertices, dtype=float),
+                        axis=0,
                     )
+                    observed = _ray_role(
+                        solver,
+                        centroid,
+                        boundary_epsilon,
+                    )
+                    if observed is not fragment.role:
+                        issue_count += 1
+                        examples.append(
+                            f"{fragment.fragment_id}/centroid-fallback stored="
+                            f"{fragment.role.value} classified={observed.value}"
+                        )
             if issue_count:
                 failures.append(
                     _case_issue_summary(

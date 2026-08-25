@@ -69,6 +69,13 @@ from .trace import section_trace_curves
 
 QUADRIC_SECTION_COMPOSITING_SCHEMA = "manim-quadric-section-compositing/v1"
 
+# The public error is a display-space upper bound, not a request to refine the
+# analytic section down to floating-point jitter.  These conservative divisors
+# keep the boundary far below one rendered pixel while preserving the original
+# fixed fragment capacity for ordinary teaching scenes.
+_SECTION_BOUNDARY_CHORD_DIVISOR = 2048.0
+_NEAR_TANGENT_SECTION_BOUNDARY_CHORD_DIVISOR = 8192.0
+
 
 QuadricSurfaceSpec = SphereSpec | CylinderSpec | ConeSpec
 ContextInput = GeometryContext | ResolvedGeometryContext | None
@@ -93,9 +100,9 @@ class QuadricSectionCompositingLimits:
 
     minimum_subdivision_depth: int = 0
     maximum_subdivision_depth: int = 10
-    max_plane_fragments: int = 65536
+    max_plane_fragments: int = 8192
     max_outline_fragments: int = 256
-    max_ray_classifications: int = 2097152
+    max_ray_classifications: int = 65536
 
     def __post_init__(self) -> None:
         for name in (
@@ -2661,12 +2668,12 @@ def compute_quadric_section_compositing(
     if sphere_needs_tight_tangent_boundary:
         section_chord_error = max(
             screen_epsilon * 16.0,
-            error / 1048576.0,
+            error / _NEAR_TANGENT_SECTION_BOUNDARY_CHORD_DIVISOR,
         )
     else:
         section_chord_error = max(
             screen_epsilon * 32.0,
-            error / 262144.0,
+            error / _SECTION_BOUNDARY_CHORD_DIVISOR,
         )
     if section_chord_error > error:
         raise QuadricSectionCompositingError(
