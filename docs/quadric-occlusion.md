@@ -146,9 +146,12 @@ is not painted.  In diagrammatic mode it is painted with the hidden dashed
 style above the opaque proxy that would physically hide it.
 
 `depth_aware_diagrammatic` is a third, opt-in policy.  The hidden fragment
-remains a dashed teaching aid, but its named occluding surface is painted over
-it.  With section compositing, the hidden dash is placed after the between-role
-plane and outline and before the front projection sheet:
+remains a dashed teaching aid.  Certified farther surfaces are painted first,
+then the dash, then every named occluding surface.  Disjoint surfaces receive
+no invented relation, and the deterministic identity tie break is never used
+as geometric depth evidence.  With section compositing, the hidden dash is
+placed after the between-role plane and outline and before the front projection
+sheet:
 
 ```text
 plane-behind

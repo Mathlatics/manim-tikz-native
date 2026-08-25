@@ -214,6 +214,84 @@ class QuadricCompositingPolicyTests(unittest.TestCase):
             },
         )
 
+    def test_depth_aware_hidden_is_bracketed_by_farther_surface_and_occluder(
+        self,
+    ) -> None:
+        frame = compute_quadric_compositing(
+            _visibility(("alpha", "beta")),
+            (_proxy("alpha"), _proxy("beta")),
+            paint_policy="depth_aware_diagrammatic",
+            surface_constraints=(("beta", "alpha"),),
+        )
+        hidden = next(
+            item
+            for item in frame.curve_fragments
+            if item.kind is QuadricPaintKind.HIDDEN_CURVE
+        )
+        ranks = _rank(frame)
+        beta = next(
+            item.item_id for item in frame.surface_items if item.surface_id == "beta"
+        )
+        alpha = next(
+            item.item_id for item in frame.surface_items if item.surface_id == "alpha"
+        )
+
+        self.assertLess(ranks[beta], ranks[hidden.item_id])
+        self.assertLess(ranks[hidden.item_id], ranks[alpha])
+        self.assertIn(
+            (
+                beta,
+                hidden.item_id,
+                "depth_aware_hidden_after_farther_surface",
+            ),
+            {
+                (item.far_item_id, item.near_item_id, item.reason)
+                for item in frame.order_relations
+            },
+        )
+
+    def test_depth_aware_does_not_move_one_occluder_in_front_of_the_stroke(
+        self,
+    ) -> None:
+        record = _record("curve", "alpha")
+        hidden = record.spans[1]
+        visibility = _visibility(
+            records=(
+                CurveVisibilityRecord(
+                    record.curve_id,
+                    record.domain,
+                    record.critical_events,
+                    (
+                        record.spans[0],
+                        VisibilitySpan(
+                            hidden.interval,
+                            hidden.kind,
+                            ("alpha", "beta"),
+                        ),
+                        record.spans[2],
+                    ),
+                    record.parameter_tolerance,
+                ),
+            )
+        )
+        frame = compute_quadric_compositing(
+            visibility,
+            (_proxy("alpha"), _proxy("beta")),
+            paint_policy="depth_aware_diagrammatic",
+            surface_constraints=(("beta", "alpha"),),
+        )
+        hidden_fragment = next(
+            item
+            for item in frame.curve_fragments
+            if item.kind is QuadricPaintKind.HIDDEN_CURVE
+        )
+        ranks = _rank(frame)
+        surface_ranks = {
+            item.surface_id: ranks[item.item_id] for item in frame.surface_items
+        }
+        self.assertLess(ranks[hidden_fragment.item_id], surface_ranks["beta"])
+        self.assertLess(surface_ranks["beta"], surface_ranks["alpha"])
+
     def test_visible_curve_is_above_every_surface_not_only_its_occluder(self) -> None:
         frame = compute_quadric_compositing(
             self.visibility,

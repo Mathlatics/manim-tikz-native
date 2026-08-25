@@ -618,6 +618,48 @@ def _surface_relations(
     return result
 
 
+def _surface_predecessors(
+    surface_items: tuple[QuadricSurfacePaintItem, ...],
+    relations: Sequence[QuadricPaintRelation],
+) -> dict[str, frozenset[str]]:
+    """Return every surface known to paint before each surface.
+
+    Only explicit surface-order evidence participates.  The lexicographic tie
+    break used by the final topological sort is deterministic, but it is not
+    geometric evidence and therefore must not decide which surface attenuates
+    a depth-aware hidden stroke.
+    """
+
+    item_ids = {item.item_id for item in surface_items}
+    direct: dict[str, set[str]] = {item_id: set() for item_id in item_ids}
+    for relation in relations:
+        if (
+            relation.far_item_id not in item_ids
+            or relation.near_item_id not in item_ids
+        ):
+            raise QuadricCompositingError(
+                "surface predecessor evidence references a non-surface item"
+            )
+        direct[relation.near_item_id].add(relation.far_item_id)
+
+    result: dict[str, frozenset[str]] = {}
+    for target in sorted(item_ids):
+        predecessors: set[str] = set()
+        pending = list(direct[target])
+        while pending:
+            current = pending.pop()
+            if current == target:
+                raise QuadricCompositingError(
+                    "surface constraints contain a contradictory painter cycle"
+                )
+            if current in predecessors:
+                continue
+            predecessors.add(current)
+            pending.extend(direct[current])
+        result[target] = frozenset(predecessors)
+    return result
+
+
 def _dedupe_relations(
     relations: Sequence[QuadricPaintRelation],
 ) -> tuple[QuadricPaintRelation, ...]:
@@ -772,6 +814,10 @@ def compute_quadric_compositing(
     crossings = tuple(sorted(crossings, key=lambda item: item.crossing_id))
 
     relations = _surface_relations(surface_items, tuple(surface_constraints))
+    surface_predecessors = _surface_predecessors(surface_items, relations)
+    surface_item_by_id = {
+        item.surface_id: item.item_id for item in surface_items
+    }
     for fragment in fragments:
         if not fragment.painted:
             continue
@@ -794,7 +840,24 @@ def compute_quadric_compositing(
                 for surface in surface_items
             )
         else:
-            occluders = set(fragment.occluder_surface_ids)
+            occluder_items = {
+                surface_item_by_id[surface_id]
+                for surface_id in fragment.occluder_surface_ids
+            }
+            farther_surface_items = {
+                farther_item
+                for occluder_item in occluder_items
+                for farther_item in surface_predecessors[occluder_item]
+                if farther_item not in occluder_items
+            }
+            relations.extend(
+                QuadricPaintRelation(
+                    surface_item_id,
+                    fragment.item_id,
+                    "depth_aware_hidden_after_farther_surface",
+                )
+                for surface_item_id in sorted(farther_surface_items)
+            )
             relations.extend(
                 QuadricPaintRelation(
                     fragment.item_id,
@@ -802,7 +865,7 @@ def compute_quadric_compositing(
                     "depth_aware_hidden_occlusion",
                 )
                 for surface in surface_items
-                if surface.surface_id in occluders
+                if surface.item_id in occluder_items
             )
     relations.extend(_crossing_relations(crossings, visibility.records, fragments))
     normalized_relations = _dedupe_relations(relations)

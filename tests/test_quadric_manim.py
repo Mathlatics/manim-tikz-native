@@ -7,7 +7,16 @@ import unittest
 from unittest.mock import patch
 
 import numpy as np
-from manim import FadeIn, FadeOut, Line, Mobject, Scene, ValueTracker, tempconfig
+from manim import (
+    FadeIn,
+    FadeOut,
+    Line,
+    Mobject,
+    Scene,
+    ValueTracker,
+    config,
+    tempconfig,
+)
 
 from polyhedron_visibility.parallel_solver import ParallelView
 from polyhedron_visibility.quadrics.compositing import (
@@ -313,6 +322,42 @@ class QuadricManimBindingTests(unittest.TestCase):
                     for item in visible
                 )
             )
+        finally:
+            controller.restore()
+
+    def test_depth_aware_multiple_surfaces_bracket_hidden_curve(self) -> None:
+        controller = QuadricOcclusion3D(
+            Scene(),
+            surfaces=(
+                SphereSpec("alpha", (0.0, 0.0, 2.0), 0.8),
+                SphereSpec("beta", (0.0, 0.0, -2.0), 0.8),
+            ),
+            curves=(
+                SegmentCurve("between", (-0.6, 0.0, 0.0), (0.6, 0.0, 0.0)),
+            ),
+            projection=IDENTITY_VIEW,
+            paint_policy="depth_aware_diagrammatic",
+            limits=_limits(max_fragments_per_curve=4),
+            max_chord_error=0.015,
+        ).attach()
+        try:
+            frame = controller.last_frame
+            assert frame is not None
+            hidden = next(
+                item
+                for item in frame.curve_fragments
+                if item.kind is QuadricPaintKind.HIDDEN_CURVE
+            )
+            ranks = {
+                item_id: index for index, item_id in enumerate(frame.draw_order)
+            }
+            beta = "surface:beta:opaque-projection"
+            alpha = "surface:alpha:opaque-projection"
+            self.assertLess(ranks[beta], ranks[hidden.item_id])
+            self.assertLess(ranks[hidden.item_id], ranks[alpha])
+            active_z = controller.active_painter_z_indices
+            self.assertLess(active_z[beta], active_z[hidden.item_id])
+            self.assertLess(active_z[hidden.item_id], active_z[alpha])
         finally:
             controller.restore()
 
@@ -705,6 +750,92 @@ class QuadricManimBindingTests(unittest.TestCase):
 
 
 class QuadricManimCairoRenderTests(unittest.TestCase):
+    def test_depth_aware_hidden_curve_is_attenuated_only_by_nearer_surface(
+        self,
+    ) -> None:
+        with tempconfig(
+            {
+                "renderer": "cairo",
+                "pixel_width": 640,
+                "pixel_height": 360,
+                "frame_rate": 5,
+                "disable_caching": True,
+                "write_to_movie": False,
+                "save_last_frame": False,
+            }
+        ):
+            scene = Scene()
+            scene.camera.background_color = "#FFFFFF"
+            controller = QuadricOcclusion3D(
+                scene,
+                surfaces=(
+                    SphereSpec("alpha", (0.0, 0.0, 2.0), 0.8),
+                    SphereSpec("beta", (0.0, 0.0, -2.0), 0.8),
+                ),
+                curves=(
+                    SegmentCurve(
+                        "between",
+                        (-0.6, 0.0, 0.0),
+                        (0.6, 0.0, 0.0),
+                    ),
+                ),
+                projection=IDENTITY_VIEW,
+                paint_policy="depth_aware_diagrammatic",
+                style=QuadricManimStyle(
+                    surface_fill_color="#2050A0",
+                    surface_fill_opacity=0.5,
+                    surface_stroke_opacity=0.0,
+                    hidden_curve_color="#F00000",
+                    hidden_curve_opacity=1.0,
+                    hidden_curve_width=8.0,
+                    dash_length=0.3,
+                    dash_gap=0.15,
+                ),
+                limits=_limits(),
+                max_chord_error=0.01,
+            ).attach()
+            try:
+                frame = controller.last_frame
+                assert frame is not None
+                hidden = next(
+                    item
+                    for item in frame.curve_fragments
+                    if item.kind is QuadricPaintKind.HIDDEN_CURVE
+                )
+                slot_index = controller._fragment_slot_maps["between"][hidden.item_id]
+                slot = controller._curve_slots["between"].fragments[slot_index]
+                dashes = tuple(dash for dash in slot.dashes if len(dash.points))
+                self.assertTrue(dashes)
+                dash = dashes[len(dashes) // 2]
+                point = 0.5 * (
+                    np.asarray(dash.get_start()) + np.asarray(dash.get_end())
+                )
+
+                scene.camera.reset()
+                scene.camera.capture_mobjects(scene.mobjects)
+                pixels = scene.camera.pixel_array[:, :, :3]
+                column = int(
+                    round(
+                        (point[0] / float(config.frame_width) + 0.5)
+                        * (int(config.pixel_width) - 1)
+                    )
+                )
+                row = int(
+                    round(
+                        (0.5 - point[1] / float(config.frame_height))
+                        * (int(config.pixel_height) - 1)
+                    )
+                )
+                # beta is painted first, the opaque red dash second, and the
+                # 50%-opaque alpha fill last: 0.5 * #2050A0 + 0.5 * #F00000.
+                np.testing.assert_allclose(
+                    pixels[row, column].astype(float),
+                    np.asarray((136.0, 40.0, 80.0)),
+                    atol=2.0,
+                )
+            finally:
+                controller.restore()
+
     def test_real_cairo_recomputes_automatic_global_surface_order(self) -> None:
         class AutomaticGlobalScene(Scene):
             def construct(inner_self) -> None:

@@ -31,9 +31,10 @@ All notable changes to this project will be documented in this file.
   near tangent events, certify each piece independently, and require exact
   combined-area recovery before publishing the frame;
 - add an opt-in `depth_aware_diagrammatic` policy which keeps
-  hidden curves dashed but places them below their occluding surface, including
-  between the section compositor's back/front alpha sheets, while preserving
-  the existing `physical` and `diagrammatic` outputs;
+  hidden curves dashed but brackets them after every certified farther surface
+  and before their occluding surfaces, including between the section
+  compositor's back/front alpha sheets, while preserving the existing
+  `physical` and `diagrammatic` outputs;
 - add a source-authoritative project format and the
   `tikz-native-project build/status/rebuild/clean` CLI: authored TikZ, optional
   motion/Bridge inputs, and render intent now deterministically regenerate
