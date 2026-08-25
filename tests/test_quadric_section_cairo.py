@@ -8,6 +8,7 @@ boundaries, patch outline, and image border without hiding an interior crack.
 from __future__ import annotations
 
 from dataclasses import replace
+from itertools import combinations
 from math import pi, sqrt
 from time import perf_counter
 from typing import Sequence
@@ -57,7 +58,10 @@ STATIC_PIXEL_WIDTH = 480
 STATIC_PIXEL_HEIGHT = 270
 DYNAMIC_PIXEL_WIDTH = 320
 DYNAMIC_PIXEL_HEIGHT = 180
+BOUNDARY_PIXEL_WIDTH = 960
+BOUNDARY_PIXEL_HEIGHT = 540
 RGB_ERROR_THRESHOLD = 8.0
+BOUNDARY_RGB_ERROR_THRESHOLD = 18.0
 BOUNDARY_EROSION_PIXELS = 3
 
 ROLE_ORDER = (
@@ -141,6 +145,21 @@ def _erode(mask: np.ndarray, radius: int) -> np.ndarray:
     return result
 
 
+def _dilate(mask: np.ndarray, radius: int) -> np.ndarray:
+    if radius <= 0:
+        return mask.copy()
+    height, width = mask.shape
+    padded = np.pad(mask, radius, mode="constant", constant_values=False)
+    result = np.zeros_like(mask, dtype=bool)
+    for row_offset in range(2 * radius + 1):
+        for column_offset in range(2 * radius + 1):
+            result |= padded[
+                row_offset : row_offset + height,
+                column_offset : column_offset + width,
+            ]
+    return result
+
+
 def _polygon_mask(
     polygons: Sequence[Sequence[Sequence[float]]],
     *,
@@ -177,6 +196,7 @@ def _role_mask(
     height: int,
     frame_width: float,
     frame_height: float,
+    erosion_pixels: int = BOUNDARY_EROSION_PIXELS,
 ) -> np.ndarray:
     return _polygon_mask(
         tuple(
@@ -187,7 +207,161 @@ def _role_mask(
         height=height,
         frame_width=frame_width,
         frame_height=frame_height,
+        erosion_pixels=erosion_pixels,
     )
+
+
+def _rgb_segment_distance(
+    pixels: np.ndarray,
+    first: np.ndarray,
+    second: np.ndarray,
+) -> np.ndarray:
+    delta = second - first
+    length_squared = float(np.dot(delta, delta))
+    if length_squared <= 0.0:
+        return np.linalg.norm(pixels - first, axis=2)
+    ratio = np.clip(
+        np.sum((pixels - first) * delta, axis=2) / length_squared,
+        0.0,
+        1.0,
+    )
+    expected = first + ratio[:, :, np.newaxis] * delta
+    return np.linalg.norm(pixels - expected, axis=2)
+
+
+def _rgb_triangle_distance(
+    pixels: np.ndarray,
+    first: np.ndarray,
+    second: np.ndarray,
+    third: np.ndarray,
+) -> np.ndarray:
+    """Distance to the legal Cairo AA hull of two fills and the background."""
+
+    first_axis = second - first
+    second_axis = third - first
+    gram = np.asarray(
+        (
+            (np.dot(first_axis, first_axis), np.dot(first_axis, second_axis)),
+            (np.dot(first_axis, second_axis), np.dot(second_axis, second_axis)),
+        ),
+        dtype=float,
+    )
+    determinant = float(np.linalg.det(gram))
+    edge_error = np.minimum.reduce(
+        (
+            _rgb_segment_distance(pixels, first, second),
+            _rgb_segment_distance(pixels, first, third),
+            _rgb_segment_distance(pixels, second, third),
+        )
+    )
+    if abs(determinant) <= 1.0e-12:
+        return edge_error
+    inverse = np.linalg.inv(gram)
+    relative = pixels - first
+    right_hand_side = np.stack(
+        (
+            np.sum(relative * first_axis, axis=2),
+            np.sum(relative * second_axis, axis=2),
+        ),
+        axis=2,
+    )
+    coordinates = right_hand_side @ inverse.T
+    first_weight = coordinates[:, :, 0]
+    second_weight = coordinates[:, :, 1]
+    inside = (
+        (first_weight >= 0.0)
+        & (second_weight >= 0.0)
+        & (first_weight + second_weight <= 1.0)
+    )
+    projection = (
+        first
+        + first_weight[:, :, np.newaxis] * first_axis
+        + second_weight[:, :, np.newaxis] * second_axis
+    )
+    plane_error = np.linalg.norm(pixels - projection, axis=2)
+    return np.where(inside, plane_error, edge_error)
+
+
+def _role_boundary_pixel_issues(
+    frame: QuadricSectionCompositingFrame,
+    pixels: np.ndarray,
+    mode: str,
+    *,
+    width: int,
+    height: int,
+    frame_width: float,
+    frame_height: float,
+) -> tuple[int, int, int, float]:
+    """Inspect internal role boundaries without eroding either neighboring role."""
+
+    raw_masks = {
+        role: _role_mask(
+            frame,
+            role,
+            width=width,
+            height=height,
+            frame_width=frame_width,
+            frame_height=frame_height,
+            erosion_pixels=0,
+        )
+        for role in ROLE_ORDER
+    }
+    patch_mask = np.logical_or.reduce(tuple(raw_masks.values()))
+    # Remove only the outer display-patch edge.  The surface silhouette and
+    # every behind/between/front transition remain inside this mask.
+    patch_interior = _erode(patch_mask, 2)
+    neighborhoods = {
+        role: _dilate(mask, 1) for role, mask in raw_masks.items()
+    }
+    neighborhood_count = sum(
+        mask.astype(np.uint8) for mask in neighborhoods.values()
+    )
+    pair_masks: list[tuple[PlaneDepthRole, PlaneDepthRole, np.ndarray]] = []
+    for first_role, second_role in combinations(ROLE_ORDER, 2):
+        pair_mask = (
+            neighborhoods[first_role]
+            & neighborhoods[second_role]
+            & patch_interior
+            & (neighborhood_count == 2)
+        )
+        if np.any(pair_mask):
+            pair_masks.append((first_role, second_role, pair_mask))
+
+    if not pair_masks:
+        return 0, 0, 0, 0.0
+    boundary_mask = np.logical_or.reduce(
+        tuple(item[2] for item in pair_masks)
+    )
+    background = _hex_rgb(BACKGROUND_COLOR)
+    # At a shared role boundary Cairo may partially cover the plane, the
+    # surface sheet, and the background in one pixel.  Those source colors form
+    # the complete legal antialias hull; a pure background pixel is rejected
+    # separately below as an actual gap.
+    legal_error = _rgb_triangle_distance(
+        pixels,
+        background,
+        _hex_rgb(PLANE_COLOR),
+        _hex_rgb(SURFACE_COLOR),
+    )
+
+    background_error = np.linalg.norm(
+        pixels - background,
+        axis=2,
+    )
+    boundary_count = int(np.count_nonzero(boundary_mask))
+    background_gaps = int(
+        np.count_nonzero(
+            boundary_mask & (background_error <= RGB_ERROR_THRESHOLD)
+        )
+    )
+    illegal_colors = int(
+        np.count_nonzero(
+            boundary_mask
+            & (legal_error > BOUNDARY_RGB_ERROR_THRESHOLD)
+        )
+    )
+    maximum_error = float(np.max(legal_error[boundary_mask]))
+    return boundary_count, background_gaps, illegal_colors, maximum_error
 
 
 def _capture_pixels(scene: Scene) -> np.ndarray:
@@ -331,6 +505,77 @@ class QuadricSectionCairoRegressionTests(unittest.TestCase):
                         }
                 finally:
                     controller.restore()
+
+    def test_high_resolution_role_boundaries_have_no_cairo_gaps(self) -> None:
+        boundary_pixels_by_mode = {
+            "opaque_fill": 0,
+            "translucent_fill": 0,
+        }
+        with tempconfig(
+            {
+                "renderer": "cairo",
+                "pixel_width": BOUNDARY_PIXEL_WIDTH,
+                "pixel_height": BOUNDARY_PIXEL_HEIGHT,
+                "frame_rate": 12,
+                "write_to_movie": False,
+                "save_last_frame": False,
+                "disable_caching": True,
+            }
+        ):
+            for mode in ("opaque_fill", "translucent_fill"):
+                state = {"name": STATES[0].name}
+                scene = Scene()
+                scene.camera.background_color = BACKGROUND_COLOR
+                controller = build_controller(
+                    scene,
+                    lambda: state["name"],
+                    mode,
+                ).attach()
+                try:
+                    for index, definition in enumerate(STATES):
+                        with self.subTest(mode=mode, state=definition.name):
+                            state["name"] = definition.name
+                            if index:
+                                controller.update()
+                            frame = controller.last_section_frame
+                            self.assertIsNotNone(frame)
+                            assert frame is not None
+                            pixels = _capture_pixels(scene).astype(float)
+                            (
+                                boundary_count,
+                                background_gaps,
+                                illegal_colors,
+                                maximum_error,
+                            ) = _role_boundary_pixel_issues(
+                                frame,
+                                pixels,
+                                mode,
+                                width=BOUNDARY_PIXEL_WIDTH,
+                                height=BOUNDARY_PIXEL_HEIGHT,
+                                frame_width=float(config.frame_width),
+                                frame_height=float(config.frame_height),
+                            )
+                            boundary_pixels_by_mode[mode] += boundary_count
+                            self.assertGreater(boundary_count, 20)
+                            self.assertEqual(
+                                background_gaps,
+                                0,
+                                "an internal role boundary contains a "
+                                "background-colored Cairo gap",
+                            )
+                            self.assertEqual(
+                                illegal_colors,
+                                0,
+                                "an internal role boundary contains a color "
+                                "outside the adjacent-role antialias range "
+                                f"(maximum RGB distance {maximum_error:.6g})",
+                            )
+                finally:
+                    controller.restore()
+
+        for mode, boundary_count in boundary_pixels_by_mode.items():
+            with self.subTest(mode=mode):
+                self.assertGreater(boundary_count, 500)
 
     def test_five_state_role_interiors_have_no_cairo_seam_pixels(self) -> None:
         safe_pixels_by_role = {role: 0 for role in ROLE_ORDER}
@@ -781,6 +1026,29 @@ class QuadricSectionCairoRegressionTests(unittest.TestCase):
                             abs(value - item) <= 1.0e-12
                             for item in near_progress
                         ):
+                            (
+                                boundary_count,
+                                background_gaps,
+                                illegal_colors,
+                                maximum_error,
+                            ) = _role_boundary_pixel_issues(
+                                frame,
+                                pixels,
+                                "translucent_fill",
+                                width=DYNAMIC_PIXEL_WIDTH,
+                                height=DYNAMIC_PIXEL_HEIGHT,
+                                frame_width=float(config.frame_width),
+                                frame_height=float(config.frame_height),
+                            )
+                            self.assertGreater(boundary_count, 4)
+                            self.assertEqual(background_gaps, 0)
+                            self.assertEqual(
+                                illegal_colors,
+                                0,
+                                "near-tangent role boundary contains an "
+                                "illegal Cairo color "
+                                f"(maximum RGB distance {maximum_error:.6g})",
+                            )
                             near_labels.append(labels)
                             near_areas.append(_role_areas(frame))
             finally:
