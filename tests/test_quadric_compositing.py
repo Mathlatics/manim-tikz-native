@@ -171,6 +171,49 @@ class QuadricCompositingPolicyTests(unittest.TestCase):
                 if fragment.painted:
                     self.assertLess(ranks[surface.item_id], ranks[fragment.item_id])
 
+    def test_depth_aware_diagrammatic_places_hidden_behind_its_occluder(self) -> None:
+        frame = compute_quadric_compositing(
+            _visibility(("alpha",)),
+            (_proxy("alpha"),),
+            paint_policy="depth_aware_diagrammatic",
+            curve_styles=self.style,
+        )
+        self.assertIs(
+            frame.paint_policy,
+            QuadricPaintPolicy.DEPTH_AWARE_DIAGRAMMATIC,
+        )
+        hidden = next(
+            item
+            for item in frame.curve_fragments
+            if item.kind is QuadricPaintKind.HIDDEN_CURVE
+        )
+        visible = tuple(
+            item
+            for item in frame.curve_fragments
+            if item.kind is QuadricPaintKind.VISIBLE_CURVE
+        )
+        surface = frame.surface_items[0]
+
+        self.assertTrue(hidden.painted)
+        self.assertEqual(hidden.render_intent, "dashed")
+        self.assertEqual(hidden.occluder_surface_ids, ("alpha",))
+        ranks = _rank(frame)
+        self.assertLess(ranks[hidden.item_id], ranks[surface.item_id])
+        self.assertTrue(
+            all(ranks[surface.item_id] < ranks[item.item_id] for item in visible)
+        )
+        self.assertIn(
+            (
+                hidden.item_id,
+                surface.item_id,
+                "depth_aware_hidden_occlusion",
+            ),
+            {
+                (item.far_item_id, item.near_item_id, item.reason)
+                for item in frame.order_relations
+            },
+        )
+
     def test_visible_curve_is_above_every_surface_not_only_its_occluder(self) -> None:
         frame = compute_quadric_compositing(
             self.visibility,

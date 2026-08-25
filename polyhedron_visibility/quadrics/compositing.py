@@ -5,7 +5,7 @@ visible or hidden.  Projection proxies provide display-only opaque fills.  This
 module combines those two results into one deterministic far-to-near painter
 graph without importing Manim or using the proxy as geometric evidence.
 
-Two policies are explicit:
+Three policies are explicit:
 
 ``physical``
     Hidden curve spans remain in the trace but are not paint items.
@@ -13,6 +13,11 @@ Two policies are explicit:
 ``diagrammatic``
     Hidden curve spans are dashed teaching overlays painted above every
     surface, just like visible curve spans.
+
+``depth_aware_diagrammatic``
+    Hidden curve spans remain dashed, but are painted behind the surfaces that
+    mathematically occlude them.  A section compositor can refine that depth
+    relation by placing the dash between its coincident back/front sheets.
 
 Surface-to-surface order is accepted only as explicit caller evidence.  The
 first version deliberately does not split intersecting surface proxies; any
@@ -52,6 +57,7 @@ class QuadricPaintPolicy(str, Enum):
 
     PHYSICAL = "physical"
     DIAGRAMMATIC = "diagrammatic"
+    DEPTH_AWARE_DIAGRAMMATIC = "depth_aware_diagrammatic"
 
 
 class QuadricPaintKind(str, Enum):
@@ -516,7 +522,8 @@ def _coerce_policy(value: QuadricPaintPolicy | str) -> QuadricPaintPolicy:
         return QuadricPaintPolicy(value)
     except (TypeError, ValueError) as exc:
         raise QuadricCompositingError(
-            "paint_policy must be 'physical' or 'diagrammatic'"
+            "paint_policy must be 'physical', 'diagrammatic', or "
+            "'depth_aware_diagrammatic'"
         ) from exc
 
 
@@ -737,7 +744,7 @@ def compute_quadric_compositing(
                 intent = "solid"
             else:
                 kind = QuadricPaintKind.HIDDEN_CURVE
-                painted = policy is QuadricPaintPolicy.DIAGRAMMATIC
+                painted = policy is not QuadricPaintPolicy.PHYSICAL
                 intent = "dashed" if painted else "omit"
             fragments.append(
                 QuadricCurvePaintFragment(
@@ -768,15 +775,35 @@ def compute_quadric_compositing(
     for fragment in fragments:
         if not fragment.painted:
             continue
-        reason = (
-            "visible_curve_overlay"
-            if fragment.kind is QuadricPaintKind.VISIBLE_CURVE
-            else "diagrammatic_hidden_overlay"
-        )
-        relations.extend(
-            QuadricPaintRelation(surface.item_id, fragment.item_id, reason)
-            for surface in surface_items
-        )
+        if fragment.kind is QuadricPaintKind.VISIBLE_CURVE:
+            relations.extend(
+                QuadricPaintRelation(
+                    surface.item_id,
+                    fragment.item_id,
+                    "visible_curve_overlay",
+                )
+                for surface in surface_items
+            )
+        elif policy is QuadricPaintPolicy.DIAGRAMMATIC:
+            relations.extend(
+                QuadricPaintRelation(
+                    surface.item_id,
+                    fragment.item_id,
+                    "diagrammatic_hidden_overlay",
+                )
+                for surface in surface_items
+            )
+        else:
+            occluders = set(fragment.occluder_surface_ids)
+            relations.extend(
+                QuadricPaintRelation(
+                    fragment.item_id,
+                    surface.item_id,
+                    "depth_aware_hidden_occlusion",
+                )
+                for surface in surface_items
+                if surface.surface_id in occluders
+            )
     relations.extend(_crossing_relations(crossings, visibility.records, fragments))
     normalized_relations = _dedupe_relations(relations)
     active_ids = tuple(

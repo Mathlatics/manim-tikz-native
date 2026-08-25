@@ -840,6 +840,153 @@ class QuadricSectionCairoRegressionTests(unittest.TestCase):
         )
         self.assertGreater(int(np.count_nonzero(changed)), 20)
 
+    def test_depth_aware_hidden_dashes_are_attenuated_by_front_sheet(
+        self,
+    ) -> None:
+        hidden_color = "#E50046"
+        style = replace(
+            style_for_mode("translucent_fill"),
+            visible_curve_color="#00A96B",
+            visible_curve_width=3.2,
+            visible_curve_opacity=1.0,
+            hidden_curve_color=hidden_color,
+            hidden_curve_width=3.2,
+            hidden_curve_opacity=1.0,
+        )
+        rendered: dict[str, np.ndarray] = {}
+
+        with tempconfig(
+            {
+                "renderer": "cairo",
+                "pixel_width": STATIC_PIXEL_WIDTH,
+                "pixel_height": STATIC_PIXEL_HEIGHT,
+                "write_to_movie": False,
+                "save_last_frame": False,
+                "disable_caching": True,
+            }
+        ):
+            for policy in (
+                "diagrammatic",
+                "depth_aware_diagrammatic",
+                "physical",
+            ):
+                scene = Scene()
+                scene.camera.background_color = BACKGROUND_COLOR
+                controller = build_controller(
+                    scene,
+                    lambda: "exact_parabola",
+                    "translucent_fill",
+                    paint_policy=policy,
+                    style=style,
+                ).attach()
+                try:
+                    frame = controller.last_section_frame
+                    self.assertIsNotNone(frame)
+                    assert frame is not None
+                    hidden = tuple(
+                        item
+                        for item in frame.base_frame.curve_fragments
+                        if item.kind is QuadricPaintKind.HIDDEN_CURVE
+                    )
+                    visible = tuple(
+                        item
+                        for item in frame.base_frame.curve_fragments
+                        if item.kind is QuadricPaintKind.VISIBLE_CURVE
+                    )
+                    self.assertTrue(hidden)
+                    self.assertTrue(visible)
+
+                    if policy == "depth_aware_diagrammatic":
+                        self.assertIs(
+                            frame.base_frame.paint_policy,
+                            QuadricPaintPolicy.DEPTH_AWARE_DIAGRAMMATIC,
+                        )
+                        self.assertTrue(all(item.painted for item in hidden))
+                        self.assertTrue(
+                            all(item.render_intent == "dashed" for item in hidden)
+                        )
+                        ranks = {
+                            item_id: index
+                            for index, item_id in enumerate(frame.draw_order)
+                        }
+                        self.assertLess(
+                            ranks[frame.paint_items.plane_outline_between],
+                            min(ranks[item.item_id] for item in hidden),
+                        )
+                        self.assertLess(
+                            max(ranks[item.item_id] for item in hidden),
+                            ranks[frame.paint_items.surface_front],
+                        )
+                        self.assertLess(
+                            ranks[frame.paint_items.plane_outline],
+                            min(ranks[item.item_id] for item in visible),
+                        )
+                    rendered[policy] = _capture_pixels(scene).astype(float)
+                finally:
+                    controller.restore()
+
+        hidden_rgb = _hex_rgb(hidden_color)
+        diagrammatic_hidden_pixels = (
+            np.linalg.norm(rendered["diagrammatic"] - hidden_rgb, axis=2)
+            <= RGB_ERROR_THRESHOLD
+        )
+        hidden_pixel_count = int(np.count_nonzero(diagrammatic_hidden_pixels))
+        self.assertGreater(hidden_pixel_count, 8)
+
+        sheet_alpha = 1.0 - sqrt(1.0 - style.surface_fill_opacity)
+        expected_attenuated = _source_over(
+            hidden_rgb,
+            _hex_rgb(SURFACE_COLOR),
+            sheet_alpha,
+        )
+        depth_errors = np.linalg.norm(
+            rendered["depth_aware_diagrammatic"] - expected_attenuated,
+            axis=2,
+        )
+        self.assertEqual(
+            int(
+                np.count_nonzero(
+                    diagrammatic_hidden_pixels
+                    & (depth_errors <= RGB_ERROR_THRESHOLD)
+                )
+            ),
+            hidden_pixel_count,
+        )
+        depth_pixels = rendered["depth_aware_diagrammatic"][
+            diagrammatic_hidden_pixels
+        ]
+        self.assertLess(
+            float(
+                np.median(
+                    np.linalg.norm(depth_pixels - expected_attenuated, axis=1)
+                )
+            ),
+            4.0,
+        )
+        self.assertGreater(
+            float(np.median(np.linalg.norm(depth_pixels - hidden_rgb, axis=1))),
+            40.0,
+        )
+
+        diagrammatic_changed = np.any(
+            np.abs(
+                rendered["diagrammatic"]
+                - rendered["depth_aware_diagrammatic"]
+            )
+            > 4,
+            axis=2,
+        )
+        physical_changed = np.any(
+            np.abs(
+                rendered["depth_aware_diagrammatic"]
+                - rendered["physical"]
+            )
+            > 4,
+            axis=2,
+        )
+        self.assertGreater(int(np.count_nonzero(diagrammatic_changed)), 50)
+        self.assertGreater(int(np.count_nonzero(physical_changed)), 50)
+
     def test_outline_roles_keep_distinct_depth_owned_cairo_slots(self) -> None:
         observed_roles: set[PlaneDepthRole] = set()
         for definition in STATES:

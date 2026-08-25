@@ -265,6 +265,57 @@ class QuadricManimBindingTests(unittest.TestCase):
                     self.assertNotIn(hidden.item_id, frame.draw_order)
                 controller.restore()
 
+    def test_depth_aware_diagrammatic_binding_uses_compositor_depth(self) -> None:
+        controller = _QuadricFixture(
+            Scene(),
+            paint_policy="depth_aware_diagrammatic",
+        ).controller.attach()
+        try:
+            frame = controller.last_frame
+            self.assertIsNotNone(frame)
+            assert frame is not None
+            self.assertIs(
+                frame.paint_policy,
+                QuadricPaintPolicy.DEPTH_AWARE_DIAGRAMMATIC,
+            )
+            hidden = tuple(
+                item
+                for item in frame.curve_fragments
+                if item.kind is QuadricPaintKind.HIDDEN_CURVE
+            )
+            visible = tuple(
+                item
+                for item in frame.curve_fragments
+                if item.kind is QuadricPaintKind.VISIBLE_CURVE
+            )
+            self.assertTrue(hidden)
+            self.assertTrue(visible)
+            surface_id = frame.surface_items[0].item_id
+            ranks = {
+                item_id: index for index, item_id in enumerate(frame.draw_order)
+            }
+            self.assertTrue(
+                all(ranks[item.item_id] < ranks[surface_id] for item in hidden)
+            )
+            self.assertTrue(
+                all(ranks[surface_id] < ranks[item.item_id] for item in visible)
+            )
+            active_z = controller.active_painter_z_indices
+            self.assertTrue(
+                all(
+                    active_z[item.item_id] < active_z[surface_id]
+                    for item in hidden
+                )
+            )
+            self.assertTrue(
+                all(
+                    active_z[surface_id] < active_z[item.item_id]
+                    for item in visible
+                )
+            )
+        finally:
+            controller.restore()
+
     def test_automatic_surface_order_uses_depth_instead_of_identity_order(
         self,
     ) -> None:
