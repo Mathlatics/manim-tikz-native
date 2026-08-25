@@ -14,12 +14,22 @@ import json
 from math import isfinite
 from typing import Mapping, Sequence
 
-from ..compositor import CompositorCycleError, PainterConstraint, stable_topological_sort
+from ..compositor import (
+    CompositorCycleError,
+    PainterConstraint,
+    stable_topological_sort,
+)
 from ..geometry import GeometryContext, ResolvedGeometryContext
 from ..parallel_solver import ParallelView
 from ..topology import ParameterInterval
 from ..visibility import VisibilityKind
-from .compositing import QuadricPaintPolicy, QuadricPaintRelation
+from .compositing import (
+    QuadricCompositingError,
+    QuadricPaintPolicy,
+    QuadricPaintRelation,
+    _depth_aware_farther_items,
+    _paint_predecessors,
+)
 from .contract import ConeSpec, CylinderSpec, SphereSpec
 from .critical import AnalyticCurve3D
 from .curve_intersections import ProjectedCurveCrossing
@@ -119,8 +129,15 @@ class QuadricBoundarySource:
             raise QuadricBoundaryCompositingError(
                 "owner-aware boundary scopes require owner_surface_id"
             )
-        style_id = None if self.style_id is None else _identity(self.style_id, "style_id")
-        sort_key = tuple(_identity(item, "stable_sort_key item") for item in self.stable_sort_key)
+        style_id = (
+            None
+            if self.style_id is None
+            else _identity(self.style_id, "style_id")
+        )
+        sort_key = tuple(
+            _identity(item, "stable_sort_key item")
+            for item in self.stable_sort_key
+        )
         object.__setattr__(self, "source_id", source_id)
         object.__setattr__(self, "owner_id", owner)
         object.__setattr__(self, "owner_surface_id", owner_surface)
@@ -151,13 +168,19 @@ class QuadricBoundaryVisibilitySpan:
     depth_role: str | None = None
 
     def __post_init__(self) -> None:
-        if not isinstance(self.interval, ParameterInterval) or self.interval.length <= 0.0:
+        if (
+            not isinstance(self.interval, ParameterInterval)
+            or self.interval.length <= 0.0
+        ):
             raise QuadricBoundaryCompositingError(
                 "boundary visibility interval must have positive length"
             )
         if not isinstance(self.kind, VisibilityKind):
             raise TypeError("kind must be a VisibilityKind")
-        occluders = tuple(_identity(item, "occluder surface identity") for item in self.occluder_surface_ids)
+        occluders = tuple(
+            _identity(item, "occluder surface identity")
+            for item in self.occluder_surface_ids
+        )
         if occluders != tuple(sorted(set(occluders))):
             raise QuadricBoundaryCompositingError(
                 "boundary occluder identities must be unique and sorted"
@@ -207,7 +230,10 @@ class QuadricBoundaryPaintFragment:
     def __post_init__(self) -> None:
         item_id = _identity(self.item_id, "boundary fragment item_id")
         source_id = _identity(self.source_id, "boundary fragment source_id")
-        if not isinstance(self.interval, ParameterInterval) or self.interval.length <= 0.0:
+        if (
+            not isinstance(self.interval, ParameterInterval)
+            or self.interval.length <= 0.0
+        ):
             raise QuadricBoundaryCompositingError(
                 "boundary fragment interval must have positive length"
             )
@@ -223,11 +249,17 @@ class QuadricBoundaryPaintFragment:
             raise QuadricBoundaryCompositingError(
                 "painted flag must agree with boundary render_intent"
             )
-        if self.visibility_kind is VisibilityKind.VISIBLE and self.render_intent is not BoundaryRenderIntent.SOLID:
+        if (
+            self.visibility_kind is VisibilityKind.VISIBLE
+            and self.render_intent is not BoundaryRenderIntent.SOLID
+        ):
             raise QuadricBoundaryCompositingError(
                 "visible boundary fragments must render solid"
             )
-        if self.visibility_kind is VisibilityKind.HIDDEN and self.render_intent is BoundaryRenderIntent.SOLID:
+        if (
+            self.visibility_kind is VisibilityKind.HIDDEN
+            and self.render_intent is BoundaryRenderIntent.SOLID
+        ):
             raise QuadricBoundaryCompositingError(
                 "hidden boundary fragments cannot render solid"
             )
@@ -274,7 +306,10 @@ class BoundarySectionAnchors:
     outline_front: str
 
     def __post_init__(self) -> None:
-        values = tuple(_identity(getattr(self, name), name) for name in self.__dataclass_fields__)
+        values = tuple(
+            _identity(getattr(self, name), name)
+            for name in self.__dataclass_fields__
+        )
         if len(set(values)) != len(values):
             raise QuadricBoundaryCompositingError(
                 "section boundary anchors must have unique identities"
@@ -297,12 +332,18 @@ class QuadricBoundaryCompositingFrame:
                 "invalid quadric boundary compositing schema"
             )
         source_ids = tuple(item.source_id for item in self.sources)
-        if source_ids != tuple(sorted(source_ids)) or len(set(source_ids)) != len(source_ids):
+        if (
+            source_ids != tuple(sorted(source_ids))
+            or len(set(source_ids)) != len(source_ids)
+        ):
             raise QuadricBoundaryCompositingError(
                 "boundary sources must have unique sorted identities"
             )
         fragment_ids = tuple(item.item_id for item in self.fragments)
-        if fragment_ids != tuple(sorted(fragment_ids)) or len(set(fragment_ids)) != len(fragment_ids):
+        if (
+            fragment_ids != tuple(sorted(fragment_ids))
+            or len(set(fragment_ids)) != len(fragment_ids)
+        ):
             raise QuadricBoundaryCompositingError(
                 "boundary fragments must have unique sorted identities"
             )
@@ -445,7 +486,9 @@ def _crossing_parameters(
     result: dict[str, list[float]] = {}
     for crossing in crossings:
         result.setdefault(crossing.first_curve_id, []).append(crossing.first_parameter)
-        result.setdefault(crossing.second_curve_id, []).append(crossing.second_parameter)
+        result.setdefault(crossing.second_curve_id, []).append(
+            crossing.second_parameter
+        )
     return result
 
 
@@ -662,6 +705,28 @@ def compute_quadric_boundary_compositing(
 
     parent_ids = tuple(parent_item_ids)
     parent_set = set(parent_ids)
+    normalized_surface_items = {
+        _identity(surface_id, "surface_item_by_id key"): _identity(
+            item_id, "surface_item_by_id value"
+        )
+        for surface_id, item_id in surface_item_by_id.items()
+    }
+    if len(normalized_surface_items) != len(surface_item_by_id):
+        raise QuadricBoundaryCompositingError(
+            "surface_item_by_id keys must be unique after normalization"
+        )
+    surface_item_values = tuple(normalized_surface_items.values())
+    if len(set(surface_item_values)) != len(surface_item_values):
+        raise QuadricBoundaryCompositingError(
+            "surface_item_by_id values must be unique"
+        )
+    unknown_surface_items = sorted(set(surface_item_values) - parent_set)
+    if unknown_surface_items:
+        raise QuadricBoundaryCompositingError(
+            "surface_item_by_id references non-parent items: "
+            + ", ".join(unknown_surface_items)
+        )
+    surface_item_by_id = normalized_surface_items
     relaxed_parent_pairs: set[tuple[str, str]] = set()
     if section_anchors is not None:
         # The outside patch region is screen-disjoint from both projection
@@ -683,11 +748,33 @@ def compute_quadric_boundary_compositing(
         and item.near_item_id in parent_set
         and (item.far_item_id, item.near_item_id) not in relaxed_parent_pairs
     ]
+    surface_predecessors: dict[str, frozenset[str]] = {}
+    if section_anchors is None:
+        surface_item_ids = tuple(sorted(surface_item_by_id.values()))
+        surface_item_set = set(surface_item_ids)
+        try:
+            surface_predecessors = _paint_predecessors(
+                surface_item_ids,
+                tuple(
+                    item
+                    for item in relations
+                    if item.far_item_id in surface_item_set
+                    and item.near_item_id in surface_item_set
+                ),
+            )
+        except QuadricCompositingError as exc:
+            raise QuadricBoundaryCompositingError(
+                f"invalid parent surface ordering: {exc}"
+            ) from exc
 
     for fragment in fragments:
         if not fragment.painted:
             continue
-        source = next(item for item in source_items if item.source_id == fragment.source_id)
+        source = next(
+            item
+            for item in source_items
+            if item.source_id == fragment.source_id
+        )
         is_plane_edge = source.source_kind is BoundarySourceKind.PLANE_PATCH_EDGE
         if is_plane_edge and fragment.visibility_kind is VisibilityKind.VISIBLE:
             if section_anchors is None:
@@ -727,7 +814,12 @@ def compute_quadric_boundary_compositing(
                             "visible_owner_surface_boundary",
                         )
                     )
-                else:
+                elif fragment.plane_relation != "boundary_behind_plane":
+                    # A transition bank can carry a visible section curve
+                    # whose geometry lies behind the currently displayed
+                    # plane.  Its certified plane relation must then place it
+                    # before the front fill and outline; forcing the generic
+                    # visible overlay here would create the reverse path.
                     relations.append(
                         QuadricPaintRelation(
                             section_anchors.outline_front,
@@ -810,10 +902,15 @@ def compute_quadric_boundary_compositing(
                     "depth_aware_hidden_owner_boundary",
                 )
             else:
+                far_anchor = (
+                    section_anchors.surface_back
+                    if fragment.plane_relation == "boundary_behind_plane"
+                    else section_anchors.outline_between
+                )
                 _add_bracket(
                     relations,
                     fragment.item_id,
-                    section_anchors.outline_between,
+                    far_anchor,
                     section_anchors.surface_front,
                     "depth_aware_hidden_boundary",
                 )
@@ -821,19 +918,38 @@ def compute_quadric_boundary_compositing(
                 relations, fragment, section_anchors
             )
         else:
+            occluder_items: set[str] = set()
             for surface_id in fragment.occluder_surface_ids:
-                item_id = surface_item_by_id.get(surface_id)
-                if item_id is None:
+                occluder_item = surface_item_by_id.get(surface_id)
+                if occluder_item is None:
                     raise QuadricBoundaryCompositingError(
                         f"unknown boundary occluder surface {surface_id!r}"
                     )
-                relations.append(
-                    QuadricPaintRelation(
-                        fragment.item_id,
-                        item_id,
-                        "depth_aware_hidden_boundary_occlusion",
-                    )
+                occluder_items.add(occluder_item)
+            try:
+                farther_surface_items = _depth_aware_farther_items(
+                    occluder_items, surface_predecessors
                 )
+            except QuadricCompositingError as exc:
+                raise QuadricBoundaryCompositingError(
+                    f"cannot bracket hidden boundary {fragment.item_id!r}: {exc}"
+                ) from exc
+            relations.extend(
+                QuadricPaintRelation(
+                    item_id,
+                    fragment.item_id,
+                    "depth_aware_hidden_boundary_after_farther_surface",
+                )
+                for item_id in sorted(farther_surface_items)
+            )
+            relations.extend(
+                QuadricPaintRelation(
+                    fragment.item_id,
+                    item_id,
+                    "depth_aware_hidden_boundary_occlusion",
+                )
+                for item_id in sorted(occluder_items)
+            )
 
     source_map = {item.source_id: item for item in source_items}
     for crossing in crossings_tuple:

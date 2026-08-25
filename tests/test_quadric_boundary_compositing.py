@@ -12,10 +12,15 @@ from polyhedron_visibility.quadrics.boundary_compositing import (
     BoundarySectionAnchors,
     BoundarySemanticKind,
     BoundarySourceKind,
+    QuadricBoundaryCompositingError,
     QuadricBoundaryVisibilitySpan,
     canonical_quadric_boundary_compositing_json,
     compute_boundary_visibility,
     compute_quadric_boundary_compositing,
+)
+from polyhedron_visibility.quadrics.boundary_section import (
+    BoundaryPlaneRelation,
+    QuadricBoundarySectionSpan,
 )
 from polyhedron_visibility.quadrics.compositing import (
     QuadricPaintPolicy,
@@ -54,7 +59,216 @@ VIEW = ParallelView.from_matrix(
 
 IDENTITY_VIEW = ParallelView.from_matrix(np.eye(3))
 
+
 class QuadricBoundaryContractTests(unittest.TestCase):
+    def test_hidden_free_curve_behind_between_plane_uses_back_sheet_lower_bound(
+        self,
+    ) -> None:
+        curve = SegmentCurve(
+            "hidden-transition-curve",
+            (-0.5, 0.0, 0.0),
+            (0.5, 0.0, 0.0),
+        )
+        source = curve_boundary_source(curve)
+        anchors = BoundarySectionAnchors(
+            "plane-behind",
+            "outline-behind",
+            "surface-back",
+            "plane-outside",
+            "outline-outside",
+            "plane-between",
+            "outline-between",
+            "surface-front",
+            "plane-front",
+            "outline-front",
+        )
+        parent = (
+            "plane-behind",
+            "outline-behind",
+            "surface-back",
+            "plane-outside",
+            "outline-outside",
+            "plane-between",
+            "outline-between",
+            "surface-front",
+            "plane-front",
+            "outline-front",
+        )
+        frame = compute_quadric_boundary_compositing(
+            (source,),
+            {
+                source.source_id: (
+                    QuadricBoundaryVisibilitySpan(
+                        curve.domain,
+                        VisibilityKind.HIDDEN,
+                        ("solid",),
+                    ),
+                )
+            },
+            paint_policy=QuadricPaintPolicy.DEPTH_AWARE_DIAGRAMMATIC,
+            parent_item_ids=parent,
+            parent_relations=tuple(
+                QuadricPaintRelation(left, right, "parent")
+                for left, right in zip(parent, parent[1:])
+            ),
+            surface_item_by_id={"solid": "surface-front"},
+            section_anchors=anchors,
+            section_spans_by_source={
+                source.source_id: (
+                    QuadricBoundarySectionSpan(
+                        curve.domain,
+                        BoundaryPlaneRelation.BOUNDARY_BEHIND_PLANE,
+                        ("between_surface_sheets",),
+                    ),
+                )
+            },
+        )
+        fragment = frame.fragments[0]
+        ranks = {
+            item_id: index for index, item_id in enumerate(frame.draw_order)
+        }
+        self.assertLess(ranks["surface-back"], ranks[fragment.item_id])
+        self.assertLess(ranks[fragment.item_id], ranks["plane-between"])
+        self.assertLess(ranks[fragment.item_id], ranks["surface-front"])
+
+    def test_visible_free_curve_behind_section_plane_uses_certified_order(
+        self,
+    ) -> None:
+        curve = SegmentCurve(
+            "transition-curve", (-0.5, 0.0, 0.0), (0.5, 0.0, 0.0)
+        )
+        source = curve_boundary_source(curve)
+        anchors = BoundarySectionAnchors(
+            "plane-behind",
+            "outline-behind",
+            "surface-back",
+            "plane-outside",
+            "outline-outside",
+            "plane-between",
+            "outline-between",
+            "surface-front",
+            "plane-front",
+            "outline-front",
+        )
+        parent = (
+            "plane-behind",
+            "outline-behind",
+            "surface-back",
+            "plane-outside",
+            "outline-outside",
+            "plane-between",
+            "outline-between",
+            "surface-front",
+            "plane-front",
+            "outline-front",
+        )
+        frame = compute_quadric_boundary_compositing(
+            (source,),
+            {
+                source.source_id: (
+                    QuadricBoundaryVisibilitySpan(
+                        curve.domain, VisibilityKind.VISIBLE
+                    ),
+                )
+            },
+            paint_policy=QuadricPaintPolicy.DEPTH_AWARE_DIAGRAMMATIC,
+            parent_item_ids=parent,
+            parent_relations=tuple(
+                QuadricPaintRelation(left, right, "parent")
+                for left, right in zip(parent, parent[1:])
+            ),
+            surface_item_by_id={"solid": "surface-front"},
+            section_anchors=anchors,
+            section_spans_by_source={
+                source.source_id: (
+                    QuadricBoundarySectionSpan(
+                        curve.domain,
+                        BoundaryPlaneRelation.BOUNDARY_BEHIND_PLANE,
+                        ("in_front_of_surface",),
+                    ),
+                )
+            },
+        )
+        fragment = frame.fragments[0]
+        self.assertLess(
+            frame.draw_order.index(fragment.item_id),
+            frame.draw_order.index("plane-front"),
+        )
+        self.assertLess(
+            frame.draw_order.index(fragment.item_id),
+            frame.draw_order.index("outline-front"),
+        )
+
+    def test_surface_item_mapping_must_reference_parent_items(self) -> None:
+        curve = SegmentCurve(
+            "visible-boundary", (-0.5, 0.0, 0.0), (0.5, 0.0, 0.0)
+        )
+        source = curve_boundary_source(curve)
+        with self.assertRaisesRegex(
+            QuadricBoundaryCompositingError,
+            "references non-parent items",
+        ):
+            compute_quadric_boundary_compositing(
+                (source,),
+                {
+                    source.source_id: (
+                        QuadricBoundaryVisibilitySpan(
+                            curve.domain, VisibilityKind.VISIBLE
+                        ),
+                    )
+                },
+                paint_policy=QuadricPaintPolicy.PHYSICAL,
+                parent_item_ids=("surface:actual",),
+                parent_relations=(),
+                surface_item_by_id={"actual": "surface:missing"},
+            )
+
+    def test_depth_aware_hidden_boundary_is_globally_bracketed(self) -> None:
+        curve = SegmentCurve(
+            "hidden-boundary", (-0.5, 0.0, 0.0), (0.5, 0.0, 0.0)
+        )
+        source = curve_boundary_source(curve)
+        frame = compute_quadric_boundary_compositing(
+            (source,),
+            {
+                source.source_id: (
+                    QuadricBoundaryVisibilitySpan(
+                        curve.domain,
+                        VisibilityKind.HIDDEN,
+                        ("near",),
+                    ),
+                )
+            },
+            paint_policy=QuadricPaintPolicy.DEPTH_AWARE_DIAGRAMMATIC,
+            parent_item_ids=("surface:far", "surface:near"),
+            parent_relations=(
+                QuadricPaintRelation(
+                    "surface:far", "surface:near", "certified_surface_order"
+                ),
+            ),
+            surface_item_by_id={
+                "far": "surface:far",
+                "near": "surface:near",
+            },
+        )
+        fragment = frame.fragments[0]
+        ranks = {
+            item_id: index for index, item_id in enumerate(frame.draw_order)
+        }
+        self.assertLess(ranks["surface:far"], ranks[fragment.item_id])
+        self.assertLess(ranks[fragment.item_id], ranks["surface:near"])
+        self.assertIn(
+            (
+                "surface:far",
+                fragment.item_id,
+                "depth_aware_hidden_boundary_after_farther_surface",
+            ),
+            {
+                (item.far_item_id, item.near_item_id, item.reason)
+                for item in frame.order_relations
+            },
+        )
+
     def test_depth_aware_visibility_uses_source_scope(self) -> None:
         owner = SphereSpec("owner", (0.0, 0.0, 0.0), 1.0)
         other = SphereSpec("other", (0.0, 0.0, 3.0), 0.4)

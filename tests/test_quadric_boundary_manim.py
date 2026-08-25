@@ -109,6 +109,7 @@ class UnifiedBoundaryManimTests(unittest.TestCase):
             SphereSpec("far", (0.0, 0.0, 0.0), 1.0),
             SphereSpec("near", (0.0, 0.0, 3.0), 1.2),
         )
+        far_item = "surface:far:opaque-projection"
         near_item = "surface:near:opaque-projection"
         for policy in (
             QuadricPaintPolicy.PHYSICAL,
@@ -165,6 +166,13 @@ class UnifiedBoundaryManimTests(unittest.TestCase):
                     )
                 else:
                     self.assertTrue(all(item.painted for item in far))
+                    self.assertTrue(
+                        all(
+                            frame.draw_order.index(item.item_id)
+                            > frame.draw_order.index(far_item)
+                            for item in far
+                        )
+                    )
                     self.assertTrue(
                         all(
                             frame.draw_order.index(item.item_id)

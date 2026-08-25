@@ -186,7 +186,11 @@ def _axial_generator_source(
     )
 
     def point(axial: float) -> np.ndarray:
-        radius = surface.radius if isinstance(surface, CylinderSpec) else abs(axial) * surface.slope
+        radius = (
+            surface.radius
+            if isinstance(surface, CylinderSpec)
+            else abs(axial) * surface.slope
+        )
         return base + axial * axis + radius * radial
 
     return curve_boundary_source(

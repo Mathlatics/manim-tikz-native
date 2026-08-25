@@ -58,7 +58,10 @@ class QuadricBoundarySectionSpan:
     plane_depth_roles: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
-        if not isinstance(self.interval, ParameterInterval) or self.interval.length <= 0.0:
+        if (
+            not isinstance(self.interval, ParameterInterval)
+            or self.interval.length <= 0.0
+        ):
             raise QuadricBoundaryCompositingError(
                 "boundary section interval must have positive length"
             )
