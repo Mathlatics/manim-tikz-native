@@ -849,6 +849,10 @@ def compute_quadric_compositing(
                 for occluder_item in occluder_items
                 for farther_item in surface_predecessors[occluder_item]
                 if farther_item not in occluder_items
+                and not any(
+                    other_occluder_item in surface_predecessors[farther_item]
+                    for other_occluder_item in occluder_items
+                )
             }
             relations.extend(
                 QuadricPaintRelation(

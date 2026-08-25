@@ -292,6 +292,48 @@ class QuadricCompositingPolicyTests(unittest.TestCase):
         self.assertLess(ranks[hidden_fragment.item_id], surface_ranks["beta"])
         self.assertLess(surface_ranks["beta"], surface_ranks["alpha"])
 
+    def test_depth_aware_multi_occluder_chain_remains_acyclic(self) -> None:
+        record = _record("curve", "alpha")
+        hidden = record.spans[1]
+        visibility = _visibility(
+            records=(
+                CurveVisibilityRecord(
+                    record.curve_id,
+                    record.domain,
+                    record.critical_events,
+                    (
+                        record.spans[0],
+                        VisibilitySpan(
+                            hidden.interval,
+                            hidden.kind,
+                            ("alpha", "gamma"),
+                        ),
+                        record.spans[2],
+                    ),
+                    record.parameter_tolerance,
+                ),
+            ),
+            surface_ids=("alpha", "beta", "gamma"),
+        )
+        frame = compute_quadric_compositing(
+            visibility,
+            (_proxy("alpha"), _proxy("beta"), _proxy("gamma")),
+            paint_policy="depth_aware_diagrammatic",
+            surface_constraints=(("gamma", "beta"), ("beta", "alpha")),
+        )
+        hidden_fragment = next(
+            item
+            for item in frame.curve_fragments
+            if item.kind is QuadricPaintKind.HIDDEN_CURVE
+        )
+        ranks = _rank(frame)
+        surface_ranks = {
+            item.surface_id: ranks[item.item_id] for item in frame.surface_items
+        }
+        self.assertLess(ranks[hidden_fragment.item_id], surface_ranks["gamma"])
+        self.assertLess(surface_ranks["gamma"], surface_ranks["beta"])
+        self.assertLess(surface_ranks["beta"], surface_ranks["alpha"])
+
     def test_visible_curve_is_above_every_surface_not_only_its_occluder(self) -> None:
         frame = compute_quadric_compositing(
             self.visibility,
