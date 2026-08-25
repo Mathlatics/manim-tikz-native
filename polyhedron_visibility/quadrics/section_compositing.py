@@ -63,6 +63,8 @@ from ..topology import (
 )
 from .compositing import (
     QuadricCompositingFrame,
+    QuadricPaintKind,
+    QuadricPaintPolicy,
     QuadricPaintRelation,
 )
 from .contract import (
@@ -4115,14 +4117,59 @@ def compute_quadric_section_compositing(
         if relation.far_item_id in active_curve_ids
         and relation.near_item_id in active_curve_ids
     )
-    relations.extend(
-        QuadricPaintRelation(
-            items.plane_outline,
-            curve_id,
-            "section_curve_overlay",
+    if (
+        base_frame.paint_policy
+        is QuadricPaintPolicy.DEPTH_AWARE_DIAGRAMMATIC
+    ):
+        hidden_curve_ids = tuple(
+            sorted(
+                item.item_id
+                for item in base_frame.curve_fragments
+                if item.painted
+                and item.kind is QuadricPaintKind.HIDDEN_CURVE
+            )
         )
-        for curve_id in sorted(active_curve_ids)
-    )
+        visible_curve_ids = tuple(
+            sorted(
+                item.item_id
+                for item in base_frame.curve_fragments
+                if item.painted
+                and item.kind is QuadricPaintKind.VISIBLE_CURVE
+            )
+        )
+        relations.extend(
+            QuadricPaintRelation(
+                items.plane_outline_between,
+                curve_id,
+                "depth_aware_hidden_after_between",
+            )
+            for curve_id in hidden_curve_ids
+        )
+        relations.extend(
+            QuadricPaintRelation(
+                curve_id,
+                items.surface_front,
+                "depth_aware_hidden_before_front_sheet",
+            )
+            for curve_id in hidden_curve_ids
+        )
+        relations.extend(
+            QuadricPaintRelation(
+                items.plane_outline,
+                curve_id,
+                "section_visible_curve_overlay",
+            )
+            for curve_id in visible_curve_ids
+        )
+    else:
+        relations.extend(
+            QuadricPaintRelation(
+                items.plane_outline,
+                curve_id,
+                "section_curve_overlay",
+            )
+            for curve_id in sorted(active_curve_ids)
+        )
     normalized = _dedupe_relations(relations)
     active_ids = (*items.ordered, *sorted(active_curve_ids))
     try:

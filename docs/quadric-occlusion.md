@@ -145,6 +145,35 @@ always records visible and hidden spans.  In physical mode a hidden fragment
 is not painted.  In diagrammatic mode it is painted with the hidden dashed
 style above the opaque proxy that would physically hide it.
 
+`depth_aware_diagrammatic` is a third, opt-in policy.  The hidden fragment
+remains a dashed teaching aid.  Certified farther surfaces are painted first,
+then the dash, then every named occluding surface.  Disjoint surfaces receive
+no invented relation, and the deterministic identity tie break is never used
+as geometric depth evidence.  With section compositing, the hidden dash is
+placed after the between-role plane and outline and before the front projection
+sheet:
+
+```text
+plane-behind
+outline-behind
+surface-back
+plane-outside
+outline-outside
+plane-between
+outline-between
+hidden dashed
+surface-front
+plane-front
+outline-front
+visible solid curve
+```
+
+The front sheet therefore attenuates the hidden dash when the authored surface
+is translucent, so it reads as lying inside or behind the solid instead of
+being attached to the screen.  A fully opaque front sheet can cover it
+completely; use ordinary `diagrammatic` when the dash must remain equally
+strong regardless of surface opacity.
+
 That diagrammatic dashed stroke is a teaching overlay.  It deliberately sits
 above the surface and plane painter layers so the learner can see the hidden
 construction.  It is not a simulation of light passing through a transparent
@@ -280,6 +309,11 @@ controller = QuadricOcclusion3D(
     paint_policy="diagrammatic",
 ).attach()
 ```
+
+Change `paint_policy` to `"depth_aware_diagrammatic"` to use front-sheet
+attenuated hidden dashes.  This option changes painter order only; visibility
+intervals, dash geometry, dash pattern, fixed slot identities, and the two
+existing policies remain unchanged.
 
 The omitted projection is the true orthographic isometric preset.  It is the
 quadric/conic classroom default: equal projected axis scales, no screen shear,

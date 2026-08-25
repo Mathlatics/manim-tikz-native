@@ -13,6 +13,7 @@ from polyhedron_visibility.parallel_solver import ParallelView
 from polyhedron_visibility.geometry import GeometryContext, GeometryQuantity
 from polyhedron_visibility.topology import ParameterInterval
 from polyhedron_visibility.quadrics.compositing import (
+    QuadricPaintKind,
     QuadricPaintPolicy,
     compute_quadric_compositing,
 )
@@ -1629,6 +1630,83 @@ class QuadricSectionCompositingTests(unittest.TestCase):
         outline_rank = frame.draw_order.index(frame.paint_items.plane_outline)
         self.assertTrue(
             all(frame.draw_order.index(item_id) > outline_rank for item_id in active_curves)
+        )
+
+    def test_depth_aware_hidden_curve_sits_between_surface_sheets(self) -> None:
+        sphere = SphereSpec("sphere", (0.0, 0.0, 0.0), 1.0)
+        curve = CircleArcCurve(
+            "equator",
+            (0.0, 0.0, 0.0),
+            1.0,
+            (0.0, 1.0, 0.0),
+            radial_axis=(1.0, 0.0, 0.0),
+        )
+        plane = SectionPlane(
+            "cut",
+            (0.0, 0.0, 0.0),
+            (0.7, 0.0, 1.0),
+            u_axis=(0.0, 1.0, 0.0),
+        )
+        patch = fit_plane_display_patch("patch", plane, (sphere,)).patch
+        base = _base_frame(
+            sphere,
+            (curve,),
+            paint_policy="depth_aware_diagrammatic",
+        )
+        frame = compute_quadric_section_compositing(
+            base,
+            sphere,
+            plane,
+            patch,
+            IDENTITY_VIEW,
+        )
+        hidden = tuple(
+            item.item_id
+            for item in base.curve_fragments
+            if item.kind is QuadricPaintKind.HIDDEN_CURVE
+        )
+        visible = tuple(
+            item.item_id
+            for item in base.curve_fragments
+            if item.kind is QuadricPaintKind.VISIBLE_CURVE
+        )
+        self.assertTrue(hidden)
+        self.assertTrue(visible)
+
+        ranks = {item_id: index for index, item_id in enumerate(frame.draw_order)}
+        self.assertLess(
+            ranks[frame.paint_items.plane_outline_between],
+            min(ranks[item_id] for item_id in hidden),
+        )
+        self.assertLess(
+            max(ranks[item_id] for item_id in hidden),
+            ranks[frame.paint_items.surface_front],
+        )
+        self.assertLess(
+            ranks[frame.paint_items.plane_outline],
+            min(ranks[item_id] for item_id in visible),
+        )
+
+        expected_depth_chain = (
+            frame.paint_items.plane_behind,
+            frame.paint_items.plane_outline_behind,
+            frame.paint_items.surface_back,
+            frame.paint_items.plane_outside,
+            frame.paint_items.plane_outline_outside,
+            frame.paint_items.plane_between,
+            frame.paint_items.plane_outline_between,
+            *hidden,
+            frame.paint_items.surface_front,
+            frame.paint_items.plane_front,
+            frame.paint_items.plane_outline,
+        )
+        self.assertEqual(
+            tuple(
+                item_id
+                for item_id in frame.draw_order
+                if item_id in set(expected_depth_chain)
+            ),
+            expected_depth_chain,
         )
 
     def test_cone_transition_style_frame_is_deterministic(self) -> None:

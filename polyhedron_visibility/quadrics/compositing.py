@@ -5,7 +5,7 @@ visible or hidden.  Projection proxies provide display-only opaque fills.  This
 module combines those two results into one deterministic far-to-near painter
 graph without importing Manim or using the proxy as geometric evidence.
 
-Two policies are explicit:
+Three policies are explicit:
 
 ``physical``
     Hidden curve spans remain in the trace but are not paint items.
@@ -13,6 +13,11 @@ Two policies are explicit:
 ``diagrammatic``
     Hidden curve spans are dashed teaching overlays painted above every
     surface, just like visible curve spans.
+
+``depth_aware_diagrammatic``
+    Hidden curve spans remain dashed, but are painted behind the surfaces that
+    mathematically occlude them.  A section compositor can refine that depth
+    relation by placing the dash between its coincident back/front sheets.
 
 Surface-to-surface order is accepted only as explicit caller evidence.  The
 first version deliberately does not split intersecting surface proxies; any
@@ -52,6 +57,7 @@ class QuadricPaintPolicy(str, Enum):
 
     PHYSICAL = "physical"
     DIAGRAMMATIC = "diagrammatic"
+    DEPTH_AWARE_DIAGRAMMATIC = "depth_aware_diagrammatic"
 
 
 class QuadricPaintKind(str, Enum):
@@ -516,7 +522,8 @@ def _coerce_policy(value: QuadricPaintPolicy | str) -> QuadricPaintPolicy:
         return QuadricPaintPolicy(value)
     except (TypeError, ValueError) as exc:
         raise QuadricCompositingError(
-            "paint_policy must be 'physical' or 'diagrammatic'"
+            "paint_policy must be 'physical', 'diagrammatic', or "
+            "'depth_aware_diagrammatic'"
         ) from exc
 
 
@@ -608,6 +615,48 @@ def _surface_relations(
                 "explicit_surface_order",
             )
         )
+    return result
+
+
+def _surface_predecessors(
+    surface_items: tuple[QuadricSurfacePaintItem, ...],
+    relations: Sequence[QuadricPaintRelation],
+) -> dict[str, frozenset[str]]:
+    """Return every surface known to paint before each surface.
+
+    Only explicit surface-order evidence participates.  The lexicographic tie
+    break used by the final topological sort is deterministic, but it is not
+    geometric evidence and therefore must not decide which surface attenuates
+    a depth-aware hidden stroke.
+    """
+
+    item_ids = {item.item_id for item in surface_items}
+    direct: dict[str, set[str]] = {item_id: set() for item_id in item_ids}
+    for relation in relations:
+        if (
+            relation.far_item_id not in item_ids
+            or relation.near_item_id not in item_ids
+        ):
+            raise QuadricCompositingError(
+                "surface predecessor evidence references a non-surface item"
+            )
+        direct[relation.near_item_id].add(relation.far_item_id)
+
+    result: dict[str, frozenset[str]] = {}
+    for target in sorted(item_ids):
+        predecessors: set[str] = set()
+        pending = list(direct[target])
+        while pending:
+            current = pending.pop()
+            if current == target:
+                raise QuadricCompositingError(
+                    "surface constraints contain a contradictory painter cycle"
+                )
+            if current in predecessors:
+                continue
+            predecessors.add(current)
+            pending.extend(direct[current])
+        result[target] = frozenset(predecessors)
     return result
 
 
@@ -737,7 +786,7 @@ def compute_quadric_compositing(
                 intent = "solid"
             else:
                 kind = QuadricPaintKind.HIDDEN_CURVE
-                painted = policy is QuadricPaintPolicy.DIAGRAMMATIC
+                painted = policy is not QuadricPaintPolicy.PHYSICAL
                 intent = "dashed" if painted else "omit"
             fragments.append(
                 QuadricCurvePaintFragment(
@@ -765,18 +814,63 @@ def compute_quadric_compositing(
     crossings = tuple(sorted(crossings, key=lambda item: item.crossing_id))
 
     relations = _surface_relations(surface_items, tuple(surface_constraints))
+    surface_predecessors = _surface_predecessors(surface_items, relations)
+    surface_item_by_id = {
+        item.surface_id: item.item_id for item in surface_items
+    }
     for fragment in fragments:
         if not fragment.painted:
             continue
-        reason = (
-            "visible_curve_overlay"
-            if fragment.kind is QuadricPaintKind.VISIBLE_CURVE
-            else "diagrammatic_hidden_overlay"
-        )
-        relations.extend(
-            QuadricPaintRelation(surface.item_id, fragment.item_id, reason)
-            for surface in surface_items
-        )
+        if fragment.kind is QuadricPaintKind.VISIBLE_CURVE:
+            relations.extend(
+                QuadricPaintRelation(
+                    surface.item_id,
+                    fragment.item_id,
+                    "visible_curve_overlay",
+                )
+                for surface in surface_items
+            )
+        elif policy is QuadricPaintPolicy.DIAGRAMMATIC:
+            relations.extend(
+                QuadricPaintRelation(
+                    surface.item_id,
+                    fragment.item_id,
+                    "diagrammatic_hidden_overlay",
+                )
+                for surface in surface_items
+            )
+        else:
+            occluder_items = {
+                surface_item_by_id[surface_id]
+                for surface_id in fragment.occluder_surface_ids
+            }
+            farther_surface_items = {
+                farther_item
+                for occluder_item in occluder_items
+                for farther_item in surface_predecessors[occluder_item]
+                if farther_item not in occluder_items
+                and not any(
+                    other_occluder_item in surface_predecessors[farther_item]
+                    for other_occluder_item in occluder_items
+                )
+            }
+            relations.extend(
+                QuadricPaintRelation(
+                    surface_item_id,
+                    fragment.item_id,
+                    "depth_aware_hidden_after_farther_surface",
+                )
+                for surface_item_id in sorted(farther_surface_items)
+            )
+            relations.extend(
+                QuadricPaintRelation(
+                    fragment.item_id,
+                    surface.item_id,
+                    "depth_aware_hidden_occlusion",
+                )
+                for surface in surface_items
+                if surface.item_id in occluder_items
+            )
     relations.extend(_crossing_relations(crossings, visibility.records, fragments))
     normalized_relations = _dedupe_relations(relations)
     active_ids = tuple(

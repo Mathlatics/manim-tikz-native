@@ -789,7 +789,8 @@ class QuadricOcclusion3D:
             policy = QuadricPaintPolicy(paint_policy)
         except (TypeError, ValueError) as exc:
             raise QuadricManimError(
-                "paint_policy must be 'physical' or 'diagrammatic'"
+                "paint_policy must be 'physical', 'diagrammatic', or "
+                "'depth_aware_diagrammatic'"
             ) from exc
         if surface_order_mode not in ("automatic", "explicit"):
             raise QuadricManimError(

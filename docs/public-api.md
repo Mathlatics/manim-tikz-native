@@ -463,8 +463,12 @@ The Manim binding accepts immutable surface/curve sequences or callbacks that
 return a new sequence for the current frame.  IDs and counts remain fixed for
 the lifetime of an attached controller.  `paint_policy="physical"` omits
 hidden spans; `paint_policy="diagrammatic"` draws them with the hidden dash
-style.  The runtime targets Cairo, preallocates all Mobjects, and commits each
-prepared painter frame transactionally.  Its default
+style as a global teaching overlay;
+`paint_policy="depth_aware_diagrammatic"` keeps the dash but brackets it after
+every surface certified farther than its occluders and before the occluding
+surfaces themselves.  Section compositing places it between the back/front
+projection sheets.  The runtime targets Cairo, preallocates all
+Mobjects, and commits each prepared painter frame transactionally.  Its default
 `surface_order_mode="automatic"` recomputes the certified global frame on each
 update and exposes the committed evidence through `last_global_frame`;
 `surface_order_mode="explicit"` retains the legacy manual-constraint path.
