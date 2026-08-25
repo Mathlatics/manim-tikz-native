@@ -202,6 +202,9 @@ def build_controller(
     scene: Scene,
     state_provider: Callable[[], str],
     mode: str,
+    *,
+    paint_policy: str = "diagrammatic",
+    style: QuadricManimStyle | None = None,
 ) -> QuadricOcclusion3D:
     cache: dict[str, tuple[ParametricConicBranch, ...]] = {}
 
@@ -252,8 +255,8 @@ def build_controller(
         curve_opacities=curve_opacities,
         allocated_curve_ids=ALLOCATED_CURVE_IDS,
         projection=DIAGNOSTIC_VIEW,
-        paint_policy="diagrammatic",
-        style=style_for_mode(mode),
+        paint_policy=paint_policy,
+        style=style_for_mode(mode) if style is None else style,
         limits=diagnostic_limits(),
         max_chord_error=0.006,
         painter_z_band=(20.0, 30.0),

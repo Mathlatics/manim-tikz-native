@@ -21,7 +21,11 @@ All notable changes to this project will be documented in this file.
   quadrics; add one-quadric/one-cutting-plane local compositing with adaptive
   rear/between/front patch partitioning, near-tangent feature guarding,
   seam-free contour merging, one managed painter band, fixed Manim identities,
-  and transactional last-good-frame rollback;
+  and transactional last-good-frame rollback; make every emitted plane
+  fragment conform to its actual outside/behind/between/front boundary without
+  raising the original 8192-fragment capacity, and add masked five-state Cairo
+  color/seam, surface-opacity, outline, hidden-curve, and continuous-motion
+  regressions;
 - add a source-authoritative project format and the
   `tikz-native-project build/status/rebuild/clean` CLI: authored TikZ, optional
   motion/Bridge inputs, and render intent now deterministically regenerate

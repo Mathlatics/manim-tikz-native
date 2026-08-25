@@ -30,3 +30,11 @@ Python object addresses are process-local, so the committed evidence does not
 pretend that raw `id()` values are portable. It records the fixed family size and
 topology and verifies that every identity remains unchanged while the controller
 updates through all five states.
+
+The frozen artifact above remains historical evidence for the pre-fix commit.
+The permanent post-fix acceptance lives in
+`tests/test_quadric_section_cairo.py`. It renders both fill modes in memory,
+checks each role against its own Cairo `OVER` color rather than any valid
+palette entry, verifies the surface-only opacity contract, and samples a
+continuous ellipse/parabola/hyperbola motion. The test class skips cleanly when
+the Cairo backend is unavailable.
