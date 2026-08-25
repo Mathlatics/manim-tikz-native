@@ -27,7 +27,19 @@ from dataclasses import dataclass
 from enum import Enum
 from hashlib import sha256
 import json
-from math import atan2, copysign, cos, floor, isfinite, sin, sqrt, tau
+from math import (
+    atan2,
+    copysign,
+    cos,
+    cosh,
+    floor,
+    isfinite,
+    sin,
+    sinh,
+    sqrt,
+    tanh,
+    tau,
+)
 from typing import Callable, Sequence
 
 import numpy as np
@@ -60,6 +72,7 @@ from .contract import (
     SectionPlane,
     SphereSpec,
 )
+from .conics import ConicKind
 from .critical import CriticalEventError, compute_curve_critical_events
 from .curves import ParametricConicBranch, SegmentCurve
 from .projection import OpaqueProjectionProxy
@@ -1469,6 +1482,144 @@ def _point_segment_distance_2d(
     return float(np.linalg.norm(point - (start + ratio * delta)))
 
 
+def _section_curve_tangent_envelope_error_bound(
+    curve: SegmentCurve | ParametricConicBranch,
+    view: ParallelView,
+    left: float,
+    right: float,
+) -> float:
+    """Return a conservative screen error for one tangent-envelope arc.
+
+    The finite-section polygon is built from supporting tangents, not from the
+    sampled chord itself.  For two neighboring samples, both tangent segments
+    lie in the triangle formed by the endpoints and their tangent
+    intersection.  The distance of that triangle from the chord is therefore
+    an upper bound for the rendered tangent envelope.  The analytic linear
+    interpolation remainder additionally bounds the true conic arc from the
+    same chord.  Their sum bounds the screen-space separation between the
+    emitted envelope and the true role boundary.
+
+    A non-finite return value means that the interval is not yet a certifiable
+    forward convex arc (for example, it spans half an ellipse or has nearly
+    parallel endpoint tangents).  The adaptive caller must subdivide it.
+    """
+
+    if not isfinite(left) or not isfinite(right) or right <= left:
+        return float("inf")
+    if isinstance(curve, SegmentCurve):
+        return 0.0
+
+    projection = np.asarray(view.matrix[:2], dtype=float)
+
+    def projected_point(parameter: float) -> np.ndarray:
+        return projection @ np.asarray(curve.point(parameter), dtype=float)
+
+    try:
+        first = projected_point(left)
+        last = projected_point(right)
+    except (OverflowError, ValueError):
+        return float("inf")
+    if not all(
+        value.shape == (2,) and np.all(np.isfinite(value))
+        for value in (first, last)
+    ):
+        return float("inf")
+
+    parameterization = curve.parameterization
+    interval_length = right - left
+    machine_epsilon = float(np.finfo(float).eps)
+    try:
+        if parameterization.kind in {ConicKind.CIRCLE, ConicKind.ELLIPSE}:
+            half_interval = 0.5 * interval_length
+            cosine = cos(half_interval)
+            if cosine <= 0.0:
+                return float("inf")
+            tangent_scale = sin(half_interval) / cosine
+        elif parameterization.kind is ConicKind.HYPERBOLA:
+            tangent_scale = tanh(0.5 * interval_length)
+        elif parameterization.kind is ConicKind.PARABOLA:
+            tangent_scale = 0.5 * interval_length
+        elif parameterization.kind in {
+            ConicKind.INTERSECTING_LINES,
+            ConicKind.PARALLEL_LINES,
+            ConicKind.COINCIDENT_LINE,
+        }:
+            return 0.0
+        else:
+            return float("inf")
+        first_intersection = projection @ (
+            np.asarray(curve.point(left), dtype=float)
+            + tangent_scale * np.asarray(curve.tangent(left), dtype=float)
+        )
+        last_intersection = projection @ (
+            np.asarray(curve.point(right), dtype=float)
+            - tangent_scale * np.asarray(curve.tangent(right), dtype=float)
+        )
+    except (OverflowError, ValueError):
+        return float("inf")
+    if (
+        not isfinite(tangent_scale)
+        or not np.all(np.isfinite(first_intersection))
+        or not np.all(np.isfinite(last_intersection))
+    ):
+        return float("inf")
+
+    intersection = 0.5 * (first_intersection + last_intersection)
+    tangent_envelope_error = _point_segment_distance_2d(
+        intersection,
+        first,
+        last,
+    )
+
+    embedding = np.asarray(curve.plane_embedding, dtype=float)[:3, :2]
+    projected_embedding = projection @ embedding
+    first_axis = projected_embedding @ np.asarray(
+        parameterization.first_axis,
+        dtype=float,
+    )
+    second_axis = projected_embedding @ np.asarray(
+        parameterization.second_axis,
+        dtype=float,
+    )
+    first_axis_norm = float(np.linalg.norm(first_axis))
+    second_axis_norm = float(np.linalg.norm(second_axis))
+    try:
+        if parameterization.kind in {ConicKind.CIRCLE, ConicKind.ELLIPSE}:
+            second_derivative_bound = first_axis_norm + second_axis_norm
+        elif parameterization.kind is ConicKind.HYPERBOLA:
+            maximum_parameter = max(abs(left), abs(right))
+            second_derivative_bound = (
+                first_axis_norm * cosh(maximum_parameter)
+                + second_axis_norm * sinh(maximum_parameter)
+            )
+        elif parameterization.kind is ConicKind.PARABOLA:
+            second_derivative_bound = 2.0 * second_axis_norm
+        elif parameterization.kind in {
+            ConicKind.INTERSECTING_LINES,
+            ConicKind.PARALLEL_LINES,
+            ConicKind.COINCIDENT_LINE,
+        }:
+            second_derivative_bound = 0.0
+        else:
+            return float("inf")
+    except OverflowError:
+        return float("inf")
+    if not isfinite(second_derivative_bound):
+        return float("inf")
+
+    interpolation_error = (
+        interval_length * interval_length * second_derivative_bound / 8.0
+    )
+    numeric_scale = max(
+        1.0,
+        float(np.linalg.norm(first)),
+        float(np.linalg.norm(last)),
+        float(np.linalg.norm(intersection)),
+    )
+    roundoff_guard = 1024.0 * machine_epsilon * numeric_scale
+    return tangent_envelope_error + interpolation_error + roundoff_guard
+
+
 def _adaptive_section_curve_parameters(
     curve: SegmentCurve | ParametricConicBranch,
     view: ParallelView,
@@ -1478,7 +1629,7 @@ def _adaptive_section_curve_parameters(
     max_segments: int,
     parameter_epsilon: float,
 ) -> tuple[float, ...]:
-    """Approximate exact finite-section arcs with certified screen chords."""
+    """Approximate exact finite-section arcs with certified tangent envelopes."""
 
     values: list[float] = []
     for raw in sorted(float(item) for item in breakpoints):
@@ -1503,37 +1654,16 @@ def _adaptive_section_curve_parameters(
             f"section curve {curve.curve_id!r} has no stable parameter interval"
         )
 
-    projection = np.asarray(view.matrix[:2], dtype=float)
-    cache: dict[float, np.ndarray] = {}
-
-    def project(parameter: float) -> np.ndarray:
-        key = float(parameter)
-        cached = cache.get(key)
-        if cached is not None:
-            return cached
-        result = projection @ np.asarray(curve.point(key), dtype=float)
-        if result.shape != (2,) or not np.all(np.isfinite(result)):
-            raise QuadricSectionCompositingError(
-                f"section curve {curve.curve_id!r} has a non-finite projection"
-            )
-        cache[key] = result
-        return result
-
-    probe_fractions = (0.25, 0.5, 0.75)
     while True:
         split: list[int] = []
         for index, (left, right) in enumerate(intervals):
-            first = project(left)
-            last = project(right)
-            observed = max(
-                _point_segment_distance_2d(
-                    project(left + fraction * (right - left)),
-                    first,
-                    last,
-                )
-                for fraction in probe_fractions
+            certified_error = _section_curve_tangent_envelope_error_bound(
+                curve,
+                view,
+                left,
+                right,
             )
-            if observed > max_chord_error:
+            if certified_error > max_chord_error:
                 split.append(index)
         if not split:
             break
@@ -2642,10 +2772,11 @@ def compute_quadric_section_compositing(
     # Build one finite-solid section boundary in plane coordinates.  Analytic
     # side curves contribute tangent support half-planes, while finite cylinder
     # and cone caps contribute exact axial half-planes.  Critical parameters
-    # are retained before adaptive chord sampling so a front/back switch cannot
-    # hide inside one boundary edge.  Keep the chord error well below the
-    # requested display error: the resulting circumscribed polygon may differ
-    # from the true curve only within that explicit boundary tolerance.
+    # are retained before adaptive tangent-envelope sampling so a front/back
+    # switch cannot hide inside one boundary edge.  Keep the certified envelope
+    # error well below the requested display error: the resulting circumscribed
+    # polygon may differ from the true curve only within that explicit boundary
+    # tolerance.
     sphere_needs_tight_tangent_boundary = False
     if isinstance(surface, SphereSpec):
         plane_offset = abs(

@@ -168,20 +168,28 @@ An updater prepares and validates a complete frame, snapshots the current
 display state, applies it transactionally, and restores the previous frame if
 anything fails.  It never creates a Mobject inside an updater.
 
-### Boundary-conforming plane fragments
+### Certified boundary-error plane fragments
 
-Every emitted plane fragment is geometrically contained in the region named by
-its `PlaneDepthRole`.  Projection-outside pieces are physically cut away from
-the projection-interior polygon.  Inside that polygon, the finite-surface ray
+Projection-outside pieces are physically cut away from the
+projection-interior polygon.  Inside that polygon, the finite-surface ray
 solver remains authoritative for the `behind`, `between`, and `front`
 boundaries, including finite cylinder and cone caps.
 
-`section_max_screen_error` bounds the screen-space distance between a curved
-role boundary and its piecewise-linear display approximation.  It does **not**
-permit a triangle or polygon to cross that boundary and merely inherit the
-role of its centre.  If the configured subdivision limit cannot produce a
-certified boundary-conforming partition, frame preparation fails before any
-Manim object is changed.
+Curved role boundaries are represented by a circumscribed tangent envelope.
+For every neighboring pair of analytic conic samples, the compositor combines
+the endpoint-tangent triangle distance with an analytic second-derivative
+interpolation remainder.  This is a conservative upper bound for the
+screen-space separation between the emitted envelope and the true boundary;
+finite cap boundaries remain exact.
+
+`section_max_screen_error` bounds that separation.  Away from its certified
+boundary band, every fragment agrees with the true `PlaneDepthRole`, and no
+fragment may span the stable interiors of two different roles.  A fragment
+touching the approximated curve may enter either adjacent true region only
+inside the certified band; the contract does not claim exact curved geometry.
+If the configured subdivision limit cannot prove this bound, frame preparation
+fails before any Manim object is changed instead of assigning a mixed polygon
+from its centre point.
 
 ### Coincident front/back projection sheets
 

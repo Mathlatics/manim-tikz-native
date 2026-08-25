@@ -11,6 +11,7 @@ import numpy as np
 
 from polyhedron_visibility.parallel_solver import ParallelView
 from polyhedron_visibility.geometry import GeometryContext, GeometryQuantity
+from polyhedron_visibility.topology import ParameterInterval
 from polyhedron_visibility.quadrics.compositing import (
     QuadricPaintPolicy,
     compute_quadric_compositing,
@@ -21,7 +22,11 @@ from polyhedron_visibility.quadrics.contract import (
     SphereSpec,
     CylinderSpec,
 )
-from polyhedron_visibility.quadrics.curves import CircleArcCurve
+from polyhedron_visibility.quadrics.conics import ConicKind, ConicParameterization
+from polyhedron_visibility.quadrics.curves import (
+    CircleArcCurve,
+    ParametricConicBranch,
+)
 from polyhedron_visibility.quadrics.plane_patch import fit_plane_display_patch
 from polyhedron_visibility.quadrics.projection import build_opaque_projection_proxy
 from polyhedron_visibility.quadrics.section_compositing import (
@@ -33,8 +38,11 @@ from polyhedron_visibility.quadrics.section_compositing import (
     canonical_quadric_section_compositing_json,
     compute_quadric_section_compositing,
     quadric_plane_fragment_contours,
+    _adaptive_section_curve_parameters,
     _CanonicalVertexRegistry,
+    _point_segment_distance_2d,
     _SECTION_BOUNDARY_CHORD_DIVISOR,
+    _section_curve_tangent_envelope_error_bound,
     _make_plane_partition_polygon,
     _nested_convex_ring_polygons,
     _PlanePartitionPolygon,
@@ -1263,6 +1271,99 @@ class PlanePartitionInfrastructureTests(unittest.TestCase):
 
 
 class QuadricSectionCompositingTests(unittest.TestCase):
+    def test_adversarial_flat_conic_uses_certified_tangent_bounds(self) -> None:
+        start = 2.75084
+        end = 5.94173
+        domain = ParameterInterval(start, end)
+        curve = ParametricConicBranch(
+            "adversarial-flat-ellipse",
+            ConicParameterization(
+                kind=ConicKind.ELLIPSE,
+                branch_label="flat",
+                origin=(0.0, 0.0),
+                first_axis=(2.0, 0.0),
+                second_axis=(0.0, 2.0e-6),
+                natural_domain=domain,
+            ),
+            (
+                (1.0, 0.0, 0.0),
+                (0.0, 1.0, 0.0),
+                (0.0, 0.0, 0.0),
+                (0.0, 0.0, 1.0),
+            ),
+            domain,
+        )
+        public_error = 0.08
+        certified_error = public_error / _SECTION_BOUNDARY_CHORD_DIVISOR
+        projection = np.asarray(IDENTITY_VIEW.matrix[:2], dtype=float)
+        first = projection @ np.asarray(curve.point(start), dtype=float)
+        last = projection @ np.asarray(curve.point(end), dtype=float)
+
+        old_probe_errors = tuple(
+            _point_segment_distance_2d(
+                projection
+                @ np.asarray(
+                    curve.point(start + fraction * (end - start)),
+                    dtype=float,
+                ),
+                first,
+                last,
+            )
+            for fraction in (0.25, 0.5, 0.75)
+        )
+        dense_error = max(
+            _point_segment_distance_2d(
+                projection @ np.asarray(curve.point(float(parameter)), dtype=float),
+                first,
+                last,
+            )
+            for parameter in np.linspace(start, end, 4097)
+        )
+        self.assertLess(max(old_probe_errors), certified_error)
+        self.assertGreater(dense_error, public_error)
+
+        parameters = _adaptive_section_curve_parameters(
+            curve,
+            IDENTITY_VIEW,
+            (start, end),
+            max_chord_error=certified_error,
+            max_segments=8192,
+            parameter_epsilon=1.0e-12,
+        )
+        self.assertGreater(len(parameters), 2)
+        self.assertEqual(
+            parameters,
+            _adaptive_section_curve_parameters(
+                curve,
+                IDENTITY_VIEW,
+                (start, end),
+                max_chord_error=certified_error,
+                max_segments=8192,
+                parameter_epsilon=1.0e-12,
+            ),
+        )
+        for left, right in zip(parameters, parameters[1:]):
+            with self.subTest(left=left, right=right):
+                bound = _section_curve_tangent_envelope_error_bound(
+                    curve,
+                    IDENTITY_VIEW,
+                    left,
+                    right,
+                )
+                first = projection @ np.asarray(curve.point(left), dtype=float)
+                last = projection @ np.asarray(curve.point(right), dtype=float)
+                sampled_error = max(
+                    _point_segment_distance_2d(
+                        projection
+                        @ np.asarray(curve.point(float(parameter)), dtype=float),
+                        first,
+                        last,
+                    )
+                    for parameter in np.linspace(left, right, 17)
+                )
+                self.assertLessEqual(bound, certified_error)
+                self.assertLessEqual(sampled_error, bound)
+
     def test_display_ray_classifier_matches_authoritative_finite_hits(self) -> None:
         surfaces = (
             SphereSpec("sphere", (0.2, -0.1, 0.3), 1.1),
@@ -1739,7 +1840,7 @@ class QuadricSectionBoundaryPartitionContractTests(unittest.TestCase):
                         frame.plane,
                         boundary_epsilon,
                         # The emitted boundary is a certified screen-space
-                        # polyline.  Samples inside its tiny chord-error band
+                        # tangent envelope.  Samples inside its tiny error band
                         # are legitimate boundary samples, not stable evidence
                         # for either neighboring role.  This remains far below
                         # the public max_screen_error and still catches any
@@ -1760,8 +1861,8 @@ class QuadricSectionBoundaryPartitionContractTests(unittest.TestCase):
                             f"{fragment.role.value} classified={observed.value}"
                         )
                 if stable_sample_count == 0:
-                    # A triangle may lie wholly inside the certified chord
-                    # approximation band.  Do not ignore that fragment: use
+                    # A triangle may lie wholly inside the certified tangent-
+                    # envelope band.  Do not ignore that fragment: use
                     # its strict interior centroid as the deterministic
                     # fallback and still require the authoritative solver to
                     # agree with the stored role.
