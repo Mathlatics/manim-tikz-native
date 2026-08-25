@@ -346,6 +346,305 @@ class UnifiedBoundaryCairoTests(unittest.TestCase):
             finally:
                 controller.restore()
 
+    def test_cone_and_cylinder_cap_rims_render_front_solid_and_rear_dash(
+        self,
+    ) -> None:
+        with tempconfig(
+            {
+                "renderer": "cairo",
+                "pixel_width": WIDTH,
+                "pixel_height": HEIGHT,
+                "frame_rate": 8,
+                "write_to_movie": False,
+                "save_last_frame": False,
+                "disable_caching": True,
+            }
+        ):
+            surfaces = (
+                CylinderSpec(
+                    "cap-cylinder",
+                    (0.0, 0.0, -1.0),
+                    (0.0, 0.0, 1.0),
+                    1.0,
+                    (0.0, 2.0),
+                    radial_axis=(1.0, 0.0, 0.0),
+                ),
+                ConeSpec(
+                    "cap-cone",
+                    (0.0, 0.0, -1.4),
+                    (0.0, 0.0, 1.0),
+                    pi / 6.0,
+                    (0.0, 3.0),
+                    radial_axis=(1.0, 0.0, 0.0),
+                ),
+            )
+            side_view = ParallelView.from_matrix(
+                (
+                    (1.0, 0.0, 0.0),
+                    (0.0, 0.0, -1.0),
+                    (0.0, 1.0, 0.0),
+                )
+            )
+            for surface in surfaces:
+                with self.subTest(surface=surface.surface_id):
+                    scene = Scene()
+                    scene.camera.background_color = "#07111F"
+                    controller = QuadricOcclusion3D(
+                        scene,
+                        surfaces=(surface,),
+                        curves=(),
+                        projection=side_view,
+                        paint_policy="diagrammatic",
+                        style=QuadricManimStyle(
+                            surface_fill_color="#355070",
+                            surface_fill_opacity=0.22,
+                            surface_stroke_color="#FFB000",
+                            surface_stroke_width=7.0,
+                            surface_stroke_opacity=1.0,
+                            hidden_curve_opacity=1.0,
+                            dash_length=0.14,
+                            dash_gap=0.10,
+                        ),
+                        limits=_limits(),
+                        max_chord_error=0.008,
+                        boundary_visibility_mode="unified",
+                    ).attach()
+                    try:
+                        frame = controller.last_boundary_frame
+                        assert frame is not None
+                        cap_ids = {
+                            source.source_id
+                            for source in frame.sources
+                            if source.source_kind.value == "surface_cap_rim"
+                        }
+                        self.assertTrue(cap_ids)
+                        pixels = _capture_pixels(scene)
+                        target = _hex_rgb("#FFB000")
+                        for source_id in cap_ids:
+                            fragments = [
+                                item
+                                for item in frame.fragments
+                                if item.source_id == source_id and item.painted
+                            ]
+                            solid = next(
+                                item
+                                for item in fragments
+                                if item.render_intent
+                                is BoundaryRenderIntent.SOLID
+                            )
+                            dashed = next(
+                                item
+                                for item in fragments
+                                if item.render_intent
+                                is BoundaryRenderIntent.DASHED
+                            )
+                            solid_slot = controller._curve_slots[
+                                source_id
+                            ].fragments[
+                                controller._fragment_slot_maps[source_id][
+                                    solid.item_id
+                                ]
+                            ]
+                            dash_slot = controller._curve_slots[
+                                source_id
+                            ].fragments[
+                                controller._fragment_slot_maps[source_id][
+                                    dashed.item_id
+                                ]
+                            ]
+                            solid_point = solid_slot.solid.points[
+                                len(solid_slot.solid.points) // 2
+                            ]
+                            active_dashes = [
+                                item for item in dash_slot.dashes if len(item.points)
+                            ]
+                            self.assertTrue(active_dashes)
+                            dash = active_dashes[len(active_dashes) // 2]
+                            dash_point = dash.points[len(dash.points) // 2]
+                            for point in (solid_point, dash_point):
+                                _row, _column, rgb = _nearest_ink_pixel(
+                                    pixels,
+                                    point,
+                                    target,
+                                )
+                                self.assertLess(
+                                    float(np.linalg.norm(rgb - target)),
+                                    75.0,
+                                )
+                    finally:
+                        controller.restore()
+
+    def test_second_surface_physically_occludes_true_silhouette_pixels(
+        self,
+    ) -> None:
+        with tempconfig(
+            {
+                "renderer": "cairo",
+                "pixel_width": WIDTH,
+                "pixel_height": HEIGHT,
+                "frame_rate": 8,
+                "write_to_movie": False,
+                "save_last_frame": False,
+                "disable_caching": True,
+            }
+        ):
+            view = ParallelView.from_matrix(np.eye(3))
+            scene = Scene()
+            scene.camera.background_color = "#07111F"
+            controller = QuadricOcclusion3D(
+                scene,
+                surfaces=(
+                    SphereSpec("far", (0.0, 0.0, -2.0), 1.0),
+                    SphereSpec("near", (0.55, 0.0, 2.0), 0.75),
+                ),
+                curves=(),
+                projection=view,
+                paint_policy="physical",
+                style=QuadricManimStyle(
+                    surface_fill_color="#204060",
+                    surface_fill_opacity=1.0,
+                    surface_stroke_color="#FFD166",
+                    surface_stroke_width=8.0,
+                    surface_stroke_opacity=1.0,
+                ),
+                limits=_limits(),
+                max_chord_error=0.008,
+                boundary_visibility_mode="unified",
+            ).attach()
+            try:
+                frame = controller.last_boundary_frame
+                assert frame is not None
+                hidden = next(
+                    item
+                    for item in frame.fragments
+                    if item.source_id == "boundary:far:silhouette"
+                    and item.visibility_kind is VisibilityKind.HIDDEN
+                )
+                self.assertFalse(hidden.painted)
+                source = next(
+                    item
+                    for item in frame.sources
+                    if item.source_id == hidden.source_id
+                )
+                world = source.curve.point(hidden.interval.midpoint)
+                screen = view.matrix[:2] @ np.asarray(world, dtype=float)
+                pixels = _capture_pixels(scene)
+                row, column = _screen_to_pixel(screen)
+                rgb = pixels[row, column]
+                fill = _hex_rgb("#204060")
+                stroke = _hex_rgb("#FFD166")
+                self.assertLess(float(np.linalg.norm(rgb - fill)), 35.0)
+                self.assertGreater(float(np.linalg.norm(rgb - stroke)), 100.0)
+            finally:
+                controller.restore()
+
+    def test_crossing_boundaries_use_far_to_near_cairo_order(self) -> None:
+        with tempconfig(
+            {
+                "renderer": "cairo",
+                "pixel_width": WIDTH,
+                "pixel_height": HEIGHT,
+                "frame_rate": 8,
+                "write_to_movie": False,
+                "save_last_frame": False,
+                "disable_caching": True,
+            }
+        ):
+            view = ParallelView.from_matrix(np.eye(3))
+            far = CylinderSpec(
+                "far-cross",
+                (-1.0, 0.0, -2.0),
+                (1.0, 0.0, 0.0),
+                0.18,
+                (0.0, 2.0),
+                radial_axis=(0.0, 1.0, 0.0),
+            )
+            near = CylinderSpec(
+                "near-cross",
+                (0.0, -1.0, 2.0),
+                (0.0, 1.0, 0.0),
+                0.18,
+                (0.0, 2.0),
+                radial_axis=(1.0, 0.0, 0.0),
+            )
+            scene = Scene()
+            scene.camera.background_color = "#000000"
+            controller = QuadricOcclusion3D(
+                scene,
+                surfaces=(far, near),
+                curves=(),
+                projection=view,
+                paint_policy="diagrammatic",
+                style=QuadricManimStyle(
+                    surface_fill_color="#404040",
+                    surface_fill_opacity=0.2,
+                    surface_stroke_opacity=0.0,
+                ),
+                boundary_styles={
+                    "style:far-red": QuadricBoundaryStyle(
+                        visible_color="#FF2020",
+                        visible_width=12.0,
+                        hidden_color="#FF2020",
+                        hidden_width=12.0,
+                        dash_length=10.0,
+                        dash_gap=0.0,
+                    ),
+                    "style:near-blue": QuadricBoundaryStyle(
+                        visible_color="#2080FF",
+                        visible_width=12.0,
+                        hidden_color="#2080FF",
+                        hidden_width=12.0,
+                        dash_length=10.0,
+                        dash_gap=0.0,
+                    ),
+                },
+                limits=_limits(),
+                max_chord_error=0.005,
+                boundary_visibility_mode="unified",
+                include_surface_boundaries=False,
+                generator_boundaries=(
+                    GeneratorBoundarySpec(
+                        "far-line",
+                        far.surface_id,
+                        pi / 2.0,
+                        style_id="style:far-red",
+                    ),
+                    GeneratorBoundarySpec(
+                        "near-line",
+                        near.surface_id,
+                        3.0 * pi / 2.0,
+                        style_id="style:near-blue",
+                    ),
+                ),
+            ).attach()
+            try:
+                frame = controller.last_boundary_frame
+                assert frame is not None
+                far_items = [
+                    item.item_id
+                    for item in frame.fragments
+                    if item.source_id == "far-line" and item.painted
+                ]
+                near_items = [
+                    item.item_id
+                    for item in frame.fragments
+                    if item.source_id == "near-line" and item.painted
+                ]
+                self.assertTrue(far_items and near_items)
+                self.assertLess(
+                    max(frame.draw_order.index(item) for item in far_items),
+                    min(frame.draw_order.index(item) for item in near_items),
+                )
+                pixels = _capture_pixels(scene)
+                _row, _column, crossing = _nearest_ink_pixel(
+                    pixels,
+                    (0.0, 0.0),
+                    _hex_rgb("#2080FF"),
+                )
+                self.assertGreater(crossing[2], crossing[0] + 120.0)
+            finally:
+                controller.restore()
+
     def test_visible_curve_is_between_front_sheet_and_front_plane(self) -> None:
         with tempconfig(
             {

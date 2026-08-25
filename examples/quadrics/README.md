@@ -15,6 +15,9 @@ manim -pql examples/quadrics/quadric_occlusion_demo.py \
   MovingSphereSectionDemo ObliqueCylinderSectionDemo \
   ConeSectionFamiliesDemo ConeSectionTopologyTransitionDemo \
   GlobalQuadricOcclusionDemo
+
+manim -pql examples/quadrics/unified_boundary_visibility_demo.py \
+  UnifiedBoundaryVisibilityComparison
 ```
 
 - `MovingSphereSectionDemo` recomputes a moving circular section and its
@@ -33,6 +36,11 @@ manim -pql examples/quadrics/quadric_occlusion_demo.py \
 - `GlobalQuadricOcclusionDemo` lets the Manim controller certify two disjoint
   convex solids automatically, derive their far-to-near relation, and put both
   surfaces and crossing semantic strokes in one painter graph.
+- `UnifiedBoundaryVisibilityComparison` runs the complete
+  ellipse-to-parabola-to-hyperbola transition side by side. The unified half
+  includes cap rims, true silhouettes, the section outline, and a red teaching
+  generator whose `style_id` resolves through the fixed boundary-style
+  registry.
 
 `QuadricOcclusion3D` remains the fixed-topology controller for ordinary scenes.
 For a topology-changing rotating-plane section, first build the analytic
