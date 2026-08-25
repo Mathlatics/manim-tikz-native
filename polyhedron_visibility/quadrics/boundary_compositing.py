@@ -199,6 +199,8 @@ class QuadricBoundaryPaintFragment:
     painted: bool
     semantic_kind: BoundarySemanticKind
     depth_role: str | None
+    plane_relation: str | None
+    plane_depth_roles: tuple[str, ...]
     style_id: str | None
     stable_sort_key: tuple[str, ...]
 
@@ -229,8 +231,16 @@ class QuadricBoundaryPaintFragment:
             raise QuadricBoundaryCompositingError(
                 "hidden boundary fragments cannot render solid"
             )
+        roles = tuple(str(item) for item in self.plane_depth_roles)
+        if roles != tuple(sorted(set(roles))) or any(
+            role not in _DEPTH_ROLES for role in roles
+        ):
+            raise QuadricBoundaryCompositingError(
+                "fragment plane-depth roles must be unique, sorted, and valid"
+            )
         object.__setattr__(self, "item_id", item_id)
         object.__setattr__(self, "source_id", source_id)
+        object.__setattr__(self, "plane_depth_roles", roles)
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -243,6 +253,8 @@ class QuadricBoundaryPaintFragment:
             "painted": self.painted,
             "semanticKind": self.semantic_kind.value,
             "depthRole": self.depth_role,
+            "planeRelation": self.plane_relation,
+            "planeDepthRoles": list(self.plane_depth_roles),
             "styleId": self.style_id,
             "stableSortKey": list(self.stable_sort_key),
         }
@@ -481,6 +493,59 @@ def _add_bracket(
     relations.append(QuadricPaintRelation(fragment_id, near_anchor, reason + ":before"))
 
 
+def _plane_item_for_role(
+    role: str | None,
+    anchors: BoundarySectionAnchors,
+) -> str | None:
+    return {
+        "behind_surface": anchors.plane_behind,
+        "outside_projection": anchors.plane_outside,
+        "between_surface_sheets": anchors.plane_between,
+        "in_front_of_surface": anchors.plane_front,
+    }.get(role)
+
+
+def _add_section_plane_relation(
+    relations: list[QuadricPaintRelation],
+    fragment: QuadricBoundaryPaintFragment,
+    anchors: BoundarySectionAnchors,
+) -> None:
+    relation = fragment.plane_relation
+    if relation in {None, "outside_patch", "coincident"}:
+        return
+    item_ids = tuple(
+        item_id
+        for role in fragment.plane_depth_roles
+        if (item_id := _plane_item_for_role(role, anchors)) is not None
+    )
+    if not item_ids:
+        raise QuadricBoundaryCompositingError(
+            "boundary span inside the patch has no adjacent plane painter item"
+        )
+    if relation == "boundary_behind_plane":
+        relations.extend(
+            QuadricPaintRelation(
+                fragment.item_id,
+                item_id,
+                "boundary_behind_section_plane",
+            )
+            for item_id in item_ids
+        )
+    elif relation == "boundary_in_front_of_plane":
+        relations.extend(
+            QuadricPaintRelation(
+                item_id,
+                fragment.item_id,
+                "boundary_in_front_of_section_plane",
+            )
+            for item_id in item_ids
+        )
+    else:
+        raise QuadricBoundaryCompositingError(
+            f"unsupported boundary/plane relation {relation!r}"
+        )
+
+
 def compute_quadric_boundary_compositing(
     sources: Sequence[QuadricBoundarySource],
     spans_by_source: Mapping[str, Sequence[QuadricBoundaryVisibilitySpan]],
@@ -491,6 +556,7 @@ def compute_quadric_boundary_compositing(
     surface_item_by_id: Mapping[str, str],
     crossings: Sequence[ProjectedCurveCrossing] = (),
     section_anchors: BoundarySectionAnchors | None = None,
+    section_spans_by_source: Mapping[str, Sequence[object]] | None = None,
     parameter_tolerance: float = 1.0e-12,
 ) -> QuadricBoundaryCompositingFrame:
     """Build one fragment-level painter graph for all semantic boundaries."""
@@ -516,6 +582,21 @@ def compute_quadric_boundary_compositing(
         )
     crossings_tuple = tuple(sorted(crossings, key=lambda item: item.crossing_id))
     split_values = _crossing_parameters(crossings_tuple)
+    section_spans = (
+        {} if section_spans_by_source is None else dict(section_spans_by_source)
+    )
+    unknown_section_sources = sorted(set(section_spans) - set(source_ids))
+    if unknown_section_sources:
+        raise QuadricBoundaryCompositingError(
+            "section spans reference unknown boundary sources: "
+            + ", ".join(unknown_section_sources)
+        )
+    for source_id, spans in section_spans.items():
+        split_values.setdefault(source_id, []).extend(
+            value
+            for span in spans
+            for value in (span.interval.start, span.interval.end)
+        )
     fragments: list[QuadricBoundaryPaintFragment] = []
     for source in source_items:
         spans = tuple(spans_by_source[source.source_id])
@@ -530,6 +611,20 @@ def compute_quadric_boundary_compositing(
                 tolerance,
             )
             for piece_index, interval in enumerate(pieces):
+                placement = None
+                placement_matches = [
+                    item
+                    for item in section_spans.get(source.source_id, ())
+                    if item.interval.contains(
+                        interval.midpoint, tolerance=tolerance
+                    )
+                ]
+                if len(placement_matches) > 1:
+                    raise QuadricBoundaryCompositingError(
+                        f"boundary {source.source_id!r} has overlapping section spans"
+                    )
+                if placement_matches:
+                    placement = placement_matches[0]
                 intent = _render_intent(policy, span.kind)
                 item_id = (
                     f"boundary:{source.source_id}:span:{span_index:04d}:"
@@ -545,7 +640,16 @@ def compute_quadric_boundary_compositing(
                         render_intent=intent,
                         painted=intent is not BoundaryRenderIntent.OMIT,
                         semantic_kind=source.semantic_kind,
+                        # ``depth_role`` is the source-owned role used by
+                        # plane-patch edges.  Surface boundaries keep all
+                        # adjacent plane regions in ``plane_depth_roles``.
                         depth_role=span.depth_role,
+                        plane_relation=(
+                            None if placement is None else placement.relation.value
+                        ),
+                        plane_depth_roles=(
+                            () if placement is None else placement.plane_depth_roles
+                        ),
                         style_id=source.style_id,
                         stable_sort_key=(
                             *source.stable_sort_key,
@@ -558,10 +662,26 @@ def compute_quadric_boundary_compositing(
 
     parent_ids = tuple(parent_item_ids)
     parent_set = set(parent_ids)
+    relaxed_parent_pairs: set[tuple[str, str]] = set()
+    if section_anchors is not None:
+        # The outside patch region is screen-disjoint from both projection
+        # sheets and the inside depth roles.  The legacy compositor gives the
+        # ten anchors a convenient total chain, but retaining those two
+        # non-overlap edges in a fragment-level graph creates false cycles
+        # when an actual silhouette or cap rim orders itself against the
+        # outside fill.  Keep the outside fill/outline pair ordered locally;
+        # direct boundary evidence supplies every relation that can paint the
+        # same pixels.
+        relaxed_parent_pairs = {
+            (section_anchors.surface_back, section_anchors.plane_outside),
+            (section_anchors.outline_outside, section_anchors.plane_between),
+        }
     relations = [
         item
         for item in parent_relations
-        if item.far_item_id in parent_set and item.near_item_id in parent_set
+        if item.far_item_id in parent_set
+        and item.near_item_id in parent_set
+        and (item.far_item_id, item.near_item_id) not in relaxed_parent_pairs
     ]
 
     for fragment in fragments:
@@ -599,13 +719,22 @@ def compute_quadric_boundary_compositing(
 
         if fragment.visibility_kind is VisibilityKind.VISIBLE:
             if section_anchors is not None:
-                relations.append(
-                    QuadricPaintRelation(
-                        section_anchors.outline_front,
-                        fragment.item_id,
-                        "visible_boundary_overlay",
+                if source.owner_surface_id is not None:
+                    relations.append(
+                        QuadricPaintRelation(
+                            section_anchors.surface_front,
+                            fragment.item_id,
+                            "visible_owner_surface_boundary",
+                        )
                     )
-                )
+                else:
+                    relations.append(
+                        QuadricPaintRelation(
+                            section_anchors.outline_front,
+                            fragment.item_id,
+                            "visible_boundary_overlay",
+                        )
+                    )
             else:
                 relations.extend(
                     QuadricPaintRelation(
@@ -614,6 +743,10 @@ def compute_quadric_boundary_compositing(
                         "visible_boundary_overlay",
                     )
                     for item_id in sorted(surface_item_by_id.values())
+                )
+            if section_anchors is not None:
+                _add_section_plane_relation(
+                    relations, fragment, section_anchors
                 )
             continue
 
@@ -668,12 +801,24 @@ def compute_quadric_boundary_compositing(
                     "hidden plane outline fragment has a visible depth role"
                 )
         elif section_anchors is not None:
-            _add_bracket(
-                relations,
-                fragment.item_id,
-                section_anchors.outline_between,
-                section_anchors.surface_front,
-                "depth_aware_hidden_boundary",
+            if source.owner_surface_id is not None:
+                _add_bracket(
+                    relations,
+                    fragment.item_id,
+                    section_anchors.surface_back,
+                    section_anchors.surface_front,
+                    "depth_aware_hidden_owner_boundary",
+                )
+            else:
+                _add_bracket(
+                    relations,
+                    fragment.item_id,
+                    section_anchors.outline_between,
+                    section_anchors.surface_front,
+                    "depth_aware_hidden_boundary",
+                )
+            _add_section_plane_relation(
+                relations, fragment, section_anchors
             )
         else:
             for surface_id in fragment.occluder_surface_ids:
@@ -698,15 +843,7 @@ def compute_quadric_boundary_compositing(
             source_map[crossing.first_curve_id],
             source_map[crossing.second_curve_id],
         )
-        # A plane-patch edge already owns an exact PlaneDepthRole and a
-        # section-layer bracket.  Keep its projected intersection as a split
-        # event, but do not add a second independent line/line relation which
-        # can contradict that authoritative section evidence.
-        if any(
-            item.source_kind is BoundarySourceKind.PLANE_PATCH_EDGE
-            for item in crossing_sources
-        ):
-            continue
+        del crossing_sources
         far = _fragments_at_parameter(
             fragments,
             crossing.far_curve_id,

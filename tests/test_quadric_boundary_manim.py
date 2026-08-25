@@ -3,6 +3,8 @@ from __future__ import annotations
 from math import pi
 import unittest
 
+import numpy as np
+
 from manim import Scene, tempconfig
 
 from polyhedron_visibility.parallel_solver import ParallelView
@@ -17,6 +19,7 @@ from polyhedron_visibility.quadrics.manim import (
     QuadricManimLimits,
     QuadricManimStyle,
     QuadricOcclusion3D,
+    _dash_polyline_anchored,
 )
 from polyhedron_visibility.quadrics.surface_boundaries import GeneratorBoundarySpec
 from polyhedron_visibility.visibility import VisibilityKind
@@ -157,6 +160,29 @@ class UnifiedBoundaryManimTests(unittest.TestCase):
                     frame.draw_order.index(section.paint_items.surface_front),
                 )
         controller.restore()
+
+    def test_dash_phase_is_anchored_to_the_semantic_source(self) -> None:
+        points_a = np.asarray(((0.0, 0.0, 0.0), (1.4, 0.0, 0.0)))
+        points_b = np.asarray(((0.2, 0.0, 0.0), (1.4, 0.0, 0.0)))
+        first = _dash_polyline_anchored(
+            points_a,
+            source_distance_start=0.0,
+            dash_length=0.3,
+            dash_gap=0.2,
+            capacity=16,
+        )
+        moved = _dash_polyline_anchored(
+            points_b,
+            source_distance_start=0.2,
+            dash_length=0.3,
+            dash_gap=0.2,
+            capacity=16,
+        )
+        first_starts = [round(float(item.points[0, 0]), 9) for item in first]
+        moved_starts = [round(float(item.points[0, 0]), 9) for item in moved]
+        self.assertEqual(first_starts[1:], moved_starts[1:])
+        self.assertAlmostEqual(float(moved[0].points[0, 0]), 0.2)
+        self.assertAlmostEqual(float(moved[0].points[-1, 0]), 0.3)
 
     def test_cylinder_cap_rims_and_authored_generator_share_fixed_pool(self) -> None:
         cylinder = CylinderSpec(

@@ -166,6 +166,15 @@ _EXPORTS: Final[dict[str, tuple[str, str]]] = {
     "BoundaryOcclusionScope": (".boundary_compositing", "BoundaryOcclusionScope"),
     "BoundaryRenderIntent": (".boundary_compositing", "BoundaryRenderIntent"),
     "BoundarySectionAnchors": (".boundary_compositing", "BoundarySectionAnchors"),
+    "BoundaryPlaneRelation": (".boundary_section", "BoundaryPlaneRelation"),
+    "QuadricBoundarySectionSpan": (
+        ".boundary_section",
+        "QuadricBoundarySectionSpan",
+    ),
+    "compute_boundary_section_spans": (
+        ".boundary_section",
+        "compute_boundary_section_spans",
+    ),
     "BoundarySemanticKind": (".boundary_compositing", "BoundarySemanticKind"),
     "BoundarySourceKind": (".boundary_compositing", "BoundarySourceKind"),
     "QUADRIC_BOUNDARY_COMPOSITING_SCHEMA": (

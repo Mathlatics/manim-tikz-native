@@ -94,6 +94,7 @@ from .section_compositing import (
     quadric_plane_fragment_contours,
 )
 from .visibility import compute_quadric_visibility
+from .boundary_section import compute_boundary_section_spans
 from .surface_boundaries import (
     GeneratorBoundarySpec,
     build_surface_boundary_sources,
@@ -1635,6 +1636,17 @@ class QuadricOcclusion3D:
         if section_frame is not None:
             spans.update(self._plane_outline_visibility(section_frame))
         crossings = self._boundary_crossings(sources, spans, view)
+        section_spans = (
+            {}
+            if section_frame is None
+            else compute_boundary_section_spans(
+                sources,
+                section_frame,
+                view,
+                crossings,
+                context=self.context,
+            )
+        )
         try:
             boundary_frame = compute_quadric_boundary_compositing(
                 sources,
@@ -1649,6 +1661,7 @@ class QuadricOcclusion3D:
                     if section_frame is None
                     else self._section_anchors(section_frame)
                 ),
+                section_spans_by_source=section_spans,
             )
         except QuadricBoundaryCompositingError as exc:
             raise QuadricManimError(
