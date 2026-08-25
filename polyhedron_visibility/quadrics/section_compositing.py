@@ -3498,6 +3498,88 @@ def compute_quadric_section_compositing(
                     coordinate_epsilon,
                 )
             if len(contours) != 1:
+                signed_areas = tuple(
+                    _partition_signed_area(contour) for contour in contours
+                )
+                source_area = sum(
+                    abs(_partition_signed_area(polygon.vertices))
+                    for polygon in polygons
+                )
+                source_perimeter = sum(
+                    float(
+                        np.linalg.norm(
+                            np.asarray(end.plane_coordinates, dtype=float)
+                            - np.asarray(start.plane_coordinates, dtype=float)
+                        )
+                    )
+                    for polygon in polygons
+                    for start, end in zip(
+                        polygon.vertices,
+                        (*polygon.vertices[1:], polygon.vertices[0]),
+                    )
+                )
+                topology_area_tolerance = max(
+                    coordinate_epsilon * coordinate_epsilon,
+                    coordinate_epsilon * source_perimeter,
+                    32.0 * boundary_epsilon * source_perimeter,
+                    source_area * 1.0e-10,
+                )
+                # Removing an unstable microscopic radial cell can separate a
+                # padded same-role run into several ordinary positive-winding
+                # components.  They have no shared interior and can be
+                # certified independently.  A negative-winding contour is a
+                # hole, which this local ring triangulator deliberately does
+                # not guess how to bridge.
+                if (
+                    contours
+                    and all(
+                        area > coordinate_epsilon * coordinate_epsilon
+                        for area in signed_areas
+                    )
+                    and abs(source_area - sum(signed_areas))
+                    <= topology_area_tolerance
+                ):
+                    component_triangles: list[_PlanePartitionPolygon] = []
+                    component_failed = False
+                    for contour_index, contour in enumerate(contours):
+                        component = _make_plane_partition_polygon(
+                            "ring-union-component:"
+                            + sha256(
+                                "|".join(
+                                    vertex.stable_token for vertex in contour
+                                ).encode("utf-8")
+                            ).hexdigest()[:24]
+                            + f":{contour_index:04d}",
+                            contour,
+                            coordinate_epsilon,
+                        )
+                        if component is None:
+                            component_failed = True
+                            break
+                        triangulated = role_triangulation((component,), role)
+                        if triangulated is None:
+                            component_failed = True
+                            break
+                        component_triangles.extend(triangulated)
+                    triangle_area = sum(
+                        abs(_partition_signed_area(triangle.vertices))
+                        for triangle in component_triangles
+                    )
+                    if (
+                        not component_failed
+                        and component_triangles
+                        and abs(source_area - triangle_area)
+                        <= topology_area_tolerance
+                    ):
+                        result = tuple(component_triangles)
+                        triangulation_cache[cache_key] = result
+                        return result
+                triangulation_diagnostics[cache_key] = (
+                    f"contour-count:{len(contours)}",
+                    "contour-signed-areas:"
+                    + ",".join(f"{area:.9g}" for area in signed_areas),
+                    f"source-area:{source_area:.9g}",
+                )
                 triangulation_cache[cache_key] = None
                 return None
             simple = _make_plane_partition_polygon(
@@ -3507,6 +3589,9 @@ def compute_quadric_section_compositing(
                 coordinate_epsilon,
             )
             if simple is None:
+                triangulation_diagnostics[cache_key] = (
+                    "union-contour-degenerate",
+                )
                 triangulation_cache[cache_key] = None
                 return None
 

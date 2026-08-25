@@ -191,6 +191,12 @@ If the configured subdivision limit cannot prove this bound, frame preparation
 fails before any Manim object is changed instead of assigning a mixed polygon
 from its centre point.
 
+A tangent-neighborhood repair may leave one role run as several disjoint
+positive-winding regions.  The compositor triangulates and certifies each
+region independently, then verifies that their combined area still equals the
+source run.  Negative-winding contours denote holes and continue to fail
+closed rather than being bridged by a guessed triangle.
+
 ### Coincident front/back projection sheets
 
 The curved solid is represented in the section painter graph by two complete,

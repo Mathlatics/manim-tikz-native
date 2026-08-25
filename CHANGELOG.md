@@ -27,6 +27,9 @@ All notable changes to this project will be documented in this file.
   without raising the original 8192-fragment capacity, and add masked
   five-state Cairo color/seam, surface-opacity, outline, hidden-curve,
   high-resolution role-boundary, and continuous-motion regressions;
+- preserve disjoint positive-winding pieces of one quadric section depth role
+  near tangent events, certify each piece independently, and require exact
+  combined-area recovery before publishing the frame;
 - add a source-authoritative project format and the
   `tikz-native-project build/status/rebuild/clean` CLI: authored TikZ, optional
   motion/Bridge inputs, and render intent now deterministically regenerate
