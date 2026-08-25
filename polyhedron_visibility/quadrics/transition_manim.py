@@ -39,6 +39,7 @@ from .section_compositing import (
     QUADRIC_SECTION_COMPOSITING_LIMITS,
     QuadricSectionCompositingLimits,
 )
+from .surface_boundaries import GeneratorBoundarySpec
 from .plane_motion import ScheduledSectionAnimation
 from .sections import compute_quadric_section
 from .transition import (
@@ -164,6 +165,10 @@ class QuadricSectionTransition3D:
         section_compositing_limits: QuadricSectionCompositingLimits = (
             QUADRIC_SECTION_COMPOSITING_LIMITS
         ),
+        boundary_visibility_mode: str = "legacy",
+        include_surface_boundaries: bool = True,
+        generator_boundaries: Sequence[GeneratorBoundarySpec] = (),
+        allocated_boundary_ids: Sequence[str] | None = None,
     ) -> None:
         if not isinstance(scheduled, ScheduledSectionAnimation):
             raise TypeError("scheduled must be a ScheduledSectionAnimation")
@@ -210,6 +215,10 @@ class QuadricSectionTransition3D:
             section_patch_margin=plane_patch_margin,
             section_max_screen_error=section_max_screen_error,
             section_compositing_limits=section_compositing_limits,
+            boundary_visibility_mode=boundary_visibility_mode,
+            include_surface_boundaries=include_surface_boundaries,
+            generator_boundaries=generator_boundaries,
+            allocated_boundary_ids=allocated_boundary_ids,
         )
 
     def _active_plane(self) -> SectionPlane:

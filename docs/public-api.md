@@ -551,3 +551,21 @@ constants for the exact request and response contracts.
 - A failed frame preserves the last good overlay and never silently displays
   all lines as visible.
 - The current real-time binding targets Manim's Cairo renderer.
+
+### Unified quadric semantic boundaries
+
+The renderer-neutral boundary sidecar is exported from
+`polyhedron_visibility.quadrics`:
+
+- `QuadricBoundarySource`, `QuadricBoundaryVisibilitySpan`,
+  `QuadricBoundaryPaintFragment`, and `QuadricBoundaryCompositingFrame`;
+- `BoundarySourceKind`, `BoundarySemanticKind`, `BoundaryOcclusionScope`, and
+  `BoundaryRenderIntent`;
+- `GeneratorBoundarySpec`, `build_surface_boundary_sources`,
+  `compute_boundary_visibility`, and `compute_quadric_boundary_compositing`;
+- `BoundaryPlaneRelation`, `QuadricBoundarySectionSpan`, and
+  `compute_boundary_section_spans`.
+
+These additive contracts use `manim-quadric-boundary-compositing/v1`. Existing
+quadric v1 schemas and canonical JSON remain unchanged. The Manim controller
+selects the new path only when `boundary_visibility_mode="unified"` is supplied.

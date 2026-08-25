@@ -11,6 +11,7 @@ from manim import Mobject, Scene, ValueTracker, linear, tempconfig
 
 from polyhedron_visibility.geometry import GeometryContext
 from polyhedron_visibility.parallel_solver import ParallelView
+from polyhedron_visibility.quadrics.compositing import QuadricPaintPolicy
 from polyhedron_visibility.quadrics.contract import ConeSpec, SectionPlane, SphereSpec
 from polyhedron_visibility.quadrics.curves import SegmentCurve
 from polyhedron_visibility.quadrics.manim import (
@@ -257,6 +258,60 @@ class QuadricSectionTransitionControllerTests(unittest.TestCase):
         progress.set_value(0.2)
         controller.update()
         self.assertEqual(controller.slot_identities(), identities)
+        controller.restore()
+
+    def test_unified_boundaries_survive_all_topology_families(self) -> None:
+        progress = ValueTracker(0.0)
+        controller = QuadricSectionTransition3D(
+            Scene(),
+            scheduled=_scheduled(),
+            progress=progress,
+            projection=VIEW,
+            transition_fraction=0.05,
+            paint_policy=QuadricPaintPolicy.DEPTH_AWARE_DIAGRAMMATIC,
+            boundary_visibility_mode="unified",
+            style=_style(),
+            limits=_limits(
+                max_total_mobjects=30000,
+                max_boundary_sources=32,
+            ),
+            max_chord_error=0.02,
+        ).attach()
+        identities = controller.slot_identities()
+        parabolic = next(
+            item
+            for item in controller.plan.knots
+            if "cone_parabolic" in item.critical_kinds
+        )
+        samples = (
+            max(0.0, 0.5 * parabolic.left_start),
+            parabolic.progress,
+            min(1.0, 0.5 * (parabolic.right_end + 1.0)),
+        )
+        families: set[str] = set()
+        for sample in samples:
+            progress.set_value(sample)
+            with patch.object(
+                Mobject,
+                "__init__",
+                side_effect=AssertionError(
+                    "unified transition updater allocated a Mobject"
+                ),
+            ):
+                controller.update()
+            families.update(
+                item.conic_family.value for item in controller.active_signatures
+            )
+            boundary = controller.controller.last_boundary_frame
+            self.assertIsNotNone(boundary)
+            assert boundary is not None
+            source_ids = {item.source_id for item in boundary.sources}
+            self.assertTrue(
+                any(item.startswith("boundary:plane:plane:edge:") for item in source_ids)
+            )
+            self.assertIn("boundary:cone:cap_max:rim", source_ids)
+            self.assertEqual(controller.slot_identities(), identities)
+        self.assertEqual(families, {"oval", "parabola", "hyperbola"})
         controller.restore()
 
     def test_invalid_progress_fails_without_changing_committed_frame(self) -> None:

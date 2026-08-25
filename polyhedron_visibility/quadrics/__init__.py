@@ -163,6 +163,64 @@ _EXPORTS: Final[dict[str, tuple[str, str]]] = {
     ),
     "QuadricPaintKind": (".compositing", "QuadricPaintKind"),
     "QuadricPaintPolicy": (".compositing", "QuadricPaintPolicy"),
+    "BoundaryOcclusionScope": (".boundary_compositing", "BoundaryOcclusionScope"),
+    "BoundaryRenderIntent": (".boundary_compositing", "BoundaryRenderIntent"),
+    "BoundarySectionAnchors": (".boundary_compositing", "BoundarySectionAnchors"),
+    "BoundaryPlaneRelation": (".boundary_section", "BoundaryPlaneRelation"),
+    "QuadricBoundarySectionSpan": (
+        ".boundary_section",
+        "QuadricBoundarySectionSpan",
+    ),
+    "compute_boundary_section_spans": (
+        ".boundary_section",
+        "compute_boundary_section_spans",
+    ),
+    "BoundarySemanticKind": (".boundary_compositing", "BoundarySemanticKind"),
+    "BoundarySourceKind": (".boundary_compositing", "BoundarySourceKind"),
+    "QUADRIC_BOUNDARY_COMPOSITING_SCHEMA": (
+        ".boundary_compositing",
+        "QUADRIC_BOUNDARY_COMPOSITING_SCHEMA",
+    ),
+    "QuadricBoundaryCompositingError": (
+        ".boundary_compositing",
+        "QuadricBoundaryCompositingError",
+    ),
+    "QuadricBoundaryCompositingFrame": (
+        ".boundary_compositing",
+        "QuadricBoundaryCompositingFrame",
+    ),
+    "QuadricBoundaryPaintFragment": (
+        ".boundary_compositing",
+        "QuadricBoundaryPaintFragment",
+    ),
+    "QuadricBoundarySource": (".boundary_compositing", "QuadricBoundarySource"),
+    "QuadricBoundaryVisibilitySpan": (
+        ".boundary_compositing",
+        "QuadricBoundaryVisibilitySpan",
+    ),
+    "canonical_quadric_boundary_compositing_json": (
+        ".boundary_compositing",
+        "canonical_quadric_boundary_compositing_json",
+    ),
+    "compute_boundary_visibility": (
+        ".boundary_compositing",
+        "compute_boundary_visibility",
+    ),
+    "compute_quadric_boundary_compositing": (
+        ".boundary_compositing",
+        "compute_quadric_boundary_compositing",
+    ),
+    "GeneratorBoundarySpec": (".surface_boundaries", "GeneratorBoundarySpec"),
+    "build_surface_boundary_sources": (
+        ".surface_boundaries",
+        "build_surface_boundary_sources",
+    ),
+    "curve_boundary_source": (".surface_boundaries", "curve_boundary_source"),
+    "plane_outline_sources": (".surface_boundaries", "plane_outline_sources"),
+    "surface_boundary_source_ids": (
+        ".surface_boundaries",
+        "surface_boundary_source_ids",
+    ),
     "QuadricPaintRelation": (".compositing", "QuadricPaintRelation"),
     "QuadricStyleDescriptor": (".compositing", "QuadricStyleDescriptor"),
     "QuadricSurfacePaintItem": (".compositing", "QuadricSurfacePaintItem"),

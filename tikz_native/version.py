@@ -92,9 +92,9 @@ _PUBLIC_0_1_COMPONENT_REVISIONS: Final[dict[str, str]] = {
     COMPONENT_TIKZ_OPEN_FACE_STATIC_ASSET_3D: "source-sha256:f74e221297d3444a17b9165ae9759ae41ca4cf7bda013333e28ab3b9d157a54e",
     COMPONENT_GENERATED_OPEN_FACE_VISIBILITY_3D: "source-sha256:d3b8917a867f754c586bef39acc1ac387726dbb7ce192f8b61a0053505b63503",
     COMPONENT_SOURCE_PROJECT_BUILD: "source-sha256:00579e342012a96443c098c7004be672d265d32fe6f82d66b0c6b11ba64305b7",
-    COMPONENT_QUADRIC_GEOMETRY: "source-sha256:c9d65a2ea38e5218217e890578fd7c4192384afb30a788f4a3594c495b10f4c2",
-    COMPONENT_QUADRIC_VISIBILITY: "source-sha256:c84ece5ca43abd6dc757d02e810f0af40a7e7d5ceff97150fd9aa53a1527a05c",
-    COMPONENT_QUADRIC_MANIM: "source-sha256:4f139f74bf01354e37a5aa7a2566b48d34a55bfd3513c11b207ba55104270c1c",
+    COMPONENT_QUADRIC_GEOMETRY: "source-sha256:184cb3a67305a385f93456232e1a7e045509f04ac6d0378b37890f250e5e0c3d",
+    COMPONENT_QUADRIC_VISIBILITY: "source-sha256:0f3beaa305dbf595dbb8f803a134fc2381cd094431a37104223650f7297b1248",
+    COMPONENT_QUADRIC_MANIM: "source-sha256:2f5fda27726961cb74f6e9587a8e7753419017f4a38aad2aa6db266d4a3a81e9",
 }
 
 
@@ -402,12 +402,15 @@ _COMPONENT_DEFINITIONS: Final[dict[str, dict[str, tuple[str, ...]]]] = {
             COMPONENT_QUADRIC_GEOMETRY,
         ),
         "files": (
+            "@tool/polyhedron_visibility/quadrics/boundary_compositing.py",
+            "@tool/polyhedron_visibility/quadrics/boundary_section.py",
             "@tool/polyhedron_visibility/quadrics/compositing.py",
             "@tool/polyhedron_visibility/quadrics/critical.py",
             "@tool/polyhedron_visibility/quadrics/curve_intersections.py",
             "@tool/polyhedron_visibility/quadrics/global_occlusion.py",
             "@tool/polyhedron_visibility/quadrics/projection.py",
             "@tool/polyhedron_visibility/quadrics/section_compositing.py",
+            "@tool/polyhedron_visibility/quadrics/surface_boundaries.py",
             "@tool/polyhedron_visibility/quadrics/visibility.py",
         ),
     },
@@ -524,13 +527,13 @@ _DECLARED_IMPLEMENTATION_DIGESTS: Final[dict[str, str]] = {
         "00579e342012a96443c098c7004be672d265d32fe6f82d66b0c6b11ba64305b7"
     ),
     COMPONENT_QUADRIC_GEOMETRY: (
-        "c9d65a2ea38e5218217e890578fd7c4192384afb30a788f4a3594c495b10f4c2"
+        "184cb3a67305a385f93456232e1a7e045509f04ac6d0378b37890f250e5e0c3d"
     ),
     COMPONENT_QUADRIC_VISIBILITY: (
-        "c84ece5ca43abd6dc757d02e810f0af40a7e7d5ceff97150fd9aa53a1527a05c"
+        "0f3beaa305dbf595dbb8f803a134fc2381cd094431a37104223650f7297b1248"
     ),
     COMPONENT_QUADRIC_MANIM: (
-        "4f139f74bf01354e37a5aa7a2566b48d34a55bfd3513c11b207ba55104270c1c"
+        "2f5fda27726961cb74f6e9587a8e7753419017f4a38aad2aa6db266d4a3a81e9"
     ),
 }
 

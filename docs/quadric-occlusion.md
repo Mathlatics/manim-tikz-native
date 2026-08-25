@@ -476,3 +476,57 @@ than returning a guessed frame.
 Surface filling is necessarily a finite display approximation in Manim.  The
 geometric visibility result remains analytic within the resolved numerical
 tolerance.
+
+## Unified semantic boundary visibility
+
+`QuadricOcclusion3D` keeps its historical pixel contract by default. Opt into
+fragment-level boundary compositing with `boundary_visibility_mode="unified"`.
+The unified sidecar preserves the existing v1 surface, visibility, and section
+frames while adding one deterministic painter frame for ordinary analytic
+curves, the four finite display-patch edges, cap rims, true silhouettes, and
+explicit teaching generators.
+
+```python
+from polyhedron_visibility.quadrics import (
+    GeneratorBoundarySpec,
+    QuadricOcclusion3D,
+)
+
+controller = QuadricOcclusion3D(
+    self,
+    surfaces=(cone,),
+    curves=section_curves,
+    section_plane=plane,
+    paint_policy="depth_aware_diagrammatic",
+    boundary_visibility_mode="unified",
+    generator_boundaries=(
+        GeneratorBoundarySpec("teaching-generator", cone.surface_id, 0.42),
+    ),
+).attach()
+```
+
+The three painter policies have one meaning for every semantic boundary:
+
+- `physical`: visible fragments are solid and hidden fragments are omitted;
+- `diagrammatic`: visible fragments are solid and hidden fragments are dashed
+  teaching overlays above their occluders;
+- `depth_aware_diagrammatic`: hidden fragments remain dashed, but every
+  certified farther surface is painted first and every named occluding surface
+  is painted afterward. A translucent front sheet attenuates the dash, while
+  an opaque front sheet can cover it completely.
+
+A true projection silhouette is not the same object as a cap rim or a display
+frame. Sphere silhouettes and the lateral silhouette generators of finite
+cylinders/cones use external-only occlusion, so their owning surface never
+turns them into hidden dashes. Circular cap rims and explicitly authored
+surface generators are ordinary owner-aware semantic boundaries: their front
+parts are solid and their rear parts follow the selected hidden-line policy.
+The rectangular plane-patch outline reuses its existing exact
+`PlaneDepthRole` partition instead of solving visibility again.
+
+Unified boundary painter fragments use fixed preallocated solid/dash families.
+Dash phase is anchored to the complete semantic source, so a moving visibility
+boundary clips only the first or last dash instead of making the pattern crawl.
+No updater creates a `VMobject`, `VGroup`, or `DashedVMobject`; object identity,
+the ten established section-layer slots, managed painter-band ownership, and
+transactional last-good-frame rollback remain stable.

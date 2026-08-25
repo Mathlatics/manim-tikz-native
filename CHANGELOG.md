@@ -35,6 +35,12 @@ All notable changes to this project will be documented in this file.
   and before their occluding surfaces, including between the section
   compositor's back/front alpha sheets, while preserving the existing
   `physical` and `diagrammatic` outputs;
+- add an opt-in unified semantic-boundary compositor for analytic curves,
+  cutting-plane display edges, finite cylinder/cone cap rims, true
+  silhouettes, and authored generators; apply physical, diagrammatic, or
+  depth-aware dashed intent through one fragment-level painter graph, reuse
+  certified global surface bracketing, anchor dash phase to stable source
+  geometry, and retain fixed Manim identities and rollback;
 - add a source-authoritative project format and the
   `tikz-native-project build/status/rebuild/clean` CLI: authored TikZ, optional
   motion/Bridge inputs, and render intent now deterministically regenerate

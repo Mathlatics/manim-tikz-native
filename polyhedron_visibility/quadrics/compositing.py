@@ -618,39 +618,46 @@ def _surface_relations(
     return result
 
 
-def _surface_predecessors(
-    surface_items: tuple[QuadricSurfacePaintItem, ...],
+def _paint_predecessors(
+    item_ids: Sequence[str],
     relations: Sequence[QuadricPaintRelation],
 ) -> dict[str, frozenset[str]]:
-    """Return every surface known to paint before each surface.
+    """Return every selected item known to paint before each selected item.
 
-    Only explicit surface-order evidence participates.  The lexicographic tie
+    Only explicit painter evidence participates.  The lexicographic tie
     break used by the final topological sort is deterministic, but it is not
     geometric evidence and therefore must not decide which surface attenuates
     a depth-aware hidden stroke.
     """
 
-    item_ids = {item.item_id for item in surface_items}
-    direct: dict[str, set[str]] = {item_id: set() for item_id in item_ids}
+    normalized_ids = tuple(item_ids)
+    selected_ids = set(normalized_ids)
+    if len(selected_ids) != len(normalized_ids):
+        raise QuadricCompositingError(
+            "painter predecessor identities must be unique"
+        )
+    direct: dict[str, set[str]] = {
+        item_id: set() for item_id in selected_ids
+    }
     for relation in relations:
         if (
-            relation.far_item_id not in item_ids
-            or relation.near_item_id not in item_ids
+            relation.far_item_id not in selected_ids
+            or relation.near_item_id not in selected_ids
         ):
             raise QuadricCompositingError(
-                "surface predecessor evidence references a non-surface item"
+                "painter predecessor evidence references an unselected item"
             )
         direct[relation.near_item_id].add(relation.far_item_id)
 
     result: dict[str, frozenset[str]] = {}
-    for target in sorted(item_ids):
+    for target in sorted(selected_ids):
         predecessors: set[str] = set()
         pending = list(direct[target])
         while pending:
             current = pending.pop()
             if current == target:
                 raise QuadricCompositingError(
-                    "surface constraints contain a contradictory painter cycle"
+                    "selected constraints contain a contradictory painter cycle"
                 )
             if current in predecessors:
                 continue
@@ -658,6 +665,39 @@ def _surface_predecessors(
             pending.extend(direct[current])
         result[target] = frozenset(predecessors)
     return result
+
+
+def _surface_predecessors(
+    surface_items: tuple[QuadricSurfacePaintItem, ...],
+    relations: Sequence[QuadricPaintRelation],
+) -> dict[str, frozenset[str]]:
+    return _paint_predecessors(
+        tuple(item.item_id for item in surface_items), relations
+    )
+
+
+def _depth_aware_farther_items(
+    occluder_items: set[str],
+    predecessors: Mapping[str, frozenset[str]],
+) -> frozenset[str]:
+    """Return non-occluders that can safely paint before a hidden stroke."""
+
+    unknown = sorted(occluder_items - set(predecessors))
+    if unknown:
+        raise QuadricCompositingError(
+            "depth-aware occlusion references unknown paint items: "
+            + ", ".join(unknown)
+        )
+    return frozenset(
+        farther_item
+        for occluder_item in occluder_items
+        for farther_item in predecessors[occluder_item]
+        if farther_item not in occluder_items
+        and not any(
+            other_occluder_item in predecessors[farther_item]
+            for other_occluder_item in occluder_items
+        )
+    )
 
 
 def _dedupe_relations(
@@ -844,16 +884,9 @@ def compute_quadric_compositing(
                 surface_item_by_id[surface_id]
                 for surface_id in fragment.occluder_surface_ids
             }
-            farther_surface_items = {
-                farther_item
-                for occluder_item in occluder_items
-                for farther_item in surface_predecessors[occluder_item]
-                if farther_item not in occluder_items
-                and not any(
-                    other_occluder_item in surface_predecessors[farther_item]
-                    for other_occluder_item in occluder_items
-                )
-            }
+            farther_surface_items = _depth_aware_farther_items(
+                occluder_items, surface_predecessors
+            )
             relations.extend(
                 QuadricPaintRelation(
                     surface_item_id,
