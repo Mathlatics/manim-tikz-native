@@ -28,6 +28,9 @@ from polyhedron_visibility.quadrics.contract import (
     SectionPlane,
     SphereSpec,
 )
+from polyhedron_visibility.quadrics.curve_intersections import (
+    compute_projected_curve_crossings,
+)
 from polyhedron_visibility.quadrics.curves import SegmentCurve
 from polyhedron_visibility.quadrics.surface_boundaries import (
     GeneratorBoundarySpec,
@@ -48,6 +51,8 @@ VIEW = ParallelView.from_matrix(
     )
 )
 
+
+IDENTITY_VIEW = ParallelView.from_matrix(np.eye(3))
 
 class QuadricBoundaryContractTests(unittest.TestCase):
     def test_depth_aware_visibility_uses_source_scope(self) -> None:
@@ -250,6 +255,95 @@ class QuadricBoundaryContractTests(unittest.TestCase):
         self.assertGreater(
             depth.draw_order.index(between.item_id),
             depth.draw_order.index("plane-between"),
+        )
+
+    def test_projected_crossing_splits_and_orders_boundary_fragments(self) -> None:
+        far_curve = SegmentCurve(
+            "a-far", (-1.0, 0.0, 0.0), (1.0, 0.0, 0.0)
+        )
+        near_curve = SegmentCurve(
+            "b-near", (0.0, -1.0, 1.0), (0.0, 1.0, 1.0)
+        )
+        sources = (
+            curve_boundary_source(far_curve),
+            curve_boundary_source(near_curve),
+        )
+        spans = {
+            item.source_id: (
+                QuadricBoundaryVisibilitySpan(
+                    item.curve.domain, VisibilityKind.VISIBLE
+                ),
+            )
+            for item in sources
+        }
+        crossings = compute_projected_curve_crossings(
+            (far_curve, near_curve), IDENTITY_VIEW
+        )
+        self.assertEqual(len(crossings), 1)
+        frame = compute_quadric_boundary_compositing(
+            sources,
+            spans,
+            paint_policy="diagrammatic",
+            parent_item_ids=(),
+            parent_relations=(),
+            surface_item_by_id={},
+            crossings=crossings,
+        )
+        by_source = {
+            source.source_id: tuple(
+                item
+                for item in frame.fragments
+                if item.source_id == source.source_id
+            )
+            for source in sources
+        }
+        self.assertEqual(len(by_source["a-far"]), 2)
+        self.assertEqual(len(by_source["b-near"]), 2)
+        crossing = crossings[0]
+        far_active = tuple(
+            item
+            for item in by_source[crossing.far_curve_id]
+            if item.interval.contains(
+                crossing.first_parameter
+                if crossing.far_curve_id == crossing.first_curve_id
+                else crossing.second_parameter,
+                tolerance=1.0e-12,
+            )
+        )
+        near_active = tuple(
+            item
+            for item in by_source[crossing.near_curve_id]
+            if item.interval.contains(
+                crossing.first_parameter
+                if crossing.near_curve_id == crossing.first_curve_id
+                else crossing.second_parameter,
+                tolerance=1.0e-12,
+            )
+        )
+        self.assertTrue(far_active and near_active)
+        for farther in far_active:
+            for nearer in near_active:
+                self.assertLess(
+                    frame.draw_order.index(farther.item_id),
+                    frame.draw_order.index(nearer.item_id),
+                )
+        rebuilt = compute_quadric_boundary_compositing(
+            sources,
+            spans,
+            paint_policy="diagrammatic",
+            parent_item_ids=(),
+            parent_relations=(),
+            surface_item_by_id={},
+            crossings=crossings,
+        )
+        self.assertEqual(
+            canonical_quadric_boundary_compositing_json(frame),
+            canonical_quadric_boundary_compositing_json(rebuilt),
+        )
+        self.assertEqual(frame.draw_order, rebuilt.draw_order)
+        self.assertEqual(
+            tuple(item.item_id for item in frame.fragments),
+            tuple(item.item_id for item in rebuilt.fragments),
         )
 
     def test_boundary_frame_is_canonical(self) -> None:
