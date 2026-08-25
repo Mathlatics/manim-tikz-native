@@ -814,6 +814,23 @@ def compute_quadric_boundary_compositing(
                             "visible_owner_surface_boundary",
                         )
                     )
+                elif (
+                    fragment.plane_relation == "boundary_behind_plane"
+                    and "in_front_of_surface" in fragment.plane_depth_roles
+                ):
+                    # The boundary is visible because it lies in front of the
+                    # finite surface, but the current section plane is nearer.
+                    # Give the fragment both sides of that certified bracket:
+                    # surface_front -> boundary -> plane_front.  Without the
+                    # lower edge, deterministic tie-breaking can place the
+                    # boundary behind the opaque front sheet.
+                    relations.append(
+                        QuadricPaintRelation(
+                            section_anchors.surface_front,
+                            fragment.item_id,
+                            "visible_boundary_in_front_of_surface",
+                        )
+                    )
                 elif fragment.plane_relation != "boundary_behind_plane":
                     # A transition bank can carry a visible section curve
                     # whose geometry lies behind the currently displayed

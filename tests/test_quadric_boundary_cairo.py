@@ -15,7 +15,13 @@ from polyhedron_visibility.quadrics.boundary_compositing import (
     BoundarySemanticKind,
 )
 from polyhedron_visibility.quadrics.compositing import QuadricPaintPolicy
-from polyhedron_visibility.quadrics.contract import ConeSpec, SectionPlane
+from polyhedron_visibility.quadrics.contract import (
+    ConeSpec,
+    PlaneDisplayPatchSpec,
+    SectionPlane,
+    SphereSpec,
+)
+from polyhedron_visibility.quadrics.curves import SegmentCurve
 from polyhedron_visibility.quadrics.manim import (
     QuadricManimLimits,
     QuadricManimStyle,
@@ -166,6 +172,56 @@ def _scene_for(policy: QuadricPaintPolicy):
     return scene, controller
 
 
+def _visible_curve_between_surface_and_plane_scene():
+    view = ParallelView.from_matrix(np.eye(3))
+    sphere = SphereSpec("bracket-sphere", (0.0, 0.0, 0.0), 1.0)
+    curve = SegmentCurve(
+        "bracket-curve",
+        (-0.7, 0.0, 1.2),
+        (0.7, 0.0, 1.2),
+    )
+    plane = SectionPlane(
+        "bracket-plane",
+        (0.0, 0.0, 1.5),
+        (0.0, 0.0, 1.0),
+        u_axis=(1.0, 0.0, 0.0),
+    )
+    patch = PlaneDisplayPatchSpec(
+        "bracket-patch",
+        plane.plane_id,
+        1.5,
+        1.2,
+    )
+    style = QuadricManimStyle(
+        surface_fill_color="#0000FF",
+        surface_fill_opacity=1.0,
+        surface_stroke_opacity=0.0,
+        visible_curve_color="#FF0000",
+        visible_curve_width=10.0,
+        visible_curve_opacity=1.0,
+        section_plane_fill_color="#00FF00",
+        section_plane_fill_opacity=0.25,
+        section_plane_stroke_opacity=0.0,
+    )
+    scene = Scene()
+    scene.camera.background_color = "#000000"
+    controller = QuadricOcclusion3D(
+        scene,
+        surfaces=(sphere,),
+        curves=(curve,),
+        projection=view,
+        paint_policy=QuadricPaintPolicy.DEPTH_AWARE_DIAGRAMMATIC,
+        style=style,
+        limits=_limits(),
+        max_chord_error=0.008,
+        section_plane=plane,
+        section_patch=patch,
+        boundary_visibility_mode="unified",
+        include_surface_boundaries=False,
+    ).attach()
+    return scene, controller
+
+
 def _first_hidden_plane_dash(controller: QuadricOcclusion3D):
     frame = controller.last_boundary_frame
     assert frame is not None
@@ -202,6 +258,58 @@ def _first_hidden_plane_dash(controller: QuadricOcclusion3D):
 
 @unittest.skipUnless(CAIRO_AVAILABLE, "Manim Cairo renderer is unavailable")
 class UnifiedBoundaryCairoTests(unittest.TestCase):
+    def test_visible_curve_is_between_front_sheet_and_front_plane(self) -> None:
+        with tempconfig(
+            {
+                "renderer": "cairo",
+                "pixel_width": WIDTH,
+                "pixel_height": HEIGHT,
+                "frame_rate": 8,
+                "write_to_movie": False,
+                "save_last_frame": False,
+                "disable_caching": True,
+            }
+        ):
+            scene, controller = _visible_curve_between_surface_and_plane_scene()
+            try:
+                frame = controller.last_boundary_frame
+                self.assertIsNotNone(frame)
+                assert frame is not None
+                fragment = next(
+                    item
+                    for item in frame.fragments
+                    if item.source_id == "bracket-curve"
+                )
+                surface_front = next(
+                    item
+                    for item in frame.draw_order
+                    if item.endswith("projection-sheet:front")
+                )
+                plane_front = next(
+                    item
+                    for item in frame.draw_order
+                    if item.endswith("bracket-plane:plane:front")
+                )
+                self.assertLess(
+                    frame.draw_order.index(surface_front),
+                    frame.draw_order.index(fragment.item_id),
+                )
+                self.assertLess(
+                    frame.draw_order.index(fragment.item_id),
+                    frame.draw_order.index(plane_front),
+                )
+
+                pixels = _capture_pixels(scene)
+                row, column = _screen_to_pixel((0.0, 0.0))
+                rgb = pixels[row, column]
+                # Red curve ink must replace the opaque blue surface before
+                # the translucent green plane attenuates it.  The old broken
+                # order produces a blue-dominant pixel instead.
+                self.assertGreater(rgb[0], rgb[2] + 100.0)
+                self.assertGreater(rgb[1], 20.0)
+            finally:
+                controller.restore()
+
     def test_depth_aware_hidden_outline_is_attenuated_by_front_sheet(
         self,
     ) -> None:

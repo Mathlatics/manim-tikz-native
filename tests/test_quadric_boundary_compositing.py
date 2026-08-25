@@ -191,6 +191,10 @@ class QuadricBoundaryContractTests(unittest.TestCase):
         )
         fragment = frame.fragments[0]
         self.assertLess(
+            frame.draw_order.index("surface-front"),
+            frame.draw_order.index(fragment.item_id),
+        )
+        self.assertLess(
             frame.draw_order.index(fragment.item_id),
             frame.draw_order.index("plane-front"),
         )
