@@ -47,6 +47,19 @@ from .compositing import (
     SurfaceConstraintInput,
     compute_quadric_compositing,
 )
+from .boundary_compositing import (
+    BoundaryRenderIntent,
+    BoundarySectionAnchors,
+    BoundarySemanticKind,
+    BoundarySourceKind,
+    QuadricBoundaryCompositingError,
+    QuadricBoundaryCompositingFrame,
+    QuadricBoundaryPaintFragment,
+    QuadricBoundarySource,
+    QuadricBoundaryVisibilitySpan,
+    compute_boundary_visibility,
+    compute_quadric_boundary_compositing,
+)
 from .contract import (
     ConeSpec,
     CylinderSpec,
@@ -81,6 +94,13 @@ from .section_compositing import (
     quadric_plane_fragment_contours,
 )
 from .visibility import compute_quadric_visibility
+from .surface_boundaries import (
+    GeneratorBoundarySpec,
+    build_surface_boundary_sources,
+    curve_boundary_source,
+    plane_outline_sources,
+    surface_boundary_source_ids,
+)
 
 QuadricSurfaceSpec = SphereSpec | CylinderSpec | ConeSpec
 AnalyticCurve3D = SegmentCurve | EllipseArcCurve | ParametricConicBranch
@@ -98,6 +118,7 @@ ProjectionInput = (
     | Sequence[Sequence[float]]
     | Callable[[object], ParallelView | Sequence[Sequence[float]]]
 )
+BoundaryGeneratorInput = Sequence[GeneratorBoundarySpec]
 
 
 DEFAULT_QUADRIC_VIEW = ParallelView.from_matrix(
@@ -237,6 +258,7 @@ class QuadricManimLimits:
     max_dashes_per_fragment: int = 128
     max_projected_length: float = 16.0
     max_total_mobjects: int = 100000
+    max_boundary_sources: int = 64
 
     def __post_init__(self) -> None:
         for name in (
@@ -247,6 +269,7 @@ class QuadricManimLimits:
             "max_surface_segments",
             "max_dashes_per_fragment",
             "max_total_mobjects",
+            "max_boundary_sources",
         ):
             value = getattr(self, name)
             if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
@@ -269,6 +292,15 @@ class _PreparedDash:
 @dataclass(frozen=True, slots=True)
 class _PreparedCurveFragment:
     fragment: QuadricCurvePaintFragment
+    slot_index: int
+    points: np.ndarray
+    dashes: tuple[_PreparedDash, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class _PreparedBoundaryFragment:
+    fragment: QuadricBoundaryPaintFragment
+    source: QuadricBoundarySource
     slot_index: int
     points: np.ndarray
     dashes: tuple[_PreparedDash, ...]
@@ -301,6 +333,11 @@ class _PreparedNumericFrame:
     item_mobjects: Mapping[str, Mobject]
     painter_draw_order: tuple[str, ...]
     section_layers: _PreparedSectionLayers | None = None
+    boundary_frame: QuadricBoundaryCompositingFrame | None = None
+    boundary_fragments: Mapping[
+        str, tuple[_PreparedBoundaryFragment, ...]
+    ] | None = None
+    boundary_opacities: Mapping[str, float] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -324,6 +361,12 @@ class PreparedQuadricManimFrame:
 
         layers = self.numeric.section_layers
         return None if layers is None else layers.frame
+
+    @property
+    def boundary_frame(self) -> QuadricBoundaryCompositingFrame | None:
+        """Return the unified semantic-boundary painter frame, when enabled."""
+
+        return self.numeric.boundary_frame
 
 
 @dataclass(slots=True)
@@ -709,6 +752,130 @@ def _dash_polyline(
     return tuple(result)
 
 
+def _adaptive_project_curve_samples(
+    curve: AnalyticCurve3D,
+    view: ParallelView,
+    *,
+    max_chord_error: float,
+    max_segments: int,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Return full-source parameters and points for stable dash phase."""
+
+    projection = view.matrix[:2]
+    cache: dict[float, np.ndarray] = {}
+
+    def project(parameter: float) -> np.ndarray:
+        key = float(parameter)
+        if key not in cache:
+            value = projection @ np.asarray(curve.point(key), dtype=float)
+            cache[key] = np.asarray((value[0], value[1], 0.0), dtype=float)
+        return cache[key]
+
+    intervals = [(curve.domain.start, curve.domain.end)]
+    probes = (0.25, 0.5, 0.75)
+    while True:
+        split = []
+        for index, (left, right) in enumerate(intervals):
+            first = project(left)
+            last = project(right)
+            observed = max(
+                _point_segment_distance(
+                    project(left + fraction * (right - left)),
+                    first,
+                    last,
+                )
+                for fraction in probes
+            )
+            if observed > max_chord_error:
+                split.append(index)
+        if not split:
+            break
+        if len(intervals) + len(split) > max_segments:
+            raise QuadricManimCapacityError(
+                f"boundary source {curve.curve_id!r} needs more than "
+                f"{max_segments} display segments"
+            )
+        marked = set(split)
+        refined = []
+        for index, (left, right) in enumerate(intervals):
+            if index not in marked:
+                refined.append((left, right))
+                continue
+            middle = left + 0.5 * (right - left)
+            if middle == left or middle == right:
+                raise QuadricManimCapacityError(
+                    f"boundary source {curve.curve_id!r} cannot refine at "
+                    "floating-point resolution"
+                )
+            refined.extend(((left, middle), (middle, right)))
+        intervals = refined
+    parameters = np.asarray(
+        [intervals[0][0], *(right for _left, right in intervals)],
+        dtype=float,
+    )
+    points = np.asarray([project(float(value)) for value in parameters], dtype=float)
+    return parameters, points
+
+
+def _source_distance_at_parameter(
+    parameters: np.ndarray,
+    points: np.ndarray,
+    parameter: float,
+) -> float:
+    cumulative, _length = _polyline_lengths(points)
+    value = float(parameter)
+    if value <= float(parameters[0]):
+        return 0.0
+    if value >= float(parameters[-1]):
+        return float(cumulative[-1])
+    index = int(np.searchsorted(parameters, value, side="right") - 1)
+    index = min(index, len(parameters) - 2)
+    span = float(parameters[index + 1] - parameters[index])
+    ratio = 0.0 if span <= 0.0 else (value - float(parameters[index])) / span
+    segment = float(np.linalg.norm(points[index + 1] - points[index]))
+    return float(cumulative[index]) + ratio * segment
+
+
+def _dash_polyline_anchored(
+    points: np.ndarray,
+    *,
+    source_distance_start: float,
+    dash_length: float,
+    dash_gap: float,
+    capacity: int,
+) -> tuple[_PreparedDash, ...]:
+    cumulative, length = _polyline_lengths(points)
+    if length <= 0.0:
+        return ()
+    period = dash_length + dash_gap
+    global_start = float(source_distance_start)
+    global_end = global_start + length
+    first_period = max(
+        0,
+        int(np.floor((global_start - dash_length) / period)) + 1,
+    )
+    result: list[_PreparedDash] = []
+    period_index = first_period
+    while period_index * period < global_end - 1.0e-12:
+        dash_start = period_index * period
+        dash_end = dash_start + dash_length
+        period_index += 1
+        clipped_start = max(global_start, dash_start) - global_start
+        clipped_end = min(global_end, dash_end) - global_start
+        if clipped_end - clipped_start <= 1.0e-12:
+            continue
+        result.append(
+            _PreparedDash(
+                _slice_polyline(points, cumulative, clipped_start, clipped_end)
+            )
+        )
+        if len(result) > capacity:
+            raise QuadricManimCapacityError(
+                f"dash count exceeds fixed slot capacity {capacity}"
+            )
+    return tuple(result)
+
+
 def _surface_items(
     value: Sequence[QuadricSurfaceSpec],
 ) -> tuple[QuadricSurfaceSpec, ...]:
@@ -774,6 +941,10 @@ class QuadricOcclusion3D:
         section_compositing_limits: QuadricSectionCompositingLimits = (
             QUADRIC_SECTION_COMPOSITING_LIMITS
         ),
+        boundary_visibility_mode: str = "legacy",
+        include_surface_boundaries: bool = True,
+        generator_boundaries: BoundaryGeneratorInput = (),
+        allocated_boundary_ids: Sequence[str] | None = None,
     ) -> None:
         if not isinstance(style, QuadricManimStyle):
             raise TypeError("style must be a QuadricManimStyle")
@@ -792,6 +963,17 @@ class QuadricOcclusion3D:
                 "paint_policy must be 'physical', 'diagrammatic', or "
                 "'depth_aware_diagrammatic'"
             ) from exc
+        if boundary_visibility_mode not in ("legacy", "unified"):
+            raise QuadricManimError(
+                "boundary_visibility_mode must be 'legacy' or 'unified'"
+            )
+        if not isinstance(include_surface_boundaries, bool):
+            raise TypeError("include_surface_boundaries must be a bool")
+        generators = tuple(generator_boundaries)
+        if not all(isinstance(item, GeneratorBoundarySpec) for item in generators):
+            raise TypeError(
+                "generator_boundaries must contain GeneratorBoundarySpec values"
+            )
         if surface_order_mode not in ("automatic", "explicit"):
             raise QuadricManimError(
                 "surface_order_mode must be 'automatic' or 'explicit'"
@@ -820,6 +1002,10 @@ class QuadricOcclusion3D:
         self.context = context
         self.surface_constraints = tuple(surface_constraints)
         self.surface_order_mode = surface_order_mode
+        self.boundary_visibility_mode = boundary_visibility_mode
+        self.include_surface_boundaries = include_surface_boundaries
+        self._generator_boundaries = generators
+        self._allocated_boundary_ids_input = allocated_boundary_ids
         self._curve_opacity_input = curve_opacities
         self._section_plane_input = section_plane
         self._section_patch_input = section_patch
@@ -836,6 +1022,7 @@ class QuadricOcclusion3D:
         self._last_frame: QuadricCompositingFrame | None = None
         self._last_global_frame: GlobalQuadricFrame | None = None
         self._last_section_frame: QuadricSectionCompositingFrame | None = None
+        self._last_boundary_frame: QuadricBoundaryCompositingFrame | None = None
 
         initial_surfaces = self._resolve_surfaces()
         initial_curves = self._resolve_curves()
@@ -876,6 +1063,51 @@ class QuadricOcclusion3D:
                 raise QuadricManimCapacityError(
                     "initial curves were not preallocated: " + ", ".join(unknown)
                 )
+        auto_boundary_ids: tuple[str, ...] = ()
+        if self.boundary_visibility_mode == "unified":
+            auto_boundary_ids = surface_boundary_source_ids(
+                initial_surfaces,
+                self._generator_boundaries,
+                include_cap_rims=self.include_surface_boundaries,
+                include_silhouettes=self.include_surface_boundaries,
+            )
+            if self._section_enabled:
+                auto_boundary_ids = (
+                    *auto_boundary_ids,
+                    *(
+                        f"boundary:plane:{self._section_plane_id}:edge:{index}"
+                        for index in range(4)
+                    ),
+                )
+        extra_boundary_ids: tuple[str, ...] = ()
+        if allocated_boundary_ids is not None:
+            if isinstance(allocated_boundary_ids, (str, bytes)):
+                raise TypeError(
+                    "allocated_boundary_ids must be a sequence of identities"
+                )
+            values = []
+            for raw in allocated_boundary_ids:
+                if not isinstance(raw, str) or not raw.strip():
+                    raise QuadricManimError(
+                        "allocated_boundary_ids must contain non-empty strings"
+                    )
+                values.append(raw.strip())
+            if len(set(values)) != len(values):
+                raise QuadricManimError("allocated_boundary_ids must be unique")
+            extra_boundary_ids = tuple(values)
+        self._boundary_source_ids = tuple(
+            sorted(set((*auto_boundary_ids, *extra_boundary_ids)))
+        )
+        if len(self._boundary_source_ids) > limits.max_boundary_sources:
+            raise QuadricManimCapacityError(
+                "boundary source count exceeds fixed limit "
+                f"{limits.max_boundary_sources}"
+            )
+        self._slot_source_ids = (
+            self._curve_ids
+            if self.boundary_visibility_mode == "legacy"
+            else tuple(sorted(set((*self._curve_ids, *self._boundary_source_ids))))
+        )
         if len(self._surface_ids) > limits.max_surfaces:
             raise QuadricManimCapacityError(
                 f"surface count exceeds fixed limit {limits.max_surfaces}"
@@ -889,7 +1121,7 @@ class QuadricOcclusion3D:
             len(self._surface_ids)
             + (10 if self._section_enabled else 0)
             + 1
-            + len(self._curve_ids)
+            + len(self._slot_source_ids)
             * (
                 1
                 + limits.max_fragments_per_curve * (limits.max_dashes_per_fragment + 3)
@@ -911,10 +1143,10 @@ class QuadricOcclusion3D:
                 limits.max_fragments_per_curve,
                 limits.max_dashes_per_fragment,
             )
-            for curve_id in self._curve_ids
+            for curve_id in self._slot_source_ids
         }
         self._fragment_slot_maps: dict[str, dict[str, int]] = {
-            curve_id: {} for curve_id in self._curve_ids
+            curve_id: {} for curve_id in self._slot_source_ids
         }
         self._section_slots = (
             tuple(VMobject() for _index in range(10))
@@ -923,7 +1155,9 @@ class QuadricOcclusion3D:
         )
         surface_root = VGroup(*self._surface_slots)
         section_root = VGroup(*self._section_slots)
-        curve_root = VGroup(*(self._curve_slots[key].root for key in self._curve_ids))
+        curve_root = VGroup(
+            *(self._curve_slots[key].root for key in self._slot_source_ids)
+        )
         self._opacity_sentinel = Line((0, 0, 0), (1.0e-9, 0, 0), buff=0)
         self._opacity_sentinel.set_stroke(width=0.0, opacity=1.0)
         self.root = _ManagedQuadricDisplayGroup(
@@ -1098,6 +1332,431 @@ class QuadricOcclusion3D:
                 result[item_id] = next(free)
         return result
 
+    def _boundary_sources_for_frame(
+        self,
+        surfaces: Sequence[QuadricSurfaceSpec],
+        curves: Sequence[AnalyticCurve3D],
+        view: ParallelView,
+        plane: SectionPlane | None,
+        patch: PlaneDisplayPatchSpec | None,
+    ) -> tuple[QuadricBoundarySource, ...]:
+        result = [
+            curve_boundary_source(
+                curve,
+                style_id="style:curve",
+            )
+            for curve in curves
+        ]
+        if self.include_surface_boundaries:
+            result.extend(
+                build_surface_boundary_sources(
+                    surfaces,
+                    view,
+                    self._generator_boundaries,
+                    include_cap_rims=True,
+                    include_silhouettes=True,
+                )
+            )
+        elif self._generator_boundaries:
+            result.extend(
+                build_surface_boundary_sources(
+                    surfaces,
+                    view,
+                    self._generator_boundaries,
+                    include_cap_rims=False,
+                    include_silhouettes=False,
+                )
+            )
+        if plane is not None and patch is not None:
+            result.extend(plane_outline_sources(plane, patch))
+        result.sort(key=lambda item: item.source_id)
+        ids = tuple(item.source_id for item in result)
+        if len(set(ids)) != len(ids):
+            raise QuadricManimError(
+                "user curves and semantic boundaries have duplicate identities"
+            )
+        unknown = sorted(set(ids) - set(self._slot_source_ids))
+        if unknown:
+            raise QuadricManimCapacityError(
+                "semantic boundary identities were not preallocated: "
+                + ", ".join(unknown)
+            )
+        return tuple(result)
+
+    @staticmethod
+    def _section_anchors(frame: QuadricSectionCompositingFrame) -> BoundarySectionAnchors:
+        items = frame.paint_items
+        return BoundarySectionAnchors(
+            items.plane_behind,
+            items.plane_outline_behind,
+            items.surface_back,
+            items.plane_outside,
+            items.plane_outline_outside,
+            items.plane_between,
+            items.plane_outline_between,
+            items.surface_front,
+            items.plane_front,
+            items.plane_outline,
+        )
+
+    @staticmethod
+    def _plane_outline_visibility(
+        frame: QuadricSectionCompositingFrame,
+    ) -> dict[str, tuple[QuadricBoundaryVisibilitySpan, ...]]:
+        grouped: dict[str, list[QuadricBoundaryVisibilitySpan]] = {
+            f"boundary:plane:{frame.plane.plane_id}:edge:{index}": []
+            for index in range(4)
+        }
+        for fragment in frame.plane_outline_fragments:
+            visible = fragment.role in {
+                PlaneDepthRole.OUTSIDE_PROJECTION,
+                PlaneDepthRole.IN_FRONT_OF_SURFACE,
+            }
+            grouped[
+                f"boundary:plane:{frame.plane.plane_id}:edge:{fragment.edge_index}"
+            ].append(
+                QuadricBoundaryVisibilitySpan(
+                    fragment.interval,
+                    VisibilityKind.VISIBLE if visible else VisibilityKind.HIDDEN,
+                    () if visible else (frame.surface_id,),
+                    fragment.role.value,
+                )
+            )
+        return {
+            source_id: tuple(
+                sorted(values, key=lambda item: item.interval.start)
+            )
+            for source_id, values in grouped.items()
+        }
+
+    def _boundary_crossings(
+        self,
+        sources: Sequence[QuadricBoundarySource],
+        spans: Mapping[str, Sequence[QuadricBoundaryVisibilitySpan]],
+        view: ParallelView,
+    ) -> tuple[object, ...]:
+        from itertools import combinations
+
+        result = []
+        for first, second in combinations(sources, 2):
+            active_intervals = None
+            if self.paint_policy is QuadricPaintPolicy.PHYSICAL:
+                active_intervals = {
+                    source.source_id: tuple(
+                        span.interval
+                        for span in spans[source.source_id]
+                        if span.kind is VisibilityKind.VISIBLE
+                    )
+                    for source in (first, second)
+                }
+            try:
+                result.extend(
+                    compute_projected_curve_crossings(
+                        (first.curve, second.curve),
+                        view,
+                        context=self.context,
+                        active_intervals=active_intervals,
+                    )
+                )
+            except ProjectedCurveIntersectionError as exc:
+                same_owner = (
+                    first.owner_surface_id is not None
+                    and first.owner_surface_id == second.owner_surface_id
+                )
+                if same_owner and {
+                    first.semantic_kind,
+                    second.semantic_kind,
+                } <= {
+                    BoundarySemanticKind.SURFACE_BOUNDARY,
+                    BoundarySemanticKind.TRUE_SILHOUETTE,
+                }:
+                    continue
+                raise QuadricManimError(
+                    "semantic boundary crossings cannot be certified: "
+                    f"{first.source_id!r}, {second.source_id!r}: {exc}"
+                ) from exc
+        by_id = {item.crossing_id: item for item in result}
+        return tuple(by_id[key] for key in sorted(by_id))
+
+    def _prepare_unified_numeric(
+        self,
+        surfaces: tuple[QuadricSurfaceSpec, ...],
+        curves: tuple[AnalyticCurve3D, ...],
+        view: ParallelView,
+        curve_opacities: Mapping[str, float],
+    ) -> _PreparedNumericFrame:
+        global_frame: GlobalQuadricFrame | None = None
+        if self.surface_order_mode == "automatic":
+            try:
+                global_frame = compute_global_quadric_frame(
+                    (),
+                    surfaces,
+                    view,
+                    context=self.context,
+                    paint_policy=QuadricPaintPolicy.PHYSICAL,
+                    max_chord_error=self.max_chord_error,
+                    max_segments=self.limits.max_surface_segments,
+                    additional_surface_constraints=self.surface_constraints,
+                )
+            except (
+                ProjectionSubdivisionError,
+                ProjectionProxyError,
+                GlobalQuadricOcclusionError,
+            ) as exc:
+                raise QuadricManimError(
+                    f"unified surface preparation failed: {exc}"
+                ) from exc
+            frame = global_frame.frame
+        else:
+            try:
+                proxies = tuple(
+                    build_opaque_projection_proxy(
+                        surface,
+                        view,
+                        patch_id=f"{surface.surface_id}:opaque-projection",
+                        max_chord_error=self.max_chord_error,
+                        max_segments=self.limits.max_surface_segments,
+                    )
+                    for surface in surfaces
+                )
+                visibility = compute_quadric_visibility(
+                    (), surfaces, view, context=self.context
+                )
+                frame = compute_quadric_compositing(
+                    visibility,
+                    proxies,
+                    paint_policy=QuadricPaintPolicy.PHYSICAL,
+                    surface_constraints=self.surface_constraints,
+                )
+            except (
+                ProjectionSubdivisionError,
+                ProjectionProxyError,
+                QuadricCompositingError,
+            ) as exc:
+                raise QuadricManimError(
+                    f"unified explicit surface preparation failed: {exc}"
+                ) from exc
+
+        surface_plans: list[_PreparedSurface] = []
+        item_mobjects: dict[str, Mobject] = {}
+        section_layers: _PreparedSectionLayers | None = None
+        section_frame: QuadricSectionCompositingFrame | None = None
+        plane: SectionPlane | None = None
+        patch: PlaneDisplayPatchSpec | None = None
+        if self._section_enabled:
+            surface = surfaces[0]
+            plane = self._resolve_section_plane()
+            patch = self._resolve_section_patch(surface, plane)
+            try:
+                section_frame = compute_quadric_section_compositing(
+                    frame,
+                    surface,
+                    plane,
+                    patch,
+                    view,
+                    context=self.context,
+                    max_screen_error=self.section_max_screen_error,
+                    limits=self.section_compositing_limits,
+                )
+                contours = quadric_plane_fragment_contours(section_frame)
+            except QuadricSectionCompositingError as exc:
+                raise QuadricManimError(
+                    f"unified section preparation failed: {exc}"
+                ) from exc
+            surface_points = np.asarray(
+                [
+                    (x, y, 0.0)
+                    for x, y in section_frame.surface_proxy.boundary_points
+                ],
+                dtype=float,
+            )
+            plane_polygons = {
+                role: tuple(
+                    np.asarray([(x, y, 0.0) for x, y in contour], dtype=float)
+                    for contour in contours[role]
+                )
+                for role in PlaneDepthRole
+            }
+            section_layers = _PreparedSectionLayers(
+                section_frame,
+                surface_points,
+                plane_polygons,
+                {role: () for role in PlaneDepthRole},
+            )
+            item_mobjects.update(
+                {
+                    item_id: self._section_slots[index]
+                    for index, item_id in enumerate(
+                        section_frame.paint_items.ordered
+                    )
+                }
+            )
+            parent_ids = section_frame.paint_items.ordered
+            parent_relations = section_frame.order_relations
+            surface_item_by_id = {
+                surface.surface_id: section_frame.paint_items.surface_front
+            }
+        else:
+            for item in frame.surface_items:
+                slot_index = self._surface_slot_by_id[item.surface_id]
+                points = np.asarray(
+                    [(x, y, 0.0) for x, y in item.proxy.boundary_points],
+                    dtype=float,
+                )
+                surface_plans.append(
+                    _PreparedSurface(item.item_id, item.surface_id, slot_index, points)
+                )
+                item_mobjects[item.item_id] = self._surface_slots[slot_index]
+            parent_ids = frame.draw_order
+            parent_relations = frame.order_relations
+            surface_item_by_id = {
+                item.surface_id: item.item_id for item in frame.surface_items
+            }
+
+        sources = self._boundary_sources_for_frame(
+            surfaces, curves, view, plane, patch
+        )
+        non_plane = tuple(
+            item
+            for item in sources
+            if item.source_kind is not BoundarySourceKind.PLANE_PATCH_EDGE
+        )
+        try:
+            spans = compute_boundary_visibility(
+                non_plane,
+                surfaces,
+                view,
+                context=self.context,
+            )
+        except Exception as exc:
+            raise QuadricManimError(
+                f"semantic boundary visibility failed: {exc}"
+            ) from exc
+        if section_frame is not None:
+            spans.update(self._plane_outline_visibility(section_frame))
+        crossings = self._boundary_crossings(sources, spans, view)
+        try:
+            boundary_frame = compute_quadric_boundary_compositing(
+                sources,
+                spans,
+                paint_policy=self.paint_policy,
+                parent_item_ids=parent_ids,
+                parent_relations=parent_relations,
+                surface_item_by_id=surface_item_by_id,
+                crossings=crossings,
+                section_anchors=(
+                    None
+                    if section_frame is None
+                    else self._section_anchors(section_frame)
+                ),
+            )
+        except QuadricBoundaryCompositingError as exc:
+            raise QuadricManimError(
+                f"semantic boundary painter graph failed: {exc}"
+            ) from exc
+
+        source_map = {item.source_id: item for item in sources}
+        by_source: dict[str, list[QuadricBoundaryPaintFragment]] = {
+            item.source_id: [] for item in sources
+        }
+        for fragment in boundary_frame.fragments:
+            if fragment.painted:
+                by_source[fragment.source_id].append(fragment)
+        next_maps: dict[str, Mapping[str, int]] = {
+            source_id: {} for source_id in self._slot_source_ids
+        }
+        prepared_by_source: dict[
+            str, tuple[_PreparedBoundaryFragment, ...]
+        ] = {}
+        boundary_opacities = {
+            item.source_id: curve_opacities.get(item.source_id, 1.0)
+            for item in sources
+        }
+        for source_id in sorted(by_source):
+            source = source_map[source_id]
+            fragments = tuple(
+                sorted(by_source[source_id], key=lambda item: item.item_id)
+            )
+            assignment = self._assign_fragment_slots(
+                source_id,
+                tuple(item.item_id for item in fragments),
+            )
+            next_maps[source_id] = assignment
+            parameters, source_points = _adaptive_project_curve_samples(
+                source.curve,
+                view,
+                max_chord_error=self.max_chord_error,
+                max_segments=self.limits.max_segments_per_fragment,
+            )
+            values = []
+            for fragment in fragments:
+                points = _adaptive_project_curve(
+                    source.curve,
+                    view,
+                    fragment.interval.start,
+                    fragment.interval.end,
+                    max_chord_error=self.max_chord_error,
+                    max_segments=self.limits.max_segments_per_fragment,
+                )
+                _cumulative, length = _polyline_lengths(points)
+                allowance = max(
+                    1.0e-12,
+                    self.limits.max_projected_length * 1.0e-9,
+                )
+                if length > self.limits.max_projected_length + allowance:
+                    raise QuadricManimCapacityError(
+                        f"boundary source {source_id!r} fragment length "
+                        f"{length:.9g} exceeds max_projected_length"
+                    )
+                dashes = (
+                    _dash_polyline_anchored(
+                        points,
+                        source_distance_start=_source_distance_at_parameter(
+                            parameters,
+                            source_points,
+                            fragment.interval.start,
+                        ),
+                        dash_length=self.style.dash_length,
+                        dash_gap=self.style.dash_gap,
+                        capacity=self.limits.max_dashes_per_fragment,
+                    )
+                    if fragment.render_intent is BoundaryRenderIntent.DASHED
+                    else ()
+                )
+                slot_index = assignment[fragment.item_id]
+                values.append(
+                    _PreparedBoundaryFragment(
+                        fragment,
+                        source,
+                        slot_index,
+                        points,
+                        dashes,
+                    )
+                )
+                item_mobjects[fragment.item_id] = self._curve_slots[
+                    source_id
+                ].fragments[slot_index].root
+            prepared_by_source[source_id] = tuple(values)
+
+        if set(item_mobjects) != set(boundary_frame.draw_order):
+            raise QuadricManimError(
+                "unified Manim items do not cover boundary draw_order"
+            )
+        return _PreparedNumericFrame(
+            frame=frame,
+            global_frame=global_frame,
+            surfaces=tuple(surface_plans),
+            fragments={},
+            curve_opacities=curve_opacities,
+            fragment_slot_maps=next_maps,
+            item_mobjects=item_mobjects,
+            painter_draw_order=boundary_frame.draw_order,
+            section_layers=section_layers,
+            boundary_frame=boundary_frame,
+            boundary_fragments=prepared_by_source,
+            boundary_opacities=boundary_opacities,
+        )
+
     def _prepare_numeric(self) -> _PreparedNumericFrame:
         surfaces = self._resolve_surfaces()
         curves = self._resolve_curves()
@@ -1108,6 +1767,13 @@ class QuadricOcclusion3D:
         compositor_style = self.style.compositor_style(
             max_projected_length=self.limits.max_projected_length
         )
+        if self.boundary_visibility_mode == "unified":
+            return self._prepare_unified_numeric(
+                surfaces,
+                curves,
+                view,
+                curve_opacities,
+            )
         global_frame: GlobalQuadricFrame | None = None
         if self.surface_order_mode == "automatic":
             try:
@@ -1284,7 +1950,7 @@ class QuadricOcclusion3D:
 
         prepared_by_curve: dict[str, tuple[_PreparedCurveFragment, ...]] = {}
         next_maps: dict[str, Mapping[str, int]] = {
-            curve_id: {} for curve_id in self._curve_ids
+            curve_id: {} for curve_id in self._slot_source_ids
         }
         for curve_id in active_curve_ids:
             fragments = tuple(sorted(by_curve[curve_id], key=lambda item: item.item_id))
@@ -1375,7 +2041,13 @@ class QuadricOcclusion3D:
         numeric = self._prepare_numeric()
         return self._prepare_painter(numeric)
 
-    def _apply_surface(self, prepared: _PreparedSurface, opacity: float) -> None:
+    def _apply_surface(
+        self,
+        prepared: _PreparedSurface,
+        opacity: float,
+        *,
+        draw_stroke: bool = True,
+    ) -> None:
         slot = self._surface_slots[prepared.slot_index]
         slot.set_points_as_corners(prepared.points)
         slot.set_fill(
@@ -1385,13 +2057,19 @@ class QuadricOcclusion3D:
         slot.set_stroke(
             color=self.style.surface_stroke_color,
             width=self.style.surface_stroke_width,
-            opacity=self.style.surface_stroke_opacity * opacity,
+            opacity=(
+                self.style.surface_stroke_opacity * opacity
+                if draw_stroke
+                else 0.0
+            ),
         )
 
     def _apply_section_layers(
         self,
         prepared: _PreparedSectionLayers,
         opacity: float,
+        *,
+        draw_legacy_strokes: bool = True,
     ) -> None:
         frame = prepared.frame
         if len(self._section_slots) != len(frame.paint_items.ordered):
@@ -1421,7 +2099,11 @@ class QuadricOcclusion3D:
         surface_front.set_stroke(
             color=self.style.surface_stroke_color,
             width=self.style.surface_stroke_width,
-            opacity=self.style.surface_stroke_opacity * opacity,
+            opacity=(
+                self.style.surface_stroke_opacity * opacity
+                if draw_legacy_strokes
+                else 0.0
+            ),
         )
 
         fill_item_by_role = {
@@ -1441,13 +2123,127 @@ class QuadricOcclusion3D:
 
         for role, item_id in frame.paint_items.outline_by_role.items():
             slot = slots[item_id]
-            _set_open_subpaths(slot, prepared.plane_outline_paths[role])
+            _set_open_subpaths(
+                slot,
+                prepared.plane_outline_paths[role]
+                if draw_legacy_strokes
+                else (),
+            )
             slot.set_fill(opacity=0.0)
             slot.set_stroke(
                 color=self.style.section_plane_stroke_color,
                 width=self.style.section_plane_stroke_width,
-                opacity=self.style.section_plane_stroke_opacity * opacity,
+                opacity=(
+                    self.style.section_plane_stroke_opacity * opacity
+                    if draw_legacy_strokes
+                    else 0.0
+                ),
             )
+
+    def _boundary_stroke_style(
+        self,
+        prepared: _PreparedBoundaryFragment,
+        opacity: float,
+    ) -> tuple[object, float, float]:
+        semantic = prepared.source.semantic_kind
+        hidden = prepared.fragment.render_intent is BoundaryRenderIntent.DASHED
+        if semantic is BoundarySemanticKind.DISPLAY_FRAME:
+            color = self.style.section_plane_stroke_color
+            width = self.style.section_plane_stroke_width
+            base_opacity = self.style.section_plane_stroke_opacity
+        elif semantic in {
+            BoundarySemanticKind.SURFACE_BOUNDARY,
+            BoundarySemanticKind.TRUE_SILHOUETTE,
+        }:
+            color = self.style.surface_stroke_color
+            width = self.style.surface_stroke_width
+            base_opacity = self.style.surface_stroke_opacity
+        else:
+            color = (
+                self.style.hidden_curve_color
+                if hidden
+                else self.style.visible_curve_color
+            )
+            width = (
+                self.style.hidden_curve_width
+                if hidden
+                else self.style.visible_curve_width
+            )
+            base_opacity = (
+                self.style.hidden_curve_opacity
+                if hidden
+                else self.style.visible_curve_opacity
+            )
+            return color, width, base_opacity * opacity
+        if hidden:
+            ratio = (
+                self.style.hidden_curve_width / self.style.visible_curve_width
+                if self.style.visible_curve_width > 0.0
+                else 0.82
+            )
+            width *= ratio
+            base_opacity *= self.style.hidden_curve_opacity
+        return color, width, base_opacity * opacity
+
+    def _apply_boundary_fragment(
+        self,
+        source_id: str,
+        prepared: _PreparedBoundaryFragment,
+        opacity: float,
+    ) -> None:
+        slot = self._curve_slots[source_id].fragments[prepared.slot_index]
+        color, width, stroke_opacity = self._boundary_stroke_style(
+            prepared, opacity
+        )
+        if prepared.fragment.render_intent is BoundaryRenderIntent.SOLID:
+            slot.solid.set_points_as_corners(prepared.points)
+            slot.solid.set_fill(opacity=0.0)
+            slot.solid.set_stroke(
+                color=color, width=width, opacity=stroke_opacity
+            )
+            slot.solid.set_stroke(
+                color=self.style.background_color,
+                width=self.style.background_width,
+                opacity=self.style.background_opacity * opacity,
+                background=True,
+            )
+            if self.style.cap_style is not None:
+                slot.solid.set_cap_style(self.style.cap_style)
+            if self.style.joint_type is not None:
+                slot.solid.joint_type = self.style.joint_type
+            for dash in slot.dashes:
+                _hide_vmobject(dash)
+            return
+        _hide_vmobject(slot.solid)
+        for index, dash in enumerate(slot.dashes):
+            if index >= len(prepared.dashes):
+                _hide_vmobject(dash)
+                continue
+            dash.set_points_as_corners(prepared.dashes[index].points)
+            dash.set_fill(opacity=0.0)
+            dash.set_stroke(
+                color=color, width=width, opacity=stroke_opacity
+            )
+            dash.set_stroke(
+                color=self.style.background_color,
+                width=self.style.background_width,
+                opacity=self.style.background_opacity * opacity,
+                background=True,
+            )
+            cap = (
+                self.style.cap_style
+                if self.style.hidden_cap_style is None
+                else self.style.hidden_cap_style
+            )
+            joint = (
+                self.style.joint_type
+                if self.style.hidden_joint_type is None
+                else self.style.hidden_joint_type
+            )
+            if cap is not None:
+                dash.set_cap_style(cap)
+            if joint is not None:
+                dash.joint_type = joint
 
     def _apply_curve_fragment(
         self,
@@ -1528,6 +2324,7 @@ class QuadricOcclusion3D:
         previous_frame = self._last_frame
         previous_global_frame = self._last_global_frame
         previous_section_frame = self._last_section_frame
+        previous_boundary_frame = self._last_boundary_frame
         opacity = self.root.opacity_multiplier
         try:
             for slot in self._surface_slots:
@@ -1537,12 +2334,16 @@ class QuadricOcclusion3D:
             for slots in self._curve_slots.values():
                 for slot in slots.fragments:
                     slot.hide()
+            unified = prepared.numeric.boundary_frame is not None
             for surface in prepared.numeric.surfaces:
-                self._apply_surface(surface, opacity)
+                self._apply_surface(
+                    surface, opacity, draw_stroke=not unified
+                )
             if prepared.numeric.section_layers is not None:
                 self._apply_section_layers(
                     prepared.numeric.section_layers,
                     opacity,
+                    draw_legacy_strokes=not unified,
                 )
             for curve_id, fragments in prepared.numeric.fragments.items():
                 for fragment in fragments:
@@ -1551,6 +2352,17 @@ class QuadricOcclusion3D:
                         fragment,
                         opacity * prepared.numeric.curve_opacities[curve_id],
                     )
+            if prepared.numeric.boundary_fragments is not None:
+                boundary_opacities = prepared.numeric.boundary_opacities or {}
+                for source_id, fragments in (
+                    prepared.numeric.boundary_fragments.items()
+                ):
+                    for fragment in fragments:
+                        self._apply_boundary_fragment(
+                            source_id,
+                            fragment,
+                            opacity * boundary_opacities.get(source_id, 1.0),
+                        )
             self._band.apply(prepared.painter_band)
             self._fragment_slot_maps = {
                 curve_id: dict(values)
@@ -1559,6 +2371,7 @@ class QuadricOcclusion3D:
             self._last_frame = prepared.frame
             self._last_global_frame = prepared.global_frame
             self._last_section_frame = prepared.section_frame
+            self._last_boundary_frame = prepared.boundary_frame
         except Exception:
             _restore_root(root_state)
             self._band.restore_active_state(band_state)
@@ -1566,6 +2379,7 @@ class QuadricOcclusion3D:
             self._last_frame = previous_frame
             self._last_global_frame = previous_global_frame
             self._last_section_frame = previous_section_frame
+            self._last_boundary_frame = previous_boundary_frame
             raise
 
     @property
@@ -1593,14 +2407,26 @@ class QuadricOcclusion3D:
         return self._last_section_frame
 
     @property
+    def last_boundary_frame(self) -> QuadricBoundaryCompositingFrame | None:
+        """Return the last committed unified semantic-boundary frame."""
+
+        return self._last_boundary_frame
+
+    @property
     def active_painter_z_indices(self) -> dict[str, float]:
         return self._band.active_z_indices
 
     @property
     def allocated_curve_ids(self) -> tuple[str, ...]:
-        """Return the immutable curve identities reserved at construction."""
+        """Return the immutable authored curve identities."""
 
         return self._curve_ids
+
+    @property
+    def allocated_boundary_ids(self) -> tuple[str, ...]:
+        """Return every fixed semantic-boundary source identity."""
+
+        return self._boundary_source_ids
 
     def attach(self) -> "QuadricOcclusion3D":
         if self._attached:
@@ -1631,6 +2457,7 @@ class QuadricOcclusion3D:
         previous_frame = self._last_frame
         previous_global_frame = self._last_global_frame
         previous_section_frame = self._last_section_frame
+        previous_boundary_frame = self._last_boundary_frame
         self.root.reset_opacity()
         try:
             # Cairo caches every mobject before the first time-aware updater as
@@ -1652,6 +2479,7 @@ class QuadricOcclusion3D:
             self._last_frame = previous_frame
             self._last_global_frame = previous_global_frame
             self._last_section_frame = previous_section_frame
+            self._last_boundary_frame = previous_boundary_frame
             self._remove_fixed_frame()
             self._remove_owned_identities()
             self._band.restore()
@@ -1713,10 +2541,13 @@ class QuadricOcclusion3D:
         for slots in self._curve_slots.values():
             for slot in slots.fragments:
                 slot.hide()
-        self._fragment_slot_maps = {curve_id: {} for curve_id in self._curve_ids}
+        self._fragment_slot_maps = {
+            source_id: {} for source_id in self._slot_source_ids
+        }
         self._last_frame = None
         self._last_global_frame = None
         self._last_section_frame = None
+        self._last_boundary_frame = None
         self._band.restore()
         self.root.reset_opacity()
         self._invalidate_cairo_static_image()

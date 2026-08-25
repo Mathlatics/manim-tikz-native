@@ -690,8 +690,22 @@ def compute_quadric_boundary_compositing(
                     )
                 )
 
+    source_map = {item.source_id: item for item in source_items}
     for crossing in crossings_tuple:
         if crossing.far_curve_id is None or crossing.near_curve_id is None:
+            continue
+        crossing_sources = (
+            source_map[crossing.first_curve_id],
+            source_map[crossing.second_curve_id],
+        )
+        # A plane-patch edge already owns an exact PlaneDepthRole and a
+        # section-layer bracket.  Keep its projected intersection as a split
+        # event, but do not add a second independent line/line relation which
+        # can contradict that authoritative section evidence.
+        if any(
+            item.source_kind is BoundarySourceKind.PLANE_PATCH_EDGE
+            for item in crossing_sources
+        ):
             continue
         far = _fragments_at_parameter(
             fragments,
