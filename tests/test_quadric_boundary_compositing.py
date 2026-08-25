@@ -203,6 +203,85 @@ class QuadricBoundaryContractTests(unittest.TestCase):
             frame.draw_order.index("outline-front"),
         )
 
+    def test_visible_owner_boundary_ignores_occluded_shared_plane_role(self) -> None:
+        cone = ConeSpec(
+            "cone",
+            (0.0, 0.0, -2.0),
+            (0.0, 0.0, 1.0),
+            pi / 6.0,
+            (0.0, 4.0),
+            radial_axis=(1.0, 0.0, 0.0),
+        )
+        source = build_surface_boundary_sources(
+            (cone,),
+            VIEW,
+            (GeneratorBoundarySpec("generator:shared", "cone", 0.4),),
+            include_cap_rims=False,
+            include_silhouettes=False,
+        )[0]
+        anchors = BoundarySectionAnchors(
+            "plane-behind",
+            "outline-behind",
+            "surface-back",
+            "plane-outside",
+            "outline-outside",
+            "plane-between",
+            "outline-between",
+            "surface-front",
+            "plane-front",
+            "outline-front",
+        )
+        parent = (
+            anchors.plane_behind,
+            anchors.outline_behind,
+            anchors.surface_back,
+            anchors.plane_outside,
+            anchors.outline_outside,
+            anchors.plane_between,
+            anchors.outline_between,
+            anchors.surface_front,
+            anchors.plane_front,
+            anchors.outline_front,
+        )
+        frame = compute_quadric_boundary_compositing(
+            (source,),
+            {
+                source.source_id: (
+                    QuadricBoundaryVisibilitySpan(
+                        source.curve.domain,
+                        VisibilityKind.VISIBLE,
+                    ),
+                )
+            },
+            paint_policy=QuadricPaintPolicy.DEPTH_AWARE_DIAGRAMMATIC,
+            parent_item_ids=parent,
+            parent_relations=tuple(
+                QuadricPaintRelation(left, right, "parent")
+                for left, right in zip(parent, parent[1:])
+            ),
+            surface_item_by_id={"cone": "surface-front"},
+            section_anchors=anchors,
+            section_spans_by_source={
+                source.source_id: (
+                    QuadricBoundarySectionSpan(
+                        source.curve.domain,
+                        BoundaryPlaneRelation.BOUNDARY_BEHIND_PLANE,
+                        ("between_surface_sheets", "outside_projection"),
+                    ),
+                )
+            },
+        )
+        fragment = frame.fragments[0]
+        self.assertLess(
+            frame.draw_order.index("surface-front"),
+            frame.draw_order.index(fragment.item_id),
+        )
+        relations = {
+            (item.far_item_id, item.near_item_id) for item in frame.order_relations
+        }
+        self.assertIn((fragment.item_id, "plane-outside"), relations)
+        self.assertNotIn((fragment.item_id, "plane-between"), relations)
+
     def test_surface_item_mapping_must_reference_parent_items(self) -> None:
         curve = SegmentCurve(
             "visible-boundary", (-0.5, 0.0, 0.0), (0.5, 0.0, 0.0)

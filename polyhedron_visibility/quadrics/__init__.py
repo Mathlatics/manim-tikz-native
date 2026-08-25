@@ -167,6 +167,14 @@ _EXPORTS: Final[dict[str, tuple[str, str]]] = {
     "BoundaryRenderIntent": (".boundary_compositing", "BoundaryRenderIntent"),
     "BoundarySectionAnchors": (".boundary_compositing", "BoundarySectionAnchors"),
     "BoundaryPlaneRelation": (".boundary_section", "BoundaryPlaneRelation"),
+    "QUADRIC_BOUNDARY_SECTION_LIMITS": (
+        ".boundary_section",
+        "QUADRIC_BOUNDARY_SECTION_LIMITS",
+    ),
+    "QuadricBoundarySectionLimits": (
+        ".boundary_section",
+        "QuadricBoundarySectionLimits",
+    ),
     "QuadricBoundarySectionSpan": (
         ".boundary_section",
         "QuadricBoundarySectionSpan",

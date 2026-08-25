@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import json
-from math import asinh, atan2, ceil, floor, isfinite, sqrt, tau
+from math import acos, asinh, atan2, ceil, floor, isfinite, sqrt, tau
 from typing import Mapping, Sequence
 
 import numpy as np
@@ -169,6 +169,7 @@ class _ProjectedModel:
     line: np.ndarray | None
     parameter_kind: str
     branch_sign: int = 1
+    rank_one_coefficients: tuple[float, float] | None = None
 
     def evaluate_homogeneous(self, x: Polynomial, y: Polynomial, w: Polynomial) -> Polynomial:
         if self.line is not None:
@@ -257,6 +258,51 @@ def _conic_matrix(
     return 0.5 * (canonical + canonical.T)
 
 
+def _rank_one_ellipse_model(
+    curve: AnalyticCurve3D,
+    origin: np.ndarray,
+    first: np.ndarray,
+    second: np.ndarray,
+) -> _ProjectedModel | None:
+    """Represent an edge-on ellipse by its finite line support.
+
+    A circle or ellipse viewed exactly edge-on is not an invalid projection:
+    it is a line segment that the authored parameter traverses twice.  Keep a
+    canonical support direction here and recover both parameters later from
+    the original trigonometric axes.
+    """
+
+    linear = np.column_stack((first, second))
+    first_length = float(np.linalg.norm(first))
+    second_length = float(np.linalg.norm(second))
+    area_scale = first_length * second_length
+    determinant = abs(float(np.linalg.det(linear)))
+    if area_scale > 0.0 and determinant > 1024.0 * _FLOAT_EPSILON * area_scale:
+        return None
+    left, singular, _right = np.linalg.svd(linear, full_matrices=False)
+    amplitude = float(singular[0]) if len(singular) else 0.0
+    if not isfinite(amplitude) or amplitude <= 0.0:
+        raise ProjectedCurveIntersectionError(
+            f"curve {curve.curve_id!r} collapses to one screen point"
+        )
+    unit_direction = np.asarray(left[:, 0], dtype=float)
+    direction = unit_direction * amplitude
+    coefficients = (
+        float(np.dot(first, unit_direction)),
+        float(np.dot(second, unit_direction)),
+    )
+    return _ProjectedModel(
+        curve,
+        origin,
+        direction,
+        None,
+        None,
+        _projected_line(origin, direction, curve.curve_id),
+        "ellipse_rank_one",
+        rank_one_coefficients=coefficients,
+    )
+
+
 def _projected_model(curve: AnalyticCurve3D, view: ParallelView) -> _ProjectedModel:
     screen = view.matrix[:2]
     if isinstance(curve, SegmentCurve):
@@ -276,6 +322,9 @@ def _projected_model(curve: AnalyticCurve3D, view: ParallelView) -> _ProjectedMo
         origin = screen @ np.asarray(curve.center, dtype=float)
         first = screen @ np.asarray(curve.first_axis, dtype=float)
         second = screen @ np.asarray(curve.second_axis, dtype=float)
+        rank_one = _rank_one_ellipse_model(curve, origin, first, second)
+        if rank_one is not None:
+            return rank_one
         matrix = _conic_matrix(
             origin,
             first,
@@ -297,6 +346,9 @@ def _projected_model(curve: AnalyticCurve3D, view: ParallelView) -> _ProjectedMo
     if kind in {ConicKind.CIRCLE, ConicKind.ELLIPSE}:
         canonical = np.diag((1.0, 1.0, -1.0))
         parameter_kind = "ellipse"
+        rank_one = _rank_one_ellipse_model(curve, origin, first, second)
+        if rank_one is not None:
+            return rank_one
     elif kind is ConicKind.HYPERBOLA:
         canonical = np.diag((1.0, -1.0, -1.0))
         parameter_kind = "hyperbola"
@@ -388,7 +440,33 @@ def _target_parameters(
         screen_delta = view.matrix[:2] @ (
             np.asarray(world_point, dtype=float) - _model_world_origin(model)
         )
-    if model.parameter_kind == "line":
+    if model.parameter_kind == "ellipse_rank_one":
+        axis = np.asarray(model.screen_first, dtype=float)
+        axis_length = float(np.linalg.norm(axis))
+        if axis_length <= 0.0:  # pragma: no cover - construction rejects this
+            return ()
+        axis /= axis_length
+        if model.rank_one_coefficients is None:  # pragma: no cover
+            return ()
+        first_coefficient, second_coefficient = model.rank_one_coefficients
+        amplitude = float(np.hypot(first_coefficient, second_coefficient))
+        if amplitude <= 0.0:  # pragma: no cover - construction rejects this
+            return ()
+        ratio = float(np.dot(screen_delta, axis)) / amplitude
+        coordinate_epsilon = screen_epsilon / amplitude
+        if ratio < -1.0 - coordinate_epsilon or ratio > 1.0 + coordinate_epsilon:
+            return ()
+        ratio = min(1.0, max(-1.0, ratio))
+        phase = atan2(second_coefficient, first_coefficient)
+        offset = acos(ratio)
+        candidates = tuple(
+            parameter
+            for base in (phase - offset, phase + offset)
+            for parameter in _parameters_in_angular_domain(
+                base, curve, parameter_epsilon
+            )
+        )
+    elif model.parameter_kind == "line":
         displacement = model.screen_first
         denominator = float(np.dot(displacement, displacement))
         if denominator <= 0.0:  # pragma: no cover - construction rejects this
@@ -1978,18 +2056,32 @@ def compute_projected_curve_crossings(
                                 np.linalg.norm(first_tangent)
                             ) * float(np.linalg.norm(second_tangent))
                             if tangent_scale <= 0.0:
-                                raise ProjectedCurveIntersectionError(
-                                    "a projected curve tangent collapsed at a crossing"
+                                rank_one_turn = (
+                                    first_model.parameter_kind
+                                    == "ellipse_rank_one"
+                                    and float(np.linalg.norm(first_tangent)) == 0.0
+                                    and float(np.linalg.norm(second_tangent)) > 0.0
+                                ) or (
+                                    second_model.parameter_kind
+                                    == "ellipse_rank_one"
+                                    and float(np.linalg.norm(second_tangent)) == 0.0
+                                    and float(np.linalg.norm(first_tangent)) > 0.0
                                 )
-                            tangent_cross = float(
-                                first_tangent[0] * second_tangent[1]
-                                - first_tangent[1] * second_tangent[0]
-                            )
-                            tangential = (
-                                first_candidate.tangential_certified
-                                or abs(tangent_cross)
-                                <= tangency_epsilon * tangent_scale
-                            )
+                                if not rank_one_turn:
+                                    raise ProjectedCurveIntersectionError(
+                                        "a projected curve tangent collapsed at a crossing"
+                                    )
+                                tangential = True
+                            else:
+                                tangent_cross = float(
+                                    first_tangent[0] * second_tangent[1]
+                                    - first_tangent[1] * second_tangent[0]
+                                )
+                                tangential = (
+                                    first_candidate.tangential_certified
+                                    or abs(tangent_cross)
+                                    <= tangency_epsilon * tangent_scale
+                                )
                             pair_entries.append(
                                 (
                                     first_parameter,

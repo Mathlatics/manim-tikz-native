@@ -524,6 +524,15 @@ parts are solid and their rear parts follow the selected hidden-line policy.
 The rectangular plane-patch outline reuses its existing exact
 `PlaneDepthRole` partition instead of solving visibility again.
 
+Every other semantic boundary is also split where it crosses a plane-role
+contour. A midpoint labels only an already partitioned open interval; three
+interior probes must agree or preparation fails closed. Curves analytically
+certified as the surface/plane section are partitioned by their exact
+visibility events, so increasing the plane triangulation density does not
+consume additional fixed Manim fragment slots. Use
+`boundary_section_limits=QuadricBoundarySectionLimits(...)` to set explicit
+role-contour and per-source split capacities.
+
 Unified boundary painter fragments use fixed preallocated solid/dash families.
 Dash phase is anchored to the complete semantic source, so a moving visibility
 boundary clips only the first or last dash instead of making the pattern crawl.

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from math import pi
 import unittest
 from unittest.mock import patch
@@ -13,6 +14,7 @@ from polyhedron_visibility.quadrics.compositing import QuadricPaintPolicy
 from polyhedron_visibility.quadrics.contract import (
     ConeSpec,
     CylinderSpec,
+    PlaneDisplayPatchSpec,
     SectionPlane,
     SphereSpec,
 )
@@ -32,6 +34,13 @@ VIEW = ParallelView.from_matrix(
         (-0.7071067811865476, 0.7071067811865476, 0.0),
         (-0.4082482904638631, -0.4082482904638631, 0.8164965809277261),
         (0.5773502691896258, 0.5773502691896258, 0.5773502691896258),
+    )
+)
+SIDE_VIEW = ParallelView.from_matrix(
+    (
+        (1.0, 0.0, 0.0),
+        (0.0, 0.0, -1.0),
+        (0.0, 1.0, 0.0),
     )
 )
 
@@ -398,6 +407,65 @@ class UnifiedBoundaryManimTests(unittest.TestCase):
                 for item in frame.fragments
             )
         )
+        controller.restore()
+
+    def test_edge_on_cap_rim_keeps_role_splits_through_real_binding(self) -> None:
+        cylinder = CylinderSpec(
+            "edge-on-cylinder",
+            (0.0, 0.0, 0.0),
+            (0.0, 0.0, 1.0),
+            1.0,
+            (0.0, 2.0),
+            radial_axis=(1.0, 0.0, 0.0),
+        )
+        plane = SectionPlane(
+            "edge-on-cut",
+            (0.0, 0.5, 1.0),
+            (0.0, 1.0, 0.0),
+            u_axis=(1.0, 0.0, 0.0),
+        )
+        patch_spec = PlaneDisplayPatchSpec(
+            "edge-on-patch", plane.plane_id, 1.4, 1.4
+        )
+        controller = QuadricOcclusion3D(
+            Scene(),
+            surfaces=(cylinder,),
+            curves=(),
+            projection=SIDE_VIEW,
+            paint_policy=QuadricPaintPolicy.DEPTH_AWARE_DIAGRAMMATIC,
+            boundary_visibility_mode="unified",
+            section_plane=plane,
+            section_patch=patch_spec,
+            limits=replace(limits(), max_total_mobjects=40000),
+        ).attach()
+        frame = controller.last_boundary_frame
+        assert frame is not None
+        cap_fragments = tuple(
+            item
+            for item in frame.fragments
+            if item.source_id == "boundary:edge-on-cylinder:cap_max:rim"
+        )
+        self.assertGreaterEqual(len(cap_fragments), 5)
+        self.assertEqual(
+            {
+                role
+                for item in cap_fragments
+                for role in item.plane_depth_roles
+            },
+            {
+                "between_surface_sheets",
+                "in_front_of_surface",
+                "outside_projection",
+            },
+        )
+        identities = controller.slot_identities()
+        with patch.object(
+            Mobject,
+            "__init__",
+            side_effect=AssertionError("edge-on update allocated a Mobject"),
+        ):
+            controller.update()
+        self.assertEqual(controller.slot_identities(), identities)
         controller.restore()
 
 

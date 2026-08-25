@@ -94,7 +94,11 @@ from .section_compositing import (
     quadric_plane_fragment_contours,
 )
 from .visibility import compute_quadric_visibility
-from .boundary_section import compute_boundary_section_spans
+from .boundary_section import (
+    QUADRIC_BOUNDARY_SECTION_LIMITS,
+    QuadricBoundarySectionLimits,
+    compute_boundary_section_spans,
+)
 from .surface_boundaries import (
     GeneratorBoundarySpec,
     build_surface_boundary_sources,
@@ -942,6 +946,9 @@ class QuadricOcclusion3D:
         section_compositing_limits: QuadricSectionCompositingLimits = (
             QUADRIC_SECTION_COMPOSITING_LIMITS
         ),
+        boundary_section_limits: QuadricBoundarySectionLimits = (
+            QUADRIC_BOUNDARY_SECTION_LIMITS
+        ),
         boundary_visibility_mode: str = "legacy",
         include_surface_boundaries: bool = True,
         generator_boundaries: BoundaryGeneratorInput = (),
@@ -990,6 +997,11 @@ class QuadricOcclusion3D:
                 "section_compositing_limits must be a "
                 "QuadricSectionCompositingLimits"
             )
+        if not isinstance(boundary_section_limits, QuadricBoundarySectionLimits):
+            raise TypeError(
+                "boundary_section_limits must be a "
+                "QuadricBoundarySectionLimits"
+            )
         self.scene = scene
         self._surface_input = surfaces
         self._curve_input = curves
@@ -1017,6 +1029,7 @@ class QuadricOcclusion3D:
             section_max_screen_error, "section_max_screen_error"
         )
         self.section_compositing_limits = section_compositing_limits
+        self.boundary_section_limits = boundary_section_limits
         self._section_enabled = section_plane is not None
         self._attached = False
         self._fixed_frame_camera: ThreeDCamera | None = None
@@ -1644,7 +1657,10 @@ class QuadricOcclusion3D:
                 section_frame,
                 view,
                 crossings,
+                surface=surfaces[0],
+                visibility_spans_by_source=spans,
                 context=self.context,
+                limits=self.boundary_section_limits,
             )
         )
         try:

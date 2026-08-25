@@ -556,9 +556,28 @@ def _add_section_plane_relation(
     relation = fragment.plane_relation
     if relation in {None, "outside_patch", "coincident"}:
         return
+    roles = fragment.plane_depth_roles
+    if (
+        fragment.visibility_kind is VisibilityKind.VISIBLE
+        and relation == "boundary_behind_plane"
+    ):
+        # On a true silhouette the certified plane partition intentionally
+        # reports both adjacent roles.  A behind/between fill is already below
+        # the front sheet, while a visible boundary is above that sheet.  Those
+        # two regions meet only on the shared contour, so forcing the boundary
+        # below the behind/between fill creates a false painter cycle.  Retain
+        # only plane regions that can actually paint over a visible front
+        # boundary.
+        roles = tuple(
+            role
+            for role in roles
+            if role in {"outside_projection", "in_front_of_surface"}
+        )
+        if not roles:
+            return
     item_ids = tuple(
         item_id
-        for role in fragment.plane_depth_roles
+        for role in roles
         if (item_id := _plane_item_for_role(role, anchors)) is not None
     )
     if not item_ids:

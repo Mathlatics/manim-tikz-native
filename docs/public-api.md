@@ -563,9 +563,16 @@ The renderer-neutral boundary sidecar is exported from
   `BoundaryRenderIntent`;
 - `GeneratorBoundarySpec`, `build_surface_boundary_sources`,
   `compute_boundary_visibility`, and `compute_quadric_boundary_compositing`;
-- `BoundaryPlaneRelation`, `QuadricBoundarySectionSpan`, and
+- `BoundaryPlaneRelation`, `QuadricBoundarySectionSpan`,
+  `QuadricBoundarySectionLimits`, `QUADRIC_BOUNDARY_SECTION_LIMITS`, and
   `compute_boundary_section_spans`.
 
 These additive contracts use `manim-quadric-boundary-compositing/v1`. Existing
 quadric v1 schemas and canonical JSON remain unchanged. The Manim controller
 selects the new path only when `boundary_visibility_mode="unified"` is supplied.
+When a cutting plane is active, semantic boundaries are partitioned at the
+actual `PlaneDepthRole` contours before midpoint classification. Exact section
+curves use their analytic surface/plane identity and visibility events instead
+of inheriting the display mesh's chord count. `boundary_section_limits` places
+explicit fixed bounds on role-contour segments and split parameters; exceeding
+either bound raises rather than guessing or allocating more objects mid-frame.

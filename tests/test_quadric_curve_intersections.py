@@ -34,6 +34,13 @@ GENERAL_VIEW_MATRIX = np.asarray(
     dtype=float,
 )
 GENERAL_VIEW = ParallelView.from_matrix(GENERAL_VIEW_MATRIX)
+EDGE_ON_CIRCLE_VIEW = ParallelView.from_matrix(
+    (
+        (1.0, 0.0, 0.0),
+        (0.0, 0.0, -1.0),
+        (0.0, 1.0, 0.0),
+    )
+)
 GENERAL_DEPTH_OFFSET = np.linalg.solve(
     GENERAL_VIEW_MATRIX,
     np.asarray((0.0, 0.0, 1.0), dtype=float),
@@ -313,6 +320,62 @@ class ProjectedConicCrossingTests(unittest.TestCase):
             {item.near_curve_id for item in crossings},
             {"line"},
         )
+
+    def test_edge_on_circle_and_transverse_segment_keep_both_crossings(self) -> None:
+        circle = CircleArcCurve(
+            "edge-on-circle",
+            (0.0, 0.0, 2.0),
+            1.0,
+            (0.0, 0.0, 1.0),
+            radial_axis=(1.0, 0.0, 0.0),
+        )
+        segment = SegmentCurve(
+            "plane-edge",
+            (0.0, 0.5, 1.5),
+            (0.0, 0.5, 2.5),
+        )
+
+        crossings = compute_projected_curve_crossings(
+            (circle, segment), EDGE_ON_CIRCLE_VIEW
+        )
+
+        self.assertEqual(len(crossings), 2)
+        self.assertAlmostEqual(crossings[0].first_parameter, pi / 2.0)
+        self.assertAlmostEqual(crossings[1].first_parameter, 3.0 * pi / 2.0)
+        self.assertEqual(
+            tuple(item.second_parameter for item in crossings),
+            (0.5, 0.5),
+        )
+        self.assertEqual(
+            {(item.far_curve_id, item.near_curve_id) for item in crossings},
+            {
+                ("edge-on-circle", "plane-edge"),
+                ("plane-edge", "edge-on-circle"),
+            },
+        )
+
+    def test_edge_on_circle_support_endpoint_is_a_certified_turn(self) -> None:
+        circle = CircleArcCurve(
+            "edge-on-circle",
+            (0.0, 0.0, 2.0),
+            1.0,
+            (0.0, 0.0, 1.0),
+            radial_axis=(1.0, 0.0, 0.0),
+        )
+        segment = SegmentCurve(
+            "endpoint-edge",
+            (1.0, 0.5, 1.5),
+            (1.0, 0.5, 2.5),
+        )
+
+        crossings = compute_projected_curve_crossings(
+            (circle, segment), EDGE_ON_CIRCLE_VIEW
+        )
+
+        self.assertEqual(len(crossings), 1)
+        self.assertAlmostEqual(crossings[0].first_parameter, 0.0)
+        self.assertAlmostEqual(crossings[0].second_parameter, 0.5)
+        self.assertTrue(crossings[0].tangential)
 
     def test_tiny_nondegenerate_circle_projection_is_not_singular(self) -> None:
         scale = 1.0e-7

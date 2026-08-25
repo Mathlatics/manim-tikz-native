@@ -35,6 +35,10 @@ from .manim import (
     QuadricManimStyle,
     QuadricOcclusion3D,
 )
+from .boundary_section import (
+    QUADRIC_BOUNDARY_SECTION_LIMITS,
+    QuadricBoundarySectionLimits,
+)
 from .section_compositing import (
     QUADRIC_SECTION_COMPOSITING_LIMITS,
     QuadricSectionCompositingLimits,
@@ -165,6 +169,9 @@ class QuadricSectionTransition3D:
         section_compositing_limits: QuadricSectionCompositingLimits = (
             QUADRIC_SECTION_COMPOSITING_LIMITS
         ),
+        boundary_section_limits: QuadricBoundarySectionLimits = (
+            QUADRIC_BOUNDARY_SECTION_LIMITS
+        ),
         boundary_visibility_mode: str = "legacy",
         include_surface_boundaries: bool = True,
         generator_boundaries: Sequence[GeneratorBoundarySpec] = (),
@@ -215,6 +222,7 @@ class QuadricSectionTransition3D:
             section_patch_margin=plane_patch_margin,
             section_max_screen_error=section_max_screen_error,
             section_compositing_limits=section_compositing_limits,
+            boundary_section_limits=boundary_section_limits,
             boundary_visibility_mode=boundary_visibility_mode,
             include_surface_boundaries=include_surface_boundaries,
             generator_boundaries=generator_boundaries,
