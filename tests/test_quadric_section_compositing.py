@@ -28,6 +28,7 @@ from polyhedron_visibility.quadrics.curves import (
     ParametricConicBranch,
 )
 from polyhedron_visibility.quadrics.plane_patch import fit_plane_display_patch
+from polyhedron_visibility.quadrics.plane_motion import AxisAnglePlaneMotion
 from polyhedron_visibility.quadrics.projection import build_opaque_projection_proxy
 from polyhedron_visibility.quadrics.section_compositing import (
     PlaneDepthRole,
@@ -61,6 +62,21 @@ OBLIQUE_VIEW = ParallelView.from_matrix(
     (
         (-1.0 / sqrt(2.0), 1.0 / sqrt(2.0), 0.0),
         (-1.0 / sqrt(6.0), -1.0 / sqrt(6.0), 2.0 / sqrt(6.0)),
+        (1.0 / sqrt(3.0), 1.0 / sqrt(3.0), 1.0 / sqrt(3.0)),
+    )
+)
+TRANSITION_TANGENT_VIEW = ParallelView.from_matrix(
+    (
+        (
+            -0.85 / sqrt(2.0),
+            0.85 / sqrt(2.0),
+            0.0,
+        ),
+        (
+            -0.85 / sqrt(6.0),
+            -0.85 / sqrt(6.0),
+            1.70 / sqrt(6.0),
+        ),
         (1.0 / sqrt(3.0), 1.0 / sqrt(3.0), 1.0 / sqrt(3.0)),
     )
 )
@@ -404,6 +420,65 @@ def _contract_frame(
         patch,
         OBLIQUE_VIEW,
         max_screen_error=max_screen_error,
+    )
+
+
+def _transition_tangent_regression_frame():
+    """Rebuild the exact 30 fps demo frame that once split one role run."""
+
+    vertical_shift = -0.9
+    cone = ConeSpec(
+        "transition-cone",
+        (0.0, 0.0, -1.5 + vertical_shift),
+        (0.0, 0.0, 1.0),
+        pi / 6.0,
+        (0.0, 4.0),
+        radial_axis=(1.0, 0.0, 0.0),
+    )
+    motion = AxisAnglePlaneMotion(
+        "transition-plane-motion",
+        SectionPlane(
+            "transition-plane",
+            (0.0, 0.0, 0.2 + vertical_shift),
+            (0.0, 0.0, 1.0),
+            u_axis=(1.0, 0.0, 0.0),
+        ),
+        (0.0, 0.0, 0.2 + vertical_shift),
+        (0.0, 1.0, 0.0),
+        0.72,
+        1.35,
+    )
+    # Manim smooth(115 / 180): the first formal 30 fps render found a
+    # microscopic tangent-neighborhood cell at precisely this progress.
+    progress = 0.8044906220284254
+    plane = motion.plane_at(progress)
+    proxy = build_opaque_projection_proxy(
+        cone,
+        TRANSITION_TANGENT_VIEW,
+        max_chord_error=0.008,
+    )
+    visibility = compute_quadric_visibility(
+        (),
+        (cone,),
+        TRANSITION_TANGENT_VIEW,
+    )
+    base = compute_quadric_compositing(
+        visibility,
+        (proxy,),
+        paint_policy=QuadricPaintPolicy.DIAGRAMMATIC,
+    )
+    patch = fit_plane_display_patch(
+        "transition-plane:auto-display-patch",
+        plane,
+        (cone,),
+        margin_ratio=0.08,
+    ).patch
+    return compute_quadric_section_compositing(
+        base,
+        cone,
+        plane,
+        patch,
+        TRANSITION_TANGENT_VIEW,
     )
 
 
@@ -1592,6 +1667,40 @@ class QuadricSectionCompositingTests(unittest.TestCase):
             canonical_quadric_section_compositing_json(first),
             canonical_quadric_section_compositing_json(second),
         )
+
+    def test_formal_transition_tangent_frame_preserves_disjoint_role_components(
+        self,
+    ) -> None:
+        first = _transition_tangent_regression_frame()
+        second = _transition_tangent_regression_frame()
+
+        first_ids = tuple(item.fragment_id for item in first.plane_fragments)
+        second_ids = tuple(item.fragment_id for item in second.plane_fragments)
+        self.assertEqual(first_ids, second_ids)
+        self.assertEqual(len(first_ids), len(set(first_ids)))
+        self.assertEqual(
+            canonical_quadric_section_compositing_json(first),
+            canonical_quadric_section_compositing_json(second),
+        )
+        restored_area = sum(
+            _triangle_area(item.world_vertices)
+            for item in first.plane_fragments
+        )
+        self.assertAlmostEqual(
+            restored_area,
+            4.0 * first.patch.half_width * first.patch.half_height,
+            places=8,
+        )
+        contours = quadric_plane_fragment_contours(first)
+        for role in PlaneDepthRole:
+            fragment_area = sum(
+                _screen_signed_area(item.screen_vertices)
+                for item in first.fragments_by_role[role]
+            )
+            contour_area = sum(
+                _screen_signed_area(contour) for contour in contours[role]
+            )
+            self.assertAlmostEqual(fragment_area, contour_area, places=8)
 
     def test_edge_on_plane_and_capacity_overflow_fail_closed(self) -> None:
         sphere = SphereSpec("sphere", (0.0, 0.0, 0.0), 1.0)
