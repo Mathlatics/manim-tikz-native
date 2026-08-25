@@ -833,6 +833,19 @@ def compute_quadric_boundary_compositing(
                             "visible_owner_surface_boundary",
                         )
                     )
+                elif fragment.plane_relation == "outside_patch":
+                    # Outside the finite display patch there are no plane
+                    # pixels to bracket against.  A visible free curve still
+                    # belongs above the front surface sheet, but tying it to
+                    # the global front-outline anchor can contradict the
+                    # certified depth order where it crosses the patch edge.
+                    relations.append(
+                        QuadricPaintRelation(
+                            section_anchors.surface_front,
+                            fragment.item_id,
+                            "visible_boundary_outside_section_patch",
+                        )
+                    )
                 elif (
                     fragment.plane_relation == "boundary_behind_plane"
                     and "in_front_of_surface" in fragment.plane_depth_roles

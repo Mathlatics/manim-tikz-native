@@ -219,6 +219,81 @@ class QuadricBoundaryContractTests(unittest.TestCase):
             frame.draw_order.index("outline-front"),
         )
 
+    def test_visible_curve_outside_patch_is_not_tied_to_plane_outline(self) -> None:
+        curve = SegmentCurve(
+            "outside-patch-curve", (-0.5, 0.0, 0.0), (0.5, 0.0, 0.0)
+        )
+        source = curve_boundary_source(curve)
+        anchors = BoundarySectionAnchors(
+            "plane-behind",
+            "outline-behind",
+            "surface-back",
+            "plane-outside",
+            "outline-outside",
+            "plane-between",
+            "outline-between",
+            "surface-front",
+            "plane-front",
+            "outline-front",
+        )
+        parent = (
+            anchors.plane_behind,
+            anchors.outline_behind,
+            anchors.surface_back,
+            anchors.plane_outside,
+            anchors.outline_outside,
+            anchors.plane_between,
+            anchors.outline_between,
+            anchors.surface_front,
+            anchors.plane_front,
+            anchors.outline_front,
+        )
+        frame = compute_quadric_boundary_compositing(
+            (source,),
+            {
+                source.source_id: (
+                    QuadricBoundaryVisibilitySpan(
+                        curve.domain, VisibilityKind.VISIBLE
+                    ),
+                )
+            },
+            paint_policy=QuadricPaintPolicy.DEPTH_AWARE_DIAGRAMMATIC,
+            parent_item_ids=parent,
+            parent_relations=tuple(
+                QuadricPaintRelation(left, right, "parent")
+                for left, right in zip(parent, parent[1:])
+            ),
+            surface_item_by_id={"solid": anchors.surface_front},
+            section_anchors=anchors,
+            section_spans_by_source={
+                source.source_id: (
+                    QuadricBoundarySectionSpan(
+                        curve.domain,
+                        BoundaryPlaneRelation.OUTSIDE_PATCH,
+                    ),
+                )
+            },
+        )
+        fragment = frame.fragments[0]
+        relations = {
+            (item.far_item_id, item.near_item_id, item.reason)
+            for item in frame.order_relations
+        }
+        self.assertIn(
+            (
+                anchors.surface_front,
+                fragment.item_id,
+                "visible_boundary_outside_section_patch",
+            ),
+            relations,
+        )
+        self.assertFalse(
+            any(
+                far == anchors.outline_front and near == fragment.item_id
+                for far, near, _reason in relations
+            )
+        )
+
     def test_visible_owner_boundary_ignores_occluded_shared_plane_role(self) -> None:
         cone = ConeSpec(
             "cone",

@@ -653,8 +653,10 @@ def _resolved_context(
 def _merge_events(
     entries: Sequence[tuple[float, CriticalEvidence]],
     *,
+    curve: AnalyticCurve3D,
     domain: ParameterInterval,
     parameter_epsilon: float,
+    point_epsilon: float,
 ) -> tuple[CriticalEvent, ...]:
     ordered = sorted(entries, key=lambda item: (item[0], _evidence_key(item[1])))
     groups: list[list[tuple[float, CriticalEvidence]]] = []
@@ -666,7 +668,39 @@ def _merge_events(
             entry = (domain.start, entry[1])
         elif parameter > domain.end:
             entry = (domain.end, entry[1])
-        if groups and entry[0] - groups[-1][-1][0] <= parameter_epsilon:
+        parameter_close = bool(
+            groups
+            and entry[0] - groups[-1][-1][0] <= parameter_epsilon
+        )
+        endpoint_evidence = (
+            entry[1].kind is CriticalEventKind.DOMAIN_ENDPOINT
+            or (
+                groups
+                and any(
+                    evidence.kind is CriticalEventKind.DOMAIN_ENDPOINT
+                    for _value, evidence in groups[-1]
+                )
+            )
+        )
+        point_close = False
+        if groups and not endpoint_evidence and not parameter_close:
+            # Different analytic equations may describe the same geometric
+            # visibility switch.  Their independently solved roots can be
+            # farther apart than the parameter tolerance after a rigid
+            # translation, even though the evaluated curve points still
+            # coincide.  Keep real domain seams distinct, then cluster the
+            # remaining evidence in world space as well as parameter space.
+            previous = groups[-1][-1][0]
+            point_close = (
+                float(
+                    np.linalg.norm(
+                        np.asarray(curve.point(entry[0]), dtype=float)
+                        - np.asarray(curve.point(previous), dtype=float)
+                    )
+                )
+                <= point_epsilon
+            )
+        if groups and (parameter_close or point_close):
             groups[-1].append(entry)
         else:
             groups.append([entry])
@@ -780,8 +814,10 @@ def compute_curve_critical_events(
             )
     return _merge_events(
         entries,
+        curve=curve,
         domain=curve.domain,
         parameter_epsilon=resolved.epsilon(GeometryQuantity.PARAMETER),
+        point_epsilon=resolved.epsilon(GeometryQuantity.BOUNDARY),
     )
 
 

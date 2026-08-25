@@ -78,6 +78,36 @@ def _scheduled():
     return track_scheduled_plane_section("section", cone, motion)
 
 
+def _translated_isometric_scheduled():
+    shift = 3.25 * np.asarray(DEFAULT_QUADRIC_VIEW.matrix[0], dtype=float)
+    apex = shift + np.asarray((0.0, 0.0, -2.45), dtype=float)
+    center = shift + np.asarray((0.0, 0.0, 0.2), dtype=float)
+    cone = ConeSpec(
+        "translated-cone",
+        tuple(float(value) for value in apex),
+        (0.0, 0.0, 1.0),
+        pi / 6.0,
+        (0.0, 4.0),
+        radial_axis=(1.0, 0.0, 0.0),
+    )
+    motion = AxisAnglePlaneMotion(
+        "translated-motion",
+        SectionPlane(
+            "translated-plane",
+            tuple(float(value) for value in center),
+            (0.0, 0.0, 1.0),
+            u_axis=(1.0, 0.0, 0.0),
+        ),
+        tuple(float(value) for value in center),
+        (0.0, 1.0, 0.0),
+        0.72,
+        1.35,
+    )
+    return track_scheduled_plane_section(
+        "translated-section", cone, motion
+    )
+
+
 def _style() -> QuadricManimStyle:
     return QuadricManimStyle(
         surface_fill_color="#315f91",
@@ -330,6 +360,41 @@ class QuadricSectionTransitionControllerTests(unittest.TestCase):
         self.assertEqual(families, {"oval", "parabola", "hyperbola"})
         controller.restore()
 
+    def test_translated_crossfade_uses_exact_plane_roles_without_cycle(self) -> None:
+        controller = QuadricSectionTransition3D(
+            Scene(),
+            scheduled=_translated_isometric_scheduled(),
+            progress=0.475,
+            projection=DEFAULT_QUADRIC_VIEW,
+            transition_fraction=0.055,
+            paint_policy=QuadricPaintPolicy.DEPTH_AWARE_DIAGRAMMATIC,
+            boundary_visibility_mode="unified",
+            style=_style(),
+            limits=_limits(
+                max_fragments_per_curve=32,
+                max_total_mobjects=60000,
+                max_boundary_sources=48,
+            ),
+            max_chord_error=0.008,
+        ).attach()
+        frame = controller.controller.last_boundary_frame
+        self.assertIsNotNone(frame)
+        assert frame is not None
+        hidden_transition = tuple(
+            item
+            for item in frame.fragments
+            if ":transition:bank:1:" in item.source_id
+            and item.visibility_kind.value == "hidden"
+        )
+        self.assertTrue(hidden_transition)
+        self.assertTrue(
+            all(
+                "outside_projection" not in item.plane_depth_roles
+                for item in hidden_transition
+            )
+        )
+        controller.restore()
+
     def test_invalid_progress_fails_without_changing_committed_frame(self) -> None:
         progress = ValueTracker(0.0)
         controller = QuadricSectionTransition3D(
@@ -358,16 +423,22 @@ class QuadricSectionTransitionControllerTests(unittest.TestCase):
                     progress=progress,
                     projection=VIEW,
                     transition_fraction=0.055,
+                    paint_policy=QuadricPaintPolicy.DEPTH_AWARE_DIAGRAMMATIC,
+                    boundary_visibility_mode="unified",
                     style=_style(),
-                    limits=_limits(),
+                    limits=_limits(
+                        max_total_mobjects=30000,
+                        max_boundary_sources=32,
+                    ),
                     max_chord_error=0.025,
                 ).attach()
                 identities = controller.slot_identities()
                 families: set[str] = set()
                 maximum_layers = 0
+                unified_frame_count = 0
 
                 def capture(value: Mobject, dt: float) -> None:
-                    nonlocal maximum_layers
+                    nonlocal maximum_layers, unified_frame_count
                     del value, dt
                     families.update(
                         item.conic_family.value
@@ -376,6 +447,8 @@ class QuadricSectionTransitionControllerTests(unittest.TestCase):
                     maximum_layers = max(
                         maximum_layers, len(controller.transition_frame.layers)
                     )
+                    if controller.controller.last_boundary_frame is not None:
+                        unified_frame_count += 1
 
                 controller.controller._update_driver.add_updater(capture)
                 inner_self.play(
@@ -385,6 +458,7 @@ class QuadricSectionTransitionControllerTests(unittest.TestCase):
                 )
                 inner_self.families = families
                 inner_self.maximum_layers = maximum_layers
+                inner_self.unified_frame_count = unified_frame_count
                 inner_self.identity_stable = identities == controller.slot_identities()
                 controller.restore()
 
@@ -408,6 +482,7 @@ class QuadricSectionTransitionControllerTests(unittest.TestCase):
             self.assertTrue(Path(scene.renderer.file_writer.movie_file_path).is_file())
             self.assertEqual(scene.families, {"oval", "parabola", "hyperbola"})
             self.assertEqual(scene.maximum_layers, 2)
+            self.assertGreater(scene.unified_frame_count, 0)
             self.assertTrue(scene.identity_stable)
 
 

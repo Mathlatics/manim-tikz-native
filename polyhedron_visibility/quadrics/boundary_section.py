@@ -24,6 +24,7 @@ from ..topology import (
 )
 from ..visibility import VisibilityKind
 from .boundary_compositing import (
+    BoundarySemanticKind,
     BoundarySourceKind,
     QuadricBoundaryCompositingError,
     QuadricBoundarySource,
@@ -217,27 +218,14 @@ def _polynomial_is_identically_zero(
     return max((abs(item) for item in coefficients), default=0.0) <= tolerance
 
 
-def _curve_lies_on_section_surface(
+def _curve_lies_on_surface(
     source: QuadricBoundarySource,
     surface: QuadricSurfaceSpec,
-    plane: SectionPlane,
     context: ResolvedGeometryContext,
 ) -> bool:
-    """Certify a finite source as part of the exact plane/surface section."""
+    """Certify that the complete finite source lies on one finite surface."""
 
     chart = _curve_chart(source.curve)
-    normal = np.asarray(plane.normal, dtype=float)
-    offset = float(np.dot(normal, np.asarray(plane.point, dtype=float)))
-    plane_polynomial = Polynomial((0.0,))
-    for component, numerator in zip(normal, chart.numerator):
-        plane_polynomial = plane_polynomial + float(component) * numerator
-    plane_polynomial = plane_polynomial - offset * chart.denominator
-    if not _polynomial_is_identically_zero(
-        plane_polynomial,
-        chart.homogeneous_scale * max(1.0, abs(offset)),
-    ):
-        return False
-
     homogeneous = (*chart.numerator, chart.denominator)
     matrix = np.asarray(surface.support_quadric.matrix, dtype=float)
     surface_polynomial = Polynomial((0.0,))
@@ -330,6 +318,27 @@ def _curve_lies_on_section_surface(
     )
 
 
+def _curve_lies_on_section_surface(
+    source: QuadricBoundarySource,
+    surface: QuadricSurfaceSpec,
+    plane: SectionPlane,
+    context: ResolvedGeometryContext,
+) -> bool:
+    """Certify a finite source as part of the exact plane/surface section."""
+
+    chart = _curve_chart(source.curve)
+    normal = np.asarray(plane.normal, dtype=float)
+    offset = float(np.dot(normal, np.asarray(plane.point, dtype=float)))
+    plane_polynomial = Polynomial((0.0,))
+    for component, numerator in zip(normal, chart.numerator):
+        plane_polynomial = plane_polynomial + float(component) * numerator
+    plane_polynomial = plane_polynomial - offset * chart.denominator
+    return _polynomial_is_identically_zero(
+        plane_polynomial,
+        chart.homogeneous_scale * max(1.0, abs(offset)),
+    ) and _curve_lies_on_surface(source, surface, context)
+
+
 def _visibility_kind_at(
     source_id: str,
     parameter: float,
@@ -350,6 +359,33 @@ def _visibility_kind_at(
             f"parameter {parameter:.17g}"
         )
     return next(iter(kinds))
+
+
+def _exact_plane_depth_role(
+    surface: QuadricSurfaceSpec,
+    plane_world: np.ndarray,
+    direction: np.ndarray,
+    context: ResolvedGeometryContext,
+) -> PlaneDepthRole:
+    """Classify one plane point against the finite surface by exact ray hits."""
+
+    parameters = tuple(
+        hit.parameter
+        for hit in surface.ray_hits(
+            plane_world,
+            direction,
+            context=context,
+            forward_only=False,
+        )
+    )
+    if not parameters:
+        return PlaneDepthRole.OUTSIDE_PROJECTION
+    boundary_epsilon = context.epsilon(GeometryQuantity.BOUNDARY)
+    if min(parameters) > boundary_epsilon:
+        return PlaneDepthRole.BEHIND_SURFACE
+    if max(parameters) < -boundary_epsilon:
+        return PlaneDepthRole.IN_FRONT_OF_SURFACE
+    return PlaneDepthRole.BETWEEN_SURFACE_SHEETS
 
 
 def _chart_polynomial_parameters(
@@ -412,6 +448,37 @@ def _chart_polynomial_parameters(
     return tuple(result)
 
 
+def _plane_depth_threshold_parameters(
+    source: QuadricBoundarySource,
+    plane: SectionPlane,
+    direction: np.ndarray,
+    depth_epsilon: float,
+    context: ResolvedGeometryContext,
+) -> tuple[float, ...]:
+    """Isolate both edges of the plane-coincidence tolerance band."""
+
+    chart = _curve_chart(source.curve)
+    normal = np.asarray(plane.normal, dtype=float)
+    offset = float(np.dot(normal, np.asarray(plane.point, dtype=float)))
+    normal_depth = float(np.dot(normal, direction))
+    base = Polynomial((0.0,))
+    for component, numerator in zip(normal, chart.numerator):
+        base = base + float(component) * numerator
+    base = base - offset * chart.denominator
+    values: list[float] = []
+    for threshold in (-depth_epsilon, depth_epsilon):
+        roots = _chart_polynomial_parameters(
+            source,
+            chart,
+            base - threshold * normal_depth * chart.denominator,
+            context,
+            label="a section-plane depth tolerance boundary",
+        )
+        if roots is not None:
+            values.extend(roots)
+    return tuple(values)
+
+
 def _projected_chart_polynomial(
     source: QuadricBoundarySource,
     view: ParallelView,
@@ -440,6 +507,46 @@ def _projected_chart_polynomial(
         + float(offset) * chart.denominator
     )
     return chart, polynomial
+
+
+def _projected_plane_surface_parameters(
+    source: QuadricBoundarySource,
+    surface: QuadricSurfaceSpec,
+    plane_lift: np.ndarray,
+    context: ResolvedGeometryContext,
+) -> tuple[float, ...]:
+    """Solve where the source's display ray lifts onto the section surface."""
+
+    chart = _curve_chart(source.curve)
+    homogeneous = (*chart.numerator, chart.denominator)
+    lifted = tuple(
+        sum(
+            (
+                float(plane_lift[row, column]) * homogeneous[column]
+                for column in range(4)
+            ),
+            Polynomial((0.0,)),
+        )
+        for row in range(4)
+    )
+    matrix = np.asarray(surface.support_quadric.matrix, dtype=float)
+    polynomial = Polynomial((0.0,))
+    for row in range(4):
+        for column in range(4):
+            coefficient = float(matrix[row, column])
+            if coefficient != 0.0:
+                polynomial = (
+                    polynomial
+                    + coefficient * lifted[row] * lifted[column]
+                )
+    roots = _chart_polynomial_parameters(
+        source,
+        chart,
+        polynomial,
+        context,
+        label="a projected plane/surface role boundary",
+    )
+    return () if roots is None else roots
 
 
 def _cross2(first: np.ndarray, second: np.ndarray) -> float:
@@ -921,19 +1028,16 @@ class _PlaneRoleLocator:
         return tuple(sorted(roles, key=lambda item: item.value))
 
 
-def _edge_crossing_parameters(
+def _crossing_parameters(
     sources: Sequence[QuadricBoundarySource],
     crossings: Sequence[ProjectedCurveCrossing],
 ) -> dict[str, list[float]]:
-    source_map = {item.source_id: item for item in sources}
     result: dict[str, list[float]] = {item.source_id: [] for item in sources}
     for crossing in crossings:
-        first = source_map[crossing.first_curve_id]
-        second = source_map[crossing.second_curve_id]
-        if first.source_kind is BoundarySourceKind.PLANE_PATCH_EDGE:
-            result[second.source_id].append(crossing.second_parameter)
-        if second.source_kind is BoundarySourceKind.PLANE_PATCH_EDGE:
-            result[first.source_id].append(crossing.first_parameter)
+        if crossing.first_curve_id in result:
+            result[crossing.first_curve_id].append(crossing.first_parameter)
+        if crossing.second_curve_id in result:
+            result[crossing.second_curve_id].append(crossing.second_parameter)
     return result
 
 
@@ -995,6 +1099,7 @@ def compute_boundary_section_spans(
     patch = section_frame.patch
     resolved = _resolve_context(source_items, plane, patch, context)
     parameter_epsilon = resolved.epsilon(GeometryQuantity.PARAMETER)
+    boundary_epsilon = resolved.epsilon(GeometryQuantity.BOUNDARY)
     depth_epsilon = resolved.epsilon(GeometryQuantity.DEPTH)
     screen_epsilon = resolved.epsilon(GeometryQuantity.SCREEN)
     plane_u, plane_v, _plane_normal = plane.basis
@@ -1010,7 +1115,15 @@ def compute_boundary_section_spans(
         )
     inverse = np.linalg.inv(screen_basis)
     direction = np.asarray(view.view_direction, dtype=float)
-    edge_parameters = _edge_crossing_parameters(source_items, crossings)
+    plane_axes = np.column_stack((plane_u, plane_v))
+    screen_projection = np.asarray(view.matrix[:2], dtype=float)
+    lift_linear = plane_axes @ inverse @ screen_projection
+    plane_point = np.asarray(plane.point, dtype=float)
+    plane_lift = np.zeros((4, 4), dtype=float)
+    plane_lift[:3, :3] = lift_linear
+    plane_lift[:3, 3] = plane_point - lift_linear @ plane_point
+    plane_lift[3, 3] = 1.0
+    crossing_parameters = _crossing_parameters(source_items, crossings)
     role_segments = _role_boundary_segments(section_frame, screen_epsilon, limits)
     role_vertices = tuple(
         sorted({point for segment in role_segments for point in segment})
@@ -1021,9 +1134,14 @@ def compute_boundary_section_spans(
     for source in source_items:
         if source.source_kind is BoundarySourceKind.PLANE_PATCH_EDGE:
             continue
-        is_section_boundary = (
+        lies_on_surface = (
             surface is not None
             and source.source_id in visibility_spans
+            and _curve_lies_on_surface(source, surface, resolved)
+        )
+        is_section_boundary = (
+            lies_on_surface
+            and surface is not None
             and _curve_lies_on_section_surface(
                 source,
                 surface,
@@ -1031,18 +1149,47 @@ def compute_boundary_section_spans(
                 resolved,
             )
         )
-        roots = _plane_intersection_parameters(source, plane, resolved)
-        split_parameters = [*roots, *edge_parameters[source.source_id]]
-        if is_section_boundary:
-            split_parameters.extend(
-                endpoint
+        exact_plane_roots = _plane_intersection_parameters(
+            source, plane, resolved
+        )
+        depth_threshold_roots = _plane_depth_threshold_parameters(
+            source,
+            plane,
+            direction,
+            depth_epsilon,
+            resolved,
+        )
+        # Every certified projected crossing can also be a true plane-depth
+        # role boundary.  In particular, a section curve crossing an analytic
+        # silhouette is more accurate than the finite contour chord used for
+        # plane triangulation, so retain both event sources and let canonical
+        # point clustering merge coincident roots.
+        # Lower priority values win when several numerical constructions land
+        # on the same geometric point.  Keep analytic zero/crossing roots over
+        # tolerance-band roots, and both over finite contour chords.
+        split_candidates = [(value, 0) for value in exact_plane_roots]
+        split_candidates.extend((value, 1) for value in depth_threshold_roots)
+        split_candidates.extend(
+            (value, 0) for value in crossing_parameters[source.source_id]
+        )
+        if surface is not None:
+            split_candidates.extend(
+                (value, 0)
+                for value in _projected_plane_surface_parameters(
+                    source, surface, plane_lift, resolved
+                )
+            )
+        if source.source_id in visibility_spans:
+            split_candidates.extend(
+                (endpoint, 0)
                 for span in visibility_spans[source.source_id]
                 for endpoint in (span.interval.start, span.interval.end)
             )
-        else:
+        if not is_section_boundary:
             for vertex in role_vertices:
-                split_parameters.extend(
-                    _projected_vertex_parameters(
+                split_candidates.extend(
+                    (value, 2)
+                    for value in _projected_vertex_parameters(
                         source,
                         vertex,
                         view,
@@ -1050,8 +1197,9 @@ def compute_boundary_section_spans(
                     )
                 )
             for start, end in role_segments:
-                split_parameters.extend(
-                    _projected_segment_intersection_parameters(
+                split_candidates.extend(
+                    (value, 2)
+                    for value in _projected_segment_intersection_parameters(
                         source,
                         start,
                         end,
@@ -1060,8 +1208,14 @@ def compute_boundary_section_spans(
                     )
                 )
         canonical_parameters: list[float] = []
+        canonical_priorities: list[int] = []
         canonical_screen_points: list[np.ndarray] = []
-        for value in sorted(float(item) for item in split_parameters):
+        canonical_world_points: list[np.ndarray] = []
+        for raw_value, priority in sorted(
+            ((float(value), priority) for value, priority in split_candidates),
+            key=lambda item: (item[0], item[1]),
+        ):
+            value = raw_value
             if not source.curve.domain.contains(
                 value, tolerance=parameter_epsilon
             ):
@@ -1070,19 +1224,30 @@ def compute_boundary_section_spans(
                 source.curve.domain.end,
                 max(source.curve.domain.start, value),
             )
-            screen_point = view.matrix[:2] @ np.asarray(
-                source.curve.point(value), dtype=float
-            )
-            if canonical_parameters and (
+            world_point = np.asarray(source.curve.point(value), dtype=float)
+            screen_point = view.matrix[:2] @ world_point
+            coincident = canonical_parameters and (
                 value - canonical_parameters[-1] <= parameter_epsilon
                 or float(
                     np.linalg.norm(screen_point - canonical_screen_points[-1])
                 )
                 <= 8.0 * screen_epsilon
-            ):
+                or float(
+                    np.linalg.norm(world_point - canonical_world_points[-1])
+                )
+                <= 8.0 * boundary_epsilon
+            )
+            if coincident:
+                if priority < canonical_priorities[-1]:
+                    canonical_parameters[-1] = value
+                    canonical_priorities[-1] = priority
+                    canonical_screen_points[-1] = screen_point
+                    canonical_world_points[-1] = world_point
                 continue
             canonical_parameters.append(value)
+            canonical_priorities.append(priority)
             canonical_screen_points.append(screen_point)
+            canonical_world_points.append(world_point)
         if len(canonical_parameters) > limits.max_split_parameters_per_source:
             raise QuadricBoundaryCompositingError(
                 f"boundary {source.source_id!r} exceeds "
@@ -1132,8 +1297,80 @@ def compute_boundary_section_spans(
                         PlaneDepthRole.BETWEEN_SURFACE_SHEETS,
                     )
                 )
+            elif (
+                surface is not None
+                and source.semantic_kind is BoundarySemanticKind.TRUE_SILHOUETTE
+                and source.owner_surface_id == surface.surface_id
+            ):
+                # A certified silhouette is itself the boundary between the
+                # finite projection and the outside region.  Its source point
+                # supplies the tangent surface depth exactly, avoiding an
+                # ill-conditioned repeated-root ray solve on the contour.
+                if relation is BoundaryPlaneRelation.BOUNDARY_IN_FRONT_OF_PLANE:
+                    roles = (
+                        PlaneDepthRole.BEHIND_SURFACE,
+                        PlaneDepthRole.OUTSIDE_PROJECTION,
+                    )
+                elif relation is BoundaryPlaneRelation.BOUNDARY_BEHIND_PLANE:
+                    roles = (
+                        PlaneDepthRole.IN_FRONT_OF_SURFACE,
+                        PlaneDepthRole.OUTSIDE_PROJECTION,
+                    )
+                else:
+                    roles = (
+                        PlaneDepthRole.BETWEEN_SURFACE_SHEETS,
+                        PlaneDepthRole.OUTSIDE_PROJECTION,
+                    )
             else:
                 roles = role_locator.roles_at(screen, screen_epsilon)
+                if surface is not None:
+                    exact_role = _exact_plane_depth_role(
+                        surface,
+                        plane_world,
+                        direction,
+                        resolved,
+                    )
+                    if (
+                        exact_role is PlaneDepthRole.OUTSIDE_PROJECTION
+                        and lies_on_surface
+                    ):
+                        inner_roles = tuple(
+                            role
+                            for role in roles
+                            if role is not PlaneDepthRole.OUTSIDE_PROJECTION
+                        )
+                        if not inner_roles:
+                            # A repeated tangent root can round just below
+                            # zero.  Since the complete authored curve is
+                            # certified on the surface, the source/plane depth
+                            # relation determines the adjacent inner role.
+                            roles = {
+                                BoundaryPlaneRelation.BOUNDARY_IN_FRONT_OF_PLANE: (
+                                    PlaneDepthRole.BEHIND_SURFACE,
+                                ),
+                                BoundaryPlaneRelation.BOUNDARY_BEHIND_PLANE: (
+                                    PlaneDepthRole.IN_FRONT_OF_SURFACE,
+                                ),
+                                BoundaryPlaneRelation.COINCIDENT: (
+                                    PlaneDepthRole.BETWEEN_SURFACE_SHEETS,
+                                ),
+                            }[relation]
+                    elif exact_role not in roles:
+                        # Contours are a finite drawing partition.  Near a
+                        # tangency their chord intersection may land just to
+                        # one side of the true projection boundary.  The
+                        # finite-surface ray solver remains geometric truth;
+                        # use it to prevent a microscopic, impossible
+                        # outside/inside role from entering the painter graph.
+                        roles = (exact_role,)
+                    elif source.source_kind is not BoundarySourceKind.SURFACE_CAP_RIM:
+                        # A generic curve only crosses a role boundary at an
+                        # isolated parameter, so an open interval owns one
+                        # exact role.  Cap rims can themselves follow the
+                        # finite projection outline and therefore retain both
+                        # adjacent roles; true silhouettes were handled by
+                        # the analytic branch above.
+                        roles = (exact_role,)
             return relation, tuple(role.value for role in roles)
 
         spans: list[QuadricBoundarySectionSpan] = []
