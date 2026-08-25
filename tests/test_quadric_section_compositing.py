@@ -34,6 +34,7 @@ from polyhedron_visibility.quadrics.section_compositing import (
     quadric_plane_fragment_contours,
     _CanonicalVertexRegistry,
     _make_plane_partition_polygon,
+    _nested_convex_ring_polygons,
     _PlanePartitionPolygon,
     _partition_triangle_by_convex_proxy,
     _plane_partition_polygon_contours,
@@ -431,22 +432,170 @@ def _positive_overlap_issues(
                 polygon,
             )
         )
-    records.sort(key=lambda item: (item[0], item[4]))
-    active: list[tuple] = []
+    records.sort(key=lambda item: item[4])
+    minimum_x = min(record[0] for record in records)
+    maximum_x = max(record[1] for record in records)
+    minimum_y = min(record[2] for record in records)
+    maximum_y = max(record[3] for record in records)
+    grid_resolution = min(256, max(16, int(sqrt(len(records)))))
+    cell_width = max(
+        (maximum_x - minimum_x) / grid_resolution,
+        linear_tolerance,
+    )
+    cell_height = max(
+        (maximum_y - minimum_y) / grid_resolution,
+        linear_tolerance,
+    )
+    grid: dict[tuple[int, int], list[int]] = {}
     issues: list[str] = []
-    for record in records:
-        minimum_x, maximum_x, minimum_y, maximum_y, fragment_id, polygon = record
-        active = [
-            candidate
-            for candidate in active
-            if candidate[1] >= minimum_x - linear_tolerance
+
+    def sat_maybe_overlaps(
+        subject: np.ndarray,
+        candidates: np.ndarray,
+    ) -> np.ndarray:
+        """Vectorized conservative SAT filter before exact polygon clipping."""
+
+        subject_edges = np.roll(subject, -1, axis=0) - subject
+        subject_axes = np.column_stack(
+            (-subject_edges[:, 1], subject_edges[:, 0])
+        )
+        subject_lengths = np.linalg.norm(subject_axes, axis=1)
+        subject_axes /= subject_lengths[:, None]
+        subject_projection = subject @ subject_axes.T
+        candidate_projection = np.einsum(
+            "kvc,ac->kva",
+            candidates,
+            subject_axes,
+        )
+        subject_axis_overlap = (
+            np.minimum(
+                np.max(subject_projection, axis=0)[None, :],
+                np.max(candidate_projection, axis=1),
+            )
+            - np.maximum(
+                np.min(subject_projection, axis=0)[None, :],
+                np.min(candidate_projection, axis=1),
+            )
+        )
+        possible = np.all(
+            subject_axis_overlap >= -linear_tolerance,
+            axis=1,
+        )
+        if not np.any(possible):
+            return possible
+
+        candidate_edges = np.roll(candidates, -1, axis=1) - candidates
+        candidate_axes = np.stack(
+            (-candidate_edges[:, :, 1], candidate_edges[:, :, 0]),
+            axis=2,
+        )
+        candidate_lengths = np.linalg.norm(candidate_axes, axis=2)
+        candidate_axes /= candidate_lengths[:, :, None]
+        candidate_self_projection = np.einsum(
+            "kvc,kac->kva",
+            candidates,
+            candidate_axes,
+        )
+        subject_on_candidate_axes = np.einsum(
+            "vc,kac->kva",
+            subject,
+            candidate_axes,
+        )
+        candidate_axis_overlap = (
+            np.minimum(
+                np.max(candidate_self_projection, axis=1),
+                np.max(subject_on_candidate_axes, axis=1),
+            )
+            - np.maximum(
+                np.min(candidate_self_projection, axis=1),
+                np.min(subject_on_candidate_axes, axis=1),
+            )
+        )
+        return possible & np.all(
+            candidate_axis_overlap >= -linear_tolerance,
+            axis=1,
+        )
+
+    for record_index, record in enumerate(records):
+        (
+            record_minimum_x,
+            record_maximum_x,
+            record_minimum_y,
+            record_maximum_y,
+            fragment_id,
+            polygon,
+        ) = record
+        first_x = int(
+            np.floor(
+                (record_minimum_x - linear_tolerance - minimum_x)
+                / cell_width
+            )
+        )
+        last_x = int(
+            np.floor(
+                (record_maximum_x + linear_tolerance - minimum_x)
+                / cell_width
+            )
+        )
+        first_y = int(
+            np.floor(
+                (record_minimum_y - linear_tolerance - minimum_y)
+                / cell_height
+            )
+        )
+        last_y = int(
+            np.floor(
+                (record_maximum_y + linear_tolerance - minimum_y)
+                / cell_height
+            )
+        )
+        cells = tuple(
+            (x_index, y_index)
+            for x_index in range(first_x, last_x + 1)
+            for y_index in range(first_y, last_y + 1)
+        )
+        candidate_indices = sorted(
+            {
+                candidate_index
+                for cell in cells
+                for candidate_index in grid.get(cell, ())
+            }
+        )
+        bbox_candidate_indices = [
+            candidate_index
+            for candidate_index in candidate_indices
+            if not (
+                records[candidate_index][1]
+                < record_minimum_x - linear_tolerance
+                or record_maximum_x
+                < records[candidate_index][0] - linear_tolerance
+                or records[candidate_index][3]
+                < record_minimum_y - linear_tolerance
+                or record_maximum_y
+                < records[candidate_index][2] - linear_tolerance
+            )
         ]
-        for candidate in active:
-            if (
-                candidate[3] < minimum_y - linear_tolerance
-                or maximum_y < candidate[2] - linear_tolerance
-            ):
-                continue
+        if bbox_candidate_indices:
+            candidate_polygons = np.asarray(
+                [records[index][5] for index in bbox_candidate_indices],
+                dtype=float,
+            )
+            overlap_mask = sat_maybe_overlaps(
+                np.asarray(polygon, dtype=float),
+                candidate_polygons,
+            )
+            exact_candidate_indices = [
+                candidate_index
+                for candidate_index, possible in zip(
+                    bbox_candidate_indices,
+                    overlap_mask,
+                )
+                if possible
+            ]
+        else:
+            exact_candidate_indices = []
+        for candidate_index in exact_candidate_indices:
+            candidate = records[candidate_index]
             overlap = _clip_convex_polygon_for_contract(
                 polygon,
                 candidate[5],
@@ -460,8 +609,69 @@ def _positive_overlap_issues(
                 )
                 if len(issues) >= 8:
                     return tuple(issues)
-        active.append(record)
+        for cell in cells:
+            grid.setdefault(cell, []).append(record_index)
     return tuple(issues)
+
+
+def _partition_topology_issues(
+    fragments: Sequence,
+    patch: Sequence[Sequence[float]],
+    *,
+    linear_tolerance: float,
+    area_tolerance: float,
+) -> tuple[str, ...]:
+    """Certify one oriented planar triangulation without quadratic pair scans."""
+
+    registry = _CanonicalVertexRegistry(
+        plane_origin=(0.0, 0.0, 0.0),
+        plane_u=(1.0, 0.0, 0.0),
+        plane_v=(0.0, 1.0, 0.0),
+        screen_origin=(0.0, 0.0),
+        screen_basis=((1.0, 0.0), (0.0, 1.0)),
+        coordinate_epsilon=linear_tolerance,
+    )
+    polygons = []
+    for fragment in fragments:
+        polygon = _make_plane_partition_polygon(
+            fragment.fragment_id,
+            tuple(
+                registry.register(point)
+                for point in fragment.screen_vertices
+            ),
+            linear_tolerance,
+        )
+        if polygon is None:
+            return (f"{fragment.fragment_id} has no stable topology",)
+        polygons.append(polygon)
+    try:
+        loops = _plane_partition_polygon_contours(
+            polygons,
+            linear_tolerance,
+        )
+    except QuadricSectionCompositingError as exc:
+        return (f"fragment topology is not a closed planar partition: {exc}",)
+    if len(loops) != 1:
+        return (
+            "fragment topology has "
+            f"{len(loops)} residual boundary loops instead of one patch loop",
+        )
+    loop = tuple(vertex.screen_point for vertex in loops[0])
+    loop_area = _polygon_area(loop)
+    patch_area = _polygon_area(patch)
+    if abs(loop_area - patch_area) > area_tolerance:
+        return (
+            f"residual boundary area {loop_area:.12g} differs from patch "
+            f"area {patch_area:.12g}",
+        )
+    clipped = _clip_convex_polygon_for_contract(
+        loop,
+        patch,
+        linear_tolerance,
+    )
+    if abs(_polygon_area(clipped) - patch_area) > area_tolerance:
+        return ("residual boundary does not coincide with the patch",)
+    return ()
 
 
 _FRAGMENT_SAMPLE_WEIGHTS = (
@@ -940,6 +1150,98 @@ class PlanePartitionInfrastructureTests(unittest.TestCase):
             (1.0, 1.0),
         )
 
+    def test_ring_coalesces_near_coincident_opposite_boundary_events(self) -> None:
+        registry = _partition_registry()
+        angular_offset = 1.0e-7
+        inner = _partition_polygon(
+            registry,
+            "inner",
+            ((1.0, 0.0), (0.0, 1.0), (-1.0, 0.0), (0.0, -1.0)),
+        )
+        outer = _partition_polygon(
+            registry,
+            "outer",
+            (
+                (2.0 * cos(angular_offset), 2.0 * sin(angular_offset)),
+                (0.0, 2.0),
+                (-2.0, 0.0),
+                (0.0, -2.0),
+            ),
+        )
+        raw = _nested_convex_ring_polygons(
+            inner,
+            outer,
+            registry,
+            _PARTITION_EPSILON,
+        )
+        stable = _nested_convex_ring_polygons(
+            inner,
+            outer,
+            registry,
+            _PARTITION_EPSILON,
+            minimum_screen_triangle_altitude=1.0e-6,
+        )
+        repeated = _nested_convex_ring_polygons(
+            inner,
+            outer,
+            registry,
+            _PARTITION_EPSILON,
+            minimum_screen_triangle_altitude=1.0e-6,
+        )
+        self.assertEqual(stable, repeated)
+        self.assertEqual(len(stable), len(raw) - 1)
+        loops = _plane_partition_polygon_contours(
+            stable,
+            _PARTITION_EPSILON,
+        )
+        self.assertEqual(len(loops), 2)
+        self.assertAlmostEqual(
+            sum(_partition_loop_signed_area(loop) for loop in loops),
+            _partition_polygon_area(outer) - _partition_polygon_area(inner),
+            places=8,
+        )
+
+    def test_partition_topology_certificate_detects_gap_and_overlap(self) -> None:
+        def fragment(
+            fragment_id: str,
+            vertices: tuple[
+                tuple[float, float],
+                tuple[float, float],
+                tuple[float, float],
+            ],
+        ) -> QuadricPlaneFragment:
+            return QuadricPlaneFragment(
+                fragment_id=fragment_id,
+                role=PlaneDepthRole.BETWEEN_SURFACE_SHEETS,
+                world_vertices=tuple((x, y, 0.0) for x, y in vertices),
+                screen_vertices=vertices,
+                subdivision_depth=0,
+            )
+
+        patch = ((0.0, 0.0), (2.0, 0.0), (2.0, 2.0), (0.0, 2.0))
+        complete = (
+            fragment("lower", ((0.0, 0.0), (2.0, 0.0), (2.0, 2.0))),
+            fragment("upper", ((0.0, 0.0), (2.0, 2.0), (0.0, 2.0))),
+        )
+        kwargs = {
+            "linear_tolerance": 1.0e-9,
+            "area_tolerance": 1.0e-9,
+        }
+        self.assertEqual(
+            _partition_topology_issues(complete, patch, **kwargs),
+            (),
+        )
+        gap = (
+            complete[0],
+            fragment("upper-gap", ((0.0, 0.1), (2.0, 2.0), (0.0, 2.0))),
+        )
+        overlap = (
+            *complete,
+            fragment("overlap", ((0.2, 0.2), (0.4, 0.2), (0.2, 0.4))),
+        )
+        self.assertTrue(_partition_topology_issues(gap, patch, **kwargs))
+        self.assertTrue(_partition_topology_issues(overlap, patch, **kwargs))
+
     def test_public_fragment_contract_is_unchanged(self) -> None:
         self.assertEqual(
             tuple(QuadricPlaneFragment.__dataclass_fields__),
@@ -1304,13 +1606,22 @@ class QuadricSectionBoundaryPartitionContractTests(unittest.TestCase):
                     f"fragment area {fragment_area:.12g} differs from patch "
                     f"area {patch_area:.12g} by {area_error:.12g}"
                 )
-            overlap_issues = _positive_overlap_issues(
+            topology_issues = _partition_topology_issues(
                 frame.plane_fragments,
+                patch,
                 linear_tolerance=linear_tolerance,
                 area_tolerance=area_tolerance,
             )
-            issue_count += len(overlap_issues)
-            examples.extend(overlap_issues)
+            issue_count += len(topology_issues)
+            examples.extend(topology_issues)
+            if len(frame.plane_fragments) <= 4096:
+                overlap_issues = _positive_overlap_issues(
+                    frame.plane_fragments,
+                    linear_tolerance=linear_tolerance,
+                    area_tolerance=area_tolerance,
+                )
+                issue_count += len(overlap_issues)
+                examples.extend(overlap_issues)
             if issue_count:
                 failures.append(
                     _case_issue_summary(

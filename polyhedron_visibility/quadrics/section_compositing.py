@@ -6,25 +6,28 @@ opaque hidden-line removal, but one silhouette cannot interleave with a plane
 which passes through the solid.
 
 This module supplies the missing local-compositing stage.  A convex solid is
-represented by two coincident projection sheets (far and near).  The finite
-display patch is adaptively partitioned into cells which lie behind both
-sheets, between them, or in front of both.  Those cells, the two smooth sheets,
-depth-split plane-outline fragments, and every analytic curve fragment then
-share one stable far-to-near painter graph.
+represented by two coincident projection sheets (far and near).  Its finite
+section and projection silhouette split the display patch into polygons which
+lie behind both sheets, between them, in front of both, or outside the
+projection.  Those polygons, the two smooth sheets, depth-split plane-outline
+fragments, and every analytic curve fragment then share one stable far-to-near
+painter graph.
 
-The support quadric and its finite ``ray_hits`` remain geometric truth.  The
-adaptive triangles are display fragments only; ambiguous boundary cells are
-refined until their projected diameter is within an explicit error bound.
-No renderer object is created here.
+The finite surface ray solver remains geometric truth.  Analytic section curves
+and cap boundaries locate role transitions; canonical polygon clipping and
+triangulation turn them into deterministic display fragments.  Any unresolved
+mixed region fails closed instead of inheriting a centre-point role.  No
+renderer object is created here.
 """
 
 from __future__ import annotations
 
-from collections import Counter
+from collections import Counter, deque
 from dataclasses import dataclass
 from enum import Enum
+from hashlib import sha256
 import json
-from math import atan2, copysign, floor, isfinite, sqrt, tau
+from math import atan2, copysign, cos, floor, isfinite, sin, sqrt, tau
 from typing import Callable, Sequence
 
 import numpy as np
@@ -57,9 +60,11 @@ from .contract import (
     SectionPlane,
     SphereSpec,
 )
-from .critical import compute_curve_critical_events
-from .curves import SegmentCurve
+from .critical import CriticalEventError, compute_curve_critical_events
+from .curves import ParametricConicBranch, SegmentCurve
 from .projection import OpaqueProjectionProxy
+from .sections import QuadricSectionError, compute_quadric_section
+from .trace import section_trace_curves
 
 
 QUADRIC_SECTION_COMPOSITING_SCHEMA = "manim-quadric-section-compositing/v1"
@@ -88,9 +93,9 @@ class QuadricSectionCompositingLimits:
 
     minimum_subdivision_depth: int = 0
     maximum_subdivision_depth: int = 10
-    max_plane_fragments: int = 8192
+    max_plane_fragments: int = 65536
     max_outline_fragments: int = 256
-    max_ray_classifications: int = 65536
+    max_ray_classifications: int = 2097152
 
     def __post_init__(self) -> None:
         for name in (
@@ -655,6 +660,15 @@ class _PlanePartitionPolygon:
             )
 
 
+@dataclass(frozen=True, slots=True)
+class _PlanePartitionHalfPlane:
+    """One normalized supporting inequality ``normal dot uv <= offset``."""
+
+    stable_token: str
+    normal: tuple[float, float]
+    offset: float
+
+
 class _CanonicalVertexRegistry:
     """Create deterministic plane/world/screen vertices on one tolerance grid."""
 
@@ -888,6 +902,153 @@ def _make_plane_partition_polygon(
     return _PlanePartitionPolygon(stable_token, tuple(ordered))
 
 
+def _intersect_convex_support_half_planes(
+    stable_token: str,
+    constraints: Sequence[_PlanePartitionHalfPlane],
+    registry: _CanonicalVertexRegistry,
+    coordinate_epsilon: float,
+) -> _PlanePartitionPolygon | None:
+    """Build a deterministic convex polygon from ordered support inequalities."""
+
+    normalized: list[tuple[float, _PlanePartitionHalfPlane]] = []
+    for constraint in constraints:
+        normal = np.asarray(constraint.normal, dtype=float)
+        length = float(np.linalg.norm(normal))
+        if not isfinite(length) or length <= coordinate_epsilon:
+            raise QuadricSectionCompositingError(
+                "plane partition support normal must be finite and non-zero"
+            )
+        unit = normal / length
+        offset = float(constraint.offset) / length
+        if not isfinite(offset):
+            raise QuadricSectionCompositingError(
+                "plane partition support offset must be finite"
+            )
+        angle = atan2(float(unit[1]), float(unit[0]))
+        normalized.append(
+            (
+                angle,
+                _PlanePartitionHalfPlane(
+                    constraint.stable_token,
+                    (float(unit[0]), float(unit[1])),
+                    offset,
+                ),
+            )
+        )
+    normalized.sort(key=lambda item: (item[0], item[1].stable_token))
+    if len(normalized) < 3:
+        return None
+
+    angular_threshold = max(coordinate_epsilon * 8.0, 1.0e-14)
+    ordered: list[_PlanePartitionHalfPlane] = []
+    for _angle, constraint in normalized:
+        if ordered:
+            previous_normal = np.asarray(ordered[-1].normal, dtype=float)
+            current_normal = np.asarray(constraint.normal, dtype=float)
+            if (
+                abs(_cross2(previous_normal, current_normal))
+                <= angular_threshold
+                and float(np.dot(previous_normal, current_normal)) > 0.0
+            ):
+                if (constraint.offset, constraint.stable_token) < (
+                    ordered[-1].offset,
+                    ordered[-1].stable_token,
+                ):
+                    ordered[-1] = constraint
+                continue
+        ordered.append(constraint)
+    if len(ordered) > 1:
+        first_normal = np.asarray(ordered[0].normal, dtype=float)
+        last_normal = np.asarray(ordered[-1].normal, dtype=float)
+        if (
+            abs(_cross2(last_normal, first_normal)) <= angular_threshold
+            and float(np.dot(last_normal, first_normal)) > 0.0
+        ):
+            preferred = min(
+                (ordered[-1], ordered[0]),
+                key=lambda item: (item.offset, item.stable_token),
+            )
+            ordered[0] = preferred
+            ordered.pop()
+    if len(ordered) < 3:
+        return None
+
+    def intersection(
+        first: _PlanePartitionHalfPlane,
+        second: _PlanePartitionHalfPlane,
+    ) -> np.ndarray:
+        matrix = np.asarray((first.normal, second.normal), dtype=float)
+        determinant = float(np.linalg.det(matrix))
+        if abs(determinant) <= angular_threshold:
+            raise QuadricSectionCompositingError(
+                "convex section support lines do not form a bounded corner"
+            )
+        return np.linalg.solve(
+            matrix,
+            np.asarray((first.offset, second.offset), dtype=float),
+        )
+
+    def excludes(
+        constraint: _PlanePartitionHalfPlane,
+        point: np.ndarray,
+    ) -> bool:
+        return float(np.dot(constraint.normal, point)) > (
+            constraint.offset + coordinate_epsilon * 8.0
+        )
+
+    active: deque[_PlanePartitionHalfPlane] = deque()
+    for constraint in ordered:
+        while len(active) >= 2 and excludes(
+            constraint,
+            intersection(active[-2], active[-1]),
+        ):
+            active.pop()
+        while len(active) >= 2 and excludes(
+            constraint,
+            intersection(active[0], active[1]),
+        ):
+            active.popleft()
+        active.append(constraint)
+    while len(active) >= 3 and excludes(
+        active[0],
+        intersection(active[-2], active[-1]),
+    ):
+        active.pop()
+    while len(active) >= 3 and excludes(
+        active[-1],
+        intersection(active[0], active[1]),
+    ):
+        active.popleft()
+    if len(active) < 3:
+        return None
+
+    lines = tuple(active)
+    vertices = tuple(
+        registry.register(intersection(lines[index - 1], lines[index]))
+        for index in range(len(lines))
+    )
+    polygon = _make_plane_partition_polygon(
+        stable_token,
+        vertices,
+        coordinate_epsilon,
+    )
+    if polygon is None:
+        return None
+    centroid = np.mean(
+        np.asarray(
+            tuple(vertex.plane_coordinates for vertex in polygon.vertices),
+            dtype=float,
+        ),
+        axis=0,
+    )
+    for constraint in lines:
+        if excludes(constraint, centroid):
+            raise QuadricSectionCompositingError(
+                "convex section support intersection is inconsistent"
+            )
+    return polygon
+
+
 def _split_convex_polygon_by_half_plane(
     polygon: _PlanePartitionPolygon,
     boundary_start: _PlanePartitionVertex,
@@ -956,14 +1117,21 @@ def _split_convex_polygon_by_half_plane(
     token = boundary_token or (
         f"{boundary_start.stable_token}->{boundary_end.stable_token}"
     )
+
+    def child_token(side_name: str) -> str:
+        digest = sha256(
+            f"{polygon.stable_token}|{token}:{side_name}".encode("utf-8")
+        ).hexdigest()[:24]
+        return f"partition:{digest}:{side_name}"
+
     return (
         _make_plane_partition_polygon(
-            f"{polygon.stable_token}|{token}:inside",
+            child_token("inside"),
             inside,
             coordinate_epsilon,
         ),
         _make_plane_partition_polygon(
-            f"{polygon.stable_token}|{token}:outside",
+            child_token("outside"),
             outside,
             coordinate_epsilon,
         ),
@@ -985,12 +1153,33 @@ def _partition_triangle_by_convex_proxy(
         raise QuadricSectionCompositingError(
             "convex proxy partition input must be a triangle"
         )
-    current: _PlanePartitionPolygon | None = triangle
+    return _partition_convex_polygon_by_convex_boundary(
+        triangle,
+        proxy,
+        registry,
+        coordinate_epsilon,
+    )
+
+
+def _partition_convex_polygon_by_convex_boundary(
+    polygon: _PlanePartitionPolygon,
+    boundary: _PlanePartitionPolygon,
+    registry: _CanonicalVertexRegistry,
+    coordinate_epsilon: float,
+) -> tuple[
+    tuple[_PlanePartitionPolygon, ...],
+    tuple[_PlanePartitionPolygon, ...],
+]:
+    """Return a complete inside/outside partition for two convex polygons."""
+
+    current: _PlanePartitionPolygon | None = polygon
     outside: list[_PlanePartitionPolygon] = []
-    for edge_index, boundary_start in enumerate(proxy.vertices):
+    for edge_index, boundary_start in enumerate(boundary.vertices):
         if current is None:
             break
-        boundary_end = proxy.vertices[(edge_index + 1) % len(proxy.vertices)]
+        boundary_end = boundary.vertices[
+            (edge_index + 1) % len(boundary.vertices)
+        ]
         current, rejected = _split_convex_polygon_by_half_plane(
             current,
             boundary_start,
@@ -1005,6 +1194,366 @@ def _partition_triangle_by_convex_proxy(
     return inside, tuple(outside)
 
 
+def _nested_convex_ring_polygons(
+    inner: _PlanePartitionPolygon,
+    outer: _PlanePartitionPolygon,
+    registry: _CanonicalVertexRegistry,
+    coordinate_epsilon: float,
+    *,
+    minimum_screen_triangle_altitude: float | None = None,
+) -> tuple[_PlanePartitionPolygon, ...]:
+    """Partition the complete region between two nested convex polygons.
+
+    Nearly coincident angular events from opposite boundaries are represented
+    by one shared radial edge.  Both original boundary vertices are retained,
+    so this removes an unstable microscopic ring cell without changing either
+    polygon's boundary.
+    """
+
+    center = np.mean(
+        np.asarray(
+            tuple(vertex.plane_coordinates for vertex in inner.vertices),
+            dtype=float,
+        ),
+        axis=0,
+    )
+    maximum_radius = max(
+        float(
+            np.linalg.norm(
+                np.asarray(vertex.plane_coordinates, dtype=float) - center
+            )
+        )
+        for vertex in (*inner.vertices, *outer.vertices)
+    )
+    if maximum_radius <= coordinate_epsilon:
+        return ()
+    angular_epsilon = coordinate_epsilon / maximum_radius
+
+    raw_angles = sorted(
+        (
+            atan2(
+                vertex.plane_coordinates[1] - center[1],
+                vertex.plane_coordinates[0] - center[0],
+            )
+            % tau,
+            kind,
+            vertex,
+        )
+        for kind, polygon in (("inner", inner), ("outer", outer))
+        for vertex in polygon.vertices
+    )
+    angle_groups: list[
+        tuple[float, dict[str, _PlanePartitionVertex]]
+    ] = []
+    for angle, kind, vertex in raw_angles:
+        if not angle_groups or angle - angle_groups[-1][0] > angular_epsilon:
+            angle_groups.append((angle, {kind: vertex}))
+        else:
+            angle_groups[-1][1].setdefault(kind, vertex)
+    if (
+        len(angle_groups) > 1
+        and angle_groups[0][0] + tau - angle_groups[-1][0]
+        <= angular_epsilon
+    ):
+        _last_angle, last_vertices = angle_groups.pop()
+        for kind, vertex in last_vertices.items():
+            angle_groups[0][1].setdefault(kind, vertex)
+    if len(angle_groups) < 3:
+        return ()
+
+    def ray_vertex(
+        polygon: _PlanePartitionPolygon,
+        angle: float,
+    ) -> _PlanePartitionVertex:
+        direction = np.asarray((cos(angle), sin(angle)), dtype=float)
+        candidates: list[tuple[float, str, np.ndarray]] = []
+        for start_vertex, end_vertex in zip(
+            polygon.vertices,
+            (*polygon.vertices[1:], polygon.vertices[0]),
+        ):
+            start = np.asarray(start_vertex.plane_coordinates, dtype=float)
+            end = np.asarray(end_vertex.plane_coordinates, dtype=float)
+            edge = end - start
+            denominator = _cross2(direction, edge)
+            if abs(denominator) <= angular_epsilon:
+                continue
+            delta = start - center
+            distance = _cross2(delta, edge) / denominator
+            edge_parameter = _cross2(delta, direction) / denominator
+            if (
+                distance >= -coordinate_epsilon
+                and -coordinate_epsilon <= edge_parameter <= 1.0 + coordinate_epsilon
+            ):
+                point = center + max(0.0, distance) * direction
+                candidates.append(
+                    (
+                        max(0.0, distance),
+                        f"{start_vertex.stable_token}->{end_vertex.stable_token}",
+                        point,
+                    )
+                )
+        if not candidates:
+            raise QuadricSectionCompositingError(
+                "nested convex ring ray did not meet its polygon boundary"
+            )
+        _distance, _token, point = min(
+            candidates,
+            key=lambda item: (item[0], item[1]),
+        )
+        return registry.register(point)
+
+    def boundary_vertices() -> tuple[
+        tuple[_PlanePartitionVertex, ...],
+        tuple[_PlanePartitionVertex, ...],
+    ]:
+        return (
+            tuple(
+                vertices.get("inner") or ray_vertex(inner, angle)
+                for angle, vertices in angle_groups
+            ),
+            tuple(
+                vertices.get("outer") or ray_vertex(outer, angle)
+                for angle, vertices in angle_groups
+            ),
+        )
+
+    if minimum_screen_triangle_altitude is not None:
+        screen_threshold = float(minimum_screen_triangle_altitude)
+        if not isfinite(screen_threshold) or screen_threshold <= 0.0:
+            raise QuadricSectionCompositingError(
+                "minimum ring triangle altitude must be finite and positive"
+            )
+
+        def triangle_altitude(
+            triangle: _PlanePartitionPolygon,
+        ) -> float:
+            points = np.asarray(
+                tuple(vertex.screen_point for vertex in triangle.vertices),
+                dtype=float,
+            )
+            edges = np.roll(points, -1, axis=0) - points
+            lengths = np.linalg.norm(edges, axis=1)
+            if np.any(lengths <= np.finfo(float).tiny):
+                return 0.0
+            double_area = abs(_cross2(points[1] - points[0], points[2] - points[0]))
+            return float(double_area / np.max(lengths))
+
+        while len(angle_groups) > 3:
+            inner_vertices, outer_vertices = boundary_vertices()
+            merge_candidates: list[
+                tuple[float, float, str, int, int]
+            ] = []
+            for index in range(len(angle_groups)):
+                following = (index + 1) % len(angle_groups)
+                first_kinds = angle_groups[index][1]
+                second_kinds = angle_groups[following][1]
+                if set(first_kinds) & set(second_kinds):
+                    continue
+                polygon = _make_plane_partition_polygon(
+                    f"ring-probe:{index:06d}",
+                    (
+                        inner_vertices[index],
+                        outer_vertices[index],
+                        outer_vertices[following],
+                        inner_vertices[following],
+                    ),
+                    coordinate_epsilon,
+                )
+                if polygon is None:
+                    unstable = True
+                else:
+                    triangles = _triangulate_plane_partition_polygon(
+                        polygon,
+                        coordinate_epsilon,
+                    )
+                    unstable = (
+                        len(triangles) != len(polygon.vertices) - 2
+                        or any(
+                            triangle_altitude(triangle) <= screen_threshold
+                            for triangle in triangles
+                        )
+                    )
+                if not unstable:
+                    continue
+                inner_span = float(
+                    np.linalg.norm(
+                        np.asarray(
+                            inner_vertices[following].screen_point,
+                            dtype=float,
+                        )
+                        - np.asarray(
+                            inner_vertices[index].screen_point,
+                            dtype=float,
+                        )
+                    )
+                )
+                outer_span = float(
+                    np.linalg.norm(
+                        np.asarray(
+                            outer_vertices[following].screen_point,
+                            dtype=float,
+                        )
+                        - np.asarray(
+                            outer_vertices[index].screen_point,
+                            dtype=float,
+                        )
+                    )
+                )
+                maximum_span = max(inner_span, outer_span)
+                if maximum_span > 2.0 * screen_threshold:
+                    continue
+                angular_gap = (
+                    angle_groups[following][0] - angle_groups[index][0]
+                ) % tau
+                token = "|".join(
+                    sorted(
+                        vertex.stable_token
+                        for vertex in (*first_kinds.values(), *second_kinds.values())
+                    )
+                )
+                merge_candidates.append(
+                    (maximum_span, angular_gap, token, index, following)
+                )
+            if not merge_candidates:
+                break
+            _span, _gap, _token, index, following = min(merge_candidates)
+            if following == 0:
+                merged = dict(angle_groups[0][1])
+                merged.update(angle_groups[index][1])
+                angle_groups[0] = (angle_groups[0][0], merged)
+                angle_groups.pop(index)
+            else:
+                angle, merged = angle_groups[index]
+                combined = dict(merged)
+                combined.update(angle_groups[following][1])
+                angle_groups[index] = (angle, combined)
+                angle_groups.pop(following)
+
+    inner_vertices, outer_vertices = boundary_vertices()
+    polygons: list[_PlanePartitionPolygon] = []
+    for index in range(len(angle_groups)):
+        following = (index + 1) % len(angle_groups)
+        polygon = _make_plane_partition_polygon(
+            f"ring:{index:06d}",
+            (
+                inner_vertices[index],
+                outer_vertices[index],
+                outer_vertices[following],
+                inner_vertices[following],
+            ),
+            coordinate_epsilon,
+        )
+        if polygon is not None:
+            polygons.append(polygon)
+    return tuple(polygons)
+
+
+def _point_segment_distance_2d(
+    point: np.ndarray,
+    start: np.ndarray,
+    end: np.ndarray,
+) -> float:
+    delta = end - start
+    length_squared = float(np.dot(delta, delta))
+    if length_squared <= 0.0:
+        return float(np.linalg.norm(point - start))
+    ratio = float(np.dot(point - start, delta) / length_squared)
+    ratio = min(1.0, max(0.0, ratio))
+    return float(np.linalg.norm(point - (start + ratio * delta)))
+
+
+def _adaptive_section_curve_parameters(
+    curve: SegmentCurve | ParametricConicBranch,
+    view: ParallelView,
+    breakpoints: Sequence[float],
+    *,
+    max_chord_error: float,
+    max_segments: int,
+    parameter_epsilon: float,
+) -> tuple[float, ...]:
+    """Approximate exact finite-section arcs with certified screen chords."""
+
+    values: list[float] = []
+    for raw in sorted(float(item) for item in breakpoints):
+        value = min(curve.domain.end, max(curve.domain.start, raw))
+        if not values or value - values[-1] > parameter_epsilon:
+            values.append(value)
+    if not values or values[0] > curve.domain.start + parameter_epsilon:
+        values.insert(0, curve.domain.start)
+    else:
+        values[0] = curve.domain.start
+    if values[-1] < curve.domain.end - parameter_epsilon:
+        values.append(curve.domain.end)
+    else:
+        values[-1] = curve.domain.end
+    intervals = [
+        (left, right)
+        for left, right in zip(values, values[1:])
+        if right - left > parameter_epsilon
+    ]
+    if not intervals:
+        raise QuadricSectionCompositingError(
+            f"section curve {curve.curve_id!r} has no stable parameter interval"
+        )
+
+    projection = np.asarray(view.matrix[:2], dtype=float)
+    cache: dict[float, np.ndarray] = {}
+
+    def project(parameter: float) -> np.ndarray:
+        key = float(parameter)
+        cached = cache.get(key)
+        if cached is not None:
+            return cached
+        result = projection @ np.asarray(curve.point(key), dtype=float)
+        if result.shape != (2,) or not np.all(np.isfinite(result)):
+            raise QuadricSectionCompositingError(
+                f"section curve {curve.curve_id!r} has a non-finite projection"
+            )
+        cache[key] = result
+        return result
+
+    probe_fractions = (0.25, 0.5, 0.75)
+    while True:
+        split: list[int] = []
+        for index, (left, right) in enumerate(intervals):
+            first = project(left)
+            last = project(right)
+            observed = max(
+                _point_segment_distance_2d(
+                    project(left + fraction * (right - left)),
+                    first,
+                    last,
+                )
+                for fraction in probe_fractions
+            )
+            if observed > max_chord_error:
+                split.append(index)
+        if not split:
+            break
+        if len(intervals) + len(split) > max_segments:
+            raise QuadricSectionCompositingError(
+                f"section curve {curve.curve_id!r} needs more than "
+                f"{max_segments} plane fragments for its boundary"
+            )
+        marked = set(split)
+        refined: list[tuple[float, float]] = []
+        for index, (left, right) in enumerate(intervals):
+            if index not in marked:
+                refined.append((left, right))
+                continue
+            middle = left + 0.5 * (right - left)
+            if middle == left or middle == right:
+                raise QuadricSectionCompositingError(
+                    f"section curve {curve.curve_id!r} cannot refine at "
+                    "floating-point resolution"
+                )
+            refined.extend(((left, middle), (middle, right)))
+        intervals = refined
+    result = [intervals[0][0]]
+    result.extend(right for _left, right in intervals)
+    return tuple(result)
+
+
 def _triangulate_plane_partition_polygon(
     polygon: _PlanePartitionPolygon,
     coordinate_epsilon: float,
@@ -1017,6 +1566,37 @@ def _triangulate_plane_partition_polygon(
         triangle = _make_plane_partition_polygon(
             f"{polygon.stable_token}:triangle:{index - 1:04d}",
             (anchor, polygon.vertices[index], polygon.vertices[index + 1]),
+            coordinate_epsilon,
+        )
+        if triangle is not None:
+            result.append(triangle)
+    return tuple(result)
+
+
+def _triangulate_convex_partition_polygon_from_center(
+    polygon: _PlanePartitionPolygon,
+    registry: _CanonicalVertexRegistry,
+    coordinate_epsilon: float,
+) -> tuple[_PlanePartitionPolygon, ...]:
+    """Triangulate a fine convex boundary without boundary-only fan slivers."""
+
+    center = registry.register(
+        np.mean(
+            np.asarray(
+                tuple(
+                    vertex.plane_coordinates for vertex in polygon.vertices
+                ),
+                dtype=float,
+            ),
+            axis=0,
+        )
+    )
+    result: list[_PlanePartitionPolygon] = []
+    for index, start in enumerate(polygon.vertices):
+        end = polygon.vertices[(index + 1) % len(polygon.vertices)]
+        triangle = _make_plane_partition_polygon(
+            f"{polygon.stable_token}:center-triangle:{index:06d}",
+            (center, start, end),
             coordinate_epsilon,
         )
         if triangle is not None:
@@ -1165,13 +1745,21 @@ def _plane_partition_polygon_contours(
                 raise QuadricSectionCompositingError(
                     "plane partition spatial traversal did not reach its endpoint"
                 )
+            needs_x_step = current_x != target_x
+            needs_y_step = current_y != target_y
             comparison_epsilon = (
                 np.finfo(float).eps
                 * max(1.0, abs(maximum_x), abs(maximum_y))
                 if isfinite(maximum_x) and isfinite(maximum_y)
                 else 0.0
             )
-            if maximum_x < maximum_y - comparison_epsilon:
+            if not needs_y_step:
+                current_x += step_x
+                maximum_x += delta_x
+            elif not needs_x_step:
+                current_y += step_y
+                maximum_y += delta_y
+            elif maximum_x < maximum_y - comparison_epsilon:
                 current_x += step_x
                 maximum_x += delta_x
             elif maximum_y < maximum_x - comparison_epsilon:
@@ -2044,6 +2632,231 @@ def compute_quadric_section_compositing(
         + boundary_epsilon * boundary_epsilon
     )
 
+    # Build one finite-solid section boundary in plane coordinates.  Analytic
+    # side curves contribute tangent support half-planes, while finite cylinder
+    # and cone caps contribute exact axial half-planes.  Critical parameters
+    # are retained before adaptive chord sampling so a front/back switch cannot
+    # hide inside one boundary edge.  Keep the chord error well below the
+    # requested display error: the resulting circumscribed polygon may differ
+    # from the true curve only within that explicit boundary tolerance.
+    sphere_needs_tight_tangent_boundary = False
+    if isinstance(surface, SphereSpec):
+        plane_offset = abs(
+            float(
+                np.dot(
+                    np.asarray(surface.center, dtype=float) - plane_origin,
+                    np.asarray(plane.normal, dtype=float),
+                )
+            )
+        )
+        section_radius = sqrt(
+            max(
+                0.0,
+                surface.radius * surface.radius - plane_offset * plane_offset,
+            )
+        )
+        sphere_needs_tight_tangent_boundary = (
+            section_radius < 0.5 * surface.radius
+        )
+    if sphere_needs_tight_tangent_boundary:
+        section_chord_error = max(
+            screen_epsilon * 16.0,
+            error / 1048576.0,
+        )
+    else:
+        section_chord_error = max(
+            screen_epsilon * 32.0,
+            error / 262144.0,
+        )
+    if section_chord_error > error:
+        raise QuadricSectionCompositingError(
+            "floating-point screen tolerance cannot certify the requested "
+            f"max_screen_error={error:.9g}"
+        )
+    try:
+        section_trace = compute_quadric_section(
+            f"{plane.plane_id}:finite-solid-boundary",
+            surface,
+            plane,
+            context=resolved,
+        )
+        section_curves = section_trace_curves(section_trace)
+    except (QuadricSectionError, ValueError) as exc:
+        raise QuadricSectionCompositingError(
+            f"finite quadric section boundary is ambiguous: {exc}"
+        ) from exc
+    section_tangent_constraints: list[
+        tuple[_PlanePartitionVertex, np.ndarray]
+    ] = []
+    section_segment_count = 0
+    parameter_epsilon = resolved.epsilon(GeometryQuantity.PARAMETER)
+    for curve in section_curves:
+        try:
+            events = compute_curve_critical_events(
+                curve,
+                (surface,),
+                view,
+                context=resolved,
+            )
+        except CriticalEventError as exc:
+            raise QuadricSectionCompositingError(
+                f"finite section curve {curve.curve_id!r} has ambiguous "
+                f"boundary events: {exc}"
+            ) from exc
+        parameters = _adaptive_section_curve_parameters(
+            curve,
+            view,
+            tuple(event.parameter for event in events),
+            max_chord_error=section_chord_error,
+            max_segments=limits.max_plane_fragments,
+            parameter_epsilon=parameter_epsilon,
+        )
+        section_segment_count += len(parameters) - 1
+        if section_segment_count > limits.max_plane_fragments:
+            raise QuadricSectionCompositingError(
+                "finite section boundary needs more than "
+                f"{limits.max_plane_fragments} plane fragments for its boundary"
+            )
+        for parameter in parameters:
+            world = np.asarray(curve.point(parameter), dtype=float)
+            vertex = partition_registry.register(
+                (
+                    float(np.dot(world - plane_origin, plane_u)),
+                    float(np.dot(world - plane_origin, plane_v)),
+                )
+            )
+            coordinates = np.asarray(vertex.plane_coordinates, dtype=float)
+            gradient = (
+                2.0 * restricted_matrix @ coordinates
+                + 2.0 * restricted_linear
+            )
+            if float(np.linalg.norm(gradient)) > coordinate_epsilon:
+                section_tangent_constraints.append((vertex, gradient))
+    section_seed = _make_plane_partition_polygon(
+        f"section-seed:{surface.surface_id}:{plane.plane_id}",
+        tuple(
+            partition_registry.register(
+                (
+                    float(np.dot(point - plane_origin, plane_u)),
+                    float(np.dot(point - plane_origin, plane_v)),
+                )
+            )
+            for point in patch_corners
+        ),
+        coordinate_epsilon,
+    )
+    if section_seed is None:
+        raise QuadricSectionCompositingError(
+            "display patch has no stable plane partition"
+        )
+    display_proxy_inside, _proxy_outside_patch = (
+        _partition_convex_polygon_by_convex_boundary(
+            partition_proxy,
+            section_seed,
+            partition_registry,
+            coordinate_epsilon,
+        )
+    )
+    if not display_proxy_inside:
+        raise QuadricSectionCompositingError(
+            "quadric projection does not overlap the display patch"
+        )
+    display_proxy_partition = display_proxy_inside[0]
+
+    # The sampled curve chords form an inscribed polygon and would leave a
+    # thin, genuinely-inside crescent in an exterior role.  Instead intersect
+    # the supporting tangent half-planes.  The result is a deterministic
+    # circumscribed approximation: its small geometric error lies inside the
+    # explicit boundary tolerance, while every exterior piece is truly
+    # outside the finite section.  Axial cap half-planes are exact and close
+    # finite cylinder/cone sections independently of the support quadric.
+    support_constraints = [
+        _PlanePartitionHalfPlane(
+            stable_token=f"section-tangent:{constraint_index:06d}",
+            normal=(float(gradient[0]), float(gradient[1])),
+            offset=float(
+                np.dot(
+                    gradient,
+                    np.asarray(vertex.plane_coordinates, dtype=float),
+                )
+            ),
+        )
+        for constraint_index, (vertex, gradient) in enumerate(
+            sorted(
+                section_tangent_constraints,
+                key=lambda item: item[0].stable_token,
+            )
+        )
+    ]
+
+    if section_tangent_constraints and axial_mapping is not None:
+        axial_direction, axial_offset, lower, upper = axial_mapping
+        axial_norm_squared = float(np.dot(axial_direction, axial_direction))
+        if axial_norm_squared > coordinate_epsilon * coordinate_epsilon:
+            for cap_name, target, normal in (
+                ("lower", lower, -axial_direction),
+                ("upper", upper, axial_direction),
+            ):
+                support_constraints.append(
+                    _PlanePartitionHalfPlane(
+                        stable_token=f"section-cap:{cap_name}",
+                        normal=(float(normal[0]), float(normal[1])),
+                        offset=float(
+                            np.dot(
+                                normal,
+                                (target - axial_offset)
+                                * axial_direction
+                                / axial_norm_squared,
+                            )
+                        ),
+                    )
+                )
+
+    section_partition = _intersect_convex_support_half_planes(
+        f"section:{surface.surface_id}:{plane.plane_id}",
+        support_constraints,
+        partition_registry,
+        coordinate_epsilon,
+    )
+    if section_partition is not None:
+        clipped_section, _outside_proxy = (
+            _partition_convex_polygon_by_convex_boundary(
+                section_partition,
+                display_proxy_partition,
+                partition_registry,
+                coordinate_epsilon,
+            )
+        )
+        section_partition = clipped_section[0] if clipped_section else None
+    if section_tangent_constraints and section_partition is None:
+        raise QuadricSectionCompositingError(
+            "finite section tangent partition unexpectedly became empty"
+        )
+    if section_partition is not None:
+        stable_interior = np.mean(
+            np.asarray(
+                tuple(
+                    vertex.plane_coordinates
+                    for vertex in section_partition.vertices
+                ),
+                dtype=float,
+            ),
+            axis=0,
+        )
+        interior_world = (
+            plane_origin
+            + stable_interior[0] * plane_u
+            + stable_interior[1] * plane_v
+        )
+        interior_parameters = ray_parameters(interior_world)
+        if not interior_parameters or not (
+            min(interior_parameters) <= boundary_epsilon
+            and max(interior_parameters) >= -boundary_epsilon
+        ):
+            raise QuadricSectionCompositingError(
+                "finite section tangent partition has no certified interior"
+            )
+
     def world_at_screen(screen_point: np.ndarray) -> np.ndarray:
         coordinates = inverse_screen_basis @ (screen_point - screen_origin)
         return (
@@ -2072,7 +2885,10 @@ def compute_quadric_section_compositing(
             role = PlaneDepthRole.BEHIND_SURFACE
         elif max(parameters) < -boundary_epsilon:
             role = PlaneDepthRole.IN_FRONT_OF_SURFACE
-        elif min(parameters) <= boundary_epsilon and max(parameters) >= -boundary_epsilon:
+        elif (
+            min(parameters) <= boundary_epsilon
+            and max(parameters) >= -boundary_epsilon
+        ):
             role = PlaneDepthRole.BETWEEN_SURFACE_SHEETS
         else:
             raise QuadricSectionCompositingError(  # pragma: no cover
@@ -2083,7 +2899,12 @@ def compute_quadric_section_compositing(
 
     fragments: list[QuadricPlaneFragment] = []
 
-    def append_leaf(world: np.ndarray, path: str, depth: int, role: PlaneDepthRole) -> None:
+    def append_leaf(
+        world: np.ndarray,
+        path: str,
+        depth: int,
+        role: PlaneDepthRole,
+    ) -> None:
         screen = np.asarray(world @ view.matrix[:2].T, dtype=float)
         world_ordered, screen_ordered = _canonical_triangle(world, screen)
         fragments.append(
@@ -2140,53 +2961,154 @@ def compute_quadric_section_compositing(
         )
         return source, inside, outside
 
+    probe_distance = 16.0 * boundary_epsilon
+    stable_probe_offsets = (
+        np.zeros(2, dtype=float),
+        probe_distance * screen_basis[:, 0],
+        -probe_distance * screen_basis[:, 0],
+        probe_distance * screen_basis[:, 1],
+        -probe_distance * screen_basis[:, 1],
+    )
+
+    def stable_role(screen_point: np.ndarray) -> PlaneDepthRole | None:
+        roles = {
+            classify(np.asarray(screen_point, dtype=float) + offset)
+            for offset in stable_probe_offsets
+        }
+        return next(iter(roles)) if len(roles) == 1 else None
+
+    def polygon_role(
+        polygon: _PlanePartitionPolygon,
+    ) -> PlaneDepthRole | None:
+        vertices = tuple(
+            np.asarray(vertex.screen_point, dtype=float)
+            for vertex in polygon.vertices
+        )
+        centroid = np.mean(vertices, axis=0)
+        # Boundary vertices intentionally lie on the role transition and are
+        # therefore poor certification probes.  Validate a bounded sequence
+        # of deterministic points strictly inside the already-cut convex
+        # polygon.  Stop after two agreeing stable probes; the independent
+        # renderer-neutral contract tests every emitted triangle more densely.
+        samples = [centroid]
+        samples.extend(
+            0.2 * vertices[index] + 0.8 * centroid
+            for index in range(min(4, len(vertices)))
+        )
+        roles: set[PlaneDepthRole] = set()
+        stable_count = 0
+        for sample in samples:
+            role = stable_role(np.asarray(sample, dtype=float))
+            if role is None:
+                continue
+            stable_count += 1
+            roles.add(role)
+            if len(roles) > 1:
+                return None
+            if stable_count >= 2:
+                break
+        if stable_count == 0 or len(roles) != 1:
+            return None
+        role = next(iter(roles))
+        if role is PlaneDepthRole.OUTSIDE_PROJECTION:
+            return None
+        return role
+
+    def polygon_role_diagnostics(
+        polygon: _PlanePartitionPolygon,
+    ) -> str:
+        vertices = tuple(
+            np.asarray(vertex.screen_point, dtype=float)
+            for vertex in polygon.vertices
+        )
+        centroid = np.mean(vertices, axis=0)
+        samples = [centroid]
+        samples.extend(
+            0.2 * vertices[index] + 0.8 * centroid
+            for index in range(min(4, len(vertices)))
+        )
+        stable_roles = [
+            role.value
+            for sample in samples
+            if (role := stable_role(np.asarray(sample, dtype=float))) is not None
+        ]
+        direct_roles = sorted(
+            {classify(np.asarray(sample, dtype=float)).value for sample in samples}
+        )
+        return (
+            f"{polygon.stable_token}:stable={sorted(set(stable_roles))}:"
+            f"stable_count={len(stable_roles)}:direct={direct_roles}"
+        )
+
+    def partition_inside_depth_roles(
+        polygon: _PlanePartitionPolygon,
+    ) -> tuple[tuple[PlaneDepthRole, _PlanePartitionPolygon], ...] | None:
+        if section_partition is None:
+            between: tuple[_PlanePartitionPolygon, ...] = ()
+            exterior = (polygon,)
+        else:
+            between, exterior = _partition_convex_polygon_by_convex_boundary(
+                polygon,
+                section_partition,
+                partition_registry,
+                coordinate_epsilon,
+            )
+        result: list[tuple[PlaneDepthRole, _PlanePartitionPolygon]] = []
+        for candidate in between:
+            role = polygon_role(candidate)
+            if role is not PlaneDepthRole.BETWEEN_SURFACE_SHEETS:
+                return None
+            result.append((role, candidate))
+        for candidate in exterior:
+            role = polygon_role(candidate)
+            if role is None:
+                return None
+            result.append((role, candidate))
+        if not result:
+            return None
+        return tuple(
+            sorted(result, key=lambda item: (item[0].value, item[1].stable_token))
+        )
+
     def append_partitioned_leaf(
         source: _PlanePartitionPolygon,
-        inside: Sequence[_PlanePartitionPolygon],
-        outside: Sequence[_PlanePartitionPolygon],
+        polygon_emissions: Sequence[
+            tuple[PlaneDepthRole, _PlanePartitionPolygon]
+        ],
         path: str,
         depth: int,
-        inside_role: PlaneDepthRole | None,
     ) -> None:
-        emissions: list[
+        triangle_emissions: list[
             tuple[PlaneDepthRole, _PlanePartitionPolygon]
         ] = []
-        for polygon in outside:
-            emissions.extend(
-                (PlaneDepthRole.OUTSIDE_PROJECTION, triangle)
+        for role, polygon in polygon_emissions:
+            triangle_emissions.extend(
+                (role, triangle)
                 for triangle in _triangulate_plane_partition_polygon(
                     polygon,
                     coordinate_epsilon,
                 )
             )
-        if inside_role is not None:
-            for polygon in inside:
-                emissions.extend(
-                    (inside_role, triangle)
-                    for triangle in _triangulate_plane_partition_polygon(
-                        polygon,
-                        coordinate_epsilon,
-                    )
-                )
-        if not emissions:
+        if not triangle_emissions:
             raise QuadricSectionCompositingError(
                 f"plane partition cell {path!r} emitted no stable triangle"
             )
-        emissions.sort(
+        triangle_emissions.sort(
             key=lambda item: (item[0].value, item[1].stable_token)
         )
         source_tokens = tuple(
             vertex.stable_token for vertex in source.vertices
         )
         if (
-            len(emissions) == 1
+            len(triangle_emissions) == 1
             and tuple(
-                vertex.stable_token for vertex in emissions[0][1].vertices
+                vertex.stable_token
+                for vertex in triangle_emissions[0][1].vertices
             )
             == source_tokens
         ):
             fragment_path = path
-            role, triangle = emissions[0]
+            role, triangle = triangle_emissions[0]
             append_leaf(
                 np.asarray(
                     tuple(vertex.world_point for vertex in triangle.vertices),
@@ -2197,16 +3119,656 @@ def compute_quadric_section_compositing(
                 role,
             )
             return
-        for index, (role, triangle) in enumerate(emissions):
+        for index, (role, triangle) in enumerate(triangle_emissions):
             append_leaf(
                 np.asarray(
                     tuple(vertex.world_point for vertex in triangle.vertices),
                     dtype=float,
                 ),
-                f"{path}.partition.{index:04d}",
+                f"{path}:piece:{index:04d}:{role.value}",
                 depth,
                 role,
             )
+
+    def emit_finite_section_arrangement() -> None:
+        if section_partition is None:  # pragma: no cover - caller guards
+            raise QuadricSectionCompositingError(
+                "finite section arrangement requires a positive-area section"
+            )
+
+        # Batch 3 already established the exact patch/proxy split.  Preserve
+        # its outside pieces, then replace the repeatedly clipped adaptive
+        # cells inside the proxy by one global nested-convex arrangement.
+        for root_index, indices in enumerate(((0, 1, 2), (0, 2, 3))):
+            source, _inside, outside = partition_triangle(
+                patch_corners[list(indices)],
+                str(root_index),
+            )
+            if outside:
+                append_partitioned_leaf(
+                    source,
+                    tuple(
+                        (PlaneDepthRole.OUTSIDE_PROJECTION, polygon)
+                        for polygon in outside
+                    ),
+                    str(root_index),
+                    0,
+                )
+
+        section_role = polygon_role(section_partition)
+        if section_role is not PlaneDepthRole.BETWEEN_SURFACE_SHEETS:
+            raise QuadricSectionCompositingError(
+                "finite section interior is not certified between the "
+                "surface sheets"
+            )
+        section_center = np.mean(
+            np.asarray(
+                tuple(
+                    vertex.plane_coordinates
+                    for vertex in section_partition.vertices
+                ),
+                dtype=float,
+            ),
+            axis=0,
+        )
+        core_vertex_count = min(64, len(section_partition.vertices))
+        core_indices = tuple(
+            sorted(
+                {
+                    (index * len(section_partition.vertices))
+                    // core_vertex_count
+                    for index in range(core_vertex_count)
+                }
+            )
+        )
+        section_core = _make_plane_partition_polygon(
+            f"section-core:{surface.surface_id}:{plane.plane_id}",
+            tuple(
+                partition_registry.register(
+                    section_center
+                    + 0.5
+                    * (
+                        np.asarray(
+                            section_partition.vertices[index].plane_coordinates,
+                            dtype=float,
+                        )
+                        - section_center
+                    )
+                )
+                for index in core_indices
+            ),
+            coordinate_epsilon,
+        )
+        if section_core is None or polygon_role(section_core) is not (
+            PlaneDepthRole.BETWEEN_SURFACE_SHEETS
+        ):
+            raise QuadricSectionCompositingError(
+                "finite section core is not stably between the surface sheets"
+            )
+        section_triangles = _triangulate_convex_partition_polygon_from_center(
+            section_core,
+            partition_registry,
+            coordinate_epsilon,
+        )
+        for triangle_index, triangle in enumerate(section_triangles):
+            append_leaf(
+                np.asarray(
+                    tuple(vertex.world_point for vertex in triangle.vertices),
+                    dtype=float,
+                ),
+                "section:piece:"
+                f"{triangle_index:06d}:"
+                f"{PlaneDepthRole.BETWEEN_SURFACE_SHEETS.value}",
+                0,
+                PlaneDepthRole.BETWEEN_SURFACE_SHEETS,
+            )
+        section_boundary_band = _nested_convex_ring_polygons(
+            section_core,
+            section_partition,
+            partition_registry,
+            coordinate_epsilon,
+            minimum_screen_triangle_altitude=8.0 * screen_epsilon,
+        )
+        if not section_boundary_band:
+            raise QuadricSectionCompositingError(
+                "finite section boundary band has no stable area"
+            )
+        boundary_triangle_index = len(section_triangles)
+        for polygon in section_boundary_band:
+            for triangle in _triangulate_plane_partition_polygon(
+                polygon,
+                coordinate_epsilon,
+            ):
+                append_leaf(
+                    np.asarray(
+                        tuple(
+                            vertex.world_point for vertex in triangle.vertices
+                        ),
+                        dtype=float,
+                    ),
+                    "section:piece:"
+                    f"{boundary_triangle_index:06d}:"
+                    f"{PlaneDepthRole.BETWEEN_SURFACE_SHEETS.value}",
+                    0,
+                    PlaneDepthRole.BETWEEN_SURFACE_SHEETS,
+                )
+                boundary_triangle_index += 1
+
+        ring_polygons = _nested_convex_ring_polygons(
+            section_partition,
+            display_proxy_partition,
+            partition_registry,
+            coordinate_epsilon,
+            minimum_screen_triangle_altitude=8.0 * screen_epsilon,
+        )
+        if not ring_polygons:
+            raise QuadricSectionCompositingError(
+                "finite section/projection ring has no stable area"
+            )
+
+        def ring_role(
+            polygon: _PlanePartitionPolygon,
+        ) -> tuple[PlaneDepthRole, bool]:
+            role = polygon_role(polygon)
+            stably_certified = role is not None
+            if role is None:
+                centroid = np.mean(
+                    np.asarray(
+                        tuple(
+                            vertex.screen_point for vertex in polygon.vertices
+                        ),
+                        dtype=float,
+                    ),
+                    axis=0,
+                )
+                direct_role = classify(centroid)
+                if direct_role in (
+                    PlaneDepthRole.BEHIND_SURFACE,
+                    PlaneDepthRole.IN_FRONT_OF_SURFACE,
+                ):
+                    role = direct_role
+            if role not in (
+                PlaneDepthRole.BEHIND_SURFACE,
+                PlaneDepthRole.IN_FRONT_OF_SURFACE,
+            ):
+                raise QuadricSectionCompositingError(
+                    "finite section ring piece remains mixed after critical "
+                    f"boundary insertion: {polygon_role_diagnostics(polygon)}"
+                )
+            return role, stably_certified
+
+        role_records = []
+        for index, polygon in enumerate(ring_polygons):
+            role, stably_certified = ring_role(polygon)
+            role_records.append((index, polygon, role, stably_certified))
+
+        triangulation_cache: dict[
+            tuple[str, tuple[str, ...]],
+            tuple[_PlanePartitionPolygon, ...] | None,
+        ] = {}
+        triangulation_diagnostics: dict[
+            tuple[str, tuple[str, ...]],
+            tuple[str, ...],
+        ] = {}
+
+        def triangle_role_certified(
+            triangle: _PlanePartitionPolygon,
+            role: PlaneDepthRole,
+        ) -> bool:
+            vertices = tuple(
+                np.asarray(vertex.screen_point, dtype=float)
+                for vertex in triangle.vertices
+            )
+            centroid = np.mean(vertices, axis=0)
+            samples = [*vertices, centroid]
+            samples.extend(
+                0.5 * (start + end)
+                for start, end in zip(
+                    vertices,
+                    (*vertices[1:], vertices[0]),
+                )
+            )
+            samples.extend(
+                0.4 * vertex + 0.6 * centroid for vertex in vertices
+            )
+            stable_sample_count = 0
+            for sample in samples:
+                observed = stable_role(sample)
+                if observed is None:
+                    continue
+                stable_sample_count += 1
+                if observed is not role:
+                    return False
+            return stable_sample_count > 0
+
+        def role_triangulation(
+            polygons: Sequence[_PlanePartitionPolygon],
+            role: PlaneDepthRole,
+        ) -> tuple[_PlanePartitionPolygon, ...] | None:
+            cache_key = (
+                role.value,
+                tuple(polygon.stable_token for polygon in polygons),
+            )
+            if cache_key in triangulation_cache:
+                return triangulation_cache[cache_key]
+            failure_reasons: list[str] = []
+            if len(polygons) == 1:
+                contours = (polygons[0].vertices,)
+            else:
+                contours = _plane_partition_polygon_contours(
+                    polygons,
+                    coordinate_epsilon,
+                )
+            if len(contours) != 1:
+                triangulation_cache[cache_key] = None
+                return None
+            simple = _make_plane_partition_polygon(
+                "ring-union:"
+                + sha256("|".join(cache_key[1]).encode("utf-8")).hexdigest()[:24],
+                contours[0],
+                coordinate_epsilon,
+            )
+            if simple is None:
+                triangulation_cache[cache_key] = None
+                return None
+
+            source_area = abs(_partition_signed_area(simple.vertices))
+            source_perimeter = sum(
+                float(
+                    np.linalg.norm(
+                        np.asarray(end.plane_coordinates, dtype=float)
+                        - np.asarray(start.plane_coordinates, dtype=float)
+                    )
+                )
+                for start, end in zip(
+                    simple.vertices,
+                    (*simple.vertices[1:], simple.vertices[0]),
+                )
+            )
+            topology_area_tolerance = max(
+                coordinate_epsilon * coordinate_epsilon,
+                coordinate_epsilon * source_perimeter,
+                32.0 * boundary_epsilon * source_perimeter,
+                source_area * 1.0e-10,
+            )
+            weighted_center_numerator = np.zeros(2, dtype=float)
+            weighted_center_denominator = 0.0
+            center_candidates: list[np.ndarray] = []
+            kernel: _PlanePartitionPolygon | None = display_proxy_partition
+            for edge_index, start_vertex in enumerate(simple.vertices):
+                if kernel is None:
+                    break
+                end_vertex = simple.vertices[
+                    (edge_index + 1) % len(simple.vertices)
+                ]
+                kernel, _outside_kernel = _split_convex_polygon_by_half_plane(
+                    kernel,
+                    start_vertex,
+                    end_vertex,
+                    partition_registry,
+                    coordinate_epsilon,
+                    boundary_token=f"kernel-edge:{edge_index:06d}",
+                )
+            if kernel is not None:
+                center_candidates.append(
+                    np.mean(
+                        np.asarray(
+                            tuple(
+                                vertex.plane_coordinates
+                                for vertex in kernel.vertices
+                            ),
+                            dtype=float,
+                        ),
+                        axis=0,
+                    )
+                )
+            center_candidates.append(
+                np.mean(
+                    np.asarray(
+                        tuple(
+                            vertex.plane_coordinates
+                            for vertex in simple.vertices
+                        ),
+                        dtype=float,
+                    ),
+                    axis=0,
+                )
+            )
+            for polygon in polygons:
+                area = abs(_partition_signed_area(polygon.vertices))
+                polygon_center = np.mean(
+                    np.asarray(
+                        tuple(
+                            vertex.plane_coordinates
+                            for vertex in polygon.vertices
+                        ),
+                        dtype=float,
+                    ),
+                    axis=0,
+                )
+                weighted_center_numerator += area * polygon_center
+                weighted_center_denominator += area
+            if weighted_center_denominator > 0.0:
+                center_candidates.insert(
+                    0,
+                    weighted_center_numerator / weighted_center_denominator,
+                )
+            center_candidates.extend(
+                np.mean(
+                    np.asarray(
+                        tuple(
+                            vertex.plane_coordinates
+                            for vertex in polygon.vertices
+                        ),
+                        dtype=float,
+                    ),
+                    axis=0,
+                )
+                for polygon in (polygons[0], polygons[-1])
+            )
+            center_candidates.extend(
+                0.5
+                * (
+                    np.asarray(start.plane_coordinates, dtype=float)
+                    + np.asarray(end.plane_coordinates, dtype=float)
+                )
+                for start, end in zip(
+                    simple.vertices,
+                    (*simple.vertices[1:], simple.vertices[0]),
+                )
+            )
+            for center_index, center_coordinates in enumerate(center_candidates):
+                center_vertex = partition_registry.register(center_coordinates)
+                center_role = stable_role(
+                    np.asarray(center_vertex.screen_point, dtype=float)
+                )
+                if center_role is not role:
+                    failure_reasons.append(
+                        f"center-{center_index}:role-"
+                        f"{None if center_role is None else center_role.value}"
+                    )
+                center_fan: list[_PlanePartitionPolygon] = []
+                valid_center = True
+                for edge_index, start in enumerate(simple.vertices):
+                    end = simple.vertices[(edge_index + 1) % len(simple.vertices)]
+                    first = np.asarray(start.plane_coordinates, dtype=float)
+                    second = np.asarray(end.plane_coordinates, dtype=float)
+                    center = np.asarray(
+                        center_vertex.plane_coordinates,
+                        dtype=float,
+                    )
+                    signed_area = _cross2(first - center, second - center)
+                    signed_tolerance = coordinate_epsilon * max(
+                        float(np.linalg.norm(second - first)),
+                        coordinate_epsilon,
+                    )
+                    if signed_area < -signed_tolerance:
+                        valid_center = False
+                        failure_reasons.append(
+                            f"center-{center_index}:outside-kernel-edge-{edge_index}"
+                        )
+                        break
+                    if abs(signed_area) <= signed_tolerance:
+                        continue
+                    triangle = _make_plane_partition_polygon(
+                        f"{simple.stable_token}:center:{center_index:02d}:"
+                        f"{edge_index:04d}",
+                        (center_vertex, start, end),
+                        coordinate_epsilon,
+                    )
+                    if triangle is None or not triangle_role_certified(
+                        triangle,
+                        role,
+                    ):
+                        valid_center = False
+                        failure_reasons.append(
+                            f"center-{center_index}:uncertified-edge-{edge_index}"
+                        )
+                        break
+                    center_fan.append(triangle)
+                center_fan_area = sum(
+                    abs(_partition_signed_area(triangle.vertices))
+                    for triangle in center_fan
+                )
+                if (
+                    valid_center
+                    and center_fan
+                    and abs(source_area - center_fan_area)
+                    <= topology_area_tolerance
+                ):
+                    result = tuple(center_fan)
+                    triangulation_cache[cache_key] = result
+                    return result
+                if valid_center and center_fan:
+                    failure_reasons.append(
+                        f"center-{center_index}:area-delta-"
+                        f"{center_fan_area - source_area:.9g}"
+                    )
+
+            for anchor_index in sorted(
+                range(len(simple.vertices)),
+                key=lambda index: simple.vertices[index].stable_token,
+            ):
+                ordered = (
+                    simple.vertices[anchor_index:]
+                    + simple.vertices[:anchor_index]
+                )
+                fan = tuple(
+                    triangle
+                    for triangle_index in range(1, len(ordered) - 1)
+                    if (
+                        triangle := _make_plane_partition_polygon(
+                            f"{simple.stable_token}:fan:{anchor_index:04d}:"
+                            f"{triangle_index:04d}",
+                            (
+                                ordered[0],
+                                ordered[triangle_index],
+                                ordered[triangle_index + 1],
+                            ),
+                            coordinate_epsilon,
+                        )
+                    )
+                    is not None
+                )
+                fan_area = sum(
+                    abs(_partition_signed_area(triangle.vertices))
+                    for triangle in fan
+                )
+                if (
+                    len(fan) == len(simple.vertices) - 2
+                    and abs(source_area - fan_area)
+                    <= topology_area_tolerance
+                    and all(
+                        triangle_role_certified(triangle, role)
+                        for triangle in fan
+                    )
+                ):
+                    triangulation_cache[cache_key] = fan
+                    return fan
+
+            failed_states: set[tuple[str, ...]] = set()
+
+            def solve(
+                vertices: tuple[_PlanePartitionVertex, ...],
+            ) -> tuple[_PlanePartitionPolygon, ...] | None:
+                state = tuple(vertex.stable_token for vertex in vertices)
+                if state in failed_states:
+                    return None
+                if len(vertices) == 3:
+                    triangle = _make_plane_partition_polygon(
+                        f"{simple.stable_token}:ear:final",
+                        vertices,
+                        coordinate_epsilon,
+                    )
+                    if triangle is not None and triangle_role_certified(
+                        triangle,
+                        role,
+                    ):
+                        return (triangle,)
+                    failed_states.add(state)
+                    return None
+
+                ear_candidates: list[
+                    tuple[float, str, int, _PlanePartitionPolygon]
+                ] = []
+                for index, middle in enumerate(vertices):
+                    previous = vertices[index - 1]
+                    following = vertices[(index + 1) % len(vertices)]
+                    first = np.asarray(previous.plane_coordinates, dtype=float)
+                    second = np.asarray(middle.plane_coordinates, dtype=float)
+                    third = np.asarray(following.plane_coordinates, dtype=float)
+                    signed_double_area = _cross2(second - first, third - first)
+                    scale = max(
+                        float(np.linalg.norm(second - first)),
+                        float(np.linalg.norm(third - second)),
+                        coordinate_epsilon,
+                    )
+                    if signed_double_area <= coordinate_epsilon * scale:
+                        continue
+
+                    # These loops are unions of consecutive radial quads, so
+                    # they are angular-monotone: every positive local corner
+                    # is an ear.  A generic all-vertices containment scan would
+                    # make the rare tangent merge cubic in boundary samples.
+                    triangle = _make_plane_partition_polygon(
+                        f"{simple.stable_token}:ear:{middle.stable_token}",
+                        (previous, middle, following),
+                        coordinate_epsilon,
+                    )
+                    if triangle is None:
+                        continue
+                    ear_candidates.append(
+                        (
+                            -signed_double_area,
+                            middle.stable_token,
+                            index,
+                            triangle,
+                        )
+                    )
+                for _area, _token, index, triangle in sorted(ear_candidates):
+                    if not triangle_role_certified(triangle, role):
+                        continue
+                    remainder = solve(vertices[:index] + vertices[index + 1 :])
+                    if remainder is not None:
+                        return (triangle, *remainder)
+                failed_states.add(state)
+                return None
+
+            result = solve(simple.vertices)
+            if result is not None:
+                triangle_area = sum(
+                    abs(_partition_signed_area(triangle.vertices))
+                    for triangle in result
+                )
+                if (
+                    abs(source_area - triangle_area)
+                    > topology_area_tolerance
+                ):
+                    result = None
+            if result is None:
+                failure_reasons.append(
+                    f"ear-search-failed-states:{len(failed_states)}"
+                )
+                triangulation_diagnostics[cache_key] = tuple(failure_reasons)
+            triangulation_cache[cache_key] = result
+            return result
+
+        if any(
+            role_records[index][2] is not role_records[index - 1][2]
+            for index in range(len(role_records))
+        ):
+            rotation = next(
+                index
+                for index in range(len(role_records))
+                if role_records[index][2] is not role_records[index - 1][2]
+            )
+            role_records = role_records[rotation:] + role_records[:rotation]
+
+        runs: list[
+            tuple[
+                PlaneDepthRole,
+                list[tuple[int, _PlanePartitionPolygon, bool]],
+            ]
+        ] = []
+        for index, polygon, role, stably_certified in role_records:
+            if not runs or runs[-1][0] is not role:
+                runs.append((role, []))
+            runs[-1][1].append((index, polygon, stably_certified))
+
+        output_groups: list[
+            tuple[
+                PlaneDepthRole,
+                list[tuple[int, _PlanePartitionPolygon, bool]],
+                tuple[_PlanePartitionPolygon, ...],
+            ]
+        ] = []
+        for role, run in runs:
+            groups: list[
+                list[tuple[int, _PlanePartitionPolygon, bool]]
+            ] = []
+            unstable_positions = [
+                index for index, record in enumerate(run) if not record[2]
+            ]
+            padded_intervals: list[tuple[int, int]] = []
+            for position in unstable_positions:
+                start = max(0, position - 16)
+                end = min(len(run) - 1, position + 16)
+                if padded_intervals and start <= padded_intervals[-1][1] + 1:
+                    padded_intervals[-1] = (
+                        padded_intervals[-1][0],
+                        max(padded_intervals[-1][1], end),
+                    )
+                else:
+                    padded_intervals.append((start, end))
+            cursor = 0
+            for start, end in padded_intervals:
+                groups.extend([run[index]] for index in range(cursor, start))
+                groups.append(run[start : end + 1])
+                cursor = end + 1
+            groups.extend([run[index]] for index in range(cursor, len(run)))
+
+            for group in groups:
+                if len(group) == 1 and group[0][2]:
+                    triangulation = _triangulate_plane_partition_polygon(
+                        group[0][1],
+                        coordinate_epsilon,
+                    )
+                else:
+                    triangulation = role_triangulation(
+                        tuple(polygon for _index, polygon, _stable in group),
+                        role,
+                    )
+                if triangulation is None:
+                    key = (
+                        role.value,
+                        tuple(polygon.stable_token for _i, polygon, _s in group),
+                    )
+                    raise QuadricSectionCompositingError(
+                        "finite section tangent neighborhood cannot be "
+                        "triangulated without an unstable fragment "
+                        f"({role.value}, ring indices "
+                        f"{group[0][0]}..{group[-1][0]}); "
+                        f"diagnostics={triangulation_diagnostics.get(key, ())}"
+                    )
+                output_groups.append((role, group, triangulation))
+
+        output_groups.sort(
+            key=lambda item: min(index for index, _polygon, _stable in item[1])
+        )
+        for group_index, (role, _records, triangles) in enumerate(output_groups):
+            for triangle_index, triangle in enumerate(triangles):
+                append_leaf(
+                    np.asarray(
+                        tuple(
+                            vertex.world_point for vertex in triangle.vertices
+                        ),
+                        dtype=float,
+                    ),
+                    f"ring:{group_index:06d}:piece:{triangle_index:04d}:"
+                    f"{role.value}",
+                    0,
+                    role,
+                )
 
     def visit(world: np.ndarray, path: str, depth: int) -> None:
         screen = np.asarray(world @ view.matrix[:2].T, dtype=float)
@@ -2218,11 +3780,12 @@ def compute_quadric_section_compositing(
             else:
                 append_partitioned_leaf(
                     source,
-                    inside,
-                    outside,
+                    tuple(
+                        (PlaneDepthRole.OUTSIDE_PROJECTION, polygon)
+                        for polygon in outside
+                    ),
                     path,
                     depth,
-                    None,
                 )
             return
 
@@ -2230,57 +3793,84 @@ def compute_quadric_section_compositing(
             np.asarray(vertex.screen_point, dtype=float)
             for vertex in inside[0].vertices
         ]
-        samples = [*inside_screen]
-        samples.append(np.mean(inside_screen, axis=0))
-        roles = {classify(np.asarray(point, dtype=float)) for point in samples}
         projected_diameter = max(
             float(np.linalg.norm(screen[first] - screen[second]))
             for first in range(3)
             for second in range(first + 1, 3)
         )
-        uniform = len(roles) == 1
-        if uniform and next(iter(roles)) is not PlaneDepthRole.BETWEEN_SURFACE_SHEETS:
-            uniform = not _plane_cell_may_meet_solid(
-                inside_screen,
-                inverse_screen_basis,
-                screen_origin,
-                restricted_surface,
-                stationary,
-                axial_mapping,
-                coordinate_epsilon,
-                implicit_epsilon,
+        role_partition = partition_inside_depth_roles(inside[0])
+        unresolved_tangent_feature = False
+        if section_partition is None and role_partition is not None:
+            unresolved_tangent_feature = (
+                all(
+                    role is not PlaneDepthRole.BETWEEN_SURFACE_SHEETS
+                    for role, _polygon in role_partition
+                )
+                and _plane_cell_may_meet_solid(
+                    inside_screen,
+                    inverse_screen_basis,
+                    screen_origin,
+                    restricted_surface,
+                    stationary,
+                    axial_mapping,
+                    coordinate_epsilon,
+                    implicit_epsilon,
+                )
+                and projected_diameter > error
             )
-        if depth >= limits.minimum_subdivision_depth and uniform:
+        if (
+            depth >= limits.minimum_subdivision_depth
+            and role_partition is not None
+            and not unresolved_tangent_feature
+        ):
             append_partitioned_leaf(
                 source,
-                inside,
-                outside,
+                (
+                    *(
+                        (PlaneDepthRole.OUTSIDE_PROJECTION, polygon)
+                        for polygon in outside
+                    ),
+                    *role_partition,
+                ),
                 path,
                 depth,
-                next(iter(roles)),
-            )
-            return
-        if projected_diameter <= error:
-            append_partitioned_leaf(
-                source,
-                inside,
-                outside,
-                path,
-                depth,
-                classify(np.mean(inside_screen, axis=0)),
             )
             return
         if depth >= limits.maximum_subdivision_depth:
+            if section_partition is None:
+                diagnostic_candidates = (inside[0],)
+            else:
+                diagnostic_between, diagnostic_exterior = (
+                    _partition_convex_polygon_by_convex_boundary(
+                        inside[0],
+                        section_partition,
+                        partition_registry,
+                        coordinate_epsilon,
+                    )
+                )
+                diagnostic_candidates = (
+                    *diagnostic_between,
+                    *diagnostic_exterior,
+                )
+            diagnostics = "; ".join(
+                polygon_role_diagnostics(polygon)
+                for polygon in diagnostic_candidates
+            )
             raise QuadricSectionCompositingError(
-                "quadric section boundary needs more than "
-                f"{limits.maximum_subdivision_depth} subdivision levels to meet "
-                f"max_screen_error={error:.9g}"
+                f"finite-surface depth boundary in cell {path!r} remains "
+                "mixed after "
+                f"{limits.maximum_subdivision_depth} subdivision levels; "
+                f"refusing to guess a role at max_screen_error={error:.9g}; "
+                f"candidates: {diagnostics}"
             )
         for index, child in enumerate(_subdivide_triangle(world)):
             visit(child, f"{path}.{index}", depth + 1)
 
-    for root_index, indices in enumerate(((0, 1, 2), (0, 2, 3))):
-        visit(patch_corners[list(indices)], str(root_index), 0)
+    if section_partition is None:
+        for root_index, indices in enumerate(((0, 1, 2), (0, 2, 3))):
+            visit(patch_corners[list(indices)], str(root_index), 0)
+    else:
+        emit_finite_section_arrangement()
 
     fragments.sort(key=lambda item: item.fragment_id)
     outline_fragments = _compute_outline_fragments(
