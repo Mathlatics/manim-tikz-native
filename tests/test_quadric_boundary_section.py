@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from math import pi, sqrt
+from math import acos, pi, sqrt
 import unittest
 
 import numpy as np
@@ -29,7 +29,10 @@ from polyhedron_visibility.quadrics.contract import (
 from polyhedron_visibility.quadrics.curve_intersections import (
     compute_projected_curve_crossings,
 )
-from polyhedron_visibility.quadrics.curves import ParametricConicBranch
+from polyhedron_visibility.quadrics.curves import (
+    CircleArcCurve,
+    ParametricConicBranch,
+)
 from polyhedron_visibility.quadrics.projection import build_opaque_projection_proxy
 from polyhedron_visibility.quadrics.section_compositing import (
     compute_quadric_section_compositing,
@@ -58,6 +61,13 @@ SIDE_VIEW = ParallelView.from_matrix(
         (1.0, 0.0, 0.0),
         (0.0, 0.0, -1.0),
         (0.0, 1.0, 0.0),
+    )
+)
+FRONT_VIEW = ParallelView.from_matrix(
+    (
+        (1.0, 0.0, 0.0),
+        (0.0, 1.0, 0.0),
+        (0.0, 0.0, 1.0),
     )
 )
 
@@ -97,6 +107,97 @@ def _cylinder_section_case():
 
 
 class BoundarySectionPlacementTests(unittest.TestCase):
+    def test_side_view_circle_keeps_screen_coincident_depth_events(self) -> None:
+        sphere = SphereSpec("sphere", (0.0, 0.0, 0.0), 1.0)
+        plane = SectionPlane(
+            "plane",
+            (0.0, 0.0, 2.0),
+            (0.0, 0.0, 1.0),
+            u_axis=(1.0, 0.0, 0.0),
+        )
+        # The patch spans x in [-2, 0.9].  Its other three edges do not meet
+        # the projected circle line y=3, while the rectangle still overlaps
+        # the sphere projection as required by the section compositor.
+        patch = PlaneDisplayPatchSpec(
+            "patch",
+            plane.plane_id,
+            1.45,
+            2.2,
+            center_coordinates=(-0.55, 1.4),
+        )
+        proxy = build_opaque_projection_proxy(
+            sphere,
+            FRONT_VIEW,
+            max_chord_error=0.002,
+        )
+        base = compute_quadric_compositing(
+            compute_quadric_visibility((), (sphere,), FRONT_VIEW),
+            (proxy,),
+        )
+        section = compute_quadric_section_compositing(
+            base,
+            sphere,
+            plane,
+            patch,
+            FRONT_VIEW,
+            max_screen_error=0.03,
+        )
+        curve = CircleArcCurve(
+            "side-view-circle",
+            (0.0, 3.0, 0.0),
+            1.0,
+            (0.0, -1.0, 0.0),
+            radial_axis=(1.0, 0.0, 0.0),
+        )
+        source = curve_boundary_source(curve)
+
+        spans = compute_boundary_section_spans(
+            (source,),
+            section,
+            FRONT_VIEW,
+        )[source.source_id]
+
+        first = acos(0.9)
+        second = 2.0 * pi - first
+        first_world = np.asarray(curve.point(first), dtype=float)
+        second_world = np.asarray(curve.point(second), dtype=float)
+        np.testing.assert_allclose(
+            FRONT_VIEW.matrix[:2] @ first_world,
+            FRONT_VIEW.matrix[:2] @ second_world,
+            atol=1.0e-12,
+        )
+        self.assertGreater(
+            abs(
+                float(
+                    np.dot(
+                        first_world - second_world,
+                        FRONT_VIEW.view_direction,
+                    )
+                )
+            ),
+            0.8,
+        )
+        self.assertEqual(len(spans), 3)
+        expected_boundaries = (0.0, first, second, 2.0 * pi)
+        for span, start, end in zip(
+            spans,
+            expected_boundaries,
+            expected_boundaries[1:],
+        ):
+            self.assertAlmostEqual(span.interval.start, start, places=10)
+            self.assertAlmostEqual(span.interval.end, end, places=10)
+        self.assertEqual(
+            tuple((item.relation, item.plane_depth_roles) for item in spans),
+            (
+                (BoundaryPlaneRelation.OUTSIDE_PATCH, ()),
+                (
+                    BoundaryPlaneRelation.BOUNDARY_BEHIND_PLANE,
+                    ("outside_projection",),
+                ),
+                (BoundaryPlaneRelation.OUTSIDE_PATCH, ()),
+            ),
+        )
+
     def test_degenerate_conic_overlap_is_split_at_finite_segment_ends(self) -> None:
         curve = ParametricConicBranch(
             "line",

@@ -1226,16 +1226,33 @@ def compute_boundary_section_spans(
             )
             world_point = np.asarray(source.curve.point(value), dtype=float)
             screen_point = view.matrix[:2] @ world_point
+            depth_close = bool(
+                canonical_world_points
+                and abs(
+                    float(
+                        np.dot(
+                            world_point - canonical_world_points[-1],
+                            direction,
+                        )
+                    )
+                )
+                <= 8.0 * depth_epsilon
+            )
             coincident = canonical_parameters and (
                 value - canonical_parameters[-1] <= parameter_epsilon
-                or float(
-                    np.linalg.norm(screen_point - canonical_screen_points[-1])
-                )
-                <= 8.0 * screen_epsilon
                 or float(
                     np.linalg.norm(world_point - canonical_world_points[-1])
                 )
                 <= 8.0 * boundary_epsilon
+                or (
+                    float(
+                        np.linalg.norm(
+                            screen_point - canonical_screen_points[-1]
+                        )
+                    )
+                    <= 8.0 * screen_epsilon
+                    and depth_close
+                )
             )
             if coincident:
                 if priority < canonical_priorities[-1]:
