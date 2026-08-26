@@ -294,7 +294,7 @@ class QuadricBoundaryContractTests(unittest.TestCase):
             )
         )
 
-    def test_visible_owner_boundary_ignores_occluded_shared_plane_role(self) -> None:
+    def test_plane_occluded_owner_silhouette_uses_front_plane_roles(self) -> None:
         cone = ConeSpec(
             "cone",
             (0.0, 0.0, -2.0),
@@ -303,13 +303,13 @@ class QuadricBoundaryContractTests(unittest.TestCase):
             (0.0, 4.0),
             radial_axis=(1.0, 0.0, 0.0),
         )
-        source = build_surface_boundary_sources(
-            (cone,),
-            VIEW,
-            (GeneratorBoundarySpec("generator:shared", "cone", 0.4),),
-            include_cap_rims=False,
-            include_silhouettes=False,
-        )[0]
+        source = next(
+            item
+            for item in build_surface_boundary_sources(
+                (cone,), VIEW, include_cap_rims=False
+            )
+            if item.semantic_kind is BoundarySemanticKind.TRUE_SILHOUETTE
+        )
         anchors = BoundarySectionAnchors(
             "plane-behind",
             "outline-behind",
@@ -357,12 +357,23 @@ class QuadricBoundaryContractTests(unittest.TestCase):
                     QuadricBoundarySectionSpan(
                         source.curve.domain,
                         BoundaryPlaneRelation.BOUNDARY_BEHIND_PLANE,
-                        ("between_surface_sheets", "outside_projection"),
+                        ("in_front_of_surface", "outside_projection"),
                     ),
                 )
             },
         )
         fragment = frame.fragments[0]
+        self.assertIs(
+            fragment.surface_visibility_kind,
+            VisibilityKind.VISIBLE,
+        )
+        self.assertIs(fragment.visibility_kind, VisibilityKind.HIDDEN)
+        self.assertTrue(fragment.plane_occluded)
+        self.assertEqual(fragment.occluder_surface_ids, ())
+        self.assertEqual(
+            fragment.render_intent,
+            BoundaryRenderIntent.DASHED,
+        )
         self.assertLess(
             frame.draw_order.index("surface-front"),
             frame.draw_order.index(fragment.item_id),
@@ -370,8 +381,160 @@ class QuadricBoundaryContractTests(unittest.TestCase):
         relations = {
             (item.far_item_id, item.near_item_id) for item in frame.order_relations
         }
+        self.assertIn((fragment.item_id, "plane-front"), relations)
         self.assertIn((fragment.item_id, "plane-outside"), relations)
         self.assertNotIn((fragment.item_id, "plane-between"), relations)
+
+    def test_section_plane_occlusion_controls_effective_boundary_visibility(
+        self,
+    ) -> None:
+        cone = ConeSpec(
+            "plane-occluded-cone",
+            (0.0, 0.0, -2.0),
+            (0.0, 0.0, 1.0),
+            pi / 6.0,
+            (0.0, 4.0),
+            radial_axis=(1.0, 0.0, 0.0),
+        )
+        source = next(
+            item
+            for item in build_surface_boundary_sources(
+                (cone,), VIEW, include_cap_rims=False
+            )
+            if item.semantic_kind is BoundarySemanticKind.TRUE_SILHOUETTE
+        )
+        self.assertIs(
+            source.occlusion_scope,
+            BoundaryOcclusionScope.EXTERNAL_ONLY,
+        )
+        domain = source.curve.domain
+        first = domain.start + 0.25 * domain.length
+        second = domain.start + 0.50 * domain.length
+        section_spans = {
+            source.source_id: (
+                QuadricBoundarySectionSpan(
+                    ParameterInterval(domain.start, first),
+                    BoundaryPlaneRelation.OUTSIDE_PATCH,
+                ),
+                QuadricBoundarySectionSpan(
+                    ParameterInterval(first, second),
+                    BoundaryPlaneRelation.BOUNDARY_IN_FRONT_OF_PLANE,
+                    ("behind_surface", "outside_projection"),
+                ),
+                QuadricBoundarySectionSpan(
+                    ParameterInterval(second, domain.end),
+                    BoundaryPlaneRelation.BOUNDARY_BEHIND_PLANE,
+                    ("in_front_of_surface", "outside_projection"),
+                ),
+            )
+        }
+        spans = {
+            source.source_id: (
+                QuadricBoundaryVisibilitySpan(
+                    domain,
+                    VisibilityKind.VISIBLE,
+                ),
+            )
+        }
+        anchors = BoundarySectionAnchors(
+            "plane-behind",
+            "outline-behind",
+            "surface-back",
+            "plane-outside",
+            "outline-outside",
+            "plane-between",
+            "outline-between",
+            "surface-front",
+            "plane-front",
+            "outline-front",
+        )
+        parent = tuple(getattr(anchors, name) for name in anchors.__dataclass_fields__)
+        parent_relations = tuple(
+            QuadricPaintRelation(left, right, "parent")
+            for left, right in zip(parent, parent[1:])
+        )
+
+        def build(policy: QuadricPaintPolicy):
+            return compute_quadric_boundary_compositing(
+                (source,),
+                spans,
+                paint_policy=policy,
+                parent_item_ids=parent,
+                parent_relations=parent_relations,
+                surface_item_by_id={cone.surface_id: anchors.surface_front},
+                section_anchors=anchors,
+                section_spans_by_source=section_spans,
+            )
+
+        for policy, hidden_intent in (
+            (QuadricPaintPolicy.PHYSICAL, BoundaryRenderIntent.OMIT),
+            (QuadricPaintPolicy.DIAGRAMMATIC, BoundaryRenderIntent.DASHED),
+            (
+                QuadricPaintPolicy.DEPTH_AWARE_DIAGRAMMATIC,
+                BoundaryRenderIntent.DASHED,
+            ),
+        ):
+            with self.subTest(policy=policy.value):
+                frame = build(policy)
+                outside, in_front, behind = sorted(
+                    frame.fragments,
+                    key=lambda item: item.interval.start,
+                )
+                for visible in (outside, in_front):
+                    self.assertIs(
+                        visible.surface_visibility_kind,
+                        VisibilityKind.VISIBLE,
+                    )
+                    self.assertIs(visible.visibility_kind, VisibilityKind.VISIBLE)
+                    self.assertFalse(visible.plane_occluded)
+                    self.assertEqual(
+                        visible.render_intent,
+                        BoundaryRenderIntent.SOLID,
+                    )
+                self.assertIs(
+                    behind.surface_visibility_kind,
+                    VisibilityKind.VISIBLE,
+                )
+                self.assertIs(behind.visibility_kind, VisibilityKind.HIDDEN)
+                self.assertTrue(behind.plane_occluded)
+                self.assertEqual(behind.occluder_surface_ids, ())
+                self.assertEqual(
+                    behind.plane_occluder_item_ids,
+                    (anchors.plane_front, anchors.plane_outside),
+                )
+                self.assertEqual(behind.render_intent, hidden_intent)
+
+        physical = build(QuadricPaintPolicy.PHYSICAL)
+        physical_behind = max(
+            physical.fragments,
+            key=lambda item: item.interval.start,
+        )
+        self.assertFalse(physical_behind.painted)
+
+        diagrammatic = build(QuadricPaintPolicy.DIAGRAMMATIC)
+        diagrammatic_behind = max(
+            diagrammatic.fragments,
+            key=lambda item: item.interval.start,
+        )
+        self.assertGreater(
+            diagrammatic.draw_order.index(diagrammatic_behind.item_id),
+            diagrammatic.draw_order.index(anchors.outline_front),
+        )
+
+        depth_aware = build(QuadricPaintPolicy.DEPTH_AWARE_DIAGRAMMATIC)
+        depth_behind = max(
+            depth_aware.fragments,
+            key=lambda item: item.interval.start,
+        )
+        self.assertLess(
+            depth_aware.draw_order.index(anchors.surface_front),
+            depth_aware.draw_order.index(depth_behind.item_id),
+        )
+        for plane_item in depth_behind.plane_occluder_item_ids:
+            self.assertLess(
+                depth_aware.draw_order.index(depth_behind.item_id),
+                depth_aware.draw_order.index(plane_item),
+            )
 
     def test_surface_item_mapping_must_reference_parent_items(self) -> None:
         curve = SegmentCurve(

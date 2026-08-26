@@ -582,3 +582,12 @@ curves use their analytic surface/plane identity and visibility events instead
 of inheriting the display mesh's chord count. `boundary_section_limits` places
 explicit fixed bounds on role-contour segments and split parameters; exceeding
 either bound raises rather than guessing or allocating more objects mid-frame.
+
+`QuadricBoundaryPaintFragment.surface_visibility_kind` records visibility
+against the selected quadratic surfaces only. `visibility_kind` is the
+effective result after also considering the finite section-plane patch.
+`plane_occluded` and `plane_occluder_item_ids` preserve the renderer-neutral
+evidence when a fragment projects inside that patch and lies behind it;
+`occluder_surface_ids` continues to contain quadratic-surface identities only.
+Consequently a true silhouette can remain visible against its owning cone or
+cylinder while still becoming hidden behind a cutting plane.

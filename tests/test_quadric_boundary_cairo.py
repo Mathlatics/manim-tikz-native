@@ -142,7 +142,11 @@ def _nearest_ink_pixel(
     )
 
 
-def _scene_for(policy: QuadricPaintPolicy):
+def _scene_for(
+    policy: QuadricPaintPolicy,
+    *,
+    silhouette_style: QuadricBoundaryStyle | None = None,
+):
     cone = ConeSpec(
         "cairo-boundary-cone",
         (0.0, 0.0, -2.4),
@@ -171,11 +175,18 @@ def _scene_for(policy: QuadricPaintPolicy):
         section_plane=plane,
         boundary_visibility_mode="unified",
         include_surface_boundaries=True,
+        boundary_styles=(
+            None
+            if silhouette_style is None
+            else {"style:surface-silhouette": silhouette_style}
+        ),
     ).attach()
     return scene, controller
 
 
-def _visible_curve_between_surface_and_plane_scene():
+def _visible_curve_between_surface_and_plane_scene(
+    policy: QuadricPaintPolicy = QuadricPaintPolicy.DEPTH_AWARE_DIAGRAMMATIC,
+):
     view = ParallelView.from_matrix(np.eye(3))
     sphere = SphereSpec("bracket-sphere", (0.0, 0.0, 0.0), 1.0)
     curve = SegmentCurve(
@@ -202,6 +213,11 @@ def _visible_curve_between_surface_and_plane_scene():
         visible_curve_color="#FF0000",
         visible_curve_width=10.0,
         visible_curve_opacity=1.0,
+        hidden_curve_color="#FF0000",
+        hidden_curve_width=10.0,
+        hidden_curve_opacity=1.0,
+        dash_length=0.18,
+        dash_gap=0.12,
         section_plane_fill_color="#00FF00",
         section_plane_fill_opacity=0.25,
         section_plane_stroke_opacity=0.0,
@@ -213,7 +229,7 @@ def _visible_curve_between_surface_and_plane_scene():
         surfaces=(sphere,),
         curves=(curve,),
         projection=view,
-        paint_policy=QuadricPaintPolicy.DEPTH_AWARE_DIAGRAMMATIC,
+        paint_policy=policy,
         style=style,
         limits=_limits(),
         max_chord_error=0.008,
@@ -252,6 +268,40 @@ def _first_hidden_plane_dash(controller: QuadricOcclusion3D):
         raise AssertionError(
             "hidden plane-outline fragment has no active dash"
         )
+    dash = dashes[len(dashes) // 2]
+    point = 0.5 * (
+        np.asarray(dash.get_start()) + np.asarray(dash.get_end())
+    )
+    return fragment, point
+
+
+def _first_plane_occluded_silhouette_dash(
+    controller: QuadricOcclusion3D,
+):
+    frame = controller.last_boundary_frame
+    assert frame is not None
+    source_map = {item.source_id: item for item in frame.sources}
+    candidates = [
+        item
+        for item in frame.fragments
+        if source_map[item.source_id].semantic_kind
+        is BoundarySemanticKind.TRUE_SILHOUETTE
+        and item.plane_occluded
+        and item.painted
+        and item.render_intent is BoundaryRenderIntent.DASHED
+    ]
+    if not candidates:
+        raise AssertionError(
+            "scene produced no painted plane-occluded silhouette fragment"
+        )
+    fragment = sorted(candidates, key=lambda item: item.item_id)[0]
+    slot_index = controller._fragment_slot_maps[fragment.source_id][
+        fragment.item_id
+    ]
+    slot = controller._curve_slots[fragment.source_id].fragments[slot_index]
+    dashes = [dash for dash in slot.dashes if len(dash.points)]
+    if not dashes:
+        raise AssertionError("plane-occluded silhouette has no active dash")
     dash = dashes[len(dashes) // 2]
     point = 0.5 * (
         np.asarray(dash.get_start()) + np.asarray(dash.get_end())
@@ -645,7 +695,9 @@ class UnifiedBoundaryCairoTests(unittest.TestCase):
             finally:
                 controller.restore()
 
-    def test_visible_curve_is_between_front_sheet_and_front_plane(self) -> None:
+    def test_plane_occluded_visible_curve_is_dashed_between_surface_and_plane(
+        self,
+    ) -> None:
         with tempconfig(
             {
                 "renderer": "cairo",
@@ -657,45 +709,240 @@ class UnifiedBoundaryCairoTests(unittest.TestCase):
                 "disable_caching": True,
             }
         ):
-            scene, controller = _visible_curve_between_surface_and_plane_scene()
+            diagram_scene, diagram = _visible_curve_between_surface_and_plane_scene(
+                QuadricPaintPolicy.DIAGRAMMATIC
+            )
+            depth_scene, depth = _visible_curve_between_surface_and_plane_scene(
+                QuadricPaintPolicy.DEPTH_AWARE_DIAGRAMMATIC
+            )
             try:
-                frame = controller.last_boundary_frame
-                self.assertIsNotNone(frame)
-                assert frame is not None
+                diagram_frame = diagram.last_boundary_frame
+                depth_frame = depth.last_boundary_frame
+                self.assertIsNotNone(diagram_frame)
+                self.assertIsNotNone(depth_frame)
+                assert diagram_frame is not None and depth_frame is not None
+                diagram_fragment = next(
+                    item
+                    for item in diagram_frame.fragments
+                    if item.source_id == "bracket-curve"
+                )
                 fragment = next(
                     item
-                    for item in frame.fragments
+                    for item in depth_frame.fragments
                     if item.source_id == "bracket-curve"
+                )
+                self.assertIs(
+                    fragment.surface_visibility_kind,
+                    VisibilityKind.VISIBLE,
+                )
+                self.assertIs(fragment.visibility_kind, VisibilityKind.HIDDEN)
+                self.assertTrue(fragment.plane_occluded)
+                self.assertEqual(fragment.occluder_surface_ids, ())
+                self.assertIs(
+                    fragment.render_intent,
+                    BoundaryRenderIntent.DASHED,
                 )
                 surface_front = next(
                     item
-                    for item in frame.draw_order
+                    for item in depth_frame.draw_order
                     if item.endswith("projection-sheet:front")
                 )
-                plane_front = next(
+                self.assertLess(
+                    depth_frame.draw_order.index(surface_front),
+                    depth_frame.draw_order.index(fragment.item_id),
+                )
+                for plane_item in fragment.plane_occluder_item_ids:
+                    self.assertLess(
+                        depth_frame.draw_order.index(fragment.item_id),
+                        depth_frame.draw_order.index(plane_item),
+                    )
+                outline_front = next(
                     item
-                    for item in frame.draw_order
-                    if item.endswith("bracket-plane:plane:front")
+                    for item in diagram_frame.draw_order
+                    if item.endswith("bracket-plane:plane:outline:front")
                 )
                 self.assertLess(
-                    frame.draw_order.index(surface_front),
-                    frame.draw_order.index(fragment.item_id),
-                )
-                self.assertLess(
-                    frame.draw_order.index(fragment.item_id),
-                    frame.draw_order.index(plane_front),
+                    diagram_frame.draw_order.index(outline_front),
+                    diagram_frame.draw_order.index(diagram_fragment.item_id),
                 )
 
-                pixels = _capture_pixels(scene)
-                row, column = _screen_to_pixel((0.0, 0.0))
-                rgb = pixels[row, column]
-                # Red curve ink must replace the opaque blue surface before
-                # the translucent green plane attenuates it.  The old broken
-                # order produces a blue-dominant pixel instead.
-                self.assertGreater(rgb[0], rgb[2] + 100.0)
-                self.assertGreater(rgb[1], 20.0)
+                def dash_midpoint(controller, item):
+                    slot_index = controller._fragment_slot_maps[item.source_id][
+                        item.item_id
+                    ]
+                    slot = controller._curve_slots[item.source_id].fragments[
+                        slot_index
+                    ]
+                    dash = next(dash for dash in slot.dashes if len(dash.points))
+                    return 0.5 * (
+                        np.asarray(dash.get_start())
+                        + np.asarray(dash.get_end())
+                    )
+
+                point = dash_midpoint(diagram, diagram_fragment)
+                depth_point = dash_midpoint(depth, fragment)
+                np.testing.assert_allclose(point, depth_point, atol=1.0e-8)
+                target = _hex_rgb("#FF0000")
+                diagram_pixels = _capture_pixels(diagram_scene)
+                depth_pixels = _capture_pixels(depth_scene)
+                row, column, diagram_rgb = _nearest_ink_pixel(
+                    diagram_pixels, point, target
+                )
+                depth_rgb = depth_pixels[row, column]
+                self.assertLess(
+                    float(np.linalg.norm(diagram_rgb - target)) + 10.0,
+                    float(np.linalg.norm(depth_rgb - target)),
+                )
+                self.assertGreater(depth_rgb[1], diagram_rgb[1] + 20.0)
             finally:
-                controller.restore()
+                depth.restore()
+                diagram.restore()
+
+    def test_section_plane_occludes_cone_silhouette_under_all_policies(
+        self,
+    ) -> None:
+        with tempconfig(
+            {
+                "renderer": "cairo",
+                "pixel_width": WIDTH,
+                "pixel_height": HEIGHT,
+                "frame_rate": 8,
+                "write_to_movie": False,
+                "save_last_frame": False,
+                "disable_caching": True,
+            }
+        ):
+            silhouette_style = QuadricBoundaryStyle(
+                visible_color="#FF2020",
+                visible_width=8.0,
+                visible_opacity=1.0,
+                hidden_color="#FF2020",
+                hidden_width=8.0,
+                hidden_opacity=1.0,
+                dash_length=0.14,
+                dash_gap=0.10,
+            )
+            physical_scene, physical = _scene_for(
+                QuadricPaintPolicy.PHYSICAL,
+                silhouette_style=silhouette_style,
+            )
+            diagram_scene, diagram = _scene_for(
+                QuadricPaintPolicy.DIAGRAMMATIC,
+                silhouette_style=silhouette_style,
+            )
+            depth_scene, depth = _scene_for(
+                QuadricPaintPolicy.DEPTH_AWARE_DIAGRAMMATIC,
+                silhouette_style=silhouette_style,
+            )
+            try:
+                frames = {
+                    QuadricPaintPolicy.PHYSICAL: physical.last_boundary_frame,
+                    QuadricPaintPolicy.DIAGRAMMATIC: diagram.last_boundary_frame,
+                    QuadricPaintPolicy.DEPTH_AWARE_DIAGRAMMATIC: (
+                        depth.last_boundary_frame
+                    ),
+                }
+                self.assertTrue(all(frame is not None for frame in frames.values()))
+                for policy, frame in frames.items():
+                    assert frame is not None
+                    source_map = {item.source_id: item for item in frame.sources}
+                    silhouettes = [
+                        item
+                        for item in frame.fragments
+                        if source_map[item.source_id].semantic_kind
+                        is BoundarySemanticKind.TRUE_SILHOUETTE
+                    ]
+                    plane_hidden = [
+                        item for item in silhouettes if item.plane_occluded
+                    ]
+                    unoccluded = [
+                        item for item in silhouettes if not item.plane_occluded
+                    ]
+                    self.assertTrue(plane_hidden and unoccluded)
+                    self.assertTrue(
+                        all(
+                            item.surface_visibility_kind
+                            is VisibilityKind.VISIBLE
+                            and item.visibility_kind is VisibilityKind.HIDDEN
+                            and not item.occluder_surface_ids
+                            for item in plane_hidden
+                        )
+                    )
+                    self.assertTrue(
+                        all(
+                            item.visibility_kind is VisibilityKind.VISIBLE
+                            and item.render_intent is BoundaryRenderIntent.SOLID
+                            and item.painted
+                            for item in unoccluded
+                        )
+                    )
+                    expected = (
+                        BoundaryRenderIntent.OMIT
+                        if policy is QuadricPaintPolicy.PHYSICAL
+                        else BoundaryRenderIntent.DASHED
+                    )
+                    self.assertTrue(
+                        all(item.render_intent is expected for item in plane_hidden)
+                    )
+
+                diagram_fragment, point = _first_plane_occluded_silhouette_dash(
+                    diagram
+                )
+                depth_fragment, depth_point = (
+                    _first_plane_occluded_silhouette_dash(depth)
+                )
+                self.assertEqual(
+                    diagram_fragment.source_id,
+                    depth_fragment.source_id,
+                )
+                np.testing.assert_allclose(point, depth_point, atol=1.0e-8)
+                depth_frame = depth.last_boundary_frame
+                assert depth_frame is not None
+                surface_front = next(
+                    item
+                    for item in depth_frame.draw_order
+                    if item.endswith("projection-sheet:front")
+                )
+                self.assertLess(
+                    depth_frame.draw_order.index(surface_front),
+                    depth_frame.draw_order.index(depth_fragment.item_id),
+                )
+                for plane_item in depth_fragment.plane_occluder_item_ids:
+                    self.assertLess(
+                        depth_frame.draw_order.index(depth_fragment.item_id),
+                        depth_frame.draw_order.index(plane_item),
+                    )
+
+                target = _hex_rgb("#FF2020")
+                physical_pixels = _capture_pixels(physical_scene)
+                diagram_pixels = _capture_pixels(diagram_scene)
+                depth_pixels = _capture_pixels(depth_scene)
+                row, column, diagram_rgb = _nearest_ink_pixel(
+                    diagram_pixels, point, target
+                )
+                depth_rgb = depth_pixels[row, column]
+                physical_rgb = physical_pixels[row, column]
+                self.assertLess(
+                    float(np.linalg.norm(diagram_rgb - target)) + 5.0,
+                    float(np.linalg.norm(depth_rgb - target)),
+                )
+                self.assertLess(
+                    float(np.linalg.norm(depth_rgb - target)) + 20.0,
+                    float(np.linalg.norm(physical_rgb - target)),
+                )
+
+                identities = depth.slot_identities()
+                depth.update()
+                updated_fragment, updated_point = (
+                    _first_plane_occluded_silhouette_dash(depth)
+                )
+                self.assertEqual(depth.slot_identities(), identities)
+                self.assertEqual(updated_fragment.item_id, depth_fragment.item_id)
+                np.testing.assert_allclose(updated_point, depth_point, atol=1.0e-8)
+            finally:
+                depth.restore()
+                diagram.restore()
+                physical.restore()
 
     def test_depth_aware_hidden_outline_is_attenuated_by_front_sheet(
         self,
@@ -744,7 +991,7 @@ class UnifiedBoundaryCairoTests(unittest.TestCase):
                 depth.restore()
                 diagram.restore()
 
-    def test_physical_omits_hidden_boundaries_and_silhouette_stays_solid(
+    def test_physical_omits_hidden_and_keeps_unoccluded_silhouette_solid(
         self,
     ) -> None:
         with tempconfig(
@@ -780,6 +1027,21 @@ class UnifiedBoundaryCairoTests(unittest.TestCase):
                     is BoundarySemanticKind.TRUE_SILHOUETTE
                 ]
                 self.assertTrue(silhouettes)
+                plane_occluded = [
+                    item for item in silhouettes if item.plane_occluded
+                ]
+                self.assertTrue(plane_occluded)
+                self.assertTrue(
+                    all(
+                        item.surface_visibility_kind
+                        is VisibilityKind.VISIBLE
+                        and item.visibility_kind is VisibilityKind.HIDDEN
+                        and item.render_intent is BoundaryRenderIntent.OMIT
+                        and not item.painted
+                        and not item.occluder_surface_ids
+                        for item in plane_occluded
+                    )
+                )
                 self.assertTrue(
                     all(
                         item.render_intent is BoundaryRenderIntent.SOLID

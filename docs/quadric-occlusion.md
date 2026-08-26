@@ -526,15 +526,18 @@ resolve an existing `style_id` and mutate preallocated solid/dash slots; they
 never add a style or create a Mobject. Unknown IDs, too many registered styles,
 and a dash pattern that exceeds `max_dashes_per_fragment` raise explicitly.
 
-The three painter policies have one meaning for every semantic boundary:
+The three painter policies consume one effective visibility result for every
+semantic boundary. A fragment is effectively hidden when either a selected
+quadratic surface hides it or it projects inside the finite section-plane patch
+and lies behind that plane:
 
 - `physical`: visible fragments are solid and hidden fragments are omitted;
 - `diagrammatic`: visible fragments are solid and hidden fragments are dashed
   teaching overlays above their occluders;
 - `depth_aware_diagrammatic`: hidden fragments remain dashed, but every
-  certified farther surface is painted first and every named occluding surface
-  is painted afterward. A translucent front sheet attenuates the dash, while
-  an opaque front sheet can cover it completely.
+  certified farther object is painted first and every actual occluder is
+  painted afterward. A translucent front sheet or section-plane role fill
+  attenuates the dash, while an opaque occluder can cover it completely.
 
 A true projection silhouette is not the same object as a cap rim or a display
 frame. Sphere silhouettes and the lateral silhouette generators of finite
@@ -544,6 +547,15 @@ surface generators are ordinary owner-aware semantic boundaries: their front
 parts are solid and their rear parts follow the selected hidden-line policy.
 The rectangular plane-patch outline reuses its existing exact
 `PlaneDepthRole` partition instead of solving visibility again.
+
+External-only applies to quadratic-surface selection, not to every possible
+occluder. A finite cutting plane may still hide part of a true cone or cylinder
+silhouette. In depth-aware mode that case is bracketed as
+`surface_front -> silhouette dash -> plane role fill`; outside the patch, or
+where the silhouette is in front of the plane, the same source remains solid.
+The fragment contract records the original surface result separately from the
+effective result, and names plane painter items without pretending that the
+plane is a quadratic surface.
 
 Every other semantic boundary is also split where it crosses a plane-role
 contour. A midpoint labels only an already partitioned open interval; three
