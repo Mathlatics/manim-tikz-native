@@ -448,7 +448,9 @@ points are:
   `CircularTrimRimSpec`, and `SectionPlane`;
 - `build_cone_projection_layers()`, `ConeProjectionLayers`, and
   `ConeProjectionSheet`;
-- `compute_quadric_section()` and `section_trace_curves()`;
+- `compute_quadric_section()`, `section_trace_curves()`,
+  `compute_quadric_section_boundary_curves()`, and
+  `section_cap_chord_curve_ids()`;
 - `compute_quadric_visibility()` and
   `compute_projected_curve_crossings()`;
 - `compute_quadric_compositing()` and
@@ -489,6 +491,16 @@ projection.  The Manim layer merges those cells back into continuous compound
 contours, so the geometric subdivision does not leave triangle seams.  No
 Mobject is created during an update, and `last_section_frame` exposes the
 committed renderer-neutral split.
+`section_plane` partitions and paints the finite display patch but deliberately
+does not invent section ink. Pass explicit curves from
+`compute_quadric_section_boundary_curves()` when the complete finite section
+boundary should be drawn. Filled end caps contribute stable `SegmentCurve`
+chords; open cone trim rims do not. For a moving cut, add the potential IDs
+from `section_cap_chord_curve_ids()` to `allocated_curve_ids` so a chord can
+appear and disappear without changing Mobject identity. A cap chord is only
+accepted when both endpoints match open endpoints of the lateral trace; an
+unresolved near-parallel cut or a lateral/cap tolerance mismatch raises an
+explicit geometry error rather than guessing a boundary.
 When `projection` is omitted, both `QuadricOcclusion3D` and
 `QuadricSectionTransition3D` use a true orthographic isometric view.  Its
 screen basis is orthonormal, all three world axes have equal projected scale,

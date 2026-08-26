@@ -9,7 +9,7 @@ open arcs (or nothing).
 
 from __future__ import annotations
 
-from math import acos, atan2, cos, cosh, exp, isfinite, log, sin, sinh, tau
+from math import acos, atan2, cos, cosh, exp, isfinite, log, sin, sinh, sqrt, tau
 from typing import Callable, Sequence
 
 import numpy as np
@@ -28,18 +28,28 @@ from .conics import (
     ConicParameterization,
     classify_conic,
 )
-from .contract import ConeSpec, CylinderSpec, SectionPlane, SphereSpec
+from .contract import (
+    ConeModel,
+    ConeSpec,
+    CylinderSpec,
+    PlanarCapSpec,
+    SectionPlane,
+    SphereSpec,
+)
+from .curves import ParametricConicBranch, SegmentCurve
 from .roots import PolynomialRootError, solve_real_polynomial
 from .trace import (
     FiniteSectionTopology,
     QuadricSectionTrace,
     SectionBranchTrace,
     SectionComponentTrace,
+    section_trace_curves,
 )
 
 
 QuadricSurfaceSpec = SphereSpec | CylinderSpec | ConeSpec
 ContextInput = GeometryContext | ResolvedGeometryContext | None
+FiniteSectionBoundaryCurve = ParametricConicBranch | SegmentCurve
 
 
 class QuadricSectionError(ValueError):
@@ -114,6 +124,300 @@ def _axial_range(surface: QuadricSurfaceSpec) -> tuple[float, float] | None:
     if not isfinite(lower) or not isfinite(upper) or lower >= upper:
         raise QuadricSectionError("surface axial_range must be finite and increasing")
     return lower, upper
+
+
+def _cap_chord_curve_id(section_id: str, cap: PlanarCapSpec) -> str:
+    return f"{section_id}:cap:{cap.role}:chord"
+
+
+def _validate_finite_boundary_surface(surface: object) -> QuadricSurfaceSpec:
+    if not isinstance(surface, (SphereSpec, CylinderSpec, ConeSpec)):
+        raise TypeError("surface must be SphereSpec, CylinderSpec, or ConeSpec")
+    if isinstance(surface, ConeSpec) and surface.model is ConeModel.ANALYTIC_DOUBLE:
+        raise QuadricSectionError(
+            "analytic_double cones have no directly renderable finite-section "
+            "cap boundary"
+        )
+    return surface
+
+
+def section_cap_chord_curve_ids(
+    section_id: str,
+    surface: QuadricSurfaceSpec,
+) -> tuple[str, ...]:
+    """Return every stable cap-chord identity the finite entity may activate.
+
+    The identities depend only on authored semantics, never on the current
+    cutting-plane position.  Callers with fixed-capacity renderers can reserve
+    these slots before a moving plane first reaches an end cap.
+    """
+
+    identity = _identity(section_id, "section_id")
+    _validate_finite_boundary_surface(surface)
+    return tuple(
+        _cap_chord_curve_id(identity, cap)
+        for cap in sorted(surface.end_caps, key=lambda item: item.role)
+    )
+
+
+def _canonical_segment_endpoints(
+    first: np.ndarray,
+    second: np.ndarray,
+) -> tuple[tuple[float, float, float], tuple[float, float, float]]:
+    endpoints = sorted(
+        (
+            tuple(float(component) for component in first),
+            tuple(float(component) for component in second),
+        )
+    )
+    return endpoints[0], endpoints[1]
+
+
+def _cap_chord_curve(
+    section_id: str,
+    cap: PlanarCapSpec,
+    plane: SectionPlane,
+    *,
+    context: ResolvedGeometryContext,
+) -> SegmentCurve | None:
+    """Intersect one finite circular cap with a plane without sampling."""
+
+    cap_frame = cap.frame
+    first_axis = np.asarray(cap_frame.x_axis, dtype=float)
+    second_axis = np.asarray(cap_frame.y_axis, dtype=float)
+    plane_normal = np.asarray(plane.normal, dtype=float)
+    cap_normal = np.asarray(cap.normal, dtype=float)
+    cap_center = np.asarray(cap.center, dtype=float)
+    plane_point = np.asarray(plane.point, dtype=float)
+
+    first_coefficient = float(np.dot(plane_normal, first_axis))
+    second_coefficient = float(np.dot(plane_normal, second_axis))
+    constant = float(np.dot(plane_normal, cap_center - plane_point))
+    in_plane_normal_length = float(
+        np.hypot(first_coefficient, second_coefficient)
+    )
+    angular_epsilon = context.epsilon(GeometryQuantity.ANGULAR)
+    boundary_epsilon = context.epsilon(GeometryQuantity.BOUNDARY)
+    normal_crossing = np.cross(cap_normal, plane_normal)
+    normal_crossing_length = float(np.linalg.norm(normal_crossing))
+    cross_product_envelope = np.asarray(
+        (
+            abs(cap_normal[1] * plane_normal[2])
+            + abs(cap_normal[2] * plane_normal[1]),
+            abs(cap_normal[2] * plane_normal[0])
+            + abs(cap_normal[0] * plane_normal[2]),
+            abs(cap_normal[0] * plane_normal[1])
+            + abs(cap_normal[1] * plane_normal[0]),
+        ),
+        dtype=float,
+    )
+    parallel_roundoff = (
+        2.0
+        * float(np.finfo(float).eps)
+        * float(np.linalg.norm(cross_product_envelope))
+    )
+
+    radius = float(cap.radius)
+    if normal_crossing_length <= parallel_roundoff:
+        # Parallel disjoint planes have no cap contribution.  Coincident
+        # planes also add no chord: the lateral section already supplies the
+        # cap rim, the complete one-dimensional section boundary.  The narrow
+        # bound above covers only product/subtraction roundoff in the cross
+        # product; a resolvable non-zero tilt proceeds to the explicit
+        # angular-resolution check below.
+        return None
+    if normal_crossing_length <= angular_epsilon:
+        if in_plane_normal_length <= 0.0:
+            raise QuadricSectionError(
+                "section plane/end-cap angular evidence is internally inconsistent"
+            )
+        unresolved_distance = abs(constant) / in_plane_normal_length
+        if unresolved_distance > radius + boundary_epsilon:
+            return None
+        raise QuadricSectionError(
+            "section plane and end cap meet below the configured angular "
+            "resolution; a unique cap chord cannot be certified"
+        )
+
+    radial_distance = abs(constant) / in_plane_normal_length
+    if radial_distance > radius + boundary_epsilon:
+        return None
+    if abs(radial_distance - radius) <= boundary_epsilon:
+        # A tangent point is retained by the section trace, not invented as a
+        # zero-length SegmentCurve.
+        return None
+
+    denominator = in_plane_normal_length * in_plane_normal_length
+    closest_coordinates = (
+        -constant
+        * np.asarray((first_coefficient, second_coefficient), dtype=float)
+        / denominator
+    )
+    direction = np.asarray(
+        (-second_coefficient, first_coefficient), dtype=float
+    ) / in_plane_normal_length
+    half_length = sqrt(
+        max(0.0, radius * radius - radial_distance * radial_distance)
+    )
+    if 2.0 * half_length <= boundary_epsilon:
+        return None
+
+    first_coordinates = closest_coordinates - half_length * direction
+    second_coordinates = closest_coordinates + half_length * direction
+    first_world = (
+        cap_center
+        + first_coordinates[0] * first_axis
+        + first_coordinates[1] * second_axis
+    )
+    second_world = (
+        cap_center
+        + second_coordinates[0] * first_axis
+        + second_coordinates[1] * second_axis
+    )
+    start, end = _canonical_segment_endpoints(first_world, second_world)
+
+    # Reject an internally inconsistent construction instead of snapping it
+    # onto one of the authored boundaries.
+    validation_epsilon = 8.0 * boundary_epsilon
+    for label, endpoint in (("start", start), ("end", end)):
+        value = np.asarray(endpoint, dtype=float)
+        cap_offset = value - cap_center
+        cap_plane_residual = abs(float(np.dot(cap_offset, cap_normal)))
+        section_plane_residual = abs(plane.signed_distance(endpoint))
+        radial = cap_offset - float(np.dot(cap_offset, cap_normal)) * cap_normal
+        rim_residual = abs(float(np.linalg.norm(radial)) - radius)
+        if (
+            max(cap_plane_residual, section_plane_residual, rim_residual)
+            > validation_epsilon
+        ):
+            raise QuadricSectionError(
+                f"computed cap-chord {label} does not satisfy the authored "
+                "cap and section-plane boundaries"
+            )
+
+    return SegmentCurve(_cap_chord_curve_id(section_id, cap), start, end)
+
+
+def compute_section_cap_chord_curves(
+    section_id: str,
+    surface: QuadricSurfaceSpec,
+    plane: SectionPlane,
+    *,
+    context: ContextInput = None,
+) -> tuple[SegmentCurve, ...]:
+    """Return non-degenerate plane/end-cap chords for one finite quadric.
+
+    Open cone shells expose trim rims rather than filled caps, so their
+    ``end_caps`` collection is empty and no chord is produced.
+    """
+
+    identity = _identity(section_id, "section_id")
+    _validate_finite_boundary_surface(surface)
+    if not isinstance(plane, SectionPlane):
+        raise TypeError("plane must be a SectionPlane")
+    resolved = _resolved_context(surface, plane, context)
+    result = tuple(
+        chord
+        for cap in sorted(surface.end_caps, key=lambda item: item.role)
+        if (
+            chord := _cap_chord_curve(
+                identity,
+                cap,
+                plane,
+                context=resolved,
+            )
+        )
+        is not None
+    )
+    return tuple(sorted(result, key=lambda item: item.curve_id))
+
+
+def _open_lateral_component_endpoints(
+    trace: QuadricSectionTrace,
+    *,
+    boundary_epsilon: float,
+) -> tuple[np.ndarray, ...]:
+    """Return the two topological endpoints of every open lateral component.
+
+    A periodic component can straddle its stable parameter seam and therefore
+    contain two parameter intervals.  The coincident seam endpoints occur
+    twice and cancel topologically; the two clipping endpoints occur once.
+    """
+
+    validation_epsilon = 8.0 * boundary_epsilon
+    branches = trace.branch_map
+    result: list[np.ndarray] = []
+    for component in trace.components:
+        if component.closed:
+            continue
+        branch = branches[component.branch_id]
+        clusters: list[tuple[np.ndarray, int]] = []
+        for interval in component.parameter_intervals:
+            for parameter in (interval.start, interval.end):
+                point = branch.world_point(parameter)
+                matches = tuple(
+                    index
+                    for index, (representative, _count) in enumerate(clusters)
+                    if float(np.linalg.norm(point - representative))
+                    <= validation_epsilon
+                )
+                if len(matches) > 1:
+                    raise QuadricSectionError(
+                        f"open lateral component {component.component_id!r} has "
+                        "ambiguous endpoint clustering"
+                    )
+                if matches:
+                    index = matches[0]
+                    representative, count = clusters[index]
+                    clusters[index] = (representative, count + 1)
+                else:
+                    clusters.append((point, 1))
+        endpoints = tuple(
+            representative
+            for representative, count in clusters
+            if count % 2 == 1
+        )
+        if len(endpoints) != 2:
+            raise QuadricSectionError(
+                f"open lateral component {component.component_id!r} does not "
+                "expose exactly two certifiable endpoints"
+            )
+        result.extend(endpoints)
+    return tuple(result)
+
+
+def _certify_cap_chord_joins(
+    trace: QuadricSectionTrace,
+    chords: Sequence[SegmentCurve],
+    *,
+    boundary_epsilon: float,
+) -> None:
+    """Require every cap chord to join two genuine lateral clipping ends."""
+
+    if not chords:
+        return
+    available = list(
+        _open_lateral_component_endpoints(
+            trace,
+            boundary_epsilon=boundary_epsilon,
+        )
+    )
+    validation_epsilon = 8.0 * boundary_epsilon
+    for chord in chords:
+        for endpoint in (chord.start, chord.end):
+            value = np.asarray(endpoint, dtype=float)
+            matches = tuple(
+                index
+                for index, candidate in enumerate(available)
+                if float(np.linalg.norm(value - candidate)) <= validation_epsilon
+            )
+            if len(matches) != 1:
+                raise QuadricSectionError(
+                    f"cap chord {chord.curve_id!r} cannot be joined uniquely "
+                    "to the open lateral-section endpoints; lateral and cap "
+                    "clipping disagree at the configured tolerance"
+                )
+            available.pop(matches[0])
 
 
 def _tuple_matrix(value: np.ndarray) -> tuple[tuple[float, ...], ...]:
@@ -669,11 +973,65 @@ def intersect_plane_with_quadric(
     return compute_quadric_section(section_id, surface, plane, **kwargs)
 
 
+def compute_quadric_section_boundary_curves(
+    section_id: str,
+    surface: QuadricSurfaceSpec,
+    plane: SectionPlane,
+    *,
+    context: ContextInput = None,
+    coefficient_tolerance: float | None = None,
+) -> tuple[FiniteSectionBoundaryCurve, ...]:
+    """Return the complete one-dimensional boundary of a finite section.
+
+    The existing :func:`compute_quadric_section` trace remains the exact
+    lateral supporting-conic result.  This convenience adapter adds any
+    non-degenerate chords contributed by filled planar end caps.  It never
+    adds a chord for an open cone shell.
+    """
+
+    _validate_finite_boundary_surface(surface)
+    if not isinstance(plane, SectionPlane):
+        raise TypeError("plane must be a SectionPlane")
+    resolved = _resolved_context(surface, plane, context)
+    trace = compute_quadric_section(
+        section_id,
+        surface,
+        plane,
+        context=resolved,
+        coefficient_tolerance=coefficient_tolerance,
+    )
+    chords = compute_section_cap_chord_curves(
+        section_id,
+        surface,
+        plane,
+        context=resolved,
+    )
+    _certify_cap_chord_joins(
+        trace,
+        chords,
+        boundary_epsilon=resolved.epsilon(GeometryQuantity.BOUNDARY),
+    )
+    result: tuple[FiniteSectionBoundaryCurve, ...] = (
+        *section_trace_curves(trace),
+        *chords,
+    )
+    identities = tuple(item.curve_id for item in result)
+    if len(set(identities)) != len(identities):
+        raise QuadricSectionError(
+            "finite section boundary curves must have unique identities"
+        )
+    return tuple(sorted(result, key=lambda item: item.curve_id))
+
+
 __all__ = [
+    "FiniteSectionBoundaryCurve",
     "QuadricSectionError",
     "QuadricSurfaceSpec",
     "UnboundedFiniteSectionError",
     "compute_quadric_section",
+    "compute_quadric_section_boundary_curves",
+    "compute_section_cap_chord_curves",
     "intersect_plane_with_quadric",
     "restrict_quadric_to_plane",
+    "section_cap_chord_curve_ids",
 ]

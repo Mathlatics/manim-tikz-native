@@ -47,6 +47,7 @@ class QuadricBoundaryCompositingError(ValueError):
 
 class BoundarySourceKind(str, Enum):
     ANALYTIC_CURVE = "analytic_curve"
+    SECTION_CAP_CHORD = "section_cap_chord"
     PLANE_PATCH_EDGE = "plane_patch_edge"
     SURFACE_CAP_RIM = "surface_cap_rim"
     SURFACE_TRIM_RIM = "surface_trim_rim"

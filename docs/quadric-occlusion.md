@@ -129,7 +129,20 @@ separately.  A finite cylinder section can, for example, retain only one or
 more lateral conic arcs after the axial trim is applied.  End caps participate
 in solid containment and ray occlusion; the section trace itself describes the
 intersection with the lateral quadric and does not invent cap-boundary
-segments.
+segments.  Use `compute_quadric_section_boundary_curves()` when the displayed
+ink must be the complete one-dimensional boundary of the finite entity's
+section.  It adapts the lateral trace and adds every non-degenerate
+plane/end-cap chord as a `SegmentCurve`.  A closed cone can therefore change
+from one closed lateral conic to a lateral arc plus a stable cap chord, while
+an open cone shell keeps only the lateral arc because it has no filled cap.
+Tangency does not create a zero-length placeholder, and a plane coincident
+with a cap does not duplicate the lateral rim. The compatibility-only
+`ANALYTIC_DOUBLE` remains available through `compute_quadric_section()` but
+fails explicitly in the finite display-boundary helper because it has no
+directly renderable cap model. Every active chord must join two certified open
+endpoints of the clipped lateral trace. If cap and lateral clipping disagree
+inside the configured numerical resolution, the helper fails explicitly
+instead of returning a closed conic with a spurious interior chord.
 
 For an open single shell, local cutting-plane compositing classifies the plane
 against the lateral ray intersections only. It uses adaptive certified cells
@@ -325,14 +338,12 @@ from polyhedron_visibility.quadrics import (
     QuadricOcclusion3D,
     SectionPlane,
     SphereSpec,
-    compute_quadric_section,
-    section_trace_curves,
+    compute_quadric_section_boundary_curves,
 )
 
 sphere = SphereSpec("sphere", (0, 0, 0), 2)
 plane = SectionPlane("cut", (0.4, 0, 0), (1, 0.3, 0.2))
-trace = compute_quadric_section("section", sphere, plane)
-curves = section_trace_curves(trace)
+curves = compute_quadric_section_boundary_curves("section", sphere, plane)
 
 controller = QuadricOcclusion3D(
     self,
@@ -342,6 +353,13 @@ controller = QuadricOcclusion3D(
     paint_policy="diagrammatic",
 ).attach()
 ```
+
+For a moving finite cone or cylinder, reserve
+`section_cap_chord_curve_ids(section_id, surface)` together with the active
+lateral IDs through `allocated_curve_ids`.  The chord then changes between
+inactive and active without creating, removing, or replacing a Manim object.
+`compute_quadric_section()` plus `section_trace_curves()` remains available
+when a caller intentionally wants only the lateral support-quadric trace.
 
 Change `paint_policy` to `"depth_aware_diagrammatic"` to use front-sheet
 attenuated hidden dashes.  This option changes painter order only; visibility

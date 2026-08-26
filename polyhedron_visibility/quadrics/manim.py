@@ -108,6 +108,7 @@ from .surface_boundaries import (
     build_surface_boundary_sources,
     curve_boundary_source,
     plane_outline_sources,
+    section_curve_boundary_source,
     surface_boundary_source_ids,
 )
 
@@ -1733,9 +1734,19 @@ class QuadricOcclusion3D:
         patch: PlaneDisplayPatchSpec | None,
     ) -> tuple[QuadricBoundarySource, ...]:
         result = [
-            curve_boundary_source(
-                curve,
-                style_id="style:curve",
+            (
+                section_curve_boundary_source(
+                    curve,
+                    surfaces[0],
+                    plane,
+                    context=self.context,
+                    style_id="style:curve",
+                )
+                if plane is not None and len(surfaces) == 1
+                else curve_boundary_source(
+                    curve,
+                    style_id="style:curve",
+                )
             )
             for curve in curves
         ]

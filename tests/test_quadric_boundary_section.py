@@ -14,6 +14,7 @@ from polyhedron_visibility.quadrics.boundary_section import (
     compute_boundary_section_spans,
 )
 from polyhedron_visibility.quadrics.boundary_compositing import (
+    BoundarySourceKind,
     QuadricBoundaryCompositingError,
     compute_boundary_visibility,
 )
@@ -32,17 +33,24 @@ from polyhedron_visibility.quadrics.curve_intersections import (
 from polyhedron_visibility.quadrics.curves import (
     CircleArcCurve,
     ParametricConicBranch,
+    SegmentCurve,
 )
 from polyhedron_visibility.quadrics.projection import build_opaque_projection_proxy
 from polyhedron_visibility.quadrics.section_compositing import (
     compute_quadric_section_compositing,
 )
-from polyhedron_visibility.quadrics.sections import compute_quadric_section
+from polyhedron_visibility.quadrics.sections import (
+    QuadricSectionError,
+    compute_quadric_section,
+    compute_quadric_section_boundary_curves,
+    compute_section_cap_chord_curves,
+)
 from polyhedron_visibility.quadrics.plane_patch import fit_plane_display_patch
 from polyhedron_visibility.quadrics.surface_boundaries import (
     build_surface_boundary_sources,
     curve_boundary_source,
     plane_outline_sources,
+    section_curve_boundary_source,
 )
 from polyhedron_visibility.quadrics.visibility import compute_quadric_visibility
 from polyhedron_visibility.quadrics.trace import section_trace_curves
@@ -314,6 +322,200 @@ class BoundarySectionPlacementTests(unittest.TestCase):
                 ("between_surface_sheets", "in_front_of_surface"),
             },
         )
+
+    def test_cap_chord_is_certified_as_an_exact_section_boundary(self) -> None:
+        cone = ConeSpec(
+            "closed-cone",
+            (0.0, 0.0, 0.0),
+            (0.0, 0.0, 1.0),
+            pi / 4.0,
+            (0.0, 2.0),
+            radial_axis=(1.0, 0.0, 0.0),
+        )
+        plane = SectionPlane(
+            "cut",
+            (0.0, 0.0, 1.5),
+            (0.5, 0.0, 1.0),
+            u_axis=(0.0, 1.0, 0.0),
+        )
+        patch = fit_plane_display_patch(
+            "patch", plane, (cone,), margin_ratio=0.08
+        ).patch
+        curves = compute_quadric_section_boundary_curves(
+            "finite-section",
+            cone,
+            plane,
+        )
+        sources = tuple(
+            section_curve_boundary_source(curve, cone, plane)
+            for curve in curves
+        )
+        chord_source = next(
+            item
+            for item in sources
+            if isinstance(item.curve, SegmentCurve)
+        )
+        self.assertIs(
+            chord_source.source_kind,
+            BoundarySourceKind.SECTION_CAP_CHORD,
+        )
+        self.assertEqual(chord_source.owner_id, cone.end_caps[0].cap_id)
+
+        proxy = build_opaque_projection_proxy(
+            cone,
+            VIEW,
+            max_chord_error=0.002,
+        )
+        base = compute_quadric_compositing(
+            compute_quadric_visibility(curves, (cone,), VIEW),
+            (proxy,),
+        )
+        section = compute_quadric_section_compositing(
+            base,
+            cone,
+            plane,
+            patch,
+            VIEW,
+            max_screen_error=0.03,
+        )
+        visibility = compute_boundary_visibility(sources, (cone,), VIEW)
+        spans = compute_boundary_section_spans(
+            sources,
+            section,
+            VIEW,
+            surface=cone,
+            visibility_spans_by_source=visibility,
+        )[chord_source.source_id]
+
+        self.assertTrue(spans)
+        self.assertEqual(
+            {item.relation for item in spans},
+            {BoundaryPlaneRelation.COINCIDENT},
+        )
+        self.assertTrue(
+            all(
+                item.plane_depth_roles
+                in {
+                    ("behind_surface", "between_surface_sheets"),
+                    ("between_surface_sheets", "in_front_of_surface"),
+                }
+                for item in spans
+            )
+        )
+
+        forged = curve_boundary_source(
+            SegmentCurve(
+                chord_source.source_id,
+                chord_source.curve.start,
+                (0.0, 0.0, 2.0),
+            ),
+            source_kind=BoundarySourceKind.SECTION_CAP_CHORD,
+            owner_id=cone.end_caps[0].cap_id,
+        )
+        forged_visibility = compute_boundary_visibility(
+            (forged,),
+            (cone,),
+            VIEW,
+        )
+        with self.assertRaisesRegex(
+            QuadricBoundaryCompositingError,
+            "does not end on",
+        ):
+            compute_boundary_section_spans(
+                (forged,),
+                section,
+                VIEW,
+                surface=cone,
+                visibility_spans_by_source=forged_visibility,
+            )
+
+    def test_cap_chord_suffix_collision_remains_an_ordinary_curve(self) -> None:
+        cone = ConeSpec(
+            "collision-cone",
+            (0.0, 0.0, 0.0),
+            (0.0, 0.0, 1.0),
+            pi / 4.0,
+            (0.0, 2.0),
+            radial_axis=(1.0, 0.0, 0.0),
+        )
+        plane = SectionPlane(
+            "collision-cut",
+            (0.0, 0.0, 1.5),
+            (0.5, 0.0, 1.0),
+            u_axis=(0.0, 1.0, 0.0),
+        )
+        ordinary = SegmentCurve(
+            "ordinary-feature:cap:cap_max:chord",
+            (-0.25, -0.25, 0.5),
+            (0.25, 0.25, 0.5),
+        )
+        source = section_curve_boundary_source(ordinary, cone, plane)
+        self.assertIs(source.source_kind, BoundarySourceKind.ANALYTIC_CURVE)
+        self.assertEqual(source.owner_id, ordinary.curve_id)
+
+    def test_stale_cap_chord_is_not_downgraded_to_a_free_curve(self) -> None:
+        cone = ConeSpec(
+            "stale-cone",
+            (0.0, 0.0, 0.0),
+            (0.0, 0.0, 1.0),
+            pi / 4.0,
+            (0.0, 2.0),
+            radial_axis=(1.0, 0.0, 0.0),
+        )
+        cap = cone.end_caps[0]
+        previous_plane = SectionPlane(
+            "previous-cut",
+            (0.0, 0.0, 1.5),
+            (0.5, 0.0, 1.0),
+            u_axis=(0.0, 1.0, 0.0),
+        )
+        stale = compute_section_cap_chord_curves(
+            "stale-section",
+            cone,
+            previous_plane,
+        )[0]
+        unresolved_plane = SectionPlane(
+            "unresolved-cut",
+            cap.center,
+            (1.0e-15, 0.0, 1.0),
+            u_axis=(0.0, 1.0, 0.0),
+        )
+        with self.assertRaisesRegex(
+            QuadricSectionError,
+            "below the configured angular resolution",
+        ):
+            section_curve_boundary_source(stale, cone, unresolved_plane)
+
+    def test_cap_source_reuses_complete_boundary_topology_check(self) -> None:
+        cone = ConeSpec(
+            "topology-cone",
+            (0.0, 0.0, 0.0),
+            (0.0, 0.0, 1.0),
+            pi / 4.0,
+            (0.0, 2.0),
+            radial_axis=(1.0, 0.0, 0.0),
+        )
+        cap = cone.end_caps[0]
+        tolerance_mismatch_plane = SectionPlane(
+            "topology-mismatch-cut",
+            cap.center,
+            (1.0e-9, 0.0, 1.0),
+            u_axis=(0.0, 1.0, 0.0),
+        )
+        standalone_chord = compute_section_cap_chord_curves(
+            "topology-section",
+            cone,
+            tolerance_mismatch_plane,
+        )[0]
+        with self.assertRaisesRegex(
+            QuadricSectionError,
+            "lateral and cap clipping disagree",
+        ):
+            section_curve_boundary_source(
+                standalone_chord,
+                cone,
+                tolerance_mismatch_plane,
+            )
 
     def test_cap_rim_splits_at_every_plane_depth_role_boundary(self) -> None:
         sources, section = _cylinder_section_case()

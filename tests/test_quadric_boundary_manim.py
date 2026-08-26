@@ -12,6 +12,9 @@ from manim.utils.color import color_to_rgb
 
 from polyhedron_visibility.parallel_solver import ParallelView
 from polyhedron_visibility.quadrics.compositing import QuadricPaintPolicy
+from polyhedron_visibility.quadrics.boundary_compositing import (
+    canonical_quadric_boundary_compositing_json,
+)
 from polyhedron_visibility.quadrics.contract import (
     ConeSpec,
     CylinderSpec,
@@ -27,6 +30,13 @@ from polyhedron_visibility.quadrics.manim import (
     QuadricManimStyle,
     QuadricOcclusion3D,
     _dash_polyline_anchored,
+)
+from polyhedron_visibility.quadrics.sections import (
+    compute_quadric_section_boundary_curves,
+    section_cap_chord_curve_ids,
+)
+from polyhedron_visibility.quadrics.section_compositing import (
+    canonical_quadric_section_compositing_json,
 )
 from polyhedron_visibility.quadrics.surface_boundaries import GeneratorBoundarySpec
 from polyhedron_visibility.visibility import VisibilityKind
@@ -473,6 +483,223 @@ class UnifiedBoundaryManimTests(unittest.TestCase):
             controller.update()
         self.assertEqual(controller.slot_identities(), identities)
         controller.restore()
+
+    def test_moving_finite_section_uses_fixed_lateral_and_cap_chord_slots(
+        self,
+    ) -> None:
+        cone = ConeSpec(
+            "moving-section-cone",
+            (0.0, 0.0, 0.0),
+            (0.0, 0.0, 1.0),
+            pi / 4.0,
+            (0.0, 2.0),
+            radial_axis=(1.0, 0.0, 0.0),
+        )
+        state = {"height": 0.8}
+        section_id = "moving-finite-section"
+
+        def plane() -> SectionPlane:
+            return SectionPlane(
+                "moving-cut",
+                (0.0, 0.0, state["height"]),
+                (0.5, 0.0, 1.0),
+                u_axis=(0.0, 1.0, 0.0),
+            )
+
+        def curves():
+            return compute_quadric_section_boundary_curves(
+                section_id,
+                cone,
+                plane(),
+            )
+
+        initial_ids = tuple(item.curve_id for item in curves())
+        chord_id = section_cap_chord_curve_ids(section_id, cone)[0]
+        allocated = tuple(sorted((*initial_ids, chord_id)))
+        controller = QuadricOcclusion3D(
+            Scene(),
+            surfaces=(cone,),
+            curves=curves,
+            allocated_curve_ids=allocated,
+            projection=VIEW,
+            paint_policy=QuadricPaintPolicy.DEPTH_AWARE_DIAGRAMMATIC,
+            boundary_visibility_mode="unified",
+            section_plane=plane,
+            style=QuadricManimStyle(
+                surface_fill_opacity=0.72,
+                cone_lateral_fill_colors=("#173753", "#4F84B3", "#1D4368"),
+                cone_cap_fill_colors=("#557A99", "#294B6B"),
+            ),
+            limits=replace(limits(), max_total_mobjects=50000),
+            max_chord_error=0.01,
+        ).attach()
+        identities = controller.slot_identities()
+
+        def active_sources() -> set[str]:
+            frame = controller.last_boundary_frame
+            assert frame is not None
+            return {item.source_id for item in frame.sources}
+
+        self.assertNotIn(chord_id, active_sources())
+        for height, expect_chord in (
+            (1.5, True),
+            (1.7, True),
+            (0.8, False),
+        ):
+            state["height"] = height
+            with patch.object(
+                Mobject,
+                "__init__",
+                side_effect=AssertionError("section update allocated a Mobject"),
+            ):
+                controller.update()
+            self.assertEqual(controller.slot_identities(), identities)
+            self.assertEqual(chord_id in active_sources(), expect_chord)
+
+        chord_slots = controller._curve_slots[chord_id].fragments
+        self.assertTrue(
+            all(
+                float(fragment.solid.get_stroke_opacity()) == 0.0
+                and all(
+                    float(dash.get_stroke_opacity()) == 0.0
+                    for dash in fragment.dashes
+                )
+                for fragment in chord_slots
+            )
+        )
+        controller.restore()
+
+    def test_unallocated_cap_chord_fails_and_rolls_back(self) -> None:
+        cone = ConeSpec(
+            "rollback-cone",
+            (0.0, 0.0, 0.0),
+            (0.0, 0.0, 1.0),
+            pi / 4.0,
+            (0.0, 2.0),
+            radial_axis=(1.0, 0.0, 0.0),
+        )
+        state = {"height": 0.8}
+
+        def plane() -> SectionPlane:
+            return SectionPlane(
+                "rollback-cut",
+                (0.0, 0.0, state["height"]),
+                (0.5, 0.0, 1.0),
+                u_axis=(0.0, 1.0, 0.0),
+            )
+
+        def curves():
+            return compute_quadric_section_boundary_curves(
+                "rollback-section",
+                cone,
+                plane(),
+            )
+
+        lateral_id = curves()[0].curve_id
+        controller = QuadricOcclusion3D(
+            Scene(),
+            surfaces=(cone,),
+            curves=curves,
+            allocated_curve_ids=(lateral_id,),
+            projection=VIEW,
+            boundary_visibility_mode="unified",
+            section_plane=plane,
+            limits=replace(limits(), max_total_mobjects=40000),
+        ).attach()
+        snapshot = controller.slot_snapshot()
+        identities = controller.slot_identities()
+        previous_frame = controller.last_boundary_frame
+        state["height"] = 1.5
+        with self.assertRaisesRegex(
+            QuadricManimCapacityError,
+            "were not preallocated",
+        ):
+            controller.update()
+        self.assertEqual(controller.slot_snapshot(), snapshot)
+        self.assertEqual(controller.slot_identities(), identities)
+        self.assertIs(controller.last_boundary_frame, previous_frame)
+        controller.restore()
+
+    def test_cone_component_shading_does_not_change_section_painter_graph(
+        self,
+    ) -> None:
+        cone = ConeSpec(
+            "shading-section-cone",
+            (0.0, 0.0, 0.0),
+            (0.0, 0.0, 1.0),
+            pi / 4.0,
+            (0.0, 2.0),
+            radial_axis=(1.0, 0.0, 0.0),
+        )
+        plane = SectionPlane(
+            "shading-cut",
+            (0.0, 0.0, 1.5),
+            (0.5, 0.0, 1.0),
+            u_axis=(0.0, 1.0, 0.0),
+        )
+        curves = compute_quadric_section_boundary_curves(
+            "shading-section",
+            cone,
+            plane,
+        )
+
+        def build(style: QuadricManimStyle) -> QuadricOcclusion3D:
+            return QuadricOcclusion3D(
+                Scene(),
+                surfaces=(cone,),
+                curves=curves,
+                projection=VIEW,
+                paint_policy=QuadricPaintPolicy.DEPTH_AWARE_DIAGRAMMATIC,
+                boundary_visibility_mode="unified",
+                section_plane=plane,
+                style=style,
+                limits=replace(limits(), max_total_mobjects=50000),
+                max_chord_error=0.01,
+            ).attach()
+
+        legacy = build(QuadricManimStyle(surface_fill_opacity=0.72))
+        component = build(
+            QuadricManimStyle(
+                surface_fill_opacity=0.72,
+                cone_lateral_fill_colors=("#173753", "#4F84B3", "#1D4368"),
+                cone_cap_fill_colors=("#557A99", "#294B6B"),
+            )
+        )
+        try:
+            legacy_section = legacy.last_section_frame
+            component_section = component.last_section_frame
+            legacy_boundary = legacy.last_boundary_frame
+            component_boundary = component.last_boundary_frame
+            assert legacy_section is not None and component_section is not None
+            assert legacy_boundary is not None and component_boundary is not None
+            self.assertEqual(
+                canonical_quadric_section_compositing_json(legacy_section),
+                canonical_quadric_section_compositing_json(component_section),
+            )
+            self.assertEqual(
+                canonical_quadric_boundary_compositing_json(legacy_boundary),
+                canonical_quadric_boundary_compositing_json(component_boundary),
+            )
+            section_fragments = tuple(
+                item
+                for item in component_boundary.fragments
+                if item.source_id.startswith("shading-section:") and item.painted
+            )
+            self.assertTrue(section_fragments)
+            front_index = component_boundary.draw_order.index(
+                component_section.paint_items.surface_front
+            )
+            for fragment in section_fragments:
+                fragment_index = component_boundary.draw_order.index(
+                    fragment.item_id
+                )
+                if fragment.effective_visibility_kind is VisibilityKind.VISIBLE:
+                    self.assertGreater(fragment_index, front_index)
+                else:
+                    self.assertLess(fragment_index, front_index)
+        finally:
+            component.restore()
+            legacy.restore()
 
     def test_section_outline_has_policy_owned_solid_and_dash_fragments(self) -> None:
         cone = ConeSpec(

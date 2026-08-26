@@ -92,10 +92,26 @@ _EXPORTS: Final[dict[str, tuple[str, str]]] = {
         "canonical_opaque_projection_proxy_json",
     ),
     "QuadricSectionError": (".sections", "QuadricSectionError"),
+    "FiniteSectionBoundaryCurve": (
+        ".sections",
+        "FiniteSectionBoundaryCurve",
+    ),
     "UnboundedFiniteSectionError": (".sections", "UnboundedFiniteSectionError"),
     "compute_quadric_section": (".sections", "compute_quadric_section"),
+    "compute_quadric_section_boundary_curves": (
+        ".sections",
+        "compute_quadric_section_boundary_curves",
+    ),
+    "compute_section_cap_chord_curves": (
+        ".sections",
+        "compute_section_cap_chord_curves",
+    ),
     "intersect_plane_with_quadric": (".sections", "intersect_plane_with_quadric"),
     "restrict_quadric_to_plane": (".sections", "restrict_quadric_to_plane"),
+    "section_cap_chord_curve_ids": (
+        ".sections",
+        "section_cap_chord_curve_ids",
+    ),
     "FiniteSectionTopology": (".trace", "FiniteSectionTopology"),
     "QUADRIC_SECTION_TRACE_SCHEMA": (
         ".trace",
@@ -237,6 +253,10 @@ _EXPORTS: Final[dict[str, tuple[str, str]]] = {
     ),
     "curve_boundary_source": (".surface_boundaries", "curve_boundary_source"),
     "plane_outline_sources": (".surface_boundaries", "plane_outline_sources"),
+    "section_curve_boundary_source": (
+        ".surface_boundaries",
+        "section_curve_boundary_source",
+    ),
     "surface_boundary_source_ids": (
         ".surface_boundaries",
         "surface_boundary_source_ids",

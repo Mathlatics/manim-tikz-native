@@ -8,6 +8,11 @@ from typing import Sequence
 
 import numpy as np
 
+from ..geometry import (
+    GeometryQuantity,
+    ResolvedGeometryContext,
+    resolve_geometry_context,
+)
 from ..parallel_solver import ParallelView
 from ..topology import ParameterInterval
 from .boundary_compositing import (
@@ -25,6 +30,7 @@ from .contract import (
     SphereSpec,
 )
 from .curves import CircleArcCurve, SegmentCurve
+from .sections import compute_quadric_section_boundary_curves
 
 
 QuadricSurfaceSpec = SphereSpec | CylinderSpec | ConeSpec
@@ -88,6 +94,105 @@ def curve_boundary_source(
         style_id=style_id,
         stable_sort_key=(source_kind.value, semantic_kind.value, source_id),
     )
+
+
+def section_curve_boundary_source(
+    curve,
+    surface: QuadricSurfaceSpec,
+    plane: SectionPlane,
+    *,
+    context=None,
+    style_id: str | None = "style:curve",
+) -> QuadricBoundarySource:
+    """Wrap an explicit section curve with its finite-cap semantics.
+
+    Lateral conics keep the ordinary analytic-curve source kind and are
+    certified geometrically by the section compositor.  Cap chords use the
+    reserved semantic identity emitted by ``sections.py`` so the compositor
+    can certify them against the owning finite disk rather than the infinite
+    support quadric.
+    """
+
+    if not isinstance(surface, (SphereSpec, CylinderSpec, ConeSpec)):
+        raise TypeError("surface must be SphereSpec, CylinderSpec, or ConeSpec")
+    if not isinstance(plane, SectionPlane):
+        raise TypeError("plane must be a SectionPlane")
+    if isinstance(curve, SegmentCurve):
+        matches = tuple(
+            (cap, f":cap:{cap.role}:chord")
+            for cap in surface.end_caps
+            if curve.curve_id.endswith(f":cap:{cap.role}:chord")
+        )
+        if len(matches) > 1:
+            raise QuadricBoundaryCompositingError(
+                f"section cap-chord {curve.curve_id!r} has an ambiguous owner"
+            )
+        if matches:
+            cap, suffix = matches[0]
+            section_id = curve.curve_id[: -len(suffix)]
+            resolved = (
+                resolve_geometry_context(context)
+                if isinstance(context, ResolvedGeometryContext)
+                else resolve_geometry_context(
+                    context,
+                    positions=(*surface.characteristic_points, plane.point),
+                )
+            )
+            center = np.asarray(cap.center, dtype=float)
+            normal = np.asarray(cap.normal, dtype=float)
+            validation_epsilon = 8.0 * resolved.epsilon(
+                GeometryQuantity.BOUNDARY
+            )
+            endpoints_on_rim = True
+            for endpoint in (curve.start, curve.end):
+                offset = np.asarray(endpoint, dtype=float) - center
+                plane_residual = abs(float(np.dot(offset, normal)))
+                radial = offset - float(np.dot(offset, normal)) * normal
+                rim_residual = abs(float(np.linalg.norm(radial)) - cap.radius)
+                if max(plane_residual, rim_residual) > validation_epsilon:
+                    endpoints_on_rim = False
+                    break
+            if not endpoints_on_rim:
+                return curve_boundary_source(curve, style_id=style_id)
+            # Once both endpoints claim the reserved cap-rim geometry, this
+            # is no longer an accidental text-suffix collision. Numerical
+            # uncertainty and stale geometry must fail explicitly instead of
+            # being downgraded to a free curve.
+            expected_curves = compute_quadric_section_boundary_curves(
+                section_id,
+                surface,
+                plane,
+                context=resolved,
+            )
+            expected = next(
+                (
+                    item
+                    for item in expected_curves
+                    if isinstance(item, SegmentCurve)
+                    and item.curve_id == curve.curve_id
+                ),
+                None,
+            )
+            same_orientation = expected is not None and (
+                curve.start == expected.start and curve.end == expected.end
+            )
+            reverse_orientation = expected is not None and (
+                curve.start == expected.end and curve.end == expected.start
+            )
+            if same_orientation or reverse_orientation:
+                return curve_boundary_source(
+                    curve,
+                    source_kind=BoundarySourceKind.SECTION_CAP_CHORD,
+                    semantic_kind=BoundarySemanticKind.FREE_CURVE,
+                    occlusion_scope=BoundaryOcclusionScope.ALL_SURFACES,
+                    owner_id=cap.cap_id,
+                    style_id=style_id,
+                )
+            raise QuadricBoundaryCompositingError(
+                f"reserved section cap-chord {curve.curve_id!r} does not "
+                "match the authoritative chord for the current section plane"
+            )
+    return curve_boundary_source(curve, style_id=style_id)
 
 
 def plane_outline_sources(
@@ -363,5 +468,6 @@ __all__ = [
     "build_surface_boundary_sources",
     "curve_boundary_source",
     "plane_outline_sources",
+    "section_curve_boundary_source",
     "surface_boundary_source_ids",
 ]

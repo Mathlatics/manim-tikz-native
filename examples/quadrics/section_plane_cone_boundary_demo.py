@@ -20,6 +20,10 @@ from polyhedron_visibility.quadrics.manim import (
     QuadricManimStyle,
     QuadricOcclusion3D,
 )
+from polyhedron_visibility.quadrics.sections import (
+    compute_quadric_section_boundary_curves,
+    section_cap_chord_curve_ids,
+)
 
 
 VIEW = DEFAULT_QUADRIC_VIEW
@@ -47,6 +51,11 @@ STYLE = QuadricManimStyle(
     cone_cap_fill_colors=("#557A99", "#294B6B"),
     cone_lateral_sheen_direction=(1.0, 0.0, 0.0),
     cone_cap_sheen_direction=(-1.0, 1.0, 0.0),
+    visible_curve_color="#FFD166",
+    visible_curve_width=4.0,
+    hidden_curve_color="#F59E0B",
+    hidden_curve_width=3.0,
+    hidden_curve_opacity=0.66,
     section_plane_fill_color="#43D9C0",
     section_plane_fill_opacity=0.34,
     section_plane_stroke_color="#B39DDB",
@@ -78,7 +87,7 @@ class SectionPlaneConeBoundaryDemo(Scene):
             color="#F4F7FB",
         ).to_edge(UP, buff=0.24)
         note = Text(
-            "same cyan boundary  •  hidden parts become faint dashes",
+            "yellow section + cyan cone boundary  •  hidden parts become dashes",
             font_size=15,
             color="#B8C5D6",
         ).next_to(heading, DOWN, buff=0.10)
@@ -132,10 +141,32 @@ class SectionPlaneConeBoundaryDemo(Scene):
                     u_axis=(0.0, 1.0, 0.0),
                 )
 
+            section_id = f"demo-section-{index}"
+
+            def current_curves(
+                current_surface=cone,
+                plane_callback=current_plane,
+                current_section_id=section_id,
+            ):
+                return compute_quadric_section_boundary_curves(
+                    current_section_id,
+                    current_surface,
+                    plane_callback(),
+                )
+
+            allocated_curve_ids = tuple(
+                sorted(
+                    {
+                        *(item.curve_id for item in current_curves()),
+                        *section_cap_chord_curve_ids(section_id, cone),
+                    }
+                )
+            )
+
             controller = QuadricOcclusion3D(
                 self,
                 surfaces=(cone,),
-                curves=(),
+                curves=current_curves,
                 projection=VIEW,
                 paint_policy=policy,
                 style=STYLE,
@@ -148,6 +179,7 @@ class SectionPlaneConeBoundaryDemo(Scene):
                 section_plane=current_plane,
                 boundary_visibility_mode="unified",
                 include_surface_boundaries=True,
+                allocated_curve_ids=allocated_curve_ids,
                 painter_z_band=(20.0 + 20.0 * index, 30.0 + 20.0 * index),
             ).attach()
             controllers.append(controller)

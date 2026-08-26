@@ -19,6 +19,8 @@ from polyhedron_visibility.quadrics import (
     SphereSpec,
     build_section_transition_plan,
     compute_quadric_section,
+    compute_quadric_section_boundary_curves,
+    section_cap_chord_curve_ids,
 )
 from tikz_native.manim_renderer import DEFAULT_TEX_TEMPLATE
 
@@ -60,6 +62,8 @@ class PublicPackageTests(unittest.TestCase):
         )
         self.assertTrue(callable(build_section_transition_plan))
         self.assertTrue(callable(compute_quadric_section))
+        self.assertTrue(callable(compute_quadric_section_boundary_curves))
+        self.assertTrue(callable(section_cap_chord_curve_ids))
 
         completed = subprocess.run(
             [
@@ -67,9 +71,13 @@ class PublicPackageTests(unittest.TestCase):
                 "-c",
                 (
                     "import sys; from polyhedron_visibility.quadrics import "
-                    "SectionTransitionPlan, build_section_transition_plan; "
+                    "SectionTransitionPlan, build_section_transition_plan, "
+                    "compute_quadric_section_boundary_curves, "
+                    "section_cap_chord_curve_ids; "
                     "assert SectionTransitionPlan.__name__; "
                     "assert callable(build_section_transition_plan); "
+                    "assert callable(compute_quadric_section_boundary_curves); "
+                    "assert callable(section_cap_chord_curve_ids); "
                     "assert 'manim' not in sys.modules"
                 ),
             ],

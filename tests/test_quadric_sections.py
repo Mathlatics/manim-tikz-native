@@ -8,17 +8,24 @@ import unittest
 
 import numpy as np
 
+from polyhedron_visibility.geometry import GeometryContext
 from polyhedron_visibility.quadrics.conics import ConicKind, classify_conic
 from polyhedron_visibility.quadrics.contract import (
+    ConeModel,
     ConeSpec,
     CylinderSpec,
     SectionPlane,
     SphereSpec,
 )
 from polyhedron_visibility.quadrics.sections import (
+    QuadricSectionError,
     compute_quadric_section,
+    compute_quadric_section_boundary_curves,
+    compute_section_cap_chord_curves,
     restrict_quadric_to_plane,
+    section_cap_chord_curve_ids,
 )
+from polyhedron_visibility.quadrics.curves import ParametricConicBranch, SegmentCurve
 from polyhedron_visibility.quadrics.trace import (
     FiniteSectionTopology,
     canonical_quadric_section_trace_json,
@@ -669,6 +676,419 @@ class SectionCurveAdapterTests(unittest.TestCase):
         trace = compute_quadric_section("section", sphere, plane)
         self.assertEqual(section_trace_curves(trace), ())
         self.assertEqual(len(trace.isolated_world_points), 1)
+
+
+class FiniteSectionBoundaryCurveTests(unittest.TestCase):
+    @staticmethod
+    def _cone(model: ConeModel) -> ConeSpec:
+        return ConeSpec(
+            f"cone-{model.value}",
+            (0.0, 0.0, 0.0),
+            (0.0, 0.0, 1.0),
+            pi / 4.0,
+            (0.0, 2.0),
+            radial_axis=(1.0, 0.0, 0.0),
+            model=model,
+        )
+
+    @staticmethod
+    def _plane(height: float, *, normal_sign: float = 1.0) -> SectionPlane:
+        return SectionPlane(
+            "moving-cut",
+            (0.0, 0.0, height),
+            (0.5 * normal_sign, 0.0, normal_sign),
+            u_axis=(0.0, 1.0, 0.0),
+        )
+
+    def test_closed_section_adds_cap_chord_but_open_shell_does_not(self) -> None:
+        closed = self._cone(ConeModel.CLOSED_SINGLE)
+        opened = self._cone(ConeModel.OPEN_SINGLE)
+        section_id = "finite-section"
+
+        pre_plane = self._plane(0.8)
+        tangent_plane = self._plane(1.0)
+        post_plane = self._plane(1.5)
+        self.assertEqual(
+            compute_section_cap_chord_curves(section_id, closed, pre_plane),
+            (),
+        )
+        self.assertEqual(
+            compute_section_cap_chord_curves(section_id, closed, tangent_plane),
+            (),
+        )
+        self.assertEqual(
+            compute_section_cap_chord_curves(section_id, opened, post_plane),
+            (),
+        )
+
+        closed_curves = compute_quadric_section_boundary_curves(
+            section_id,
+            closed,
+            post_plane,
+        )
+        open_curves = compute_quadric_section_boundary_curves(
+            section_id,
+            opened,
+            post_plane,
+        )
+        closed_lateral = tuple(
+            item for item in closed_curves if isinstance(item, ParametricConicBranch)
+        )
+        closed_chords = tuple(
+            item for item in closed_curves if isinstance(item, SegmentCurve)
+        )
+        open_lateral = tuple(
+            item for item in open_curves if isinstance(item, ParametricConicBranch)
+        )
+        open_chords = tuple(
+            item for item in open_curves if isinstance(item, SegmentCurve)
+        )
+        self.assertEqual(len(closed_lateral), 1)
+        self.assertEqual(len(closed_chords), 1)
+        self.assertEqual(len(open_lateral), 1)
+        self.assertEqual(open_chords, ())
+
+        chord = closed_chords[0]
+        cap = closed.end_caps[0]
+        self.assertEqual(
+            chord.curve_id,
+            f"{section_id}:cap:cap_max:chord",
+        )
+        for endpoint in (chord.start, chord.end):
+            self.assertAlmostEqual(post_plane.signed_distance(endpoint), 0.0, places=11)
+            local = cap.frame.to_local_point(endpoint)
+            self.assertAlmostEqual(local[2], 0.0, places=11)
+            self.assertAlmostEqual(np.hypot(local[0], local[1]), cap.radius, places=11)
+        midpoint = np.asarray(chord.point(chord.domain.midpoint), dtype=float)
+        midpoint_local = cap.frame.to_local_point(midpoint)
+        self.assertLess(np.hypot(midpoint_local[0], midpoint_local[1]), cap.radius)
+        homogeneous = np.append(midpoint, 1.0)
+        self.assertGreater(
+            abs(float(homogeneous @ closed.support_quadric.matrix @ homogeneous)),
+            1.0e-6,
+        )
+
+        lateral_endpoints = sorted(
+            (
+                tuple(closed_lateral[0].point(closed_lateral[0].domain.start)),
+                tuple(closed_lateral[0].point(closed_lateral[0].domain.end)),
+            )
+        )
+        for actual, expected in zip((chord.start, chord.end), lateral_endpoints):
+            np.testing.assert_allclose(actual, expected, rtol=0.0, atol=1.0e-10)
+
+    def test_cap_chord_identity_and_orientation_are_stable(self) -> None:
+        closed = self._cone(ConeModel.CLOSED_SINGLE)
+        section_id = "finite-section"
+        self.assertEqual(
+            section_cap_chord_curve_ids(section_id, closed),
+            (f"{section_id}:cap:cap_max:chord",),
+        )
+        self.assertEqual(
+            section_cap_chord_curve_ids(
+                section_id,
+                self._cone(ConeModel.OPEN_SINGLE),
+            ),
+            (),
+        )
+
+        first = compute_section_cap_chord_curves(
+            section_id,
+            closed,
+            self._plane(1.5),
+        )[0]
+        repeated = compute_section_cap_chord_curves(
+            section_id,
+            closed,
+            self._plane(1.7),
+        )[0]
+        reversed_normal = compute_section_cap_chord_curves(
+            section_id,
+            closed,
+            self._plane(1.5, normal_sign=-1.0),
+        )[0]
+        self.assertEqual(first.curve_id, repeated.curve_id)
+        self.assertEqual(first.curve_id, reversed_normal.curve_id)
+        np.testing.assert_allclose(first.start, reversed_normal.start, rtol=0.0, atol=1.0e-12)
+        np.testing.assert_allclose(first.end, reversed_normal.end, rtol=0.0, atol=1.0e-12)
+
+    def test_cap_coincident_plane_does_not_duplicate_the_lateral_rim(self) -> None:
+        closed = self._cone(ConeModel.CLOSED_SINGLE)
+        plane = SectionPlane(
+            "cap-plane",
+            (0.0, 0.0, 2.0),
+            (0.0, 0.0, 1.0),
+            u_axis=(1.0, 0.0, 0.0),
+        )
+        curves = compute_quadric_section_boundary_curves(
+            "cap-section",
+            closed,
+            plane,
+        )
+        self.assertEqual(len(curves), 1)
+        self.assertIsInstance(curves[0], ParametricConicBranch)
+
+    def test_tilted_cap_coincident_plane_is_recognized_as_parallel(self) -> None:
+        cone = ConeSpec(
+            "tilted-cone",
+            (0.25, -0.5, 0.75),
+            (1.0, 2.0, 3.0),
+            pi / 5.0,
+            (0.0, 2.0),
+            radial_axis=(1.0, 0.0, 0.0),
+            model=ConeModel.CLOSED_SINGLE,
+        )
+        cap = cone.end_caps[0]
+        plane = SectionPlane(
+            "tilted-cap-plane",
+            cap.center,
+            cap.normal,
+            u_axis=cap.radial_axis,
+        )
+        self.assertEqual(
+            compute_section_cap_chord_curves(
+                "tilted-cap-section",
+                cone,
+                plane,
+            ),
+            (),
+        )
+        curves = compute_quadric_section_boundary_curves(
+            "tilted-cap-section",
+            cone,
+            plane,
+        )
+        self.assertEqual(len(curves), 1)
+        self.assertIsInstance(curves[0], ParametricConicBranch)
+
+        for index, proportional_normal in enumerate(
+            (
+                (10.0 / 3.0, 20.0 / 3.0, 10.0),
+                (1.0e-7, 2.0e-7, 3.0e-7),
+                (-10.0, -20.0, -30.0),
+            )
+        ):
+            with self.subTest(proportional_normal=proportional_normal):
+                proportional_plane = SectionPlane(
+                    f"tilted-cap-proportional-{index}",
+                    cap.center,
+                    proportional_normal,
+                    u_axis=cap.radial_axis,
+                )
+                self.assertEqual(
+                    compute_section_cap_chord_curves(
+                        "tilted-cap-section",
+                        cone,
+                        proportional_plane,
+                    ),
+                    (),
+                )
+
+    def test_cylinder_can_activate_one_stable_chord_per_end_cap(self) -> None:
+        cylinder = CylinderSpec(
+            "finite-cylinder",
+            (0.0, 0.0, 0.0),
+            (0.0, 0.0, 1.0),
+            1.0,
+            (0.0, 2.0),
+            radial_axis=(1.0, 0.0, 0.0),
+        )
+        plane = SectionPlane(
+            "axial-cut",
+            (0.0, 0.0, 1.0),
+            (1.0, 0.0, 0.0),
+            u_axis=(0.0, 1.0, 0.0),
+        )
+        identities = section_cap_chord_curve_ids(
+            "cylinder-section",
+            cylinder,
+        )
+        chords = compute_section_cap_chord_curves(
+            "cylinder-section",
+            cylinder,
+            plane,
+        )
+        self.assertEqual(tuple(item.curve_id for item in chords), identities)
+        self.assertEqual(len(chords), 2)
+        self.assertEqual(
+            {round(float(item.start[2]), 12) for item in chords},
+            {0.0, 2.0},
+        )
+        for chord in chords:
+            self.assertAlmostEqual(chord.length, 2.0, places=12)
+        complete_boundary = compute_quadric_section_boundary_curves(
+            "cylinder-section",
+            cylinder,
+            plane,
+        )
+        self.assertEqual(
+            len(
+                tuple(
+                    item
+                    for item in complete_boundary
+                    if isinstance(item, SegmentCurve)
+                )
+            ),
+            2,
+        )
+        self.assertEqual(
+            len(
+                tuple(
+                    item
+                    for item in complete_boundary
+                    if isinstance(item, ParametricConicBranch)
+                )
+            ),
+            2,
+        )
+
+    def test_unresolved_near_parallel_cap_cut_fails_instead_of_guessing(self) -> None:
+        closed = self._cone(ConeModel.CLOSED_SINGLE)
+        cap = closed.end_caps[0]
+        near_parallel = SectionPlane(
+            "near-parallel-cut",
+            cap.center,
+            (1.0e-4, 0.0, 1.0),
+            u_axis=(0.0, 1.0, 0.0),
+        )
+        context = GeometryContext(
+            overrides={"angular": 1.0e-3, "boundary": 1.0e-9}
+        )
+        with self.assertRaisesRegex(
+            QuadricSectionError,
+            "below the configured angular resolution",
+        ):
+            compute_section_cap_chord_curves(
+                "ambiguous-section",
+                closed,
+                near_parallel,
+                context=context,
+            )
+
+    def test_tiny_nonzero_cap_tilt_fails_instead_of_becoming_coincident(self) -> None:
+        closed = self._cone(ConeModel.CLOSED_SINGLE)
+        cap = closed.end_caps[0]
+        tiny_tilt = SectionPlane(
+            "tiny-cap-tilt",
+            cap.center,
+            (1.0e-15, 0.0, 1.0),
+            u_axis=(0.0, 1.0, 0.0),
+        )
+        with self.assertRaisesRegex(
+            QuadricSectionError,
+            "below the configured angular resolution",
+        ):
+            compute_section_cap_chord_curves(
+                "tiny-cap-section",
+                closed,
+                tiny_tilt,
+            )
+
+    def test_cap_chord_and_closed_lateral_trace_mismatch_fails(self) -> None:
+        closed = self._cone(ConeModel.CLOSED_SINGLE)
+        cap = closed.end_caps[0]
+        for tilt in (1.0e-9, 1.0e-8):
+            with self.subTest(tilt=tilt):
+                plane = SectionPlane(
+                    f"near-cap-{tilt}",
+                    cap.center,
+                    (tilt, 0.0, 1.0),
+                    u_axis=(0.0, 1.0, 0.0),
+                )
+                trace = compute_quadric_section(
+                    "near-cap-section",
+                    closed,
+                    plane,
+                )
+                self.assertIs(
+                    trace.finite_topology,
+                    FiniteSectionTopology.CLOSED_CURVE,
+                )
+                self.assertEqual(
+                    len(
+                        compute_section_cap_chord_curves(
+                            "near-cap-section",
+                            closed,
+                            plane,
+                        )
+                    ),
+                    1,
+                )
+                with self.assertRaisesRegex(
+                    QuadricSectionError,
+                    "lateral and cap clipping disagree",
+                ):
+                    compute_quadric_section_boundary_curves(
+                        "near-cap-section",
+                        closed,
+                        plane,
+                    )
+
+    def test_analytic_double_does_not_invent_renderable_cap_chords(self) -> None:
+        analytic = ConeSpec(
+            "analytic-double",
+            (0.0, 0.0, 0.0),
+            (0.0, 0.0, 1.0),
+            pi / 4.0,
+            (-2.0, 2.0),
+            radial_axis=(1.0, 0.0, 0.0),
+            model=ConeModel.ANALYTIC_DOUBLE,
+        )
+        plane = SectionPlane(
+            "analytic-cut",
+            (0.0, 0.0, 0.5),
+            (1.0, 0.0, 0.0),
+            u_axis=(0.0, 1.0, 0.0),
+        )
+        with self.assertRaisesRegex(
+            QuadricSectionError,
+            "no directly renderable",
+        ):
+            section_cap_chord_curve_ids("analytic-section", analytic)
+        with self.assertRaisesRegex(
+            QuadricSectionError,
+            "no directly renderable",
+        ):
+            compute_quadric_section_boundary_curves(
+                "analytic-section",
+                analytic,
+                plane,
+            )
+
+    def test_cap_chord_geometry_is_scale_invariant(self) -> None:
+        reference: np.ndarray | None = None
+        for scale in (1.0e-6, 1.0, 1.0e6):
+            with self.subTest(scale=scale):
+                cone = ConeSpec(
+                    "scaled-cone",
+                    (0.0, 0.0, 0.0),
+                    (0.0, 0.0, 1.0),
+                    pi / 4.0,
+                    (0.0, 2.0 * scale),
+                    radial_axis=(1.0, 0.0, 0.0),
+                    model=ConeModel.CLOSED_SINGLE,
+                )
+                plane = SectionPlane(
+                    "scaled-cut",
+                    (0.0, 0.0, 1.5 * scale),
+                    (0.5, 0.0, 1.0),
+                    u_axis=(0.0, 1.0, 0.0),
+                )
+                chord = compute_section_cap_chord_curves(
+                    "scaled-section",
+                    cone,
+                    plane,
+                )[0]
+                normalized = np.asarray((chord.start, chord.end)) / scale
+                if reference is None:
+                    reference = normalized
+                else:
+                    np.testing.assert_allclose(
+                        normalized,
+                        reference,
+                        rtol=0.0,
+                        atol=1.0e-9,
+                    )
 
 
 class RendererNeutralSectionImportTests(unittest.TestCase):

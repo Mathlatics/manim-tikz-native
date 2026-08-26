@@ -225,6 +225,44 @@ def _curve_lies_on_surface(
 ) -> bool:
     """Certify that the complete finite source lies on one finite surface."""
 
+    if source.source_kind is BoundarySourceKind.SECTION_CAP_CHORD:
+        if not isinstance(source.curve, SegmentCurve):
+            raise QuadricBoundaryCompositingError(
+                f"section cap-chord {source.source_id!r} must use SegmentCurve"
+            )
+        matching_caps = tuple(
+            cap
+            for cap in surface.end_caps
+            if cap.cap_id == source.owner_id
+        )
+        if len(matching_caps) != 1:
+            raise QuadricBoundaryCompositingError(
+                f"section cap-chord {source.source_id!r} does not identify "
+                f"one end cap on surface {surface.surface_id!r}"
+            )
+        cap = matching_caps[0]
+        expected_suffix = f":cap:{cap.role}:chord"
+        if not source.source_id.endswith(expected_suffix):
+            raise QuadricBoundaryCompositingError(
+                f"section cap-chord {source.source_id!r} does not use its "
+                "owner cap's stable semantic identity"
+            )
+        center = np.asarray(cap.center, dtype=float)
+        normal = np.asarray(cap.normal, dtype=float)
+        boundary_epsilon = context.epsilon(GeometryQuantity.BOUNDARY)
+        validation_epsilon = 8.0 * boundary_epsilon
+        for endpoint in (source.curve.start, source.curve.end):
+            offset = np.asarray(endpoint, dtype=float) - center
+            plane_residual = abs(float(np.dot(offset, normal)))
+            radial = offset - float(np.dot(offset, normal)) * normal
+            rim_residual = abs(float(np.linalg.norm(radial)) - cap.radius)
+            if max(plane_residual, rim_residual) > validation_epsilon:
+                raise QuadricBoundaryCompositingError(
+                    f"section cap-chord {source.source_id!r} does not end on "
+                    f"the declared cap rim {cap.cap_id!r}"
+                )
+        return True
+
     chart = _curve_chart(source.curve)
     homogeneous = (*chart.numerator, chart.denominator)
     matrix = np.asarray(surface.support_quadric.matrix, dtype=float)
@@ -325,6 +363,25 @@ def _curve_lies_on_section_surface(
     context: ResolvedGeometryContext,
 ) -> bool:
     """Certify a finite source as part of the exact plane/surface section."""
+
+    if source.source_kind is BoundarySourceKind.SECTION_CAP_CHORD:
+        matching_caps = tuple(
+            cap for cap in surface.end_caps if cap.cap_id == source.owner_id
+        )
+        if len(matching_caps) != 1:
+            raise QuadricBoundaryCompositingError(
+                f"section cap-chord {source.source_id!r} does not identify "
+                f"one end cap on surface {surface.surface_id!r}"
+            )
+        cap = matching_caps[0]
+        normal_crossing = float(
+            np.linalg.norm(np.cross(cap.normal, plane.normal))
+        )
+        if normal_crossing <= context.epsilon(GeometryQuantity.ANGULAR):
+            raise QuadricBoundaryCompositingError(
+                f"section cap-chord {source.source_id!r} requires a unique "
+                "intersection line between the cap and section planes"
+            )
 
     chart = _curve_chart(source.curve)
     normal = np.asarray(plane.normal, dtype=float)
