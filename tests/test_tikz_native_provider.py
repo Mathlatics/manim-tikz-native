@@ -95,6 +95,9 @@ class TikzNativeProviderTests(unittest.TestCase):
             info["capabilities"]["quadric_occlusion_parallel_v1"]
         )
         self.assertTrue(
+            info["capabilities"]["quadric_boundary_compositing_v2"]
+        )
+        self.assertTrue(
             info["capabilities"]["quadric_section_animation_trace_v1"]
         )
         self.assertTrue(

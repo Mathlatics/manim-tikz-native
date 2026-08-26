@@ -3,7 +3,7 @@
 The existing quadric stack intentionally keeps exact curve visibility, finite
 section geometry, and Manim allocation separate.  This module is the sidecar
 which turns all semantic stroke sources into one fragment-level painter graph
-without changing any existing v1 frame or importing Manim.
+without importing Manim.
 """
 
 from __future__ import annotations
@@ -36,7 +36,7 @@ from .curve_intersections import ProjectedCurveCrossing
 from .visibility import CurveVisibilityRecord, compute_curve_visibility
 
 
-QUADRIC_BOUNDARY_COMPOSITING_SCHEMA = "manim-quadric-boundary-compositing/v1"
+QUADRIC_BOUNDARY_COMPOSITING_SCHEMA = "manim-quadric-boundary-compositing/v2"
 QuadricSurfaceSpec = SphereSpec | CylinderSpec | ConeSpec
 ContextInput = GeometryContext | ResolvedGeometryContext | None
 
@@ -216,7 +216,8 @@ class QuadricBoundaryPaintFragment:
     item_id: str
     source_id: str
     interval: ParameterInterval
-    visibility_kind: VisibilityKind
+    surface_visibility_kind: VisibilityKind
+    effective_visibility_kind: VisibilityKind
     occluder_surface_ids: tuple[str, ...]
     render_intent: BoundaryRenderIntent
     painted: bool
@@ -226,7 +227,6 @@ class QuadricBoundaryPaintFragment:
     plane_depth_roles: tuple[str, ...]
     style_id: str | None
     stable_sort_key: tuple[str, ...]
-    surface_visibility_kind: VisibilityKind | None = None
     plane_occluded: bool = False
     plane_occluder_item_ids: tuple[str, ...] = ()
 
@@ -240,16 +240,13 @@ class QuadricBoundaryPaintFragment:
             raise QuadricBoundaryCompositingError(
                 "boundary fragment interval must have positive length"
             )
-        if not isinstance(self.visibility_kind, VisibilityKind):
-            raise TypeError("visibility_kind must be a VisibilityKind")
-        surface_visibility_kind = (
-            self.visibility_kind
-            if self.surface_visibility_kind is None
-            else self.surface_visibility_kind
-        )
-        if not isinstance(surface_visibility_kind, VisibilityKind):
+        if not isinstance(self.surface_visibility_kind, VisibilityKind):
             raise TypeError(
                 "surface_visibility_kind must be a VisibilityKind"
+            )
+        if not isinstance(self.effective_visibility_kind, VisibilityKind):
+            raise TypeError(
+                "effective_visibility_kind must be a VisibilityKind"
             )
         if not isinstance(self.plane_occluded, bool):
             raise TypeError("plane_occluded must be a bool")
@@ -264,14 +261,14 @@ class QuadricBoundaryPaintFragment:
                 "painted flag must agree with boundary render_intent"
             )
         if (
-            self.visibility_kind is VisibilityKind.VISIBLE
+            self.effective_visibility_kind is VisibilityKind.VISIBLE
             and self.render_intent is not BoundaryRenderIntent.SOLID
         ):
             raise QuadricBoundaryCompositingError(
                 "visible boundary fragments must render solid"
             )
         if (
-            self.visibility_kind is VisibilityKind.HIDDEN
+            self.effective_visibility_kind is VisibilityKind.HIDDEN
             and self.render_intent is BoundaryRenderIntent.SOLID
         ):
             raise QuadricBoundaryCompositingError(
@@ -286,14 +283,14 @@ class QuadricBoundaryPaintFragment:
                 "fragment surface occluders must be unique and sorted"
             )
         if (
-            surface_visibility_kind is VisibilityKind.VISIBLE
+            self.surface_visibility_kind is VisibilityKind.VISIBLE
             and surface_occluders
         ):
             raise QuadricBoundaryCompositingError(
                 "surface-visible fragments cannot name surface occluders"
             )
         if (
-            surface_visibility_kind is VisibilityKind.HIDDEN
+            self.surface_visibility_kind is VisibilityKind.HIDDEN
             and not surface_occluders
         ):
             raise QuadricBoundaryCompositingError(
@@ -322,14 +319,14 @@ class QuadricBoundaryPaintFragment:
             )
         effective_kind = (
             VisibilityKind.HIDDEN
-            if surface_visibility_kind is VisibilityKind.HIDDEN
+            if self.surface_visibility_kind is VisibilityKind.HIDDEN
             or self.plane_occluded
             else VisibilityKind.VISIBLE
         )
-        if self.visibility_kind is not effective_kind:
+        if self.effective_visibility_kind is not effective_kind:
             raise QuadricBoundaryCompositingError(
-                "boundary visibility_kind must combine surface visibility "
-                "and section-plane occlusion"
+                "boundary effective_visibility_kind must combine surface "
+                "visibility and section-plane occlusion"
             )
         roles = tuple(str(item) for item in self.plane_depth_roles)
         if roles != tuple(sorted(set(roles))) or any(
@@ -340,11 +337,6 @@ class QuadricBoundaryPaintFragment:
             )
         object.__setattr__(self, "item_id", item_id)
         object.__setattr__(self, "source_id", source_id)
-        object.__setattr__(
-            self,
-            "surface_visibility_kind",
-            surface_visibility_kind,
-        )
         object.__setattr__(self, "occluder_surface_ids", surface_occluders)
         object.__setattr__(self, "plane_occluder_item_ids", plane_occluders)
         object.__setattr__(self, "plane_depth_roles", roles)
@@ -354,8 +346,8 @@ class QuadricBoundaryPaintFragment:
             "itemId": self.item_id,
             "sourceId": self.source_id,
             "interval": [self.interval.start, self.interval.end],
-            "visibilityKind": self.visibility_kind.value,
             "surfaceVisibilityKind": self.surface_visibility_kind.value,
+            "effectiveVisibilityKind": self.effective_visibility_kind.value,
             "occluderSurfaceIds": list(self.occluder_surface_ids),
             "planeOccluded": self.plane_occluded,
             "planeOccluderItemIds": list(self.plane_occluder_item_ids),
@@ -636,7 +628,7 @@ def _add_section_plane_relation(
         return
     roles = fragment.plane_depth_roles
     if (
-        fragment.visibility_kind is VisibilityKind.VISIBLE
+        fragment.effective_visibility_kind is VisibilityKind.VISIBLE
         and relation == "boundary_behind_plane"
     ):
         # On a true silhouette the certified plane partition intentionally
@@ -814,7 +806,8 @@ def compute_quadric_boundary_compositing(
                         item_id=item_id,
                         source_id=source.source_id,
                         interval=interval,
-                        visibility_kind=effective_kind,
+                        surface_visibility_kind=span.kind,
+                        effective_visibility_kind=effective_kind,
                         occluder_surface_ids=span.occluder_surface_ids,
                         render_intent=intent,
                         painted=intent is not BoundaryRenderIntent.OMIT,
@@ -833,7 +826,6 @@ def compute_quadric_boundary_compositing(
                             f"{span_index:04d}",
                             f"{piece_index:04d}",
                         ),
-                        surface_visibility_kind=span.kind,
                         plane_occluded=plane_occluded,
                         plane_occluder_item_ids=plane_occluder_item_ids,
                     )
@@ -926,7 +918,10 @@ def compute_quadric_boundary_compositing(
             if item.source_id == fragment.source_id
         )
         is_plane_edge = source.source_kind is BoundarySourceKind.PLANE_PATCH_EDGE
-        if is_plane_edge and fragment.visibility_kind is VisibilityKind.VISIBLE:
+        if (
+            is_plane_edge
+            and fragment.effective_visibility_kind is VisibilityKind.VISIBLE
+        ):
             if section_anchors is None:
                 raise QuadricBoundaryCompositingError(
                     "plane-edge fragments require section anchors"
@@ -954,7 +949,7 @@ def compute_quadric_boundary_compositing(
                 )
             continue
 
-        if fragment.visibility_kind is VisibilityKind.VISIBLE:
+        if fragment.effective_visibility_kind is VisibilityKind.VISIBLE:
             if section_anchors is not None:
                 if source.owner_surface_id is not None:
                     relations.append(
@@ -1179,7 +1174,8 @@ def compute_quadric_boundary_compositing(
             for nearer in near:
                 if (
                     policy is QuadricPaintPolicy.DIAGRAMMATIC
-                    and farther.visibility_kind is not nearer.visibility_kind
+                    and farther.effective_visibility_kind
+                    is not nearer.effective_visibility_kind
                     and BoundarySourceKind.PLANE_PATCH_EDGE
                     in {
                         source_map[farther.source_id].source_kind,
@@ -1195,7 +1191,8 @@ def compute_quadric_boundary_compositing(
                     # retain their certified far-to-near order.
                     visible = (
                         farther
-                        if farther.visibility_kind is VisibilityKind.VISIBLE
+                        if farther.effective_visibility_kind
+                        is VisibilityKind.VISIBLE
                         else nearer
                     )
                     hidden = nearer if visible is farther else farther

@@ -250,7 +250,7 @@ def _first_hidden_plane_dash(controller: QuadricOcclusion3D):
         if item.source_id.startswith(
             "boundary:plane:cairo-boundary-plane:edge:"
         )
-        and item.visibility_kind is VisibilityKind.HIDDEN
+        and item.effective_visibility_kind is VisibilityKind.HIDDEN
         and item.painted
         and item.render_intent is BoundaryRenderIntent.DASHED
     ]
@@ -568,7 +568,7 @@ class UnifiedBoundaryCairoTests(unittest.TestCase):
                     item
                     for item in frame.fragments
                     if item.source_id == "boundary:far:silhouette"
-                    and item.visibility_kind is VisibilityKind.HIDDEN
+                    and item.effective_visibility_kind is VisibilityKind.HIDDEN
                 )
                 self.assertFalse(hidden.painted)
                 source = next(
@@ -735,7 +735,10 @@ class UnifiedBoundaryCairoTests(unittest.TestCase):
                     fragment.surface_visibility_kind,
                     VisibilityKind.VISIBLE,
                 )
-                self.assertIs(fragment.visibility_kind, VisibilityKind.HIDDEN)
+                self.assertIs(
+                    fragment.effective_visibility_kind,
+                    VisibilityKind.HIDDEN,
+                )
                 self.assertTrue(fragment.plane_occluded)
                 self.assertEqual(fragment.occluder_surface_ids, ())
                 self.assertIs(
@@ -863,14 +866,16 @@ class UnifiedBoundaryCairoTests(unittest.TestCase):
                         all(
                             item.surface_visibility_kind
                             is VisibilityKind.VISIBLE
-                            and item.visibility_kind is VisibilityKind.HIDDEN
+                            and item.effective_visibility_kind
+                            is VisibilityKind.HIDDEN
                             and not item.occluder_surface_ids
                             for item in plane_hidden
                         )
                     )
                     self.assertTrue(
                         all(
-                            item.visibility_kind is VisibilityKind.VISIBLE
+                            item.effective_visibility_kind
+                            is VisibilityKind.VISIBLE
                             and item.render_intent is BoundaryRenderIntent.SOLID
                             and item.painted
                             for item in unoccluded
@@ -1013,7 +1018,7 @@ class UnifiedBoundaryCairoTests(unittest.TestCase):
                 hidden = [
                     item
                     for item in frame.fragments
-                    if item.visibility_kind is VisibilityKind.HIDDEN
+                    if item.effective_visibility_kind is VisibilityKind.HIDDEN
                 ]
                 self.assertTrue(hidden)
                 self.assertTrue(all(not item.painted for item in hidden))
@@ -1035,7 +1040,8 @@ class UnifiedBoundaryCairoTests(unittest.TestCase):
                     all(
                         item.surface_visibility_kind
                         is VisibilityKind.VISIBLE
-                        and item.visibility_kind is VisibilityKind.HIDDEN
+                        and item.effective_visibility_kind
+                        is VisibilityKind.HIDDEN
                         and item.render_intent is BoundaryRenderIntent.OMIT
                         and not item.painted
                         and not item.occluder_surface_ids

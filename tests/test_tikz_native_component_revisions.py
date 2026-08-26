@@ -137,10 +137,10 @@ QUADRIC_GEOMETRY_REVISION = (
     "source-sha256:a1dcbee17ee2fe00809bd0cdd40f90e2bdee317f2b5e162e1b0011bfd9403f24"
 )
 QUADRIC_VISIBILITY_REVISION = (
-    "source-sha256:45f01300b054999c14e66baf51f7d1fd18120c619888b4648550d927267480ec"
+    "source-sha256:16ca8b8641a6b784f87ddf620f86f5ecfbb744c2219209f3ec5609dc00d15fbf"
 )
 QUADRIC_MANIM_REVISION = (
-    "source-sha256:778630129608e8d4894ae46f4c33358d29b85ce11459f0b754bbf69328bb61bf"
+    "source-sha256:6af96598ee94e3c0e1de6ccef7c74ac6ae529c63a35b28dbfe2834c93257259f"
 )
 CONVEX_SECTION_3D_REVISION = (
     "source-sha256:5cfd664e136caf4f68876ac76f81674d99c15b3b275c3859a84c174d738729b5"
@@ -245,6 +245,9 @@ class TikzNativeComponentRevisionTests(unittest.TestCase):
             asset["capabilities"]["quadric_occlusion_parallel_v1"]
         )
         self.assertTrue(
+            asset["capabilities"]["quadric_boundary_compositing_v2"]
+        )
+        self.assertTrue(
             asset["capabilities"]["quadric_section_animation_trace_v1"]
         )
         self.assertTrue(
@@ -264,6 +267,10 @@ class TikzNativeComponentRevisionTests(unittest.TestCase):
         ):
             self.assertIn(component, revisions)
             self.assertIn(component, contracts)
+        self.assertEqual(
+            contracts[COMPONENT_QUADRIC_VISIBILITY],
+            "tikz-native-contract:quadric_visibility/v2",
+        )
         self.assertEqual(
             motion_2d["revision"], revisions[COMPONENT_MOTION_PREVIEW_2D]
         )

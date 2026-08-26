@@ -573,9 +573,12 @@ The renderer-neutral boundary sidecar is exported from
   `QuadricBoundarySectionLimits`, `QUADRIC_BOUNDARY_SECTION_LIMITS`, and
   `compute_boundary_section_spans`.
 
-These additive contracts use `manim-quadric-boundary-compositing/v1`. Existing
-quadric v1 schemas and canonical JSON remain unchanged. The Manim controller
-selects the new path only when `boundary_visibility_mode="unified"` is supplied.
+The boundary painter frame uses
+`manim-quadric-boundary-compositing/v2`. The short-lived v1 boundary frame is
+superseded rather than maintained as a second runtime path: generated boundary
+frames and caches must be rebuilt. Other quadric v1 surface, visibility, and
+section schemas remain unchanged. The Manim controller selects the unified path
+only when `boundary_visibility_mode="unified"` is supplied.
 When a cutting plane is active, semantic boundaries are partitioned at the
 actual `PlaneDepthRole` contours before midpoint classification. Exact section
 curves use their analytic surface/plane identity and visibility events instead
@@ -584,10 +587,13 @@ explicit fixed bounds on role-contour segments and split parameters; exceeding
 either bound raises rather than guessing or allocating more objects mid-frame.
 
 `QuadricBoundaryPaintFragment.surface_visibility_kind` records visibility
-against the selected quadratic surfaces only. `visibility_kind` is the
-effective result after also considering the finite section-plane patch.
-`plane_occluded` and `plane_occluder_item_ids` preserve the renderer-neutral
-evidence when a fragment projects inside that patch and lies behind it;
+against the selected quadratic surfaces only.
+`effective_visibility_kind` is the result after also considering the finite
+section-plane patch. Canonical v2 JSON names these fields
+`surfaceVisibilityKind` and `effectiveVisibilityKind`; the ambiguous v1
+`visibilityKind` field is not emitted. `plane_occluded` and
+`plane_occluder_item_ids` preserve the renderer-neutral evidence when a
+fragment projects inside that patch and lies behind it;
 `occluder_surface_ids` continues to contain quadratic-surface identities only.
 Consequently a true silhouette can remain visible against its owning cone or
 cylinder while still becoming hidden behind a cutting plane.

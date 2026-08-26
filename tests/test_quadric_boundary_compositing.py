@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from dataclasses import replace
+import json
 from math import pi, sqrt
 import unittest
 
@@ -12,6 +14,7 @@ from polyhedron_visibility.quadrics.boundary_compositing import (
     BoundarySectionAnchors,
     BoundarySemanticKind,
     BoundarySourceKind,
+    QUADRIC_BOUNDARY_COMPOSITING_SCHEMA,
     QuadricBoundaryCompositingError,
     QuadricBoundaryVisibilitySpan,
     canonical_quadric_boundary_compositing_json,
@@ -368,7 +371,10 @@ class QuadricBoundaryContractTests(unittest.TestCase):
             fragment.surface_visibility_kind,
             VisibilityKind.VISIBLE,
         )
-        self.assertIs(fragment.visibility_kind, VisibilityKind.HIDDEN)
+        self.assertIs(
+            fragment.effective_visibility_kind,
+            VisibilityKind.HIDDEN,
+        )
         self.assertTrue(fragment.plane_occluded)
         self.assertEqual(fragment.occluder_surface_ids, ())
         self.assertEqual(
@@ -486,7 +492,10 @@ class QuadricBoundaryContractTests(unittest.TestCase):
                         visible.surface_visibility_kind,
                         VisibilityKind.VISIBLE,
                     )
-                    self.assertIs(visible.visibility_kind, VisibilityKind.VISIBLE)
+                    self.assertIs(
+                        visible.effective_visibility_kind,
+                        VisibilityKind.VISIBLE,
+                    )
                     self.assertFalse(visible.plane_occluded)
                     self.assertEqual(
                         visible.render_intent,
@@ -496,7 +505,10 @@ class QuadricBoundaryContractTests(unittest.TestCase):
                     behind.surface_visibility_kind,
                     VisibilityKind.VISIBLE,
                 )
-                self.assertIs(behind.visibility_kind, VisibilityKind.HIDDEN)
+                self.assertIs(
+                    behind.effective_visibility_kind,
+                    VisibilityKind.HIDDEN,
+                )
                 self.assertTrue(behind.plane_occluded)
                 self.assertEqual(behind.occluder_surface_ids, ())
                 self.assertEqual(
@@ -536,6 +548,36 @@ class QuadricBoundaryContractTests(unittest.TestCase):
                 depth_aware.draw_order.index(depth_behind.item_id),
                 depth_aware.draw_order.index(plane_item),
             )
+        payload = json.loads(
+            canonical_quadric_boundary_compositing_json(depth_aware)
+        )
+        self.assertEqual(
+            payload["schema"],
+            "manim-quadric-boundary-compositing/v2",
+        )
+        self.assertEqual(
+            payload["schema"],
+            QUADRIC_BOUNDARY_COMPOSITING_SCHEMA,
+        )
+        fragment_payload = next(
+            item
+            for item in payload["fragments"]
+            if item["itemId"] == depth_behind.item_id
+        )
+        self.assertNotIn("visibilityKind", fragment_payload)
+        self.assertEqual(
+            fragment_payload["surfaceVisibilityKind"],
+            "visible",
+        )
+        self.assertEqual(
+            fragment_payload["effectiveVisibilityKind"],
+            "hidden",
+        )
+        self.assertTrue(fragment_payload["planeOccluded"])
+        self.assertEqual(
+            fragment_payload["planeOccluderItemIds"],
+            list(depth_behind.plane_occluder_item_ids),
+        )
 
     def test_diagrammatic_hidden_dash_overrides_crossing_depth_order(self) -> None:
         hidden_curve = SegmentCurve(
@@ -635,7 +677,7 @@ class QuadricBoundaryContractTests(unittest.TestCase):
         self.assertTrue(hidden_fragments and plane_fragments)
         self.assertTrue(
             all(
-                item.visibility_kind is VisibilityKind.HIDDEN
+                item.effective_visibility_kind is VisibilityKind.HIDDEN
                 and item.render_intent is BoundaryRenderIntent.DASHED
                 for item in hidden_fragments
             )
@@ -889,7 +931,7 @@ class QuadricBoundaryContractTests(unittest.TestCase):
                 diagrammatic.draw_order.index(item.item_id)
                 > diagrammatic.draw_order.index("outline-front")
                 for item in diagrammatic.fragments
-                if item.visibility_kind is VisibilityKind.HIDDEN
+                if item.effective_visibility_kind is VisibilityKind.HIDDEN
             )
         )
         depth = compute_quadric_boundary_compositing(
@@ -903,7 +945,7 @@ class QuadricBoundaryContractTests(unittest.TestCase):
         )
         hidden = [
             item for item in depth.fragments
-            if item.visibility_kind is VisibilityKind.HIDDEN
+            if item.effective_visibility_kind is VisibilityKind.HIDDEN
         ]
         behind, between = hidden
         self.assertLess(
@@ -1031,6 +1073,14 @@ class QuadricBoundaryContractTests(unittest.TestCase):
             canonical_quadric_boundary_compositing_json(frame),
         )
         self.assertEqual(frame.draw_order[-1], frame.fragments[0].item_id)
+        with self.assertRaisesRegex(
+            QuadricBoundaryCompositingError,
+            "invalid quadric boundary compositing schema",
+        ):
+            replace(
+                frame,
+                schema="manim-quadric-boundary-compositing/v1",
+            )
 
 
 if __name__ == "__main__":

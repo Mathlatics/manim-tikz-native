@@ -384,7 +384,7 @@ class QuadricSectionTransitionControllerTests(unittest.TestCase):
             item
             for item in frame.fragments
             if ":transition:bank:1:" in item.source_id
-            and item.visibility_kind.value == "hidden"
+            and item.effective_visibility_kind.value == "hidden"
         )
         self.assertTrue(hidden_transition)
         self.assertTrue(

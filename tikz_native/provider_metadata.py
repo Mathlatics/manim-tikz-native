@@ -96,6 +96,7 @@ def provider_info(
             "tikz_open_face_static_asset_3d_v1": True,
             "generated_open_face_visibility_3d_v1": True,
             "quadric_occlusion_parallel_v1": True,
+            "quadric_boundary_compositing_v2": True,
             "quadric_section_animation_trace_v1": True,
             "quadric_section_topology_transition_manim_v1": True,
             "quadric_global_compositing_v1": True,

@@ -154,13 +154,16 @@ class UnifiedBoundaryManimTests(unittest.TestCase):
                 self.assertTrue(far and near)
                 self.assertTrue(
                     all(
-                        item.visibility_kind is VisibilityKind.HIDDEN
+                        item.effective_visibility_kind is VisibilityKind.HIDDEN
                         and item.occluder_surface_ids == ("near",)
                         for item in far
                     )
                 )
                 self.assertTrue(
-                    all(item.visibility_kind is VisibilityKind.VISIBLE for item in near)
+                    all(
+                        item.effective_visibility_kind is VisibilityKind.VISIBLE
+                        for item in near
+                    )
                 )
                 if policy is QuadricPaintPolicy.PHYSICAL:
                     self.assertTrue(all(not item.painted for item in far))
@@ -507,14 +510,21 @@ class UnifiedBoundaryManimTests(unittest.TestCase):
             if item.source_id.startswith("boundary:plane:cut:edge:")
         ]
         self.assertTrue(
-            any(item.visibility_kind is VisibilityKind.VISIBLE for item in outline)
+            any(
+                item.effective_visibility_kind is VisibilityKind.VISIBLE
+                for item in outline
+            )
         )
         self.assertTrue(
-            any(item.visibility_kind is VisibilityKind.HIDDEN for item in outline)
+            any(
+                item.effective_visibility_kind is VisibilityKind.HIDDEN
+                for item in outline
+            )
         )
         hidden = [
             item for item in outline
-            if item.visibility_kind is VisibilityKind.HIDDEN and item.painted
+            if item.effective_visibility_kind is VisibilityKind.HIDDEN
+            and item.painted
         ]
         self.assertTrue(hidden)
         for item in hidden:
@@ -584,7 +594,7 @@ class UnifiedBoundaryManimTests(unittest.TestCase):
         self.assertTrue(
             any(
                 item.source_id.endswith(":rim")
-                and item.visibility_kind is VisibilityKind.HIDDEN
+                and item.effective_visibility_kind is VisibilityKind.HIDDEN
                 and item.painted
                 for item in frame.fragments
             )

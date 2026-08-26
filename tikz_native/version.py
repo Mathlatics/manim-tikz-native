@@ -93,8 +93,8 @@ _PUBLIC_0_1_COMPONENT_REVISIONS: Final[dict[str, str]] = {
     COMPONENT_GENERATED_OPEN_FACE_VISIBILITY_3D: "source-sha256:d3b8917a867f754c586bef39acc1ac387726dbb7ce192f8b61a0053505b63503",
     COMPONENT_SOURCE_PROJECT_BUILD: "source-sha256:00579e342012a96443c098c7004be672d265d32fe6f82d66b0c6b11ba64305b7",
     COMPONENT_QUADRIC_GEOMETRY: "source-sha256:a1dcbee17ee2fe00809bd0cdd40f90e2bdee317f2b5e162e1b0011bfd9403f24",
-    COMPONENT_QUADRIC_VISIBILITY: "source-sha256:45f01300b054999c14e66baf51f7d1fd18120c619888b4648550d927267480ec",
-    COMPONENT_QUADRIC_MANIM: "source-sha256:778630129608e8d4894ae46f4c33358d29b85ce11459f0b754bbf69328bb61bf",
+    COMPONENT_QUADRIC_VISIBILITY: "source-sha256:16ca8b8641a6b784f87ddf620f86f5ecfbb744c2219209f3ec5609dc00d15fbf",
+    COMPONENT_QUADRIC_MANIM: "source-sha256:6af96598ee94e3c0e1de6ccef7c74ac6ae529c63a35b28dbfe2834c93257259f",
 }
 
 
@@ -440,7 +440,10 @@ _DECLARED_COMPONENT_REVISIONS: Final[dict[str, str]] = dict(
 # ``provider_component_revisions()`` remains the render/cache identity and may
 # change whenever implementation bytes change.
 _DECLARED_COMPONENT_CONTRACT_VERSIONS: Final[dict[str, int]] = {
-    component: 1 for component in _COMPONENT_DEFINITIONS
+    component: (
+        2 if component == COMPONENT_QUADRIC_VISIBILITY else 1
+    )
+    for component in _COMPONENT_DEFINITIONS
 }
 
 
@@ -530,10 +533,10 @@ _DECLARED_IMPLEMENTATION_DIGESTS: Final[dict[str, str]] = {
         "a1dcbee17ee2fe00809bd0cdd40f90e2bdee317f2b5e162e1b0011bfd9403f24"
     ),
     COMPONENT_QUADRIC_VISIBILITY: (
-        "45f01300b054999c14e66baf51f7d1fd18120c619888b4648550d927267480ec"
+        "16ca8b8641a6b784f87ddf620f86f5ecfbb744c2219209f3ec5609dc00d15fbf"
     ),
     COMPONENT_QUADRIC_MANIM: (
-        "778630129608e8d4894ae46f4c33358d29b85ce11459f0b754bbf69328bb61bf"
+        "6af96598ee94e3c0e1de6ccef7c74ac6ae529c63a35b28dbfe2834c93257259f"
     ),
 }
 

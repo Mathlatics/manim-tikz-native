@@ -40,7 +40,10 @@ All notable changes to this project will be documented in this file.
   silhouettes, and authored generators; apply physical, diagrammatic, or
   depth-aware dashed intent through one fragment-level painter graph, reuse
   certified global surface bracketing, anchor dash phase to stable source
-  geometry, and retain fixed Manim identities and rollback;
+  geometry, and retain fixed Manim identities and rollback; publish the
+  boundary painter frame as `manim-quadric-boundary-compositing/v2` with
+  explicit surface and effective visibility fields instead of silently
+  changing the v1 `visibilityKind` meaning;
 - add a source-authoritative project format and the
   `tikz-native-project build/status/rebuild/clean` CLI: authored TikZ, optional
   motion/Bridge inputs, and render intent now deterministically regenerate

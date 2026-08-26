@@ -484,7 +484,9 @@ fragment-level boundary compositing with `boundary_visibility_mode="unified"`.
 The unified sidecar preserves the existing v1 surface, visibility, and section
 frames while adding one deterministic painter frame for ordinary analytic
 curves, the four finite display-patch edges, cap rims, true silhouettes, and
-explicit teaching generators.
+explicit teaching generators. That painter frame is the separately versioned
+`manim-quadric-boundary-compositing/v2` contract; it has one runtime path and
+does not generate the superseded boundary-compositing v1 payload.
 
 ```python
 from polyhedron_visibility.quadrics import (
@@ -554,8 +556,9 @@ silhouette. In depth-aware mode that case is bracketed as
 `surface_front -> silhouette dash -> plane role fill`; outside the patch, or
 where the silhouette is in front of the plane, the same source remains solid.
 The fragment contract records the original surface result separately from the
-effective result, and names plane painter items without pretending that the
-plane is a quadratic surface.
+effective result as `surfaceVisibilityKind` and `effectiveVisibilityKind`, and
+names plane painter items without pretending that the plane is a quadratic
+surface. The ambiguous v1 `visibilityKind` field is not part of the v2 payload.
 
 At a projected crossing with the finite plane outline, diagrammatic hidden ink
 keeps its documented top-overlay precedence. Crossings between ordinary entity
