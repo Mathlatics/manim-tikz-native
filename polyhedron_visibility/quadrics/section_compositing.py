@@ -2365,6 +2365,18 @@ def _surface_ray_solver(
     radius = surface.radius if is_cylinder else 0.0
     slope = 0.0 if is_cylinder else surface.slope
     if is_cylinder:
+        cap_axials = (lower, upper)
+    elif surface.is_open_shell:
+        cap_axials = ()
+    else:
+        # Match ``ConeSpec.end_caps`` without rebuilding validated cap
+        # dataclasses for every ray query.  The adaptive section compositor
+        # calls this closure many thousands of times, so that allocation would
+        # turn an otherwise constant-time model check into a major regression.
+        cap_axials = tuple(
+            axial for axial in (lower, upper) if abs(axial) * slope > 0.0
+        )
+    if is_cylinder:
         first = float(np.dot(local_direction[:2], local_direction[:2]))
     else:
         first = float(np.dot(local_direction[:2], local_direction[:2])) - (
@@ -2403,10 +2415,6 @@ def _surface_ray_solver(
             <= upper + boundary_epsilon
         ]
         if abs(float(local_direction[2])) > angular_epsilon:
-            cap_axials = tuple(
-                lower if cap.role == "cap_min" else upper
-                for cap in surface.end_caps
-            )
             for axial in cap_axials:
                 parameter = float((axial - local_point[2]) / local_direction[2])
                 radial = local_point[:2] + parameter * local_direction[:2]
