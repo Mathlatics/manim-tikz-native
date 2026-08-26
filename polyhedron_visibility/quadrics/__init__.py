@@ -21,6 +21,8 @@ _EXPORTS: Final[dict[str, tuple[str, str]]] = {
     "ConicKind": (".conics", "ConicKind"),
     "ConicParameterization": (".conics", "ConicParameterization"),
     "classify_conic": (".conics", "classify_conic"),
+    "CircularTrimRimSpec": (".contract", "CircularTrimRimSpec"),
+    "ConeModel": (".contract", "ConeModel"),
     "ConeSpec": (".contract", "ConeSpec"),
     "CylinderSpec": (".contract", "CylinderSpec"),
     "PlanarCapSpec": (".contract", "PlanarCapSpec"),
@@ -60,6 +62,12 @@ _EXPORTS: Final[dict[str, tuple[str, str]]] = {
         ".projection",
         "OPAQUE_PROJECTION_PROXY_SCHEMA",
     ),
+    "CONE_PROJECTION_LAYERS_SCHEMA": (
+        ".projection",
+        "CONE_PROJECTION_LAYERS_SCHEMA",
+    ),
+    "ConeProjectionLayers": (".projection", "ConeProjectionLayers"),
+    "ConeProjectionSheet": (".projection", "ConeProjectionSheet"),
     "OpaqueProjectionProxy": (".projection", "OpaqueProjectionProxy"),
     "ParallelViewInput": (".projection", "ParallelViewInput"),
     "ProjectionApproximationMetadata": (
@@ -74,6 +82,10 @@ _EXPORTS: Final[dict[str, tuple[str, str]]] = {
     "build_opaque_projection_proxy": (
         ".projection",
         "build_opaque_projection_proxy",
+    ),
+    "build_cone_projection_layers": (
+        ".projection",
+        "build_cone_projection_layers",
     ),
     "canonical_opaque_projection_proxy_json": (
         ".projection",

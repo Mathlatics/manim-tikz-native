@@ -112,7 +112,9 @@ def plane_outline_sources(
     return tuple(result)
 
 
-def _cap_rim_sources(surface: QuadricSurfaceSpec) -> tuple[QuadricBoundarySource, ...]:
+def _surface_rim_sources(
+    surface: QuadricSurfaceSpec,
+) -> tuple[QuadricBoundarySource, ...]:
     result = []
     for cap in surface.end_caps:
         source_id = f"boundary:{surface.surface_id}:{cap.role}:rim"
@@ -133,6 +135,26 @@ def _cap_rim_sources(surface: QuadricSurfaceSpec) -> tuple[QuadricBoundarySource
                 style_id="style:surface-boundary",
             )
         )
+    if isinstance(surface, ConeSpec):
+        for rim in surface.trim_rims:
+            source_id = f"boundary:{surface.surface_id}:{rim.role}:rim"
+            result.append(
+                curve_boundary_source(
+                    CircleArcCurve(
+                        source_id,
+                        rim.center,
+                        rim.radius,
+                        rim.normal,
+                        radial_axis=rim.radial_axis,
+                    ),
+                    source_kind=BoundarySourceKind.SURFACE_TRIM_RIM,
+                    semantic_kind=BoundarySemanticKind.SURFACE_BOUNDARY,
+                    occlusion_scope=BoundaryOcclusionScope.OWNER_AND_EXTERNAL,
+                    owner_id=rim.rim_id,
+                    owner_surface_id=surface.surface_id,
+                    style_id="style:surface-boundary",
+                )
+            )
     return tuple(result)
 
 
@@ -286,6 +308,11 @@ def surface_boundary_source_ids(
                 f"boundary:{surface.surface_id}:{cap.role}:rim"
                 for cap in surface.end_caps
             )
+            if isinstance(surface, ConeSpec):
+                result.update(
+                    f"boundary:{surface.surface_id}:{rim.role}:rim"
+                    for rim in surface.trim_rims
+                )
         if include_silhouettes:
             if isinstance(surface, SphereSpec):
                 result.add(f"boundary:{surface.surface_id}:silhouette")
@@ -310,7 +337,7 @@ def build_surface_boundary_sources(
     result: list[QuadricBoundarySource] = []
     for surface in surface_items:
         if include_cap_rims:
-            result.extend(_cap_rim_sources(surface))
+            result.extend(_surface_rim_sources(surface))
         if include_silhouettes:
             if isinstance(surface, SphereSpec):
                 result.append(_sphere_silhouette_source(surface, view))

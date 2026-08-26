@@ -8,7 +8,11 @@ import numpy as np
 from manim import DOWN, Scene, Text, UP, ValueTracker, linear
 
 from polyhedron_visibility.quadrics.compositing import QuadricPaintPolicy
-from polyhedron_visibility.quadrics.contract import ConeSpec, SectionPlane
+from polyhedron_visibility.quadrics.contract import (
+    ConeModel,
+    ConeSpec,
+    SectionPlane,
+)
 from polyhedron_visibility.quadrics.manim import (
     DEFAULT_QUADRIC_VIEW,
     QuadricBoundaryStyle,
@@ -38,9 +42,11 @@ def limits() -> QuadricManimLimits:
 STYLE = QuadricManimStyle(
     surface_fill_color="#315A8A",
     surface_fill_opacity=0.78,
-    # Keep tessellation strokes hidden. Semantic cone boundaries receive
-    # independent styles below and therefore remain visible.
     surface_stroke_opacity=0.0,
+    cone_lateral_fill_colors=("#173753", "#4F84B3", "#1D4368"),
+    cone_cap_fill_colors=("#557A99", "#294B6B"),
+    cone_lateral_sheen_direction=(1.0, 0.0, 0.0),
+    cone_cap_sheen_direction=(-1.0, 1.0, 0.0),
     section_plane_fill_color="#43D9C0",
     section_plane_fill_opacity=0.34,
     section_plane_stroke_color="#B39DDB",
@@ -51,25 +57,13 @@ STYLE = QuadricManimStyle(
 )
 
 
-SILHOUETTE_STYLE = QuadricBoundaryStyle(
-    visible_color="#FFE45E",
-    visible_width=5.0,
-    visible_opacity=1.0,
-    hidden_color="#FF3158",
-    hidden_width=4.2,
-    hidden_opacity=1.0,
-    dash_length=0.12,
-    dash_gap=0.09,
-)
-
-
-CAP_RIM_STYLE = QuadricBoundaryStyle(
+CONE_BOUNDARY_STYLE = QuadricBoundaryStyle(
     visible_color="#5CE1E6",
     visible_width=4.4,
     visible_opacity=1.0,
-    hidden_color="#FF8BD1",
-    hidden_width=3.8,
-    hidden_opacity=1.0,
+    hidden_color="#5CE1E6",
+    hidden_width=3.0,
+    hidden_opacity=0.24,
     dash_length=0.12,
     dash_gap=0.09,
 )
@@ -84,7 +78,7 @@ class SectionPlaneConeBoundaryDemo(Scene):
             color="#F4F7FB",
         ).to_edge(UP, buff=0.24)
         note = Text(
-            "silhouette: yellow/red  •  base rim: cyan/magenta",
+            "same cyan boundary  •  hidden parts become faint dashes",
             font_size=15,
             color="#B8C5D6",
         ).next_to(heading, DOWN, buff=0.10)
@@ -119,6 +113,7 @@ class SectionPlaneConeBoundaryDemo(Scene):
                 pi / 6.0,
                 (0.0, 4.0),
                 radial_axis=(1.0, 0.0, 0.0),
+                model=ConeModel.CLOSED_SINGLE,
             )
 
             def current_plane(
@@ -145,8 +140,8 @@ class SectionPlaneConeBoundaryDemo(Scene):
                 paint_policy=policy,
                 style=STYLE,
                 boundary_styles={
-                    "style:surface-silhouette": SILHOUETTE_STYLE,
-                    "style:surface-boundary": CAP_RIM_STYLE,
+                    "style:surface-silhouette": CONE_BOUNDARY_STYLE,
+                    "style:surface-boundary": CONE_BOUNDARY_STYLE,
                 },
                 limits=limits(),
                 max_chord_error=0.008,
@@ -164,7 +159,6 @@ class SectionPlaneConeBoundaryDemo(Scene):
             captions.append(caption)
 
         self.add_foreground_mobjects(heading, note, *captions)
-
         self.wait(0.35)
         self.play(offset.animate.set_value(0.48), run_time=4.2, rate_func=linear)
         self.wait(0.35)

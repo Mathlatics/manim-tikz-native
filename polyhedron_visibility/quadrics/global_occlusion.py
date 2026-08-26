@@ -44,7 +44,7 @@ from .compositing import (
     QuadricPaintPolicy,
     compute_quadric_compositing,
 )
-from .contract import ConeSpec, CylinderSpec, SphereSpec
+from .contract import ConeModel, ConeSpec, CylinderSpec, SphereSpec
 from .critical import AnalyticCurve3D
 from .curve_intersections import (
     ProjectedCurveIntersectionError,
@@ -169,6 +169,8 @@ def _localized_surface(
         surface.half_angle,
         axial_range,
         radial_axis=surface.radial_axis,
+        model=surface.model,
+        component_parent_id=surface.component_parent_id,
     )
 
 
@@ -216,6 +218,46 @@ def _validated_surfaces(
     if len(set(identities)) != len(identities):
         raise GlobalQuadricOcclusionError("surface identities must be unique")
     return tuple(sorted(result, key=lambda surface: surface.surface_id))
+
+
+def _shared_open_double_components(
+    first: QuadricSurfaceSpec,
+    second: QuadricSurfaceSpec,
+) -> bool:
+    if not isinstance(first, ConeSpec) or not isinstance(second, ConeSpec):
+        return False
+    parent_id = first.component_parent_id
+    if (
+        first.model is not ConeModel.OPEN_SINGLE
+        or second.model is not ConeModel.OPEN_SINGLE
+        or parent_id is None
+        or second.component_parent_id != parent_id
+    ):
+        return False
+
+    def component_role(surface: ConeSpec) -> str | None:
+        lower, upper = surface.axial_range
+        if (
+            surface.surface_id == f"{parent_id}:nappe:negative"
+            and lower < 0.0
+            and upper == 0.0
+        ):
+            return "negative"
+        if (
+            surface.surface_id == f"{parent_id}:nappe:positive"
+            and lower == 0.0
+            and upper > 0.0
+        ):
+            return "positive"
+        return None
+
+    return (
+        {component_role(first), component_role(second)} == {"negative", "positive"}
+        and first.apex == second.apex
+        and first.axis == second.axis
+        and first.radial_axis == second.radial_axis
+        and first.half_angle == second.half_angle
+    )
 
 
 def _resolve_context(
@@ -479,6 +521,38 @@ def verify_strict_quadric_separation(
     epsilon = resolved.epsilon(GeometryQuantity.BOUNDARY)
     result: list[StrictSeparationEvidence] = []
     for first, second in combinations(items, 2):
+        evidence = _strict_separation_certificate(
+            first,
+            second,
+            epsilon=epsilon,
+            max_iterations=iterations,
+        )
+        if evidence is None:
+            raise GlobalQuadricOcclusionError(
+                "finite convex entities are touching, intersecting, or "
+                "numerically inseparable: "
+                f"{first.surface_id!r}, {second.surface_id!r}"
+            )
+        result.append(evidence)
+    return tuple(result)
+
+
+def _verify_render_component_separation(
+    surfaces: Sequence[QuadricSurfaceSpec],
+    *,
+    context: ContextInput,
+    gjk_max_iterations: int,
+) -> tuple[StrictSeparationEvidence, ...]:
+    """Certify unrelated entities while allowing one authored shared apex."""
+
+    items = _validated_surfaces(surfaces)
+    resolved = _resolve_context(items, context)
+    iterations = _iteration_limit(gjk_max_iterations)
+    epsilon = resolved.epsilon(GeometryQuantity.BOUNDARY)
+    result: list[StrictSeparationEvidence] = []
+    for first, second in combinations(items, 2):
+        if _shared_open_double_components(first, second):
+            continue
         evidence = _strict_separation_certificate(
             first,
             second,
@@ -987,11 +1061,32 @@ def _automatic_surface_order(
             (first_proxy.metadata.max_chord_error + second_proxy.metadata.max_chord_error)
             * clipping_epsilon,
         )
+        shared_open_double_parent = _shared_open_double_components(first, second)
         if len(overlap_local) < 3 or area <= area_floor:
+            if shared_open_double_parent:
+                evidence_items.append(
+                    SurfaceDepthEvidence(
+                        first_id,
+                        second_id,
+                        "touching_open_double_nappes",
+                        0.0,
+                        (),
+                        (),
+                        None,
+                        None,
+                    )
+                )
+                continue
             raise GlobalQuadricOcclusionError(
                 "projected silhouettes may touch or overlap, but the adaptive "
                 "proxies do not contain a stable interior witness: "
                 f"{first_id!r}, {second_id!r}"
+            )
+        if shared_open_double_parent:
+            raise GlobalQuadricOcclusionError(
+                "the two finite open-cone nappes have overlapping projected "
+                "interiors in this view; the current whole-surface painter "
+                "cannot certify their multi-sheet order"
             )
 
         witnesses: list[SurfaceDepthWitness] = []
@@ -1216,7 +1311,7 @@ def compute_global_quadric_frame(
     resolved = _resolve_context(surface_items, context, curves=curve_items)
     iteration_limit = _iteration_limit(gjk_max_iterations)
 
-    separation = verify_strict_quadric_separation(
+    separation = _verify_render_component_separation(
         surface_items,
         context=resolved,
         gjk_max_iterations=iteration_limit,

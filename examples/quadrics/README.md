@@ -21,6 +21,9 @@ manim -pql examples/quadrics/unified_boundary_visibility_demo.py \
 
 manim -pql examples/quadrics/section_plane_cone_boundary_demo.py \
   SectionPlaneConeBoundaryDemo
+
+manim -pql examples/quadrics/cone_model_comparison_demo.py \
+  ConeModelComparisonDemo ConeModelPlaneComparisonDemo
 ```
 
 - `MovingSphereSectionDemo` recomputes a moving circular section and its
@@ -48,6 +51,14 @@ manim -pql examples/quadrics/section_plane_cone_boundary_demo.py \
   ink for both the true cone silhouette and the finite base rim. It keeps the
   tessellated surface stroke transparent while assigning explicit visible and
   hidden styles to both semantic boundary kinds.
+- `ConeModelComparisonDemo` compares a closed single cone, an open single cone
+  shell, and a finite open double shell while their common axis tilts. The
+  closed base, open trim rims, and two stable double-shell components all use
+  the public contract and fixed component paint slots.
+- `ConeModelPlaneComparisonDemo` moves the same translucent plane through a
+  closed single cone and an open single shell. It shows the missing base's
+  real depth-role difference and keeps plane-hidden generator/trim-rim dashes
+  beneath the plane in the depth-aware painter order.
 
 `QuadricOcclusion3D` remains the fixed-topology controller for ordinary scenes.
 For a topology-changing rotating-plane section, first build the analytic

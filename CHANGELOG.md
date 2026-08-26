@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+- distinguish finite closed single cones, open single cone shells, and open
+  double cone shells in the public contract; keep planar caps separate from
+  non-solid trim rims, expand a double shell into stable single-nappe IDs,
+  compose open-shell cutting planes from lateral ray hits only, and add
+  fixed-capacity lateral/cap projection masks with independent highlight
+  directions and no updater-time Mobject allocation;
 - use the classroom oblique-dimetric (`斜二测`) preset as the default
   multi-projection camera for ordinary polyhedra and a true orthographic
   isometric preset as the default Manim projection for quadrics and conic

@@ -18,7 +18,10 @@ TikZ 图压成一张 SVG 或图片。转换后的直线、面、点、标签仍�
 图形则继续以 TikZ 源码中写明的投影为准。
 
 现在还提供一套独立的二次曲面模块：在正交投影或一般平行投影下，支持有限
-球体、带端盖圆柱、单叶圆锥和圆台；能解析计算平面截出的圆、椭圆、抛物线、
+球体、带端盖圆柱、封闭单锥、张口单锥壳和有限张口双锥壳。封闭单锥的底面是
+真正的平面端盖；张口圆锥只有侧面和开口圆周，不会把开口误当成底面。双锥壳
+会稳定拆成共享顶点的上下两个单锥壳，动画更新时不会替换对象。模块还能解析
+计算平面截出的圆、椭圆、抛物线、
 双曲线及退化情况，并把语义直线、圆弧、椭圆弧和截口曲线自动切成前方实线与
 后方虚线。曲线与曲线投影相交时，也会根据真实深度建立绘图次序。多个彼此严格
 分离的凸二次曲面可以共同参加同一份全局遮挡；如果实体相交或出现无法证明的
@@ -150,6 +153,10 @@ manim -pql examples/quadrics/quadric_occlusion_demo.py \
   MovingSphereSectionDemo ObliqueCylinderSectionDemo \
   ConeSectionFamiliesDemo ConeSectionTopologyTransitionDemo \
   GlobalQuadricOcclusionDemo
+
+# 对比封闭单锥、张口单锥壳、张口双锥壳，以及平面与开口的交互
+manim -pql examples/quadrics/cone_model_comparison_demo.py \
+  ConeModelComparisonDemo ConeModelPlaneComparisonDemo
 ```
 
 其中往返示例会让高亮复制体完成分离、同步旋转，再重新回到与原形状完全重合的

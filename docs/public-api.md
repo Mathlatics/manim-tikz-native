@@ -444,7 +444,10 @@ combined managed band.
 renderer-neutral contracts and solvers does not import Manim.  Its main entry
 points are:
 
-- `SphereSpec`, `CylinderSpec`, `ConeSpec`, `SectionPlane`;
+- `SphereSpec`, `CylinderSpec`, `ConeSpec`, `ConeModel`,
+  `CircularTrimRimSpec`, and `SectionPlane`;
+- `build_cone_projection_layers()`, `ConeProjectionLayers`, and
+  `ConeProjectionSheet`;
 - `compute_quadric_section()` and `section_trace_curves()`;
 - `compute_quadric_visibility()` and
   `compute_projected_curve_crossings()`;
@@ -492,6 +495,27 @@ screen basis is orthonormal, all three world axes have equal projected scale,
 and world-z is vertical on screen.  Pass `ParallelView.from_matrix(...)` to
 override it for a deliberate general parallel view.
 
+`ConeSpec(model=...)` distinguishes the finite teaching object instead of
+inferring a cap from a silhouette. `CLOSED_SINGLE` contains one lateral
+surface and one planar base; `OPEN_SINGLE` contains the lateral surface and
+one trim rim; `OPEN_DOUBLE` contains two finite open nappes, two trim rims,
+and one shared apex. The double shell is expanded once into stable component
+IDs, so updates do not replace Mobjects. `ANALYTIC_DOUBLE` is a compatibility
+support for exact section mathematics and is not directly renderable. No
+public model silently represents an infinite cone.
+
+Set `QuadricManimStyle.cone_lateral_fill_colors` and/or
+`cone_cap_fill_colors` to opt into fixed component-aware cone shading. The
+renderer-neutral projection layer keeps the cap and lateral masks separate;
+an open mouth therefore receives one translucent lateral sheet instead of a
+fake base disk. `cone_lateral_sheen_direction` and
+`cone_cap_sheen_direction` are independent because a side highlight and a
+planar-base highlight need not point the same way. All component slots are
+preallocated and included in transactional rollback. Component-aware masks
+currently require an apex-to-one-rim cone. Leave the component color options
+unset for a two-terminal frustum; opting in there raises an explicit error
+rather than approximating an unimplemented polygon union.
+
 `QuadricSectionTransition3D` is the topology-changing companion to
 `QuadricOcclusion3D`.  It consumes a `ScheduledSectionAnimation` and a
 normalized progress source, reserves two banks of curve slots once, and uses
@@ -504,11 +528,15 @@ Its cutting plane is shown and unified by default; use `show_plane=False` only
 when a scene intentionally wants the section curve without a displayed plane.
 
 Global ordering accepts a bounded set of pairwise-strictly-separated convex
-spheres, capped finite cylinders, and one-nappe cones/frusta.  Intersecting
-entities and a real cyclic surface order fail explicitly because
+spheres, capped finite cylinders, and one-nappe cones/frusta. The two stable
+components of one `OPEN_DOUBLE` may share their apex when their projected
+interiors do not overlap; a view requiring interleaved multi-sheet order fails
+explicitly. Intersecting entities and a real cyclic surface order fail because
 quadric-to-quadric surface-cell splitting is outside the current contract.
 That restriction does not apply to the supported one-quadric/one-cutting-plane
-compositor described above.  Full details and a minimal example are in
+compositor described above. It supports `OPEN_SINGLE`; a whole `OPEN_DOUBLE`
+expands to two surfaces and is therefore outside that one-surface compositor.
+Full details and a minimal example are in
 [quadric-occlusion.md](quadric-occlusion.md).
 
 ## TikZ visibility adapters

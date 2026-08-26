@@ -49,6 +49,7 @@ class BoundarySourceKind(str, Enum):
     ANALYTIC_CURVE = "analytic_curve"
     PLANE_PATCH_EDGE = "plane_patch_edge"
     SURFACE_CAP_RIM = "surface_cap_rim"
+    SURFACE_TRIM_RIM = "surface_trim_rim"
     SURFACE_GENERATOR = "surface_generator"
     SURFACE_SILHOUETTE = "surface_silhouette"
     POLYHEDRON_EDGE = "polyhedron_edge"

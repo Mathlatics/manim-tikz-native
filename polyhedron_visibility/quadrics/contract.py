@@ -14,6 +14,7 @@ silently changing the mathematical quadric.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from enum import Enum
 from math import isfinite, pi, tan
 from typing import Literal, Sequence
 
@@ -38,6 +39,21 @@ class QuadricContractError(ValueError):
 
 
 ContextInput = GeometryContext | ResolvedGeometryContext | None
+
+
+class ConeModel(str, Enum):
+    """Finite cone models accepted by the public geometry contract.
+
+    ``ANALYTIC_DOUBLE`` preserves the historical cross-apex ``ConeSpec`` used
+    by conic-section solvers.  It is deliberately not a directly renderable
+    solid.  Finite double-cone display geometry must use ``OPEN_DOUBLE`` and is
+    then expanded into two stable single-nappe shell components.
+    """
+
+    CLOSED_SINGLE = "closed_single"
+    OPEN_SINGLE = "open_single"
+    OPEN_DOUBLE = "open_double"
+    ANALYTIC_DOUBLE = "analytic_double"
 
 
 def _identity(value: object, label: str) -> str:
@@ -303,6 +319,65 @@ class PlanarCapSpec:
                 self.role,
                 False,
             ),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class CircularTrimRimSpec:
+    """A circular finite-surface boundary without a planar closing disk."""
+
+    rim_id: str
+    parent_surface_id: str
+    center: tuple[float, float, float]
+    normal: tuple[float, float, float]
+    radius: float
+    radial_axis: tuple[float, float, float] | None = None
+    role: Literal["trim_min", "trim_max"] = "trim_max"
+
+    def __post_init__(self) -> None:
+        rim_id = _identity(self.rim_id, "rim_id")
+        parent_id = _identity(self.parent_surface_id, "parent_surface_id")
+        center = _point3(self.center, "trim-rim center")
+        normal = _point3(self.normal, "trim-rim normal")
+        radial = (
+            None
+            if self.radial_axis is None
+            else _point3(self.radial_axis, "trim-rim radial_axis")
+        )
+        if self.role not in {"trim_min", "trim_max"}:
+            raise QuadricContractError(
+                "trim-rim role must be 'trim_min' or 'trim_max'"
+            )
+        frame = _frame(center, normal, radial, "trim rim")
+        object.__setattr__(self, "rim_id", rim_id)
+        object.__setattr__(self, "parent_surface_id", parent_id)
+        object.__setattr__(self, "center", center)
+        object.__setattr__(self, "normal", frame.z_axis)
+        object.__setattr__(self, "radial_axis", frame.x_axis)
+        object.__setattr__(self, "radius", _positive(self.radius, "trim-rim radius"))
+
+    @property
+    def frame(self) -> AffineFrame3D:
+        return AffineFrame3D.from_axis(
+            self.center,
+            self.normal,
+            radial_axis=self.radial_axis,
+        )
+
+    @property
+    def characteristic_points(self) -> tuple[tuple[float, float, float], ...]:
+        frame = self.frame
+        center = np.asarray(self.center, dtype=float)
+        x_axis = np.asarray(frame.x_axis, dtype=float)
+        y_axis = np.asarray(frame.y_axis, dtype=float)
+        return tuple(
+            tuple(float(item) for item in point)
+            for point in (
+                center + self.radius * x_axis,
+                center - self.radius * x_axis,
+                center + self.radius * y_axis,
+                center - self.radius * y_axis,
+            )
         )
 
 
@@ -643,7 +718,13 @@ class CylinderSpec:
 
 @dataclass(frozen=True, slots=True)
 class ConeSpec:
-    """A finite axial slice of an infinite circular double-cone."""
+    """A finite cone solid, open shell, or analytic double-cone slice.
+
+    Omitting ``model`` keeps historical construction compatible: a range on
+    one side of the apex becomes ``CLOSED_SINGLE`` while a range crossing the
+    apex becomes ``ANALYTIC_DOUBLE``.  The latter remains available to exact
+    conic-section code but is not silently treated as a renderable solid.
+    """
 
     surface_id: str
     apex: tuple[float, float, float]
@@ -651,6 +732,8 @@ class ConeSpec:
     half_angle: float
     axial_range: tuple[float, float]
     radial_axis: tuple[float, float, float] | None = None
+    model: ConeModel | str | None = None
+    component_parent_id: str | None = None
 
     def __post_init__(self) -> None:
         surface_id = _identity(self.surface_id, "surface_id")
@@ -676,12 +759,53 @@ class ConeSpec:
                 "cone half_angle must lie strictly between 0 and pi/2"
             )
         frame = _frame(apex, axis, radial, "cone")
+        axial_range = _axial_range(self.axial_range)
+        crosses_apex = axial_range[0] < 0.0 < axial_range[1]
+        if self.model is None:
+            model = (
+                ConeModel.ANALYTIC_DOUBLE
+                if crosses_apex
+                else ConeModel.CLOSED_SINGLE
+            )
+        else:
+            try:
+                model = ConeModel(self.model)
+            except (TypeError, ValueError) as exc:
+                raise QuadricContractError(
+                    "cone model must be 'closed_single', 'open_single', "
+                    "'open_double', or 'analytic_double'"
+                ) from exc
+        if model in {ConeModel.CLOSED_SINGLE, ConeModel.OPEN_SINGLE} and crosses_apex:
+            raise QuadricContractError(
+                f"cone model {model.value!r} requires one nappe; axial_range "
+                "must not cross the apex"
+            )
+        if (
+            model in {ConeModel.OPEN_DOUBLE, ConeModel.ANALYTIC_DOUBLE}
+            and not crosses_apex
+        ):
+            raise QuadricContractError(
+                f"cone model {model.value!r} requires axial_range to cross "
+                "the apex"
+            )
+        component_parent_id = (
+            None
+            if self.component_parent_id is None
+            else _identity(self.component_parent_id, "cone component_parent_id")
+        )
+        if component_parent_id is not None and model is not ConeModel.OPEN_SINGLE:
+            raise QuadricContractError(
+                "cone component_parent_id is reserved for open-double "
+                "single-nappe render components"
+            )
         object.__setattr__(self, "surface_id", surface_id)
         object.__setattr__(self, "apex", apex)
         object.__setattr__(self, "axis", frame.z_axis)
         object.__setattr__(self, "radial_axis", frame.x_axis)
         object.__setattr__(self, "half_angle", half_angle)
-        object.__setattr__(self, "axial_range", _axial_range(self.axial_range))
+        object.__setattr__(self, "axial_range", axial_range)
+        object.__setattr__(self, "model", model)
+        object.__setattr__(self, "component_parent_id", component_parent_id)
 
     @property
     def frame(self) -> AffineFrame3D:
@@ -708,7 +832,24 @@ class ConeSpec:
         return self.support_quadric
 
     @property
+    def is_open_shell(self) -> bool:
+        return self.model in {ConeModel.OPEN_SINGLE, ConeModel.OPEN_DOUBLE}
+
+    @property
+    def nappe_count(self) -> int:
+        return 2 if self.model in {
+            ConeModel.OPEN_DOUBLE,
+            ConeModel.ANALYTIC_DOUBLE,
+        } else 1
+
+    @property
+    def is_directly_renderable(self) -> bool:
+        return self.model is not ConeModel.ANALYTIC_DOUBLE
+
+    @property
     def end_caps(self) -> tuple[PlanarCapSpec, ...]:
+        if self.is_open_shell:
+            return ()
         frame = self.frame
         axis = np.asarray(frame.z_axis, dtype=float)
         apex = np.asarray(self.apex, dtype=float)
@@ -735,6 +876,67 @@ class ConeSpec:
         return tuple(result)
 
     @property
+    def trim_rims(self) -> tuple[CircularTrimRimSpec, ...]:
+        if not self.is_open_shell:
+            return ()
+        frame = self.frame
+        axis = np.asarray(frame.z_axis, dtype=float)
+        apex = np.asarray(self.apex, dtype=float)
+        result: list[CircularTrimRimSpec] = []
+        for axial, suffix, role, normal in (
+            (self.axial_range[0], "min", "trim_min", -axis),
+            (self.axial_range[1], "max", "trim_max", axis),
+        ):
+            radius = abs(axial) * self.slope
+            if radius == 0.0:
+                continue
+            result.append(
+                CircularTrimRimSpec(
+                    f"{self.surface_id}:trim:{suffix}",
+                    self.surface_id,
+                    tuple(float(item) for item in apex + axial * axis),
+                    tuple(float(item) for item in normal),
+                    radius,
+                    radial_axis=frame.x_axis,
+                    role=role,  # type: ignore[arg-type]
+                )
+            )
+        return tuple(result)
+
+    @property
+    def render_components(self) -> tuple["ConeSpec", ...]:
+        """Return stable convex components for a finite display model."""
+
+        if self.model is ConeModel.ANALYTIC_DOUBLE:
+            raise QuadricContractError(
+                "analytic_double cones are mathematical section supports only; "
+                "use model='open_double' for a finite renderable double shell"
+            )
+        if self.model is not ConeModel.OPEN_DOUBLE:
+            return (self,)
+        lower, upper = self.axial_range
+        common = {
+            "apex": self.apex,
+            "axis": self.axis,
+            "half_angle": self.half_angle,
+            "radial_axis": self.radial_axis,
+            "model": ConeModel.OPEN_SINGLE,
+            "component_parent_id": self.surface_id,
+        }
+        return (
+            ConeSpec(
+                f"{self.surface_id}:nappe:negative",
+                axial_range=(lower, 0.0),
+                **common,
+            ),
+            ConeSpec(
+                f"{self.surface_id}:nappe:positive",
+                axial_range=(0.0, upper),
+                **common,
+            ),
+        )
+
+    @property
     def characteristic_points(self) -> tuple[tuple[float, float, float], ...]:
         frame = self.frame
         apex = np.asarray(self.apex, dtype=float)
@@ -752,6 +954,10 @@ class ConeSpec:
         return tuple(tuple(float(item) for item in point) for point in result)
 
     def contains(self, point: Sequence[float], *, context: ContextInput = None) -> bool:
+        if self.is_open_shell:
+            raise QuadricContractError(
+                "an open cone shell has no filled-volume contains relation"
+            )
         value = np.asarray(_point3(point, "cone query point"), dtype=float)
         resolved = _resolve(context, self.characteristic_points)
         local = self.frame.to_local_point(value)
@@ -943,6 +1149,8 @@ class PlaneDisplayPatchSpec:
 
 
 __all__ = [
+    "CircularTrimRimSpec",
+    "ConeModel",
     "ConeSpec",
     "CylinderSpec",
     "PlanarCapSpec",

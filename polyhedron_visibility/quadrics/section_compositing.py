@@ -2403,7 +2403,11 @@ def _surface_ray_solver(
             <= upper + boundary_epsilon
         ]
         if abs(float(local_direction[2])) > angular_epsilon:
-            for axial in (lower, upper):
+            cap_axials = tuple(
+                lower if cap.role == "cap_min" else upper
+                for cap in surface.end_caps
+            )
+            for axial in cap_axials:
                 parameter = float((axial - local_point[2]) / local_direction[2])
                 radial = local_point[:2] + parameter * local_direction[:2]
                 cap_radius = radius if is_cylinder else abs(axial) * slope
@@ -2972,7 +2976,9 @@ def compute_quadric_section_compositing(
         raise QuadricSectionCompositingError(
             "finite section tangent partition unexpectedly became empty"
         )
-    if section_partition is not None:
+    if section_partition is not None and not (
+        isinstance(surface, ConeSpec) and surface.is_open_shell
+    ):
         stable_interior = np.mean(
             np.asarray(
                 tuple(
@@ -3196,7 +3202,10 @@ def compute_quadric_section_compositing(
         result: list[tuple[PlaneDepthRole, _PlanePartitionPolygon]] = []
         for candidate in between:
             role = polygon_role(candidate)
-            if role is not PlaneDepthRole.BETWEEN_SURFACE_SHEETS:
+            if role is None or (
+                not (isinstance(surface, ConeSpec) and surface.is_open_shell)
+                and role is not PlaneDepthRole.BETWEEN_SURFACE_SHEETS
+            ):
                 return None
             result.append((role, candidate))
         for candidate in exterior:
@@ -4091,7 +4100,10 @@ def compute_quadric_section_compositing(
         for index, child in enumerate(_subdivide_triangle(world)):
             visit(child, f"{path}.{index}", depth + 1)
 
-    if section_partition is None:
+    use_adaptive_open_shell_partition = (
+        isinstance(surface, ConeSpec) and surface.is_open_shell
+    )
+    if section_partition is None or use_adaptive_open_shell_partition:
         for root_index, indices in enumerate(((0, 1, 2), (0, 2, 3))):
             visit(patch_corners[list(indices)], str(root_index), 0)
     else:
