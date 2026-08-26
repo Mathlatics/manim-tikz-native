@@ -42,6 +42,11 @@ SECTION_VIEW = ParallelView.from_matrix(
         (0.5773502691896258, 0.5773502691896258, 0.5773502691896258),
     )
 )
+OPEN_SHELL_REGRESSION_FRONT_POINTS = (
+    # Opposite sides of the former false chord; both are truly in front.
+    (0.68337608, 0.21844136),
+    (0.39171439, 1.17496290),
+)
 
 
 def _capture(model: ConeModel) -> tuple[np.ndarray, QuadricOcclusion3D]:
@@ -145,10 +150,63 @@ def _capture_section(
     return pixels, controller, section_curves
 
 
+def _capture_open_shell_trim_partition() -> tuple[np.ndarray, QuadricOcclusion3D]:
+    scene = Scene()
+    scene.camera.background_color = "#101820"
+    cone = ConeSpec(
+        "pixel-open-shell-trim-cone",
+        (0.0, 0.0, -2.4),
+        (0.0, 0.0, 1.0),
+        pi / 6.0,
+        (0.0, 4.0),
+        radial_axis=(1.0, 0.0, 0.0),
+        model=ConeModel.OPEN_SINGLE,
+    )
+    normal = np.asarray((0.82, 0.0, 1.0), dtype=float)
+    normal /= np.linalg.norm(normal)
+    plane = SectionPlane(
+        "pixel-open-shell-trim-plane",
+        tuple(np.asarray((0.0, 0.0, -0.35)) + 0.48 * normal),
+        (0.82, 0.0, 1.0),
+        u_axis=(0.0, 1.0, 0.0),
+    )
+    controller = QuadricOcclusion3D(
+        scene,
+        surfaces=(cone,),
+        curves=(),
+        projection=SECTION_VIEW,
+        paint_policy=QuadricPaintPolicy.DEPTH_AWARE_DIAGRAMMATIC,
+        boundary_visibility_mode="unified",
+        include_surface_boundaries=False,
+        section_plane=plane,
+        max_chord_error=0.015,
+        style=QuadricManimStyle(
+            surface_fill_color="#315A8A",
+            surface_fill_opacity=1.0,
+            surface_stroke_opacity=0.0,
+            cone_lateral_fill_colors=None,
+            cone_cap_fill_colors=None,
+            section_plane_fill_color="#43D9C0",
+            section_plane_fill_opacity=0.7,
+            section_plane_stroke_opacity=0.0,
+        ),
+    ).attach()
+    scene.camera.reset()
+    scene.camera.capture_mobjects(scene.mobjects)
+    pixels = scene.camera.pixel_array[:, :, :3].astype(float).copy()
+    return pixels, controller
+
+
 def _world_to_pixel(point: object) -> tuple[int, int]:
     screen = SECTION_VIEW.matrix[:2] @ np.asarray(point, dtype=float)
     column = int(round((screen[0] / float(config.frame_width) + 0.5) * (WIDTH - 1)))
     row = int(round((0.5 - screen[1] / float(config.frame_height)) * (HEIGHT - 1)))
+    return row, column
+
+
+def _screen_to_pixel(point: tuple[float, float]) -> tuple[int, int]:
+    column = int(round((point[0] / float(config.frame_width) + 0.5) * (WIDTH - 1)))
+    row = int(round((0.5 - point[1] / float(config.frame_height)) * (HEIGHT - 1)))
     return row, column
 
 
@@ -332,6 +390,36 @@ class ConeModelCairoTests(unittest.TestCase):
             finally:
                 for controller in reversed(controllers):
                     controller.restore()
+
+    def test_open_shell_trim_rim_removes_the_false_chord_fill_band(self) -> None:
+        with tempconfig(
+            {
+                "renderer": "cairo",
+                "pixel_width": WIDTH,
+                "pixel_height": HEIGHT,
+                "frame_rate": 8,
+                "write_to_movie": False,
+                "save_last_frame": False,
+                "disable_caching": True,
+            }
+        ):
+            pixels, controller = _capture_open_shell_trim_partition()
+            try:
+                samples = []
+                for point in OPEN_SHELL_REGRESSION_FRONT_POINTS:
+                    row, column = _screen_to_pixel(point)
+                    samples.append(pixels[row, column])
+
+                # Both points are geometrically in front of the open shell.
+                # The old false chord put the first point below the front
+                # surface and produced the dark band from the reported image.
+                self.assertGreater(min(sample[1] for sample in samples), 160.0)
+                self.assertLess(
+                    float(np.max(np.abs(samples[0] - samples[1]))),
+                    8.0,
+                )
+            finally:
+                controller.restore()
 
 
 if __name__ == "__main__":

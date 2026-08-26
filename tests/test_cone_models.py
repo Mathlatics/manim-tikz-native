@@ -25,6 +25,7 @@ from polyhedron_visibility.quadrics.manim import (
     QuadricManimStyle,
     QuadricOcclusion3D,
 )
+from polyhedron_visibility.quadrics.plane_patch import fit_plane_display_patch
 from polyhedron_visibility.quadrics.global_occlusion import (
     GlobalQuadricOcclusionError,
     compute_global_quadric_frame,
@@ -37,6 +38,7 @@ from polyhedron_visibility.quadrics.projection import (
 from polyhedron_visibility.quadrics.section_compositing import (
     PlaneDepthRole,
     compute_quadric_section_compositing,
+    quadric_plane_fragment_contours,
 )
 from polyhedron_visibility.quadrics.surface_boundaries import (
     build_surface_boundary_sources,
@@ -49,6 +51,13 @@ from polyhedron_visibility.quadrics.visibility import (
 IDENTITY_VIEW = ParallelView.from_matrix(np.eye(3))
 SIDE_VIEW = ParallelView.from_matrix(
     ((1.0, 0.0, 0.0), (0.0, 0.0, 1.0), (0.0, 1.0, 0.0))
+)
+OBLIQUE_VIEW = ParallelView.from_matrix(
+    (
+        (-0.7071067811865476, 0.7071067811865476, 0.0),
+        (-0.4082482904638631, -0.4082482904638631, 0.8164965809277261),
+        (0.5773502691896258, 0.5773502691896258, 0.5773502691896258),
+    )
 )
 
 
@@ -186,6 +195,75 @@ class ConeProjectionAndSectionTests(unittest.TestCase):
             PlaneDepthRole.IN_FRONT_OF_SURFACE,
             roles_by_model[ConeModel.OPEN_SINGLE],
         )
+
+    def test_open_shell_plane_roles_follow_trim_rim_not_a_false_chord(self) -> None:
+        cone = ConeSpec(
+            "open-shell-trim-regression",
+            (0.0, 0.0, -2.4),
+            (0.0, 0.0, 1.0),
+            pi / 6.0,
+            (0.0, 4.0),
+            radial_axis=(1.0, 0.0, 0.0),
+            model=ConeModel.OPEN_SINGLE,
+        )
+        normal = np.asarray((0.82, 0.0, 1.0), dtype=float)
+        normal /= np.linalg.norm(normal)
+        plane = SectionPlane(
+            "open-shell-trim-cut",
+            tuple(np.asarray((0.0, 0.0, -0.35)) + 0.48 * normal),
+            (0.82, 0.0, 1.0),
+            u_axis=(0.0, 1.0, 0.0),
+        )
+        patch = fit_plane_display_patch(
+            "open-shell-trim-patch",
+            plane,
+            (cone,),
+            margin_ratio=0.08,
+        ).patch
+        proxy = build_opaque_projection_proxy(
+            cone,
+            OBLIQUE_VIEW,
+            max_chord_error=0.008,
+            max_segments=768,
+        )
+        base = compute_quadric_compositing(
+            compute_quadric_visibility((), (cone,), OBLIQUE_VIEW),
+            (proxy,),
+        )
+        frame = compute_quadric_section_compositing(
+            base,
+            cone,
+            plane,
+            patch,
+            OBLIQUE_VIEW,
+            max_screen_error=0.08,
+        )
+        contours = quadric_plane_fragment_contours(frame)
+
+        def contour_edges(role: PlaneDepthRole):
+            result = {}
+            for contour in contours[role]:
+                points = tuple(tuple(float(value) for value in point) for point in contour)
+                for start, end in zip(points, (*points[1:], points[0])):
+                    key = tuple(sorted((start, end)))
+                    result[key] = float(
+                        np.linalg.norm(np.asarray(end) - np.asarray(start))
+                    )
+            return result
+
+        between_edges = contour_edges(PlaneDepthRole.BETWEEN_SURFACE_SHEETS)
+        front_edges = contour_edges(PlaneDepthRole.IN_FRONT_OF_SURFACE)
+        shared_lengths = tuple(
+            between_edges[key] for key in between_edges.keys() & front_edges.keys()
+        )
+        self.assertTrue(shared_lengths)
+
+        # The former regression emitted one 3.65-unit straight chord through
+        # the open mouth.  The real boundary is now the sampled trim-rim arc;
+        # every shared segment remains one local piece of that arc.
+        self.assertLess(max(shared_lengths), 0.32)
+        self.assertLess(len(frame.plane_fragments), 8192)
+        self.assertLess(frame.ray_classification_count, 65536)
 
 
 class ConeBoundaryAndBindingTests(unittest.TestCase):
