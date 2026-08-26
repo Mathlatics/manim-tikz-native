@@ -1177,6 +1177,37 @@ def compute_quadric_boundary_compositing(
         )
         for farther in far:
             for nearer in near:
+                if (
+                    policy is QuadricPaintPolicy.DIAGRAMMATIC
+                    and farther.visibility_kind is not nearer.visibility_kind
+                    and BoundarySourceKind.PLANE_PATCH_EDGE
+                    in {
+                        source_map[farther.source_id].source_kind,
+                        source_map[nearer.source_id].source_kind,
+                    }
+                ):
+                    # A diagrammatic hidden stroke crossing the finite plane
+                    # outline is an explicit teaching overlay.  Keep it above
+                    # that outline even when objective crossing depth says the
+                    # hidden source is farther; retaining the physical edge can
+                    # form a cycle with the plane's fill -> edge -> outline
+                    # bracket.  Crossings between ordinary entity boundaries
+                    # retain their certified far-to-near order.
+                    visible = (
+                        farther
+                        if farther.visibility_kind is VisibilityKind.VISIBLE
+                        else nearer
+                    )
+                    hidden = nearer if visible is farther else farther
+                    relations.append(
+                        QuadricPaintRelation(
+                            visible.item_id,
+                            hidden.item_id,
+                            "diagrammatic_hidden_boundary_crossing_overlay:"
+                            f"{crossing.crossing_id}",
+                        )
+                    )
+                    continue
                 relations.append(
                     QuadricPaintRelation(
                         farther.item_id,

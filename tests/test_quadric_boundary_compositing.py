@@ -34,6 +34,7 @@ from polyhedron_visibility.quadrics.contract import (
     SphereSpec,
 )
 from polyhedron_visibility.quadrics.curve_intersections import (
+    ProjectedCurveCrossing,
     compute_projected_curve_crossings,
 )
 from polyhedron_visibility.quadrics.curves import SegmentCurve
@@ -535,6 +536,116 @@ class QuadricBoundaryContractTests(unittest.TestCase):
                 depth_aware.draw_order.index(depth_behind.item_id),
                 depth_aware.draw_order.index(plane_item),
             )
+
+    def test_diagrammatic_hidden_dash_overrides_crossing_depth_order(self) -> None:
+        hidden_curve = SegmentCurve(
+            "a-hidden",
+            (-1.0, 0.0, 0.0),
+            (1.0, 0.0, 0.0),
+        )
+        hidden_source = curve_boundary_source(hidden_curve)
+        plane = SectionPlane(
+            "crossing-plane",
+            (0.0, 0.0, 1.0),
+            (0.0, 0.0, 1.0),
+            u_axis=(1.0, 0.0, 0.0),
+        )
+        patch = PlaneDisplayPatchSpec(
+            "crossing-patch",
+            plane.plane_id,
+            2.0,
+            1.5,
+        )
+        plane_source = plane_outline_sources(plane, patch)[0]
+        self.assertLess(hidden_source.source_id, plane_source.source_id)
+        anchors = BoundarySectionAnchors(
+            "plane-behind",
+            "outline-behind",
+            "surface-back",
+            "plane-outside",
+            "outline-outside",
+            "plane-between",
+            "outline-between",
+            "surface-front",
+            "plane-front",
+            "outline-front",
+        )
+        parent = tuple(
+            getattr(anchors, name) for name in anchors.__dataclass_fields__
+        )
+        frame = compute_quadric_boundary_compositing(
+            (hidden_source, plane_source),
+            {
+                hidden_source.source_id: (
+                    QuadricBoundaryVisibilitySpan(
+                        hidden_curve.domain,
+                        VisibilityKind.VISIBLE,
+                    ),
+                ),
+                plane_source.source_id: (
+                    QuadricBoundaryVisibilitySpan(
+                        plane_source.curve.domain,
+                        VisibilityKind.VISIBLE,
+                        depth_role="in_front_of_surface",
+                    ),
+                ),
+            },
+            paint_policy=QuadricPaintPolicy.DIAGRAMMATIC,
+            parent_item_ids=parent,
+            parent_relations=tuple(
+                QuadricPaintRelation(left, right, "parent")
+                for left, right in zip(parent, parent[1:])
+            ),
+            surface_item_by_id={"surface": anchors.surface_front},
+            crossings=(
+                ProjectedCurveCrossing(
+                    "crossing:a-hidden:plane-edge:0",
+                    hidden_source.source_id,
+                    plane_source.source_id,
+                    hidden_curve.domain.midpoint,
+                    plane_source.curve.domain.midpoint,
+                    (0.0, 0.0),
+                    0.0,
+                    1.0,
+                    hidden_source.source_id,
+                    plane_source.source_id,
+                ),
+            ),
+            section_anchors=anchors,
+            section_spans_by_source={
+                hidden_source.source_id: (
+                    QuadricBoundarySectionSpan(
+                        hidden_curve.domain,
+                        BoundaryPlaneRelation.BOUNDARY_BEHIND_PLANE,
+                        ("in_front_of_surface",),
+                    ),
+                )
+            },
+        )
+        hidden_fragments = tuple(
+            item
+            for item in frame.fragments
+            if item.source_id == hidden_source.source_id and item.painted
+        )
+        plane_fragments = tuple(
+            item
+            for item in frame.fragments
+            if item.source_id == plane_source.source_id and item.painted
+        )
+        self.assertTrue(hidden_fragments and plane_fragments)
+        self.assertTrue(
+            all(
+                item.visibility_kind is VisibilityKind.HIDDEN
+                and item.render_intent is BoundaryRenderIntent.DASHED
+                for item in hidden_fragments
+            )
+        )
+        for plane_fragment in plane_fragments:
+            for hidden_fragment in hidden_fragments:
+                self.assertLess(
+                    frame.draw_order.index(plane_fragment.item_id),
+                    frame.draw_order.index(hidden_fragment.item_id),
+                )
 
     def test_surface_item_mapping_must_reference_parent_items(self) -> None:
         curve = SegmentCurve(

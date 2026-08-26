@@ -557,6 +557,10 @@ The fragment contract records the original surface result separately from the
 effective result, and names plane painter items without pretending that the
 plane is a quadratic surface.
 
+At a projected crossing with the finite plane outline, diagrammatic hidden ink
+keeps its documented top-overlay precedence. Crossings between ordinary entity
+boundaries continue to use their certified far-to-near depth order.
+
 Every other semantic boundary is also split where it crosses a plane-role
 contour. A midpoint labels only an already partitioned open interval; three
 interior probes must agree or preparation fails closed. Curves analytically
