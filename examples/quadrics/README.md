@@ -18,6 +18,9 @@ manim -pql examples/quadrics/quadric_occlusion_demo.py \
 
 manim -pql examples/quadrics/unified_boundary_visibility_demo.py \
   UnifiedBoundaryVisibilityComparison
+
+manim -pql examples/quadrics/section_plane_cone_boundary_demo.py \
+  SectionPlaneConeBoundaryDemo
 ```
 
 - `MovingSphereSectionDemo` recomputes a moving circular section and its
@@ -41,6 +44,10 @@ manim -pql examples/quadrics/unified_boundary_visibility_demo.py \
   includes cap rims, true silhouettes, the section outline, and a red teaching
   generator whose `style_id` resolves through the fixed boundary-style
   registry.
+- `SectionPlaneConeBoundaryDemo` compares top-overlay and depth-aware hidden
+  ink for both the true cone silhouette and the finite base rim. It keeps the
+  tessellated surface stroke transparent while assigning explicit visible and
+  hidden styles to both semantic boundary kinds.
 
 `QuadricOcclusion3D` remains the fixed-topology controller for ordinary scenes.
 For a topology-changing rotating-plane section, first build the analytic

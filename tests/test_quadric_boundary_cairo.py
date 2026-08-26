@@ -524,6 +524,167 @@ class UnifiedBoundaryCairoTests(unittest.TestCase):
                     finally:
                         controller.restore()
 
+    def test_custom_cap_rim_style_draws_plane_occluded_dashes_when_mesh_hidden(
+        self,
+    ) -> None:
+        with tempconfig(
+            {
+                "renderer": "cairo",
+                "pixel_width": WIDTH,
+                "pixel_height": HEIGHT,
+                "frame_rate": 8,
+                "write_to_movie": False,
+                "save_last_frame": False,
+                "disable_caching": True,
+            }
+        ):
+            normal = np.asarray((0.82, 0.0, 1.0), dtype=float)
+            normal /= np.linalg.norm(normal)
+            plane_point = (
+                np.asarray((0.0, 0.0, -0.35), dtype=float)
+                + 0.48 * normal
+            )
+            cone = ConeSpec(
+                "styled-cap-cone",
+                (0.0, 0.0, -2.4),
+                (0.0, 0.0, 1.0),
+                pi / 6.0,
+                (0.0, 4.0),
+                radial_axis=(1.0, 0.0, 0.0),
+            )
+            plane = SectionPlane(
+                "styled-cap-plane",
+                tuple(float(value) for value in plane_point),
+                (0.82, 0.0, 1.0),
+                u_axis=(0.0, 1.0, 0.0),
+            )
+            rim_style = QuadricBoundaryStyle(
+                visible_color="#5CE1E6",
+                visible_width=7.0,
+                visible_opacity=1.0,
+                hidden_color="#FF8BD1",
+                hidden_width=7.0,
+                hidden_opacity=1.0,
+                dash_length=0.14,
+                dash_gap=0.10,
+            )
+            scene = Scene()
+            scene.camera.background_color = "#101820"
+            controller = QuadricOcclusion3D(
+                scene,
+                surfaces=(cone,),
+                curves=(),
+                projection=VIEW,
+                paint_policy=QuadricPaintPolicy.DIAGRAMMATIC,
+                style=QuadricManimStyle(
+                    surface_fill_color="#315A8A",
+                    surface_fill_opacity=0.78,
+                    surface_stroke_opacity=0.0,
+                    section_plane_fill_color="#43D9C0",
+                    section_plane_fill_opacity=0.34,
+                    section_plane_stroke_opacity=0.0,
+                    dash_length=0.14,
+                    dash_gap=0.10,
+                ),
+                boundary_styles={"style:surface-boundary": rim_style},
+                limits=_limits(),
+                max_chord_error=0.008,
+                section_plane=plane,
+                boundary_visibility_mode="unified",
+                include_surface_boundaries=True,
+            ).attach()
+            try:
+                frame = controller.last_boundary_frame
+                assert frame is not None
+                rim_source = next(
+                    item
+                    for item in frame.sources
+                    if item.source_kind.value == "surface_cap_rim"
+                )
+                fragments = [
+                    item
+                    for item in frame.fragments
+                    if item.source_id == rim_source.source_id
+                ]
+                plane_hidden = [
+                    item
+                    for item in fragments
+                    if item.plane_occluded
+                    and item.render_intent is BoundaryRenderIntent.DASHED
+                    and item.painted
+                ]
+                visible = [
+                    item
+                    for item in fragments
+                    if not item.plane_occluded
+                    and item.effective_visibility_kind
+                    is VisibilityKind.VISIBLE
+                    and item.render_intent is BoundaryRenderIntent.SOLID
+                    and item.painted
+                ]
+                self.assertTrue(plane_hidden and visible)
+                self.assertTrue(
+                    all(
+                        item.surface_visibility_kind is VisibilityKind.VISIBLE
+                        and item.effective_visibility_kind
+                        is VisibilityKind.HIDDEN
+                        for item in plane_hidden
+                    )
+                )
+                self.assertEqual(
+                    controller.boundary_styles["style:surface-boundary"],
+                    rim_style,
+                )
+
+                hidden = max(
+                    plane_hidden,
+                    key=lambda item: item.interval.end - item.interval.start,
+                )
+                solid = max(
+                    visible,
+                    key=lambda item: item.interval.end - item.interval.start,
+                )
+                hidden_slot = controller._curve_slots[
+                    hidden.source_id
+                ].fragments[
+                    controller._fragment_slot_maps[hidden.source_id][
+                        hidden.item_id
+                    ]
+                ]
+                solid_slot = controller._curve_slots[
+                    solid.source_id
+                ].fragments[
+                    controller._fragment_slot_maps[solid.source_id][
+                        solid.item_id
+                    ]
+                ]
+                active_dashes = [
+                    item for item in hidden_slot.dashes if len(item.points)
+                ]
+                self.assertTrue(active_dashes)
+                dash = active_dashes[len(active_dashes) // 2]
+                dash_point = dash.points[len(dash.points) // 2]
+                solid_point = solid_slot.solid.points[
+                    len(solid_slot.solid.points) // 2
+                ]
+
+                pixels = _capture_pixels(scene)
+                for point, target in (
+                    (solid_point, _hex_rgb("#5CE1E6")),
+                    (dash_point, _hex_rgb("#FF8BD1")),
+                ):
+                    _row, _column, rgb = _nearest_ink_pixel(
+                        pixels,
+                        point,
+                        target,
+                    )
+                    self.assertLess(
+                        float(np.linalg.norm(rgb - target)),
+                        75.0,
+                    )
+            finally:
+                controller.restore()
+
     def test_second_surface_physically_occludes_true_silhouette_pixels(
         self,
     ) -> None:
