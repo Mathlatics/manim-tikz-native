@@ -223,6 +223,19 @@ class QuadricSectionV1ContractTests(unittest.TestCase):
             self.contract["contract_id"],
         )
         self.assertEqual(self.cairo_baseline["renderer"], "cairo")
+        release_cairo = self.release_manifest["cairo_baseline"]
+        self.assertEqual(
+            release_cairo["path"],
+            str(CAIRO_BASELINE_PATH.relative_to(ROOT)),
+        )
+        self.assertEqual(
+            release_cairo["manim_community"],
+            self.cairo_baseline["reference_environment"]["manim_community"],
+        )
+        self.assertEqual(
+            release_cairo["comparison_policy"],
+            self.cairo_baseline["reference_environment"]["comparison_policy"],
+        )
         evidence_tests = {record["test"] for record in evidence.values()}
         for fixture in self.cairo_baseline["fixtures"].values():
             self.assertIn(fixture["test"], evidence_tests)

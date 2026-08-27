@@ -4,6 +4,9 @@
   "renderer": "cairo",
   "reference_environment": {
     "manim_community": "0.20.1",
+    "platform": "macOS 15.8 arm64",
+    "pycairo": "1.29.0",
+    "cairo_library": "1.18.4",
     "comparison_policy": "semantic masks and stable interior probes; no platform-specific whole-image hash"
   },
   "profiles": {
