@@ -1,0 +1,180 @@
+{
+  "schema": "manim-quadric-section-support-contract/v1",
+  "contract_id": "quadric-section-v1",
+  "frozen_on": "2026-08-27",
+  "scope": "Finite cone sections and automatic occlusion under parallel projection",
+  "components": {
+    "quadric_geometry": {
+      "contract_revision": "tikz-native-contract:quadric_geometry/v1"
+    },
+    "quadric_visibility": {
+      "contract_revision": "tikz-native-contract:quadric_visibility/v2"
+    },
+    "quadric_manim": {
+      "contract_revision": "tikz-native-contract:quadric_manim/v1"
+    }
+  },
+  "layers": {
+    "renderer_neutral": {
+      "projection": "parallel",
+      "surface_limit_for_local_section_compositor": 1,
+      "cutting_plane_limit": 1,
+      "cutting_plane_requires_display_area": true
+    },
+    "manim_binding": {
+      "renderer": "cairo",
+      "recommended_authoring_facade": "QuadricSection3D",
+      "fixed_mobject_identity": true,
+      "fixed_capacity": true,
+      "transactional_rollback": true
+    }
+  },
+  "evidence_contract": {
+    "supported_renderer_neutral_rows_require": "renderer_neutral_pass",
+    "supported_cairo_rows_require": "manim_or_cairo_pass",
+    "unsupported_explicit_failure_rows_require": "explicit_failure"
+  },
+  "support_matrix": [
+    {
+      "id": "closed_finite_single_cone",
+      "status": "supported",
+      "renderer_neutral": true,
+      "cairo_binding": true,
+      "evidence_ids": [
+        "closed_open_model_contract",
+        "finite_boundary_closed_open",
+        "closed_open_cairo_pixels"
+      ]
+    },
+    {
+      "id": "open_finite_single_cone_shell",
+      "status": "supported",
+      "renderer_neutral": true,
+      "cairo_binding": true,
+      "evidence_ids": [
+        "closed_open_model_contract",
+        "finite_boundary_closed_open",
+        "open_shell_offset_geometry",
+        "open_shell_offset_cairo"
+      ]
+    },
+    {
+      "id": "finite_cone_frustum_section_and_occlusion",
+      "status": "supported",
+      "renderer_neutral": true,
+      "cairo_binding": true,
+      "evidence_ids": [
+        "frustum_side_geometry",
+        "frustum_cairo_section"
+      ]
+    },
+    {
+      "id": "frustum_two_cap_component_shading",
+      "status": "unsupported_explicit_failure",
+      "renderer_neutral": false,
+      "cairo_binding": false,
+      "evidence_ids": [
+        "frustum_two_cap_shading_failure"
+      ]
+    },
+    {
+      "id": "open_double_display_and_general_occlusion",
+      "status": "supported_with_constraints",
+      "renderer_neutral": true,
+      "cairo_binding": true,
+      "evidence_ids": [
+        "open_double_geometry",
+        "open_double_manim_binding"
+      ]
+    },
+    {
+      "id": "open_double_unified_section_plane_compositing",
+      "status": "unsupported_explicit_failure",
+      "renderer_neutral": false,
+      "cairo_binding": false,
+      "evidence_ids": [
+        "open_double_section_failure"
+      ]
+    },
+    {
+      "id": "one_surface_one_cutting_plane",
+      "status": "supported",
+      "renderer_neutral": true,
+      "cairo_binding": true,
+      "evidence_ids": [
+        "single_surface_plane_geometry",
+        "single_surface_plane_cairo",
+        "scheduled_facade_complete_boundary"
+      ]
+    },
+    {
+      "id": "multiple_intersecting_surfaces_one_cutting_plane",
+      "status": "unsupported_explicit_failure",
+      "renderer_neutral": false,
+      "cairo_binding": false,
+      "evidence_ids": [
+        "multiple_surface_section_failure"
+      ]
+    },
+    {
+      "id": "parallel_projection",
+      "status": "supported",
+      "renderer_neutral": true,
+      "cairo_binding": true,
+      "evidence_ids": [
+        "parallel_view_geometry",
+        "parallel_view_cairo",
+        "near_side_rank_switch_binding",
+        "near_side_visibility_factorization"
+      ]
+    },
+    {
+      "id": "perspective_projection",
+      "status": "unsupported_explicit_failure",
+      "renderer_neutral": false,
+      "cairo_binding": false,
+      "evidence_ids": [
+        "perspective_projection_failure"
+      ]
+    },
+    {
+      "id": "manim_cairo",
+      "status": "supported",
+      "renderer_neutral": false,
+      "cairo_binding": true,
+      "evidence_ids": [
+        "cairo_production_pixels",
+        "scheduled_facade_cairo_animation"
+      ]
+    },
+    {
+      "id": "manim_opengl",
+      "status": "unsupported_explicit_failure",
+      "renderer_neutral": false,
+      "cairo_binding": false,
+      "evidence_ids": [
+        "opengl_binding_failure"
+      ]
+    },
+    {
+      "id": "cutting_plane_with_two_dimensional_projection",
+      "status": "supported",
+      "renderer_neutral": true,
+      "cairo_binding": true,
+      "evidence_ids": [
+        "single_surface_plane_geometry",
+        "single_surface_plane_cairo"
+      ]
+    },
+    {
+      "id": "edge_on_cutting_plane",
+      "status": "unsupported_explicit_failure",
+      "renderer_neutral": false,
+      "cairo_binding": false,
+      "evidence_ids": [
+        "edge_on_plane_failure",
+        "edge_on_animation_rollback"
+      ]
+    }
+  ]
+}

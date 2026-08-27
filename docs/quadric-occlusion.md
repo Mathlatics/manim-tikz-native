@@ -6,6 +6,13 @@ feature is intentionally a sibling of the existing closed-polyhedron,
 open-face, and convex-section solvers.  It reuses their renderer-neutral
 kernel layers, but it does not add curved special cases to those models.
 
+The release boundary for finite-cone sections is frozen separately in the
+[finite-cone section v1 support contract](quadric-section-v1-contract.md).
+That semantic matrix and its versioned
+[release manifest](../release/quadric-section-v1-release-manifest.json) are
+authoritative when a broad description in this implementation guide could be
+read as supporting more than the tested v1 combinations.
+
 ## Scope
 
 The public contract targets finite, opaque teaching solids built from:
@@ -27,6 +34,15 @@ stroke style.
 
 Perspective projection, general free-form surfaces, reflective or refractive
 materials, and physically accurate transparency are outside this contract.
+
+The local cutting-plane compositor has a narrower v1 release boundary: one
+finite convex surface, one cutting plane whose screen projection has
+two-dimensional area, and parallel projection. Open double shells expand into
+two stable single-nappe surfaces, so their general display and occlusion are
+supported while their unified local cutting-plane composition is not. Multiple
+strictly disjoint quadrics may still use the global occlusion graph; multiple
+intersecting quadrics do not gain a shared local plane arrangement. The Manim
+production binding explicitly accepts Cairo and rejects OpenGL.
 
 ## Layering
 
