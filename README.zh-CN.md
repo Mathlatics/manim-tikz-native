@@ -192,7 +192,17 @@ manim -pql examples/quadrics/quadric_occlusion_demo.py \
 # 对比封闭单锥、张口单锥壳、张口双锥壳，以及平面与开口的交互
 manim -pql examples/quadrics/cone_model_comparison_demo.py \
   ConeModelComparisonDemo ConeModelPlaneComparisonDemo
+
+# 五个带教学停顿、参数说明和教师提示的高中圆锥截口场景
+manim -ql --fps 8 \
+  examples/classroom_cone_sections/classroom_cone_sections.py \
+  ConicFamilyTransitionLesson ClosedVsOpenConeLesson \
+  HiddenCurvePoliciesLesson ProjectionDegenerationLesson \
+  CapChordTopologyLesson
 ```
+
+课堂场景的数学结论、逐场景命令和 15 张审查关键帧见
+[高中课堂圆锥截口场景库](examples/classroom_cone_sections/README.md)。
 
 其中往返示例会让高亮复制体完成分离、同步旋转，再重新回到与原形状完全重合的
 位置。反向过程仍使用同一套语义交接计算，因此末帧重新只显示一份形状，不会出现
@@ -213,6 +223,7 @@ SVG 或位图。这样做的目的，是保证动画中的每个对象都可读�
 - [二次曲面与圆锥曲线遮挡](docs/quadric-occlusion.md)
 - [圆锥截口 v1 支持契约](docs/quadric-section-v1-contract.md)
 - [快速 CI 与扩展 Cairo 验收](docs/extended-quadric-ci.md)
+- [高中课堂圆锥截口场景库](examples/classroom_cone_sections/README.md)
 - [支持的 TikZ 子集](docs/supported-tikz.md)
 - [架构说明](docs/architecture.md)
 

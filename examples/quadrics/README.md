@@ -29,6 +29,12 @@ manim -pql examples/quadrics/extended_acceptance_demo.py \
   ClosedOpenComparisonAcceptance SectionTopologyAcceptance \
   CurvePolicyComparisonAcceptance SideViewTrimRimAcceptance \
   CapChordActivationAcceptance
+
+manim -ql --fps 8 \
+  examples/classroom_cone_sections/classroom_cone_sections.py \
+  ConicFamilyTransitionLesson ClosedVsOpenConeLesson \
+  HiddenCurvePoliciesLesson ProjectionDegenerationLesson \
+  CapChordTopologyLesson
 ```
 
 - `MovingSphereSectionDemo` recomputes a moving circular section and its
@@ -70,6 +76,10 @@ manim -pql examples/quadrics/extended_acceptance_demo.py \
   evidence bundle. Their shared builders also produce the 960x540 semantic
   keyframes, so the videos and JSON painter evidence consume the same public
   controller path.
+- The five classroom lessons use those same production controllers but add
+  paced teaching stops, parameter notes, mathematical conclusions, teacher
+  prompts, and a checked-in 15-frame Cairo gallery.  See the
+  [classroom guide](../classroom_cone_sections/README.md).
 
 `QuadricOcclusion3D` remains the fixed-topology controller for ordinary scenes.
 For a topology-changing rotating-plane section, first build the analytic
