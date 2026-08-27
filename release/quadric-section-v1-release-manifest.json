@@ -1,20 +1,20 @@
 {
   "schema": "manim-quadric-section-release-manifest/v1",
-  "release_id": "quadric-section-v1-baseline-2026-08-27",
+  "release_id": "quadric-section-v1-parameter-sweep-2026-08-27",
   "contract_id": "quadric-section-v1",
-  "implementation_base_commit": "b130fa6cdd6fc6942072c91d407031c7e53a2a14",
+  "implementation_base_commit": "c22fca8d77ba986415f2d9d1e34e857960f3bba6",
   "components": {
     "quadric_geometry": {
       "contract_revision": "tikz-native-contract:quadric_geometry/v1",
-      "render_revision": "source-sha256:8ea6f776d5e174da98717275cb9b0682131242a42a0271a62af6a8ceb96f1748"
+      "render_revision": "source-sha256:eac9106efeafd1696fb32fdafcddcef59cd6d8a924d994d905687083aab2afd4"
     },
     "quadric_visibility": {
       "contract_revision": "tikz-native-contract:quadric_visibility/v2",
-      "render_revision": "source-sha256:6a782852be7ee63354884fd0c91fc0a6cb1a25eb76d64cd6cd4ea682ec7334c8"
+      "render_revision": "source-sha256:821943faf4ae7e93beca0a71005e1857cde3661030f3c19a7d97c92c4a622f68"
     },
     "quadric_manim": {
       "contract_revision": "tikz-native-contract:quadric_manim/v1",
-      "render_revision": "source-sha256:9f55f2f2e96d1e6027e30507df963fd9a82c70f646357f8f4d3f8cad544b415c"
+      "render_revision": "source-sha256:32f94c3835d9ead9bdbc0ad5bdc44decefb6d08ee01b1acfde511de04bf8f7a7"
     }
   },
   "build_artifacts": {
@@ -24,11 +24,11 @@
     "twine_check": "twine 7.0.0 passed",
     "wheel": {
       "filename": "manim_tikz_native-0.1.0-py3-none-any.whl",
-      "sha256": "d95ed173da8b3850967ea39325c8e9ee496b0bba5fb3b89006c31b48865537d9"
+      "sha256": "fb6bb34bd032b26e4bec4e79fee7b803711080a59fc48bd94d58b54dfe9722bd"
     },
     "sdist": {
       "filename": "manim_tikz_native-0.1.0.tar.gz",
-      "sha256": "06108b6e36315f0c3fe197d813072ccc7b5c672bb4783c7357a97c60763537bd",
+      "sha256": "38b8814b697b3ae017a76051892bebc09e6f436760b663d6955c44a3fe61e3a8",
       "normalization": "sorted regular files and links; USTAR; uid/gid 0; root owner/group; SOURCE_DATE_EPOCH mtime; gzip -n"
     }
   },

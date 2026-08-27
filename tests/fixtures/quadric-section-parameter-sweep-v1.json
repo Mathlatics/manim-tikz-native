@@ -1,0 +1,118 @@
+{
+  "schema": "manim-quadric-section-parameter-sweep/v1",
+  "coneHalfAngleDegrees": 30.0,
+  "surfaces": [
+    {"id": "closed_cone", "model": "closed_single", "axialRange": [0.0, 3.0]},
+    {"id": "open_cone", "model": "open_single", "axialRange": [0.0, 3.0]},
+    {"id": "closed_frustum", "model": "closed_single", "axialRange": [1.0, 3.0]},
+    {"id": "open_frustum", "model": "open_single", "axialRange": [1.0, 3.0]}
+  ],
+  "planeNormalAnglesDegrees": [0.0, 45.0, 59.5, 60.0, 60.5, 89.5, 90.0],
+  "planePositions": [
+    {"id": "below_entity", "height": -0.25},
+    {"id": "through_apex", "height": 0.0},
+    {"id": "near_apex", "height": 0.02},
+    {"id": "lower_terminal", "height": 1.0},
+    {"id": "side_interior", "height": 1.5},
+    {"id": "near_upper_terminal", "height": 2.95},
+    {"id": "upper_terminal", "height": 3.0},
+    {"id": "above_entity", "height": 3.25},
+    {"id": "oblique_terminal_tangent", "height": 4.732050807568877}
+  ],
+  "views": [
+    {
+      "id": "isometric",
+      "matrix": [
+        [-0.7071067811865475, 0.7071067811865475, 0.0],
+        [-0.4082482904638631, -0.4082482904638631, 0.8164965809277261],
+        [0.5773502691896258, 0.5773502691896258, 0.5773502691896258]
+      ]
+    },
+    {
+      "id": "cabinet",
+      "matrix": [
+        [1.0, 0.0, 0.3535533905932738],
+        [0.0, 1.0, 0.3535533905932738],
+        [-0.31622776601683794, -0.31622776601683794, 0.8944271909999159]
+      ]
+    },
+    {"id": "side", "direction": [0.0, -1.0, 0.0], "up": [0.0, 0.0, 1.0]},
+    {"id": "near_side", "direction": [0.02, -1.0, 0.015], "up": [0.0, 0.0, 1.0]},
+    {"id": "axis", "direction": [0.0, 0.0, 1.0], "up": [0.0, 1.0, 0.0]},
+    {"id": "general_a", "direction": [0.31, -0.27, 0.91], "up": [0.0, 0.0, 1.0]},
+    {"id": "general_b", "direction": [-0.46, 0.71, 0.53], "up": [0.0, 0.0, 1.0]}
+  ],
+  "compositorCases": [
+    {"id": "closed_cone_transverse_isometric", "surface": "closed_cone", "angle": 0.0, "height": 1.5, "view": "isometric"},
+    {"id": "open_cone_transverse_isometric", "surface": "open_cone", "angle": 0.0, "height": 1.5, "view": "isometric"},
+    {"id": "closed_frustum_transverse_axis", "surface": "closed_frustum", "angle": 0.0, "height": 1.5, "view": "axis"},
+    {"id": "open_frustum_transverse_isometric", "surface": "open_frustum", "angle": 0.0, "height": 1.5, "view": "isometric"},
+    {"id": "closed_cone_below_critical", "surface": "closed_cone", "angle": 59.5, "height": 0.02, "view": "isometric"},
+    {"id": "open_cone_below_critical", "surface": "open_cone", "angle": 59.5, "height": 1.0, "view": "general_a"},
+    {"id": "closed_frustum_below_critical", "surface": "closed_frustum", "angle": 59.5, "height": 1.5, "view": "cabinet"},
+    {"id": "open_frustum_below_critical", "surface": "open_frustum", "angle": 59.5, "height": 1.5, "view": "general_b"},
+    {"id": "closed_cone_exact_parabola", "surface": "closed_cone", "angle": 60.0, "height": 1.2, "view": "isometric"},
+    {"id": "open_cone_exact_parabola_near_side", "surface": "open_cone", "angle": 60.0, "azimuth": 90.0, "height": 1.2, "view": "near_side"},
+    {"id": "closed_frustum_exact_parabola", "surface": "closed_frustum", "angle": 60.0, "height": 1.5, "view": "general_a"},
+    {"id": "open_frustum_exact_parabola_side", "surface": "open_frustum", "angle": 60.0, "azimuth": 90.0, "height": 1.5, "view": "side"},
+    {"id": "closed_cone_above_critical", "surface": "closed_cone", "angle": 60.5, "height": 1.5, "view": "cabinet"},
+    {"id": "open_cone_above_critical", "surface": "open_cone", "angle": 60.5, "height": 1.5, "view": "general_a"},
+    {"id": "closed_frustum_above_critical", "surface": "closed_frustum", "angle": 60.5, "height": 1.5, "view": "isometric"},
+    {"id": "open_frustum_above_critical_near_side", "surface": "open_frustum", "angle": 60.5, "azimuth": 90.0, "height": 1.5, "view": "near_side"},
+    {"id": "closed_cone_through_apex_point", "surface": "closed_cone", "angle": 45.0, "height": 0.0, "view": "general_a"},
+    {"id": "open_cone_through_apex_generator", "surface": "open_cone", "angle": 60.0, "height": 0.0, "view": "isometric"},
+    {"id": "closed_frustum_through_apex_generator", "surface": "closed_frustum", "angle": 60.0, "height": 0.0, "view": "cabinet"},
+    {"id": "open_frustum_through_apex_hyperbola", "surface": "open_frustum", "angle": 60.5, "height": 0.0, "view": "general_b"},
+    {"id": "closed_cone_real_cap_chord", "surface": "closed_cone", "angle": 45.0, "height": 1.5, "view": "isometric"},
+    {"id": "open_cone_no_cap_chord", "surface": "open_cone", "angle": 45.0, "height": 1.5, "view": "isometric"},
+    {"id": "closed_frustum_two_cap_chords", "surface": "closed_frustum", "angle": 45.0, "height": 1.5, "view": "general_a"},
+    {"id": "open_frustum_two_side_rims", "surface": "open_frustum", "angle": 45.0, "azimuth": 90.0, "height": 1.5, "view": "side"},
+    {"id": "closed_cone_terminal_tangent", "surface": "closed_cone", "angle": 45.0, "height": 4.732050807568877, "view": "isometric"},
+    {"id": "open_cone_terminal_tangent", "surface": "open_cone", "angle": 45.0, "height": 4.732050807568877, "view": "isometric"},
+    {"id": "closed_frustum_empty", "surface": "closed_frustum", "angle": 0.0, "height": 3.25, "view": "general_a"},
+    {"id": "open_cone_empty", "surface": "open_cone", "angle": 0.0, "height": -0.25, "view": "axis"},
+    {"id": "closed_cone_near_upper_terminal", "surface": "closed_cone", "angle": 60.0, "height": 2.95, "view": "general_b"},
+    {"id": "open_cone_on_upper_terminal", "surface": "open_cone", "angle": 0.0, "height": 3.0, "view": "axis"},
+    {"id": "closed_frustum_near_vertical", "surface": "closed_frustum", "angle": 89.5, "height": 1.5, "view": "general_a"},
+    {"id": "open_frustum_vertical", "surface": "open_frustum", "angle": 90.0, "height": 1.5, "view": "general_b"}
+  ],
+  "dynamicSequences": [
+    {"id": "closed_cone_topology", "surface": "closed_cone", "pivotHeight": 1.2, "startAngle": 55.0, "endAngle": 65.0, "view": "isometric"},
+    {"id": "open_frustum_topology", "surface": "open_frustum", "pivotHeight": 1.5, "startAngle": 55.0, "endAngle": 65.0, "view": "isometric"}
+  ],
+  "expectedSolverSemanticDigest": "9174e811f5296b7cef307ba8f78739ef7a9a2d8169514ae6b49e3abaa5c938e2",
+  "expectedCompositorDigests": {
+    "closed_cone_above_critical": "44cba638258670f88c89a96219c4d9f5adc7bf1d42060c740c548c0ed926a6ce",
+    "closed_cone_below_critical": "1acbc3283585f7cbed2be94e2e92e1c24c3319d1cbb2055db72e5d0d71c9c6dc",
+    "closed_cone_exact_parabola": "882da964f31973a5b989de59c114ddb39d7dc9ec7d722f8f814821f5b063670d",
+    "closed_cone_near_upper_terminal": "6d33a82e09625ae8e7fdb32b8a4c9fd0b8ce1a09222d7cad5bbd81a6d17c6567",
+    "closed_cone_real_cap_chord": "0f8f3804a5fc00c43d8f859c72e7389cd3c925a8e361d3f2386fb84c65c032f1",
+    "closed_cone_terminal_tangent": "a95e7fd1d1dcb687beaa24a07ef7bb08e588071710cb3f77b2b5c3e23ed50e5b",
+    "closed_cone_through_apex_point": "87dd47ad2822d4aea7b41e08f37a50dccab55f5cf692ced3d187a8cebee463cf",
+    "closed_cone_transverse_isometric": "13f43fcac67227b4bf4966d40dd2e6eef79a2ebb2a8f1298a4a720a4a7abfdf5",
+    "closed_frustum_above_critical": "c3ee61ed765106d5e678857d6508e7ef5faab0df1aaf11c1607aa972ff442cf5",
+    "closed_frustum_below_critical": "fffac460734f5b909d0d00a9d0271119074baeb78c7e596e4b4915a0c077a876",
+    "closed_frustum_empty": "9b834eee8b0c17afe0de5ecb621d7a1f5909929fea1961fd0b29e172e25b9e3e",
+    "closed_frustum_exact_parabola": "7870e5f15eee08071a32c11c7a42bf761d4de9d892b8ad4e57e7530e21fc034e",
+    "closed_frustum_near_vertical": "389f959d9bc83bb7ceeb26b0095fc723c270bee77fa91c34d515ea7977e41191",
+    "closed_frustum_through_apex_generator": "8ebc99458a24407fd78484072ffc74d3548a773dd316b0469c61fc4090acc4fa",
+    "closed_frustum_transverse_axis": "09ce8310b004e4251cb71aaa13cbe2c31bae23bde132b676c67f330dba63caaa",
+    "closed_frustum_two_cap_chords": "f4812c9279bbb259bb3c9019b483d53823e0571253e8062e153c8125dfce3b1d",
+    "open_cone_above_critical": "8fd7128368134a2b30fa60b624fd70cbe56f8ae92f654457cd293b3599e0b023",
+    "open_cone_below_critical": "1be63b42f30d18857ff4a7c67c4e873afbd36d0a03e93851b457a3133dfc2372",
+    "open_cone_empty": "2b3b60813fc3ee59bf5b695504a60b6a677d9d10e7f332ffaad329c1bc698de1",
+    "open_cone_exact_parabola_near_side": "b6c2d24748924f14553fac96b410aea9d68f928784a928b079e96cb18b62be32",
+    "open_cone_no_cap_chord": "3cf7afb5dc31926d87cdff1f4da308f3552efaf19d9c62eb9f295065635fe2d6",
+    "open_cone_on_upper_terminal": "5bd26a8242ee6a4502414465915b6e160a85dd907db0244464f91a0c5d3bd02b",
+    "open_cone_terminal_tangent": "b38e6180c96f8903bfdc6d2ea7c4b8f17cbfa71cf42d9a69ae38e80169b9a681",
+    "open_cone_through_apex_generator": "bc6ff9f364c5ce5e97516913c2ca4308a9941995b6a5c3951d3a578d3078c03c",
+    "open_cone_transverse_isometric": "24a5c4d63eab84ac17e8adb58041f31b622467b8b15ff9834c8e804eb2ae7e5e",
+    "open_frustum_above_critical_near_side": "5cdac06e8ba77698ca6b5dbc4a04fd5e7d131c94348e900676306770e27a0749",
+    "open_frustum_below_critical": "b6ac2cbe16b89d9be339279161ed40c22a7709a09b8a40dda5dbaac26a272b10",
+    "open_frustum_exact_parabola_side": "755483cfbed527bc8d179011f4a7a2cd9f97995eb3c46e8a644a4e52dde78632",
+    "open_frustum_through_apex_hyperbola": "dfaaf44e27e9c6a202bf0a3f16ade420f4e7a2597ce6e15c793bdd3877482c9e",
+    "open_frustum_transverse_isometric": "09c3d69c95413704d5709ace7b5f0c936e3b1a2533e6b0762d7e757d72197a81",
+    "open_frustum_two_side_rims": "af9656cbc20724c481a1854d97515e9291f9b83c2336f9b0b784895d65b8b0d4",
+    "open_frustum_vertical": "87d4ab5910084a137412933d79a7bd5be3f6923558fa9c33b5439fea77cb0d9b"
+  }
+}
