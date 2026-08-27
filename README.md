@@ -25,6 +25,7 @@ to SVG. Unsupported syntax is reported explicitly.
 [Quadrics and conic sections](docs/quadric-occlusion.md) ·
 [Finite-cone section v1 contract](docs/quadric-section-v1-contract.md) ·
 [Fast and extended Cairo acceptance](docs/extended-quadric-ci.md) ·
+[Classroom cone-section gallery](examples/classroom_cone_sections/README.md) ·
 [Supported TikZ subset](docs/supported-tikz.md) ·
 [Source-authoritative projects](docs/source-authoritative-projects.md)
 
@@ -211,6 +212,20 @@ manim -pql examples/quadrics/quadric_occlusion_demo.py \
   ConeSectionFamiliesDemo ConeSectionTopologyTransitionDemo \
   GlobalQuadricOcclusionDemo
 ```
+
+Five paced high-school cone-section lessons, with parameter notes, teacher
+prompts, and reviewed keyframes:
+
+```bash
+manim -ql --fps 8 \
+  examples/classroom_cone_sections/classroom_cone_sections.py \
+  ConicFamilyTransitionLesson ClosedVsOpenConeLesson \
+  HiddenCurvePoliciesLesson ProjectionDegenerationLesson \
+  CapChordTopologyLesson
+```
+
+See the [classroom gallery guide](examples/classroom_cone_sections/README.md)
+for individual preview and release commands.
 
 Independent line and moving plane sections:
 
