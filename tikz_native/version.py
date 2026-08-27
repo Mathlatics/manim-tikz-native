@@ -92,9 +92,9 @@ _PUBLIC_0_1_COMPONENT_REVISIONS: Final[dict[str, str]] = {
     COMPONENT_TIKZ_OPEN_FACE_STATIC_ASSET_3D: "source-sha256:f74e221297d3444a17b9165ae9759ae41ca4cf7bda013333e28ab3b9d157a54e",
     COMPONENT_GENERATED_OPEN_FACE_VISIBILITY_3D: "source-sha256:d3b8917a867f754c586bef39acc1ac387726dbb7ce192f8b61a0053505b63503",
     COMPONENT_SOURCE_PROJECT_BUILD: "source-sha256:00579e342012a96443c098c7004be672d265d32fe6f82d66b0c6b11ba64305b7",
-    COMPONENT_QUADRIC_GEOMETRY: "source-sha256:830e9665b05c37e7d9182684f31896c3bfe294fc5b9a602486974cadd1a38450",
-    COMPONENT_QUADRIC_VISIBILITY: "source-sha256:1493b65088b72b28a3a6f763bf5655a0bb35d7f39e2b72adda9da541c061522e",
-    COMPONENT_QUADRIC_MANIM: "source-sha256:31049bdcf16468c977874d2505db9188ffb5320849aabe4ddb361b9ea0058c3d",
+    COMPONENT_QUADRIC_GEOMETRY: "source-sha256:2968379c0b71644bd54cb4d30e8e0693cebb2a3c45d7921a95e4a78814e8ff54",
+    COMPONENT_QUADRIC_VISIBILITY: "source-sha256:8f7f6696277f19edae294bded04219638be7166ccf86fb482ed67d837d8a626f",
+    COMPONENT_QUADRIC_MANIM: "source-sha256:4d47771ba9e3325d72928d2e9687af5dc2d5b456d52410f9f34af6648b9abda6",
 }
 
 
@@ -422,6 +422,7 @@ _COMPONENT_DEFINITIONS: Final[dict[str, dict[str, tuple[str, ...]]]] = {
             COMPONENT_MANAGED_PAINTER_BAND,
         ),
         "files": (
+            "@tool/polyhedron_visibility/quadrics/authoring.py",
             "@tool/polyhedron_visibility/quadrics/manim.py",
             "@tool/polyhedron_visibility/quadrics/transition_manim.py",
         ),
@@ -530,13 +531,13 @@ _DECLARED_IMPLEMENTATION_DIGESTS: Final[dict[str, str]] = {
         "00579e342012a96443c098c7004be672d265d32fe6f82d66b0c6b11ba64305b7"
     ),
     COMPONENT_QUADRIC_GEOMETRY: (
-        "830e9665b05c37e7d9182684f31896c3bfe294fc5b9a602486974cadd1a38450"
+        "2968379c0b71644bd54cb4d30e8e0693cebb2a3c45d7921a95e4a78814e8ff54"
     ),
     COMPONENT_QUADRIC_VISIBILITY: (
-        "1493b65088b72b28a3a6f763bf5655a0bb35d7f39e2b72adda9da541c061522e"
+        "8f7f6696277f19edae294bded04219638be7166ccf86fb482ed67d837d8a626f"
     ),
     COMPONENT_QUADRIC_MANIM: (
-        "31049bdcf16468c977874d2505db9188ffb5320849aabe4ddb361b9ea0058c3d"
+        "4d47771ba9e3325d72928d2e9687af5dc2d5b456d52410f9f34af6648b9abda6"
     ),
 }
 

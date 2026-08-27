@@ -335,29 +335,48 @@ The shortest static section workflow is:
 
 ```python
 from polyhedron_visibility.quadrics import (
-    QuadricOcclusion3D,
+    QuadricSection3D,
     SectionPlane,
     SphereSpec,
-    compute_quadric_section_boundary_curves,
 )
 
 sphere = SphereSpec("sphere", (0, 0, 0), 2)
 plane = SectionPlane("cut", (0.4, 0, 0), (1, 0.3, 0.2))
-curves = compute_quadric_section_boundary_curves("section", sphere, plane)
 
-controller = QuadricOcclusion3D(
+controller = QuadricSection3D(
     self,
-    surfaces=(sphere,),
-    curves=curves,
-    section_plane=plane,
+    surface=sphere,
+    section_id="section",
+    plane=plane,
     paint_policy="diagrammatic",
 ).attach()
 ```
 
-For a moving finite cone or cylinder, reserve
-`section_cap_chord_curve_ids(section_id, surface)` together with the active
-lateral IDs through `allocated_curve_ids`.  The chord then changes between
-inactive and active without creating, removing, or replacing a Manim object.
+`QuadricSection3D` computes the complete finite boundary by default and keeps
+it synchronized with the same current plane used by the unified compositor.
+For a fixed-topology moving cut, pass a plane callback.  Potential finite-cone
+or cylinder cap-chord IDs are reserved automatically, so a chord can activate
+or disappear without creating, removing, or replacing a Manim object.  Set
+`draw_section_boundary=False` only when the intended lesson needs the plane
+partition and surface boundaries but deliberately omits the true section ink.
+
+For an ellipse/parabola/hyperbola topology change, pass the existing analytic
+schedule instead of `surface`, `section_id`, and `plane`:
+
+```python
+controller = QuadricSection3D(
+    self,
+    scheduled=track_scheduled_plane_section("section", cone, motion),
+    progress=progress,
+).attach()
+```
+
+This mode delegates to `QuadricSectionTransition3D`; the static mode delegates
+to `QuadricOcclusion3D`.  The facade does not contain a second section solver,
+painter graph, Manim slot pool, or rollback implementation.  Advanced callers
+may still use the lower-level controllers directly.  When doing so, a moving
+finite cone or cylinder must reserve `section_cap_chord_curve_ids()` together
+with the initially active lateral IDs through `allocated_curve_ids`.
 `compute_quadric_section()` plus `section_trace_curves()` remains available
 when a caller intentionally wants only the lateral support-quadric trace.
 

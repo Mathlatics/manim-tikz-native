@@ -462,6 +462,7 @@ points are:
   `track_scheduled_plane_section()`, and `track_moving_section_point()`;
 - `build_section_transition_plan()` and
   `QuadricSectionTransition3D`;
+- `QuadricSection3D`, the preferred finite-section authoring facade;
 - `QuadricOcclusion3D`, `QuadricManimStyle`, `QuadricBoundaryStyle`, and
   `QuadricManimLimits`.
 
@@ -483,9 +484,21 @@ immutable renderer-level registry. A `GeneratorBoundarySpec.style_id` must
 resolve in that registry; unknown identities and fixed dash-slot overflow fail
 before a frame is committed. Built-in IDs preserve the historical curve,
 surface-boundary, silhouette, and section-outline appearance.
-Pass `section_plane=plane` to place one finite display patch, the two projected
-surface sheets, the section curves, and every visible/hidden curve fragment in
-one painter graph.  The patch is adaptively split into regions behind the
+For ordinary section authoring, prefer `QuadricSection3D(surface=...,
+section_id=..., plane=...)`. It computes the complete finite section boundary,
+reserves every potential cap-chord identity, and passes the same current plane
+and active curves to the existing unified `QuadricOcclusion3D`. A plane
+callback supports fixed-topology motion. For a scheduled ellipse/parabola/
+hyperbola change, pass `scheduled=track_scheduled_plane_section(...)` and
+`progress=...`; the facade delegates to the existing
+`QuadricSectionTransition3D`. `draw_section_boundary=False` is the explicit
+opt-out that retains plane/surface partitioning without adding true section
+ink. Neither mode creates a second renderer or a second rollback path.
+
+At the lower level, pass `section_plane=plane` to place one finite display
+patch, the two projected surface sheets, the section curves, and every
+visible/hidden curve fragment in one painter graph.  The patch is adaptively
+split into regions behind the
 solid, between its far and near sheets, in front of the solid, or outside its
 projection.  The Manim layer merges those cells back into continuous compound
 contours, so the geometric subdivision does not leave triangle seams.  No

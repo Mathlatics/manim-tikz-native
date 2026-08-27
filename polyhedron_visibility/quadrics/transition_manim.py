@@ -144,7 +144,9 @@ class QuadricSectionTransition3D:
 
     The caller animates one normalized progress source from ``0`` to ``1``.
     Analytic schedule events select the correct live and critical sections;
-    this controller only manages their preallocated render banks.
+    this controller only manages their preallocated render banks.  Set
+    ``draw_section_boundary=False`` to keep the scheduled plane partition while
+    deliberately omitting those banks and their section ink.
     """
 
     def __init__(
@@ -165,6 +167,7 @@ class QuadricSectionTransition3D:
         surface_constraints: Sequence[SurfaceConstraintInput] = (),
         context: GeometryContext | ResolvedGeometryContext | None = None,
         coefficient_tolerance: float | None = None,
+        draw_section_boundary: bool = True,
         show_plane: bool = True,
         plane_patch_margin: float = 0.08,
         section_max_screen_error: float = 0.08,
@@ -197,10 +200,17 @@ class QuadricSectionTransition3D:
             )
         self.context = context
         self.coefficient_tolerance = coefficient_tolerance
+        if not isinstance(draw_section_boundary, bool):
+            raise TypeError("draw_section_boundary must be a bool")
+        self.draw_section_boundary = draw_section_boundary
         if not isinstance(show_plane, bool):
             raise TypeError("show_plane must be a bool")
         self.show_plane = show_plane
-        self._allocated_curve_ids = _allocated_curve_ids(self.plan.section_id)
+        self._allocated_curve_ids = (
+            _allocated_curve_ids(self.plan.section_id)
+            if draw_section_boundary
+            else ()
+        )
         self._cache_progress: float | None = None
         self._cache_geometry: PreparedSectionTransitionGeometry | None = None
 
@@ -208,8 +218,10 @@ class QuadricSectionTransition3D:
         self._controller = QuadricOcclusion3D(
             scene,
             surfaces=(surface,),
-            curves=self._active_curves,
-            curve_opacities=self._active_curve_opacities,
+            curves=(self._active_curves if draw_section_boundary else ()),
+            curve_opacities=(
+                self._active_curve_opacities if draw_section_boundary else None
+            ),
             allocated_curve_ids=self._allocated_curve_ids,
             projection=projection,
             paint_policy=paint_policy,

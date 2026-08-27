@@ -13,6 +13,7 @@ from polyhedron_visibility.open_faces import OpenFaceScene3D
 from polyhedron_visibility.quadrics import (
     ConeSpec,
     CylinderSpec,
+    QuadricSection3D,
     QuadricSectionTransition3D,
     SectionPlane,
     SectionTransitionPlan,
@@ -57,6 +58,7 @@ class PublicPackageTests(unittest.TestCase):
         self.assertEqual(ConeSpec.__name__, "ConeSpec")
         self.assertEqual(SectionPlane.__name__, "SectionPlane")
         self.assertEqual(SectionTransitionPlan.__name__, "SectionTransitionPlan")
+        self.assertEqual(QuadricSection3D.__name__, "QuadricSection3D")
         self.assertEqual(
             QuadricSectionTransition3D.__name__, "QuadricSectionTransition3D"
         )
