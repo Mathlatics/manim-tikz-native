@@ -338,6 +338,57 @@ def _multiplicity(
     return degree
 
 
+def _polish_mapped_candidate(
+    coefficients: Sequence[float],
+    value: float,
+    domain: ParameterInterval,
+) -> float:
+    """Refine a normalized-domain candidate in the original polynomial.
+
+    Mapping a well-isolated root from ``[-1, 1]`` back to a one-sided chart
+    interval can lose several bits through ``center + half_width * y``
+    cancellation.  A deterministic long-double Newton step restores the
+    best representable original-domain value before residual validation.  The
+    step is strictly bounded by the authored root interval and is never used
+    to accept a candidate whose original polynomial still fails validation.
+    """
+
+    current = np.longdouble(value)
+    lower = np.longdouble(domain.start)
+    upper = np.longdouble(domain.end)
+    best = float(value)
+    best_residual = _normalized_residual(coefficients, best)
+    for _ in range(16):
+        polynomial = np.longdouble(0.0)
+        derivative = np.longdouble(0.0)
+        for coefficient in reversed(coefficients):
+            derivative = derivative * current + polynomial
+            polynomial = polynomial * current + np.longdouble(coefficient)
+        if derivative == 0.0:
+            break
+        candidate = current - polynomial / derivative
+        if not np.isfinite(candidate) or candidate < lower or candidate > upper:
+            break
+        candidate_float = float(candidate)
+        residual = _normalized_residual(coefficients, candidate_float)
+        if residual < best_residual:
+            best = candidate_float
+            best_residual = residual
+        if candidate_float == float(current):
+            break
+        current = candidate
+
+    neighborhood = (
+        float(np.nextafter(best, float("-inf"))),
+        best,
+        float(np.nextafter(best, float("inf"))),
+    )
+    return min(
+        (item for item in neighborhood if domain.start <= item <= domain.end),
+        key=lambda item: (_normalized_residual(coefficients, item), item),
+    )
+
+
 def cluster_real_roots(
     roots: Iterable[RealRoot],
     *,
@@ -465,6 +516,9 @@ def solve_real_polynomial(
             value = interval.end
 
         residual = _normalized_residual(canonical, value)
+        if residual > residual_epsilon:
+            value = _polish_mapped_candidate(canonical, value, interval)
+            residual = _normalized_residual(canonical, value)
         if residual > residual_epsilon:
             raise PolynomialRootError(
                 "isolated root failed residual validation; coefficients are "

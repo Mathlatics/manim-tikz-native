@@ -70,6 +70,22 @@ class QuadricPolynomialRootTests(unittest.TestCase):
             (),
         )
 
+    def test_one_sided_chart_root_is_polished_in_original_coordinates(self) -> None:
+        coefficients = (
+            1.6160254037844395,
+            1.7320508075688776,
+            1.5000000000000022,
+            1.7320508075688776,
+            -0.11602540378443793,
+        )
+        roots = solve_real_polynomial(
+            coefficients,
+            domain=(-29.85640646055121, -1.2246467991473532e-16),
+        )
+
+        self.assert_root_values(roots, (-0.8810176860692425,))
+        self.assertLess(roots[0].residual, 1.0e-15)
+
     def test_close_simple_roots_cluster_by_parameter_tolerance(self) -> None:
         coefficients = Polynomial.fromroots((0.25, 0.2500005)).coef
         separate = solve_real_polynomial(

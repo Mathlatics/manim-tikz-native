@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
-from math import atan, ceil, exp, floor, isfinite, log, pi, tau
+from math import atan, ceil, exp, floor, isfinite, log, pi, tan, tau
 from typing import Sequence
 
 import numpy as np
@@ -437,6 +437,77 @@ def _root_tolerance(chart: _CurveChart, parameter_epsilon: float) -> float:
     return _FLOAT_EPSILON * 4096.0
 
 
+def _tan_half_angle_root_domains(
+    chart: _CurveChart,
+    coefficients: Sequence[float],
+    parameter_epsilon: float,
+    scale: float,
+) -> tuple[ParameterInterval, ...]:
+    """Map one finite angle domain to the real tan-half-angle chart.
+
+    A clipped ellipse arc often occupies only the two tails on either side of
+    a ``tan(t / 2)`` pole.  Solving the event polynomial over its entire
+    Cauchy interval also inspects the excluded middle of the chart; for a
+    nearly parabolic ellipse that unnecessary interval can manufacture an
+    unvalidated stationary candidate.  Split at every chart pole and solve
+    only the root intervals that map back to the authored curve domain.
+    """
+
+    canonical = [float(value) for value in coefficients]
+    chart_pole_epsilon = _IDENTITY_FACTOR * _FLOAT_EPSILON * max(
+        abs(float(scale)),
+        np.finfo(float).tiny,
+    )
+    while len(canonical) > 1 and abs(canonical[-1]) <= chart_pole_epsilon:
+        canonical.pop()
+    if len(canonical) <= 1:
+        return ()
+    degree = len(canonical) - 1
+    leading = abs(canonical[-1])
+    # A Fujiwara-style bound is substantially tighter than the elementary
+    # Cauchy ``1 + max(abs(a_i / a_n))`` bound for the quartics produced by a
+    # nearly parabolic ellipse.  The factor-two form below is conservative for
+    # every coefficient and keeps tail-domain normalization well conditioned.
+    root_bound = 2.0 * max(
+        (abs(value) / leading) ** (1.0 / (degree - index))
+        for index, value in enumerate(canonical[:-1])
+    )
+    if not isfinite(root_bound):
+        raise CriticalEventError(
+            "tan-half-angle root bound overflowed for a finite curve domain"
+        )
+
+    poles = tuple(
+        value
+        for value in chart.chart_poles
+        if chart.curve_domain.start < value < chart.curve_domain.end
+    )
+    boundaries = (chart.curve_domain.start, *poles, chart.curve_domain.end)
+    pole_values = chart.chart_poles
+
+    def is_pole(value: float) -> bool:
+        return any(abs(value - pole) <= parameter_epsilon for pole in pole_values)
+
+    result: list[ParameterInterval] = []
+    for start, end in zip(boundaries, boundaries[1:]):
+        raw_lower = -root_bound if is_pole(start) else tan(0.5 * start)
+        raw_upper = root_bound if is_pole(end) else tan(0.5 * end)
+        if raw_lower > raw_upper + parameter_epsilon:
+            raise CriticalEventError(
+                "tan-half-angle chart interval is not monotone between poles"
+            )
+        lower = max(-root_bound, float(raw_lower))
+        upper = min(root_bound, float(raw_upper))
+        if lower > upper + parameter_epsilon:
+            continue
+        if lower > upper:
+            lower = upper
+        interval = ParameterInterval(lower, upper)
+        if interval not in result:
+            result.append(interval)
+    return tuple(result)
+
+
 def _equation_events(
     chart: _CurveChart,
     *,
@@ -478,11 +549,28 @@ def _equation_events(
                 )
             )
         else:
-            roots = solve_real_polynomial(
-                coefficients,
-                domain=chart.root_domain,
-                context=context,
-                parameter_tolerance=_root_tolerance(chart, parameter_epsilon),
+            root_domains = (
+                _tan_half_angle_root_domains(
+                    chart,
+                    coefficients,
+                    parameter_epsilon,
+                    scale,
+                )
+                if chart.name == "tan_half_angle"
+                else (chart.root_domain,)
+            )
+            roots = tuple(
+                root
+                for domain in root_domains
+                for root in solve_real_polynomial(
+                    coefficients,
+                    domain=domain,
+                    context=context,
+                    parameter_tolerance=_root_tolerance(
+                        chart,
+                        parameter_epsilon,
+                    ),
+                )
             )
             parameter_roots = tuple(
                 (parameter, root)
@@ -583,6 +671,13 @@ def _axial_events(
                 context=context,
             )
         )
+        # A cone endpoint at its apex has zero radius and therefore is not a
+        # circular cap/trim rim.  Its genuine event is the axial boundary
+        # above; support tangency already owns a projected generator through
+        # the apex.  Expanding a fictitious zero-radius rim into a quartic is
+        # both redundant and ill-conditioned near the parabolic section angle.
+        if isinstance(surface, ConeSpec) and boundary == 0.0:
+            continue
         if abs(direction_axial) <= context.epsilon(GeometryQuantity.ANGULAR):
             continue
         # At the axial boundary, lambda=(boundary-z(point))/(axis.direction).
