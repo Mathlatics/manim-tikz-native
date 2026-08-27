@@ -59,13 +59,16 @@ TikZ 图压成一张 SVG 或图片。转换后的直线、面、点、标签仍�
 截平面”。圆锥的开口圆周即使在精确侧视时投影成有限线段，也属于已支持情况。
 Manim 的正式生产绑定目前只支持 Cairo。
 
-暂不支持的范围包括：透视投影、OpenGL 正式绑定、张口双锥壳与截平面的统一
-局部合成、多个相交二次曲面与同一个截平面的局部合成，以及圆台两个终端面的
-独立 component shading（分组件明暗）。截平面本身完全侧视时也会明确失败。
-这些情况不会靠猜测或临时图层补丁生成一个看似可用的画面。机器可读的场景
-参数与 Cairo 验收阈值分别固定在
+明确拒绝或暂不支持的范围包括：透视投影、OpenGL 正式绑定、张口双锥壳与
+截平面的统一局部合成、多个相交二次曲面与同一个截平面的局部合成，以及圆台
+两个终端面的独立 component shading（分组件明暗）。截平面本身完全侧视时也会
+明确失败。
+这些情况不会靠猜测或临时图层补丁生成一个看似可用的画面。长期稳定的机器可读
+支持承诺固定在
 [`tests/fixtures/quadric-section-v1-contract.json`](tests/fixtures/quadric-section-v1-contract.json)
-和
+；某次发布的提交、组件实现摘要、构建产物校验值和测试证据固定在
+[`release/quadric-section-v1-release-manifest.json`](release/quadric-section-v1-release-manifest.json)
+；Cairo 验收阈值固定在
 [`tests/baselines/quadric-section-v1-cairo.json`](tests/baselines/quadric-section-v1-cairo.json)。
 
 在闭合凸多面体上，还可以继续加入两类对象：

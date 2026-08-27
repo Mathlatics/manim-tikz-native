@@ -1,4 +1,4 @@
-"""Executable release contract for the finite-cone section v1 baseline."""
+"""Executable support contract and release evidence for quadric-section v1."""
 
 from __future__ import annotations
 
@@ -42,6 +42,9 @@ from tikz_native.version import (
 
 ROOT = Path(__file__).resolve().parents[1]
 CONTRACT_PATH = ROOT / "tests" / "fixtures" / "quadric-section-v1-contract.json"
+RELEASE_MANIFEST_PATH = (
+    ROOT / "release" / "quadric-section-v1-release-manifest.json"
+)
 CAIRO_BASELINE_PATH = (
     ROOT / "tests" / "baselines" / "quadric-section-v1-cairo.json"
 )
@@ -70,21 +73,36 @@ def _small_limits() -> QuadricManimLimits:
     )
 
 
+def _resolve_test(dotted_name: str) -> type[unittest.TestCase]:
+    module_name, class_name, method_name = dotted_name.rsplit(".", 2)
+    module = importlib.import_module(module_name)
+    case = getattr(module, class_name)
+    if not issubclass(case, unittest.TestCase):
+        raise TypeError(f"{dotted_name!r} does not name a unittest case")
+    if not callable(getattr(case, method_name)):
+        raise TypeError(f"{dotted_name!r} does not name a test method")
+    return case
+
+
 class QuadricSectionV1ContractTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
         cls.contract = _load_json(CONTRACT_PATH)
+        cls.release_manifest = _load_json(RELEASE_MANIFEST_PATH)
         cls.cairo_baseline = _load_json(CAIRO_BASELINE_PATH)
 
-    def test_support_matrix_is_complete_and_frozen(self) -> None:
+    def test_support_matrix_is_complete_and_semantically_frozen(self) -> None:
         self.assertEqual(
             self.contract["schema"],
             "manim-quadric-section-support-contract/v1",
         )
         self.assertEqual(self.contract["contract_id"], "quadric-section-v1")
-        self.assertEqual(
-            self.contract["baseline_main_commit"],
-            "34f50e9b2ab66a969ae6a0648669be238ff943ae",
+        self.assertNotIn("baseline_main_commit", self.contract)
+        self.assertTrue(
+            all(
+                "render_revision" not in component
+                for component in self.contract["components"].values()
+            )
         )
         expected = {
             "closed_finite_single_cone": "supported",
@@ -104,7 +122,7 @@ class QuadricSectionV1ContractTests(unittest.TestCase):
                 "unsupported_explicit_failure"
             ),
             "parallel_projection": "supported",
-            "perspective_projection": "unsupported",
+            "perspective_projection": "unsupported_explicit_failure",
             "manim_cairo": "supported",
             "manim_opengl": "unsupported_explicit_failure",
             "cutting_plane_with_two_dimensional_projection": "supported",
@@ -116,7 +134,7 @@ class QuadricSectionV1ContractTests(unittest.TestCase):
         }
         self.assertEqual(actual, expected)
 
-    def test_component_contract_and_render_revisions_match_provider(self) -> None:
+    def test_component_contract_is_stable_and_release_matches_provider(self) -> None:
         component_names = {
             "quadric_geometry": COMPONENT_QUADRIC_GEOMETRY,
             "quadric_visibility": COMPONENT_QUADRIC_VISIBILITY,
@@ -124,55 +142,124 @@ class QuadricSectionV1ContractTests(unittest.TestCase):
         }
         contract_revisions = provider_component_contract_revisions()
         render_revisions = provider_component_revisions()
-        frozen = self.contract["components"]
+        semantic = self.contract["components"]
+        release = self.release_manifest["components"]
         for fixture_name, component_name in component_names.items():
             with self.subTest(component=fixture_name):
+                expected_contract = contract_revisions[component_name]
                 self.assertEqual(
-                    frozen[fixture_name]["contract_revision"],
-                    contract_revisions[component_name],
+                    semantic[fixture_name]["contract_revision"],
+                    expected_contract,
                 )
                 self.assertEqual(
-                    frozen[fixture_name]["render_revision"],
+                    release[fixture_name]["contract_revision"],
+                    expected_contract,
+                )
+                self.assertEqual(
+                    release[fixture_name]["render_revision"],
                     render_revisions[component_name],
                 )
 
-    def test_release_evidence_names_resolve_to_real_tests(self) -> None:
-        evidence = {
-            name
-            for fixture in self.contract["release_fixtures"]
-            for name in fixture["evidence_tests"]
-        }
-        for dotted_name in sorted(evidence):
-            with self.subTest(test=dotted_name):
-                module_name, class_name, method_name = dotted_name.rsplit(".", 2)
-                module = importlib.import_module(module_name)
-                case = getattr(module, class_name)
-                self.assertTrue(issubclass(case, unittest.TestCase))
-                self.assertTrue(callable(getattr(case, method_name)))
+    def test_every_support_row_has_executable_layer_evidence(self) -> None:
+        evidence = self.release_manifest["evidence"]
+        used_ids: set[str] = set()
+        for row in self.contract["support_matrix"]:
+            with self.subTest(capability=row["id"]):
+                evidence_ids = tuple(row["evidence_ids"])
+                self.assertTrue(evidence_ids)
+                self.assertEqual(len(evidence_ids), len(set(evidence_ids)))
+                records = []
+                for evidence_id in evidence_ids:
+                    self.assertIn(evidence_id, evidence)
+                    record = evidence[evidence_id]
+                    _resolve_test(record["test"])
+                    records.append(record)
+                    used_ids.add(evidence_id)
+
+                if row["status"].startswith("supported"):
+                    if row["renderer_neutral"]:
+                        self.assertTrue(
+                            any(
+                                item["layer"] == "renderer_neutral"
+                                and item["outcome"] == "pass"
+                                for item in records
+                            )
+                        )
+                    if row["cairo_binding"]:
+                        self.assertTrue(
+                            any(
+                                item["layer"] in {"manim", "cairo"}
+                                and item["outcome"] == "pass"
+                                for item in records
+                            )
+                        )
+                if row["status"] == "unsupported_explicit_failure":
+                    self.assertTrue(
+                        any(
+                            item["outcome"] == "explicit_failure"
+                            for item in records
+                        )
+                    )
+
+        self.assertEqual(used_ids, set(evidence))
+
+    def test_release_fixtures_and_cairo_baseline_resolve_to_evidence(self) -> None:
+        evidence = self.release_manifest["evidence"]
+        for evidence_id, record in evidence.items():
+            with self.subTest(evidence=evidence_id):
+                self.assertIn(
+                    record["layer"],
+                    {"renderer_neutral", "manim", "cairo"},
+                )
+                self.assertIn(record["outcome"], {"pass", "explicit_failure"})
+                _resolve_test(record["test"])
+
+        for fixture in self.release_manifest["release_fixtures"]:
+            for evidence_id in fixture["evidence_ids"]:
+                self.assertIn(evidence_id, evidence)
 
         self.assertEqual(
             self.cairo_baseline["contract_id"],
             self.contract["contract_id"],
         )
         self.assertEqual(self.cairo_baseline["renderer"], "cairo")
+        evidence_tests = {record["test"] for record in evidence.values()}
         for fixture in self.cairo_baseline["fixtures"].values():
-            self.assertIn(fixture["test"], evidence)
+            self.assertIn(fixture["test"], evidence_tests)
             profile = self.cairo_baseline["profiles"][fixture["profile"]]
             self.assertGreater(profile["pixel_width"], 0)
             self.assertGreater(profile["pixel_height"], 0)
             self.assertGreater(profile["frame_rate"], 0)
 
+    def test_release_manifest_has_concrete_versioned_artifacts(self) -> None:
+        self.assertEqual(
+            self.release_manifest["schema"],
+            "manim-quadric-section-release-manifest/v1",
+        )
+        self.assertEqual(
+            self.release_manifest["contract_id"],
+            self.contract["contract_id"],
+        )
+        self.assertRegex(
+            self.release_manifest["implementation_base_commit"],
+            r"^[0-9a-f]{40}$",
+        )
+        for artifact in self.release_manifest["build_artifacts"].values():
+            if not isinstance(artifact, dict):
+                continue
+            self.assertRegex(artifact["sha256"], r"^[0-9a-f]{64}$")
+
     def test_exact_side_fixture_executes_rank_one_rim_path(self) -> None:
         fixture = next(
             item
-            for item in self.contract["release_fixtures"]
+            for item in self.release_manifest["release_fixtures"]
             if item["id"] == "exact_side_open_cone_and_frustum_trim_rims"
         )
         geometry = fixture["geometry"]
         surface_data = geometry["surface"]
         plane_data = geometry["plane"]
         view = ParallelView.from_matrix(
-            self.contract["projections"][geometry["projection"]]
+            self.release_manifest["projections"][geometry["projection"]]
         )
         plane = SectionPlane(
             "v1-side-view-cut",
@@ -226,49 +313,43 @@ class QuadricSectionV1ContractTests(unittest.TestCase):
                 )
                 self.assertTrue(frame.plane_fragments)
 
-    def test_unsupported_binding_boundaries_fail_before_scene_mutation(self) -> None:
-        plane = SectionPlane(
-            "v1-cut",
-            (0.0, 0.0, 0.0),
-            (0.0, 0.0, 1.0),
-            u_axis=(1.0, 0.0, 0.0),
-        )
-        double = ConeSpec(
-            "v1-double",
-            (0.0, 0.0, 0.0),
-            (0.0, 0.0, 1.0),
-            pi / 4.0,
-            (-2.0, 2.0),
-            radial_axis=(1.0, 0.0, 0.0),
-            model=ConeModel.OPEN_DOUBLE,
-        )
+    def test_multiple_surface_section_fails_before_scene_mutation(self) -> None:
+        scene = Scene()
         with self.assertRaisesRegex(
             QuadricManimError,
             "section compositing requires exactly one",
         ):
             QuadricOcclusion3D(
-                Scene(),
-                surfaces=(double,),
-                curves=(),
-                section_plane=plane,
-                limits=_small_limits(),
-            )
-
-        with self.assertRaisesRegex(
-            QuadricManimError,
-            "section compositing requires exactly one",
-        ):
-            QuadricOcclusion3D(
-                Scene(),
+                scene,
                 surfaces=(
                     SphereSpec("v1-sphere-a", (-2.0, 0.0, 0.0), 1.0),
                     SphereSpec("v1-sphere-b", (2.0, 0.0, 0.0), 1.0),
                 ),
                 curves=(),
-                section_plane=plane,
+                section_plane=self._section_plane(),
                 limits=_small_limits(),
             )
+        self.assertEqual(scene.mobjects, [])
 
+    def test_perspective_projection_fails_before_scene_mutation(self) -> None:
+        scene = Scene()
+        controller = QuadricOcclusion3D(
+            scene,
+            surfaces=(SphereSpec("v1-perspective-sphere", (0, 0, 0), 1.0),),
+            curves=(),
+            projection=(
+                (1.0, 0.0, 0.0, 0.0),
+                (0.0, 1.0, 0.0, 0.0),
+                (0.0, 0.0, 1.0, 0.0),
+                (0.0, 0.0, 1.0, 1.0),
+            ),
+            limits=_small_limits(),
+        )
+        with self.assertRaisesRegex(QuadricManimError, "invalid parallel projection"):
+            controller.attach()
+        self.assertEqual(scene.mobjects, [])
+
+    def test_opengl_binding_fails_before_scene_mutation(self) -> None:
         scene = Scene()
         controller = QuadricOcclusion3D(
             scene,
@@ -285,7 +366,7 @@ class QuadricSectionV1ContractTests(unittest.TestCase):
                 controller.attach()
         self.assertEqual(scene.mobjects, [])
 
-    def test_public_docs_link_the_frozen_contract(self) -> None:
+    def test_public_docs_link_contract_and_release_manifest(self) -> None:
         for relative in (
             "README.md",
             "README.zh-CN.md",
@@ -294,6 +375,19 @@ class QuadricSectionV1ContractTests(unittest.TestCase):
             with self.subTest(document=relative):
                 text = (ROOT / relative).read_text(encoding="utf-8")
                 self.assertIn("quadric-section-v1-contract.md", text)
+        contract_doc = (ROOT / "docs" / "quadric-section-v1-contract.md").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("quadric-section-v1-release-manifest.json", contract_doc)
+
+    @staticmethod
+    def _section_plane() -> SectionPlane:
+        return SectionPlane(
+            "v1-cut",
+            (0.0, 0.0, 0.0),
+            (0.0, 0.0, 1.0),
+            u_axis=(1.0, 0.0, 0.0),
+        )
 
 
 if __name__ == "__main__":

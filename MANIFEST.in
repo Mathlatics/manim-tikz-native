@@ -13,4 +13,6 @@ recursive-include tests *.json *.py *.tex
 prune build
 prune dist
 prune media
+# Release manifests are external checksum sidecars, not archive payloads.
+prune release
 global-exclude __pycache__ *.py[cod]

@@ -41,6 +41,16 @@
         "open_chord_corridor_difference_max": 8.0
       }
     },
+    "finite_frustum_section_and_occlusion": {
+      "test": "tests.test_cone_models_cairo.ConeModelCairoTests.test_finite_frustum_section_and_unified_occlusion_render",
+      "profile": "standard",
+      "invariants": {
+        "changed_pixel_count_min": 1500,
+        "yellow_pixel_count_min": 60,
+        "plane_fragment_count_min": 1,
+        "cap_chord_count_min": 1
+      }
+    },
     "open_shell_oblique_offset_0_48": {
       "test": "tests.test_cone_models_cairo.ConeModelCairoTests.test_open_shell_trim_rim_removes_the_false_chord_fill_band",
       "profile": "standard",

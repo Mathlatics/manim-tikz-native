@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+- split the finite-cone section v1 semantic support contract from its
+  version-specific release manifest, and require every support-matrix row to
+  resolve to runnable renderer-neutral, Manim, Cairo, or explicit-failure
+  evidence.
 - add `QuadricSection3D` as the preferred high-level finite-section authoring
   facade: one plane source now drives both the complete analytic boundary and
   unified plane compositor, potential cap-chord slots are reserved

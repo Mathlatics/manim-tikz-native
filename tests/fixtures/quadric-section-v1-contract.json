@@ -2,20 +2,16 @@
   "schema": "manim-quadric-section-support-contract/v1",
   "contract_id": "quadric-section-v1",
   "frozen_on": "2026-08-27",
-  "baseline_main_commit": "34f50e9b2ab66a969ae6a0648669be238ff943ae",
   "scope": "Finite cone sections and automatic occlusion under parallel projection",
   "components": {
     "quadric_geometry": {
-      "contract_revision": "tikz-native-contract:quadric_geometry/v1",
-      "render_revision": "source-sha256:830e9665b05c37e7d9182684f31896c3bfe294fc5b9a602486974cadd1a38450"
+      "contract_revision": "tikz-native-contract:quadric_geometry/v1"
     },
     "quadric_visibility": {
-      "contract_revision": "tikz-native-contract:quadric_visibility/v2",
-      "render_revision": "source-sha256:1493b65088b72b28a3a6f763bf5655a0bb35d7f39e2b72adda9da541c061522e"
+      "contract_revision": "tikz-native-contract:quadric_visibility/v2"
     },
     "quadric_manim": {
-      "contract_revision": "tikz-native-contract:quadric_manim/v1",
-      "render_revision": "source-sha256:31049bdcf16468c977874d2505db9188ffb5320849aabe4ddb361b9ea0058c3d"
+      "contract_revision": "tikz-native-contract:quadric_manim/v1"
     }
   },
   "layers": {
@@ -27,200 +23,157 @@
     },
     "manim_binding": {
       "renderer": "cairo",
+      "recommended_authoring_facade": "QuadricSection3D",
       "fixed_mobject_identity": true,
       "fixed_capacity": true,
       "transactional_rollback": true
     }
+  },
+  "evidence_contract": {
+    "supported_renderer_neutral_rows_require": "renderer_neutral_pass",
+    "supported_cairo_rows_require": "manim_or_cairo_pass",
+    "unsupported_explicit_failure_rows_require": "explicit_failure"
   },
   "support_matrix": [
     {
       "id": "closed_finite_single_cone",
       "status": "supported",
       "renderer_neutral": true,
-      "cairo_binding": true
+      "cairo_binding": true,
+      "evidence_ids": [
+        "closed_open_model_contract",
+        "finite_boundary_closed_open",
+        "closed_open_cairo_pixels"
+      ]
     },
     {
       "id": "open_finite_single_cone_shell",
       "status": "supported",
       "renderer_neutral": true,
-      "cairo_binding": true
+      "cairo_binding": true,
+      "evidence_ids": [
+        "closed_open_model_contract",
+        "finite_boundary_closed_open",
+        "open_shell_offset_geometry",
+        "open_shell_offset_cairo"
+      ]
     },
     {
       "id": "finite_cone_frustum_section_and_occlusion",
       "status": "supported",
       "renderer_neutral": true,
-      "cairo_binding": true
+      "cairo_binding": true,
+      "evidence_ids": [
+        "frustum_side_geometry",
+        "frustum_cairo_section"
+      ]
     },
     {
       "id": "frustum_two_cap_component_shading",
       "status": "unsupported_explicit_failure",
       "renderer_neutral": false,
-      "cairo_binding": false
+      "cairo_binding": false,
+      "evidence_ids": [
+        "frustum_two_cap_shading_failure"
+      ]
     },
     {
       "id": "open_double_display_and_general_occlusion",
       "status": "supported_with_constraints",
       "renderer_neutral": true,
-      "cairo_binding": true
+      "cairo_binding": true,
+      "evidence_ids": [
+        "open_double_geometry",
+        "open_double_manim_binding"
+      ]
     },
     {
       "id": "open_double_unified_section_plane_compositing",
       "status": "unsupported_explicit_failure",
       "renderer_neutral": false,
-      "cairo_binding": false
+      "cairo_binding": false,
+      "evidence_ids": [
+        "open_double_section_failure"
+      ]
     },
     {
       "id": "one_surface_one_cutting_plane",
       "status": "supported",
       "renderer_neutral": true,
-      "cairo_binding": true
+      "cairo_binding": true,
+      "evidence_ids": [
+        "single_surface_plane_geometry",
+        "single_surface_plane_cairo",
+        "scheduled_facade_complete_boundary"
+      ]
     },
     {
       "id": "multiple_intersecting_surfaces_one_cutting_plane",
       "status": "unsupported_explicit_failure",
       "renderer_neutral": false,
-      "cairo_binding": false
+      "cairo_binding": false,
+      "evidence_ids": [
+        "multiple_surface_section_failure"
+      ]
     },
     {
       "id": "parallel_projection",
       "status": "supported",
       "renderer_neutral": true,
-      "cairo_binding": true
+      "cairo_binding": true,
+      "evidence_ids": [
+        "parallel_view_geometry",
+        "parallel_view_cairo",
+        "near_side_rank_switch_binding",
+        "near_side_visibility_factorization"
+      ]
     },
     {
       "id": "perspective_projection",
-      "status": "unsupported",
+      "status": "unsupported_explicit_failure",
       "renderer_neutral": false,
-      "cairo_binding": false
+      "cairo_binding": false,
+      "evidence_ids": [
+        "perspective_projection_failure"
+      ]
     },
     {
       "id": "manim_cairo",
       "status": "supported",
       "renderer_neutral": false,
-      "cairo_binding": true
+      "cairo_binding": true,
+      "evidence_ids": [
+        "cairo_production_pixels",
+        "scheduled_facade_cairo_animation"
+      ]
     },
     {
       "id": "manim_opengl",
       "status": "unsupported_explicit_failure",
       "renderer_neutral": false,
-      "cairo_binding": false
+      "cairo_binding": false,
+      "evidence_ids": [
+        "opengl_binding_failure"
+      ]
     },
     {
       "id": "cutting_plane_with_two_dimensional_projection",
       "status": "supported",
       "renderer_neutral": true,
-      "cairo_binding": true
+      "cairo_binding": true,
+      "evidence_ids": [
+        "single_surface_plane_geometry",
+        "single_surface_plane_cairo"
+      ]
     },
     {
       "id": "edge_on_cutting_plane",
       "status": "unsupported_explicit_failure",
       "renderer_neutral": false,
-      "cairo_binding": false
-    }
-  ],
-  "projections": {
-    "axial": [
-      [1.0, 0.0, 0.0],
-      [0.0, 1.0, 0.0],
-      [0.0, 0.0, 1.0]
-    ],
-    "oblique_isometric": [
-      [-0.7071067811865476, 0.7071067811865476, 0.0],
-      [-0.4082482904638631, -0.4082482904638631, 0.8164965809277261],
-      [0.5773502691896258, 0.5773502691896258, 0.5773502691896258]
-    ],
-    "exact_side": [
-      [1.0, 0.0, 0.0],
-      [0.0, 0.0, 1.0],
-      [0.0, 1.0, 0.0]
-    ]
-  },
-  "release_fixtures": [
-    {
-      "id": "closed_vs_open_finite_cone_semantics",
-      "kind": "renderer_neutral_and_cairo",
-      "evidence_tests": [
-        "tests.test_cone_models.ConeModelContractTests.test_closed_and_open_single_cones_separate_caps_from_trim_rims",
-        "tests.test_cone_models_cairo.ConeModelCairoTests.test_closed_base_and_open_mouth_have_distinct_center_pixels",
-        "tests.test_cone_models_cairo.ConeModelCairoTests.test_true_section_ink_and_closed_cap_chord_survive_component_shading"
-      ]
-    },
-    {
-      "id": "open_shell_oblique_offset_0_48",
-      "kind": "renderer_neutral_and_cairo",
-      "geometry": {
-        "surface": {
-          "model": "open_single",
-          "apex": [0.0, 0.0, -2.4],
-          "axis": [0.0, 0.0, 1.0],
-          "half_angle_radians": 0.5235987755982988,
-          "axial_range": [0.0, 4.0],
-          "radial_axis": [1.0, 0.0, 0.0]
-        },
-        "plane": {
-          "base_point": [0.0, 0.0, -0.35],
-          "normal": [0.82, 0.0, 1.0],
-          "normal_offset": 0.48,
-          "u_axis": [0.0, 1.0, 0.0]
-        },
-        "projection": "oblique_isometric"
-      },
-      "evidence_tests": [
-        "tests.test_cone_models.ConeProjectionAndSectionTests.test_open_shell_plane_roles_follow_trim_rim_not_a_false_chord",
-        "tests.test_cone_models_cairo.ConeModelCairoTests.test_open_shell_trim_rim_removes_the_false_chord_fill_band",
-        "tests.test_cone_models_cairo.ConeModelCairoTests.test_complete_offset_point_48_demo_frame_has_no_open_shell_corridor_leak"
-      ]
-    },
-    {
-      "id": "exact_side_open_cone_and_frustum_trim_rims",
-      "kind": "renderer_neutral",
-      "geometry": {
-        "surface": {
-          "model": "open_single",
-          "apex": [0.0, 0.0, 0.0],
-          "axis": [0.0, 0.0, 1.0],
-          "half_angle_radians": 0.7853981633974483,
-          "radial_axis": [1.0, 0.0, 0.0],
-          "axial_ranges": [
-            [0.0, 2.0],
-            [1.0, 2.0]
-          ]
-        },
-        "plane": {
-          "point": [0.0, 0.5, 0.0],
-          "normal": [0.0, 1.0, 0.0],
-          "u_axis": [1.0, 0.0, 0.0]
-        },
-        "projection": "exact_side"
-      },
-      "expected": {
-        "proxy_vertex_counts": [3, 4],
-        "trim_rim_counts": [1, 2]
-      },
-      "evidence_tests": [
-        "tests.test_cone_models.ConeProjectionAndSectionTests.test_side_view_open_cone_and_frustum_use_proxy_owned_rim_segments"
-      ]
-    },
-    {
-      "id": "near_side_trim_rim_rank_switch",
-      "kind": "manim_cairo_animation",
-      "geometry": {
-        "angles_radians": [
-          0.015,
-          0.005,
-          0.0026,
-          0.0025,
-          0.0024,
-          0.0,
-          -0.0024,
-          -0.0026,
-          -0.005,
-          -0.015
-        ]
-      },
-      "evidence_tests": [
-        "tests.test_cone_models.ConeBoundaryAndBindingTests.test_near_side_rim_rank_switch_preserves_slots_and_commits_every_frame",
-        "tests.test_quadric_visibility.QuadricCurveVisibilityTests.test_near_edge_on_trim_rim_factors_its_on_surface_discriminant"
+      "cairo_binding": false,
+      "evidence_ids": [
+        "edge_on_plane_failure",
+        "edge_on_animation_rollback"
       ]
     }
   ]

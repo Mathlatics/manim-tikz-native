@@ -91,14 +91,17 @@ rank-one trim rims in exact side views, parallel projection, and one finite
 convex quadric with one non-edge-on cutting plane. The fixed-capacity Manim
 production binding is Cairo-only.
 
-V1 does not claim perspective projection, an OpenGL production binding,
+V1 explicitly rejects perspective projection and an OpenGL production binding,
 unified cutting-plane compositing for an open double shell, local compositing
 of multiple intersecting quadrics, or independent component-aware shading for
 both terminal caps of a frustum. The documented explicit-failure paths are
 part of the contract; unsupported combinations are not approximated silently.
-The machine-readable geometry fixtures and Cairo acceptance thresholds live in
-[`tests/fixtures/quadric-section-v1-contract.json`](tests/fixtures/quadric-section-v1-contract.json)
-and
+The stable support promise lives in
+[`tests/fixtures/quadric-section-v1-contract.json`](tests/fixtures/quadric-section-v1-contract.json).
+The exact implementation commit, component digests, build checksums, and
+evidence mapping live in
+[`release/quadric-section-v1-release-manifest.json`](release/quadric-section-v1-release-manifest.json),
+while Cairo acceptance thresholds live in
 [`tests/baselines/quadric-section-v1-cairo.json`](tests/baselines/quadric-section-v1-cairo.json).
 
 ## Requirements

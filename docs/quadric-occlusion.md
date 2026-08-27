@@ -8,9 +8,10 @@ kernel layers, but it does not add curved special cases to those models.
 
 The release boundary for finite-cone sections is frozen separately in the
 [finite-cone section v1 support contract](quadric-section-v1-contract.md).
-That matrix and its executable JSON fixtures are authoritative when a broad
-description in this implementation guide could be read as supporting more
-than the tested v1 combinations.
+That semantic matrix and its versioned
+[release manifest](../release/quadric-section-v1-release-manifest.json) are
+authoritative when a broad description in this implementation guide could be
+read as supporting more than the tested v1 combinations.
 
 ## Scope
 

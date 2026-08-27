@@ -54,6 +54,9 @@ _CLOSED_OPEN_BASELINE = CAIRO_BASELINE["fixtures"][
 _SECTION_INK_BASELINE = CAIRO_BASELINE["fixtures"][
     "section_ink_component_shading"
 ]["invariants"]
+_FRUSTUM_BASELINE = CAIRO_BASELINE["fixtures"][
+    "finite_frustum_section_and_occlusion"
+]["invariants"]
 _OPEN_SHELL_BASELINE = CAIRO_BASELINE["fixtures"][
     "open_shell_oblique_offset_0_48"
 ]
@@ -181,6 +184,65 @@ def _capture_section(
     scene.camera.capture_mobjects(scene.mobjects)
     pixels = scene.camera.pixel_array[:, :, :3].astype(float).copy()
     return pixels, controller, section_curves
+
+
+def _capture_frustum_section() -> tuple[
+    np.ndarray,
+    QuadricOcclusion3D,
+    tuple[object, ...],
+]:
+    scene = Scene()
+    scene.camera.background_color = "#101820"
+    frustum = ConeSpec(
+        "pixel-frustum",
+        (0.0, 0.0, 0.0),
+        (0.0, 0.0, 1.0),
+        pi / 4.0,
+        (0.75, 2.0),
+        radial_axis=(1.0, 0.0, 0.0),
+        model=ConeModel.CLOSED_SINGLE,
+    )
+    plane = SectionPlane(
+        "pixel-frustum-plane",
+        (0.0, 0.0, 1.4),
+        (0.5, 0.0, 1.0),
+        u_axis=(0.0, 1.0, 0.0),
+    )
+    curves = compute_quadric_section_boundary_curves(
+        "pixel-frustum-section",
+        frustum,
+        plane,
+    )
+    controller = QuadricOcclusion3D(
+        scene,
+        surfaces=(frustum,),
+        curves=curves,
+        projection=SECTION_VIEW,
+        paint_policy=QuadricPaintPolicy.DEPTH_AWARE_DIAGRAMMATIC,
+        boundary_visibility_mode="unified",
+        include_surface_boundaries=True,
+        section_plane=plane,
+        max_chord_error=0.015,
+        style=QuadricManimStyle(
+            surface_fill_color="#315A8A",
+            surface_fill_opacity=0.76,
+            surface_stroke_opacity=0.0,
+            cone_lateral_fill_colors=None,
+            cone_cap_fill_colors=None,
+            visible_curve_color="#FFD166",
+            visible_curve_width=5.0,
+            hidden_curve_color="#F59E0B",
+            hidden_curve_width=4.0,
+            hidden_curve_opacity=0.7,
+            section_plane_fill_color="#43D9C0",
+            section_plane_fill_opacity=0.34,
+            section_plane_stroke_opacity=0.0,
+        ),
+    ).attach()
+    scene.camera.reset()
+    scene.camera.capture_mobjects(scene.mobjects)
+    pixels = scene.camera.pixel_array[:, :, :3].astype(float).copy()
+    return pixels, controller, curves
 
 
 def _capture_open_shell_trim_partition() -> tuple[np.ndarray, QuadricOcclusion3D]:
@@ -455,6 +517,52 @@ class ConeModelCairoTests(unittest.TestCase):
 
             closed.restore()
             opened.restore()
+
+    def test_finite_frustum_section_and_unified_occlusion_render(self) -> None:
+        with tempconfig(
+            {
+                "renderer": "cairo",
+                "pixel_width": WIDTH,
+                "pixel_height": HEIGHT,
+                "frame_rate": int(_STANDARD_PROFILE["frame_rate"]),
+                "write_to_movie": False,
+                "save_last_frame": False,
+                "disable_caching": True,
+            }
+        ):
+            pixels, controller, curves = _capture_frustum_section()
+            try:
+                background = np.asarray((16.0, 24.0, 32.0), dtype=float)
+                changed = np.linalg.norm(pixels - background, axis=2) > 12.0
+                yellow = (
+                    (pixels[:, :, 0] > 180.0)
+                    & (pixels[:, :, 1] > 120.0)
+                    & (pixels[:, :, 2] < 170.0)
+                )
+                self.assertGreater(
+                    int(np.count_nonzero(changed)),
+                    _FRUSTUM_BASELINE["changed_pixel_count_min"],
+                )
+                self.assertGreater(
+                    int(np.count_nonzero(yellow)),
+                    _FRUSTUM_BASELINE["yellow_pixel_count_min"],
+                )
+                section_frame = controller.last_section_frame
+                self.assertIsNotNone(section_frame)
+                assert section_frame is not None
+                self.assertGreaterEqual(
+                    len(section_frame.plane_fragments),
+                    _FRUSTUM_BASELINE["plane_fragment_count_min"],
+                )
+                self.assertGreaterEqual(
+                    sum(
+                        getattr(item, "curve_id", "").endswith(":chord")
+                        for item in curves
+                    ),
+                    _FRUSTUM_BASELINE["cap_chord_count_min"],
+                )
+            finally:
+                controller.restore()
 
     def test_true_section_ink_and_closed_cap_chord_survive_component_shading(
         self,

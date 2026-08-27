@@ -1,11 +1,13 @@
 # Finite-cone section v1 support contract
 
-- Status: **frozen release baseline**
+- Status: **frozen semantic support contract**
 - Contract ID: `quadric-section-v1`
-- Frozen from `main`: `34f50e9b2ab66a969ae6a0648669be238ff943ae`
 
 Machine-readable contract:
 [`tests/fixtures/quadric-section-v1-contract.json`](../tests/fixtures/quadric-section-v1-contract.json)
+
+Version-specific implementation evidence:
+[`release/quadric-section-v1-release-manifest.json`](../release/quadric-section-v1-release-manifest.json)
 
 This document fixes the supported boundary of finite-cone sections and their
 automatic occlusion. It is deliberately narrower than “all cone geometry”. A
@@ -27,7 +29,7 @@ case.
 | One finite convex quadric and one cutting plane | Supported | This is the complete local section-compositor scope |
 | Multiple intersecting quadrics and one cutting plane | Unsupported; explicit failure | No local multi-surface plane arrangement is guessed |
 | Parallel projection | Supported | Orthographic and general affine-free parallel views use `ParallelView` |
-| Perspective projection | Unsupported | No perspective visibility or compositing contract exists in v1 |
+| Perspective projection | Unsupported; explicit failure | The binding accepts only a three-dimensional `ParallelView`; a perspective/projective matrix is rejected before Scene ownership changes |
 | Manim Cairo | Supported | The fixed-capacity production binding and pixel regressions target Cairo |
 | Manim OpenGL | Unsupported; explicit failure | `QuadricOcclusion3D.attach()` rejects a non-Cairo renderer before Scene ownership changes |
 | Cutting plane with a two-dimensional screen projection | Supported | The plane display patch must retain certifiable display area |
@@ -55,33 +57,43 @@ The renderer-neutral layer owns mathematical truth:
 - local plane/surface partitioning and the far-to-near painter graph;
 - topology events, capacity checks, and explicit numerical failures.
 
+The recommended authoring entry point is `QuadricSection3D`. It derives the
+real section boundary and the active cutting plane from one authority, then
+delegates to the same renderer-neutral kernel and fixed-capacity Manim binding.
+Scheduled ellipse/parabola/hyperbola handoff uses two stable lateral banks;
+real cap chords keep separate semantic slots and always come from the current
+plane, not from a neighboring critical plane.
+
 The Manim binding consumes those results. It owns preallocated Mobjects,
 styles, Cairo paint order, in-place updates, and transactional rollback. It
 does not recompute geometry from rendered pixels. Renderer-neutral support
 therefore does not imply that every Manim renderer is supported: the v1
 production binding is Cairo-only.
 
-## Frozen component identities
+## Stable component contracts and versioned implementation evidence
 
-The v1 release bundle freezes the following existing Provider identities. The
-word “v1” in `quadric-section-v1` names this release support contract; it does
-not force every underlying component ABI to have the same number.
+The semantic contract freezes only public Provider contract revisions. The word
+“v1” in `quadric-section-v1` names this support contract; it does not force every
+underlying component ABI to have the same number.
 
-| Component | Persisted contract revision | Render/cache revision |
-| --- | --- | --- |
-| `quadric_geometry` | `tikz-native-contract:quadric_geometry/v1` | `source-sha256:830e9665b05c37e7d9182684f31896c3bfe294fc5b9a602486974cadd1a38450` |
-| `quadric_visibility` | `tikz-native-contract:quadric_visibility/v2` | `source-sha256:1493b65088b72b28a3a6f763bf5655a0bb35d7f39e2b72adda9da541c061522e` |
-| `quadric_manim` | `tikz-native-contract:quadric_manim/v1` | `source-sha256:31049bdcf16468c977874d2505db9188ffb5320849aabe4ddb361b9ea0058c3d` |
+| Component | Persisted contract revision |
+| --- | --- |
+| `quadric_geometry` | `tikz-native-contract:quadric_geometry/v1` |
+| `quadric_visibility` | `tikz-native-contract:quadric_visibility/v2` |
+| `quadric_manim` | `tikz-native-contract:quadric_manim/v1` |
 
-The executable contract compares these values with the live Provider. A
-production change to an owned implementation file changes its render/cache
-identity and therefore cannot silently continue to claim this exact baseline.
-A persisted author-data ABI revision changes only when existing saved data can
-no longer be read safely.
+The separate release manifest records the exact base commit, live
+`source-sha256` render/cache revisions, reproducible wheel and sdist checksums,
+the Cairo environment, and executable evidence names. A behavior-preserving
+implementation change may update that manifest without pretending the semantic
+support promise changed. The manifest is an external checksum sidecar and is
+therefore excluded from the archives whose checksums it records. A persisted
+author-data ABI revision changes only when existing saved data can no longer be
+read safely.
 
 ## Canonical release fixtures
 
-The JSON contract fixes the geometry, view matrices, expected semantic counts,
+The release manifest fixes geometry, view matrices, expected semantic counts,
 and evidence test names for these cases:
 
 1. closed finite cone versus open finite shell semantics;
@@ -90,7 +102,9 @@ and evidence test names for these cases:
 3. exact side views of an open cone and an open frustum, where one or two trim
    rims project to finite rank-one segments;
 4. a near-side-view rank switch that crosses the two-dimensional/rank-one
-   threshold without replacing Manim objects or freezing a frame.
+   threshold without replacing Manim objects or freezing a frame;
+5. a scheduled ellipse/parabola/hyperbola handoff that reaches a real end cap
+   and keeps the current-plane cap chord in its stable semantic slot.
 
 The Cairo acceptance baseline is
 [`tests/baselines/quadric-section-v1-cairo.json`](../tests/baselines/quadric-section-v1-cairo.json).
@@ -116,15 +130,18 @@ V1 never guesses an image outside the matrix:
   attached animation retains its prior committed state;
 - OpenGL attachment fails before the controller adds display slots to the
   Scene;
+- perspective/projective input fails as an invalid parallel projection before
+  the controller adds display slots to the Scene;
 - a two-terminal frustum request for component-aware cone masks fails with
   `ProjectionProxyError`; callers may use the supported uniform surface style;
 - uncertifiable error or capacity bounds remain hard failures.
 
 ## Change control
 
-Bug fixes that preserve this matrix may keep the public support-contract ID,
-but their Provider render/cache revisions and inspected Cairo evidence must be
-updated normally. Expanding a row from unsupported to supported requires new
+Bug fixes that preserve this matrix may keep the public support-contract ID;
+their release manifest, Provider render/cache revisions, build checksums, and
+inspected Cairo evidence are updated independently. Expanding a row from
+unsupported to supported requires new
 canonical geometry, renderer-neutral tests, and—if exposed through Manim—a
 real Cairo regression. Perspective rendering, OpenGL production binding,
 multi-surface local section arrangements, and independent two-terminal
