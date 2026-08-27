@@ -20,7 +20,7 @@ jobs:
     timeout-minutes: 90
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install system dependencies
         run: |
@@ -45,7 +45,7 @@ jobs:
           command -v ffprobe
           command -v pdftoppm
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
           cache: pip
@@ -69,7 +69,7 @@ jobs:
 
       - name: Upload exact acceptance evidence directory
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: quadric-section-acceptance-${{ github.sha }}
           path: ${{ runner.temp }}/quadric-section-acceptance

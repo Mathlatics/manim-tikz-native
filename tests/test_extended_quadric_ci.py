@@ -144,6 +144,21 @@ class ExtendedQuadricCIContractTests(unittest.TestCase):
     def test_workflows_run_exact_tiers_and_upload_only_the_evidence_dir(self) -> None:
         fast = FAST_WORKFLOW.read_text(encoding="utf-8")
         extended = EXTENDED_WORKFLOW.read_text(encoding="utf-8")
+        self.assertIn(
+            "  push:\n    branches:\n      - main\n  pull_request:", fast
+        )
+        self.assertEqual(fast.count("actions/checkout@v7"), 2)
+        self.assertEqual(fast.count("actions/setup-python@v7"), 2)
+        self.assertEqual(extended.count("actions/checkout@v7"), 1)
+        self.assertEqual(extended.count("actions/setup-python@v7"), 1)
+        self.assertEqual(extended.count("actions/upload-artifact@v7"), 1)
+        for obsolete in (
+            "actions/checkout@v4",
+            "actions/setup-python@v5",
+            "actions/upload-artifact@v4",
+        ):
+            self.assertNotIn(obsolete, fast)
+            self.assertNotIn(obsolete, extended)
         self.assertIn("scripts/run_ci_test_tier.py core", fast)
         self.assertIn("scripts/run_ci_test_tier.py cairo-smoke", fast)
         self.assertIn('python-version: ["3.11", "3.12"]', fast)
