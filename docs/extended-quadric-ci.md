@@ -13,6 +13,10 @@ suite, deterministic parameter sweeps, Manim binding contracts, and the
 renders four fixed small animations, including the high-level section facade
 and ellipse/parabola/hyperbola handoff.
 
+The workflow runs once for each pull-request revision and once after the
+accepted revision reaches `main`.  Pushes to a feature branch do not start a
+second duplicate run alongside the pull-request run.
+
 ```bash
 python scripts/run_ci_test_tier.py core
 python scripts/run_ci_test_tier.py cairo-smoke
