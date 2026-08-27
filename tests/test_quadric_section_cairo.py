@@ -425,7 +425,8 @@ def _transition_schedule():
 def _transition_limits() -> QuadricManimLimits:
     return QuadricManimLimits(
         max_surfaces=2,
-        max_curves=8,
+        # Eight lateral transition-bank slots plus one stable cap chord.
+        max_curves=9,
         max_fragments_per_curve=16,
         max_segments_per_fragment=256,
         max_surface_segments=512,
