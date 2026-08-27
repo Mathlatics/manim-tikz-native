@@ -3,7 +3,7 @@
 The existing quadric stack intentionally keeps exact curve visibility, finite
 section geometry, and Manim allocation separate.  This module is the sidecar
 which turns all semantic stroke sources into one fragment-level painter graph
-without changing any existing v1 frame or importing Manim.
+without importing Manim.
 """
 
 from __future__ import annotations
@@ -36,7 +36,7 @@ from .curve_intersections import ProjectedCurveCrossing
 from .visibility import CurveVisibilityRecord, compute_curve_visibility
 
 
-QUADRIC_BOUNDARY_COMPOSITING_SCHEMA = "manim-quadric-boundary-compositing/v1"
+QUADRIC_BOUNDARY_COMPOSITING_SCHEMA = "manim-quadric-boundary-compositing/v2"
 QuadricSurfaceSpec = SphereSpec | CylinderSpec | ConeSpec
 ContextInput = GeometryContext | ResolvedGeometryContext | None
 
@@ -47,8 +47,10 @@ class QuadricBoundaryCompositingError(ValueError):
 
 class BoundarySourceKind(str, Enum):
     ANALYTIC_CURVE = "analytic_curve"
+    SECTION_CAP_CHORD = "section_cap_chord"
     PLANE_PATCH_EDGE = "plane_patch_edge"
     SURFACE_CAP_RIM = "surface_cap_rim"
+    SURFACE_TRIM_RIM = "surface_trim_rim"
     SURFACE_GENERATOR = "surface_generator"
     SURFACE_SILHOUETTE = "surface_silhouette"
     POLYHEDRON_EDGE = "polyhedron_edge"
@@ -216,7 +218,8 @@ class QuadricBoundaryPaintFragment:
     item_id: str
     source_id: str
     interval: ParameterInterval
-    visibility_kind: VisibilityKind
+    surface_visibility_kind: VisibilityKind
+    effective_visibility_kind: VisibilityKind
     occluder_surface_ids: tuple[str, ...]
     render_intent: BoundaryRenderIntent
     painted: bool
@@ -226,6 +229,8 @@ class QuadricBoundaryPaintFragment:
     plane_depth_roles: tuple[str, ...]
     style_id: str | None
     stable_sort_key: tuple[str, ...]
+    plane_occluded: bool = False
+    plane_occluder_item_ids: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         item_id = _identity(self.item_id, "boundary fragment item_id")
@@ -237,8 +242,16 @@ class QuadricBoundaryPaintFragment:
             raise QuadricBoundaryCompositingError(
                 "boundary fragment interval must have positive length"
             )
-        if not isinstance(self.visibility_kind, VisibilityKind):
-            raise TypeError("visibility_kind must be a VisibilityKind")
+        if not isinstance(self.surface_visibility_kind, VisibilityKind):
+            raise TypeError(
+                "surface_visibility_kind must be a VisibilityKind"
+            )
+        if not isinstance(self.effective_visibility_kind, VisibilityKind):
+            raise TypeError(
+                "effective_visibility_kind must be a VisibilityKind"
+            )
+        if not isinstance(self.plane_occluded, bool):
+            raise TypeError("plane_occluded must be a bool")
         if not isinstance(self.render_intent, BoundaryRenderIntent):
             raise TypeError("render_intent must be a BoundaryRenderIntent")
         if not isinstance(self.painted, bool):
@@ -250,18 +263,72 @@ class QuadricBoundaryPaintFragment:
                 "painted flag must agree with boundary render_intent"
             )
         if (
-            self.visibility_kind is VisibilityKind.VISIBLE
+            self.effective_visibility_kind is VisibilityKind.VISIBLE
             and self.render_intent is not BoundaryRenderIntent.SOLID
         ):
             raise QuadricBoundaryCompositingError(
                 "visible boundary fragments must render solid"
             )
         if (
-            self.visibility_kind is VisibilityKind.HIDDEN
+            self.effective_visibility_kind is VisibilityKind.HIDDEN
             and self.render_intent is BoundaryRenderIntent.SOLID
         ):
             raise QuadricBoundaryCompositingError(
                 "hidden boundary fragments cannot render solid"
+            )
+        surface_occluders = tuple(
+            _identity(item, "fragment surface occluder identity")
+            for item in self.occluder_surface_ids
+        )
+        if surface_occluders != tuple(sorted(set(surface_occluders))):
+            raise QuadricBoundaryCompositingError(
+                "fragment surface occluders must be unique and sorted"
+            )
+        if (
+            self.surface_visibility_kind is VisibilityKind.VISIBLE
+            and surface_occluders
+        ):
+            raise QuadricBoundaryCompositingError(
+                "surface-visible fragments cannot name surface occluders"
+            )
+        if (
+            self.surface_visibility_kind is VisibilityKind.HIDDEN
+            and not surface_occluders
+        ):
+            raise QuadricBoundaryCompositingError(
+                "surface-hidden fragments must name a surface occluder"
+            )
+        plane_occluders = tuple(
+            _identity(item, "plane occluder painter identity")
+            for item in self.plane_occluder_item_ids
+        )
+        if plane_occluders != tuple(sorted(set(plane_occluders))):
+            raise QuadricBoundaryCompositingError(
+                "plane occluder painter identities must be unique and sorted"
+            )
+        if self.plane_occluded:
+            if self.plane_relation != "boundary_behind_plane":
+                raise QuadricBoundaryCompositingError(
+                    "plane-occluded fragments must lie behind the section plane"
+                )
+            if not plane_occluders:
+                raise QuadricBoundaryCompositingError(
+                    "plane-occluded fragments must name plane painter items"
+                )
+        elif plane_occluders:
+            raise QuadricBoundaryCompositingError(
+                "plane-visible fragments cannot name plane occluder items"
+            )
+        effective_kind = (
+            VisibilityKind.HIDDEN
+            if self.surface_visibility_kind is VisibilityKind.HIDDEN
+            or self.plane_occluded
+            else VisibilityKind.VISIBLE
+        )
+        if self.effective_visibility_kind is not effective_kind:
+            raise QuadricBoundaryCompositingError(
+                "boundary effective_visibility_kind must combine surface "
+                "visibility and section-plane occlusion"
             )
         roles = tuple(str(item) for item in self.plane_depth_roles)
         if roles != tuple(sorted(set(roles))) or any(
@@ -272,6 +339,8 @@ class QuadricBoundaryPaintFragment:
             )
         object.__setattr__(self, "item_id", item_id)
         object.__setattr__(self, "source_id", source_id)
+        object.__setattr__(self, "occluder_surface_ids", surface_occluders)
+        object.__setattr__(self, "plane_occluder_item_ids", plane_occluders)
         object.__setattr__(self, "plane_depth_roles", roles)
 
     def to_dict(self) -> dict[str, object]:
@@ -279,8 +348,11 @@ class QuadricBoundaryPaintFragment:
             "itemId": self.item_id,
             "sourceId": self.source_id,
             "interval": [self.interval.start, self.interval.end],
-            "visibilityKind": self.visibility_kind.value,
+            "surfaceVisibilityKind": self.surface_visibility_kind.value,
+            "effectiveVisibilityKind": self.effective_visibility_kind.value,
             "occluderSurfaceIds": list(self.occluder_surface_ids),
+            "planeOccluded": self.plane_occluded,
+            "planeOccluderItemIds": list(self.plane_occluder_item_ids),
             "renderIntent": self.render_intent.value,
             "painted": self.painted,
             "semanticKind": self.semantic_kind.value,
@@ -556,9 +628,28 @@ def _add_section_plane_relation(
     relation = fragment.plane_relation
     if relation in {None, "outside_patch", "coincident"}:
         return
+    roles = fragment.plane_depth_roles
+    if (
+        fragment.effective_visibility_kind is VisibilityKind.VISIBLE
+        and relation == "boundary_behind_plane"
+    ):
+        # On a true silhouette the certified plane partition intentionally
+        # reports both adjacent roles.  A behind/between fill is already below
+        # the front sheet, while a visible boundary is above that sheet.  Those
+        # two regions meet only on the shared contour, so forcing the boundary
+        # below the behind/between fill creates a false painter cycle.  Retain
+        # only plane regions that can actually paint over a visible front
+        # boundary.
+        roles = tuple(
+            role
+            for role in roles
+            if role in {"outside_projection", "in_front_of_surface"}
+        )
+        if not roles:
+            return
     item_ids = tuple(
         item_id
-        for role in fragment.plane_depth_roles
+        for role in roles
         if (item_id := _plane_item_for_role(role, anchors)) is not None
     )
     if not item_ids:
@@ -659,7 +750,15 @@ def compute_quadric_boundary_compositing(
                     item
                     for item in section_spans.get(source.source_id, ())
                     if item.interval.contains(
-                        interval.midpoint, tolerance=tolerance
+                        # Section spans already form an exact partition and
+                        # every emitted piece has length greater than the
+                        # splitter tolerance.  Expanding both adjacent closed
+                        # spans by that same tolerance can make the midpoint
+                        # of a tiny, but valid, piece appear in both.  Query
+                        # the strict interior midpoint instead; a genuine
+                        # positive overlap still yields multiple matches.
+                        interval.midpoint,
+                        tolerance=0.0,
                     )
                 ]
                 if len(placement_matches) > 1:
@@ -668,17 +767,57 @@ def compute_quadric_boundary_compositing(
                     )
                 if placement_matches:
                     placement = placement_matches[0]
-                intent = _render_intent(policy, span.kind)
+                placement_relation = (
+                    None if placement is None else placement.relation.value
+                )
+                plane_occluded = (
+                    source.source_kind
+                    is not BoundarySourceKind.PLANE_PATCH_EDGE
+                    and placement_relation == "boundary_behind_plane"
+                )
+                plane_occluder_item_ids: tuple[str, ...] = ()
+                if plane_occluded:
+                    if section_anchors is None:
+                        raise QuadricBoundaryCompositingError(
+                            "plane-occluded boundary fragments require "
+                            "section anchors"
+                        )
+                    plane_occluder_item_ids = tuple(
+                        sorted(
+                            {
+                                item_id
+                                for role in placement.plane_depth_roles
+                                if (
+                                    item_id := _plane_item_for_role(
+                                        role, section_anchors
+                                    )
+                                )
+                                is not None
+                            }
+                        )
+                    )
+                    if not plane_occluder_item_ids:
+                        raise QuadricBoundaryCompositingError(
+                            "plane-occluded boundary fragment has no plane "
+                            "painter item"
+                        )
+                effective_kind = (
+                    VisibilityKind.HIDDEN
+                    if span.kind is VisibilityKind.HIDDEN or plane_occluded
+                    else VisibilityKind.VISIBLE
+                )
+                intent = _render_intent(policy, effective_kind)
                 item_id = (
                     f"boundary:{source.source_id}:span:{span_index:04d}:"
-                    f"piece:{piece_index:04d}:{span.kind.value}"
+                    f"piece:{piece_index:04d}:{effective_kind.value}"
                 )
                 fragments.append(
                     QuadricBoundaryPaintFragment(
                         item_id=item_id,
                         source_id=source.source_id,
                         interval=interval,
-                        visibility_kind=span.kind,
+                        surface_visibility_kind=span.kind,
+                        effective_visibility_kind=effective_kind,
                         occluder_surface_ids=span.occluder_surface_ids,
                         render_intent=intent,
                         painted=intent is not BoundaryRenderIntent.OMIT,
@@ -687,9 +826,7 @@ def compute_quadric_boundary_compositing(
                         # plane-patch edges.  Surface boundaries keep all
                         # adjacent plane regions in ``plane_depth_roles``.
                         depth_role=span.depth_role,
-                        plane_relation=(
-                            None if placement is None else placement.relation.value
-                        ),
+                        plane_relation=placement_relation,
                         plane_depth_roles=(
                             () if placement is None else placement.plane_depth_roles
                         ),
@@ -699,6 +836,8 @@ def compute_quadric_boundary_compositing(
                             f"{span_index:04d}",
                             f"{piece_index:04d}",
                         ),
+                        plane_occluded=plane_occluded,
+                        plane_occluder_item_ids=plane_occluder_item_ids,
                     )
                 )
     fragments.sort(key=lambda item: item.item_id)
@@ -727,6 +866,19 @@ def compute_quadric_boundary_compositing(
             + ", ".join(unknown_surface_items)
         )
     surface_item_by_id = normalized_surface_items
+    unknown_plane_occluder_items = sorted(
+        {
+            item_id
+            for fragment in fragments
+            for item_id in fragment.plane_occluder_item_ids
+        }
+        - parent_set
+    )
+    if unknown_plane_occluder_items:
+        raise QuadricBoundaryCompositingError(
+            "plane occluder identities reference non-parent items: "
+            + ", ".join(unknown_plane_occluder_items)
+        )
     relaxed_parent_pairs: set[tuple[str, str]] = set()
     if section_anchors is not None:
         # The outside patch region is screen-disjoint from both projection
@@ -776,7 +928,10 @@ def compute_quadric_boundary_compositing(
             if item.source_id == fragment.source_id
         )
         is_plane_edge = source.source_kind is BoundarySourceKind.PLANE_PATCH_EDGE
-        if is_plane_edge and fragment.visibility_kind is VisibilityKind.VISIBLE:
+        if (
+            is_plane_edge
+            and fragment.effective_visibility_kind is VisibilityKind.VISIBLE
+        ):
             if section_anchors is None:
                 raise QuadricBoundaryCompositingError(
                     "plane-edge fragments require section anchors"
@@ -804,7 +959,7 @@ def compute_quadric_boundary_compositing(
                 )
             continue
 
-        if fragment.visibility_kind is VisibilityKind.VISIBLE:
+        if fragment.effective_visibility_kind is VisibilityKind.VISIBLE:
             if section_anchors is not None:
                 if source.owner_surface_id is not None:
                     relations.append(
@@ -812,6 +967,36 @@ def compute_quadric_boundary_compositing(
                             section_anchors.surface_front,
                             fragment.item_id,
                             "visible_owner_surface_boundary",
+                        )
+                    )
+                elif fragment.plane_relation == "outside_patch":
+                    # Outside the finite display patch there are no plane
+                    # pixels to bracket against.  A visible free curve still
+                    # belongs above the front surface sheet, but tying it to
+                    # the global front-outline anchor can contradict the
+                    # certified depth order where it crosses the patch edge.
+                    relations.append(
+                        QuadricPaintRelation(
+                            section_anchors.surface_front,
+                            fragment.item_id,
+                            "visible_boundary_outside_section_patch",
+                        )
+                    )
+                elif (
+                    fragment.plane_relation == "boundary_behind_plane"
+                    and "in_front_of_surface" in fragment.plane_depth_roles
+                ):
+                    # The boundary is visible because it lies in front of the
+                    # finite surface, but the current section plane is nearer.
+                    # Give the fragment both sides of that certified bracket:
+                    # surface_front -> boundary -> plane_front.  Without the
+                    # lower edge, deterministic tie-breaking can place the
+                    # boundary behind the opaque front sheet.
+                    relations.append(
+                        QuadricPaintRelation(
+                            section_anchors.surface_front,
+                            fragment.item_id,
+                            "visible_boundary_in_front_of_surface",
                         )
                     )
                 elif fragment.plane_relation != "boundary_behind_plane":
@@ -893,7 +1078,22 @@ def compute_quadric_boundary_compositing(
                     "hidden plane outline fragment has a visible depth role"
                 )
         elif section_anchors is not None:
-            if source.owner_surface_id is not None:
+            if (
+                fragment.surface_visibility_kind is VisibilityKind.VISIBLE
+                and fragment.plane_occluded
+            ):
+                # The stroke is geometrically visible against every selected
+                # surface and becomes hidden only because the finite section
+                # patch is nearer.  Keep it above the front sheet, then let the
+                # certified plane-role fills attenuate the dash.
+                relations.append(
+                    QuadricPaintRelation(
+                        section_anchors.surface_front,
+                        fragment.item_id,
+                        "depth_aware_plane_occluded_boundary_after_surface_front",
+                    )
+                )
+            elif source.owner_surface_id is not None:
                 _add_bracket(
                     relations,
                     fragment.item_id,
@@ -982,6 +1182,39 @@ def compute_quadric_boundary_compositing(
         )
         for farther in far:
             for nearer in near:
+                if (
+                    policy is QuadricPaintPolicy.DIAGRAMMATIC
+                    and farther.effective_visibility_kind
+                    is not nearer.effective_visibility_kind
+                    and BoundarySourceKind.PLANE_PATCH_EDGE
+                    in {
+                        source_map[farther.source_id].source_kind,
+                        source_map[nearer.source_id].source_kind,
+                    }
+                ):
+                    # A diagrammatic hidden stroke crossing the finite plane
+                    # outline is an explicit teaching overlay.  Keep it above
+                    # that outline even when objective crossing depth says the
+                    # hidden source is farther; retaining the physical edge can
+                    # form a cycle with the plane's fill -> edge -> outline
+                    # bracket.  Crossings between ordinary entity boundaries
+                    # retain their certified far-to-near order.
+                    visible = (
+                        farther
+                        if farther.effective_visibility_kind
+                        is VisibilityKind.VISIBLE
+                        else nearer
+                    )
+                    hidden = nearer if visible is farther else farther
+                    relations.append(
+                        QuadricPaintRelation(
+                            visible.item_id,
+                            hidden.item_id,
+                            "diagrammatic_hidden_boundary_crossing_overlay:"
+                            f"{crossing.crossing_id}",
+                        )
+                    )
+                    continue
                 relations.append(
                     QuadricPaintRelation(
                         farther.item_id,

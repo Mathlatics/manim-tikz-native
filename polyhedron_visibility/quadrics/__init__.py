@@ -21,6 +21,8 @@ _EXPORTS: Final[dict[str, tuple[str, str]]] = {
     "ConicKind": (".conics", "ConicKind"),
     "ConicParameterization": (".conics", "ConicParameterization"),
     "classify_conic": (".conics", "classify_conic"),
+    "CircularTrimRimSpec": (".contract", "CircularTrimRimSpec"),
+    "ConeModel": (".contract", "ConeModel"),
     "ConeSpec": (".contract", "ConeSpec"),
     "CylinderSpec": (".contract", "CylinderSpec"),
     "PlanarCapSpec": (".contract", "PlanarCapSpec"),
@@ -60,6 +62,12 @@ _EXPORTS: Final[dict[str, tuple[str, str]]] = {
         ".projection",
         "OPAQUE_PROJECTION_PROXY_SCHEMA",
     ),
+    "CONE_PROJECTION_LAYERS_SCHEMA": (
+        ".projection",
+        "CONE_PROJECTION_LAYERS_SCHEMA",
+    ),
+    "ConeProjectionLayers": (".projection", "ConeProjectionLayers"),
+    "ConeProjectionSheet": (".projection", "ConeProjectionSheet"),
     "OpaqueProjectionProxy": (".projection", "OpaqueProjectionProxy"),
     "ParallelViewInput": (".projection", "ParallelViewInput"),
     "ProjectionApproximationMetadata": (
@@ -75,15 +83,35 @@ _EXPORTS: Final[dict[str, tuple[str, str]]] = {
         ".projection",
         "build_opaque_projection_proxy",
     ),
+    "build_cone_projection_layers": (
+        ".projection",
+        "build_cone_projection_layers",
+    ),
     "canonical_opaque_projection_proxy_json": (
         ".projection",
         "canonical_opaque_projection_proxy_json",
     ),
     "QuadricSectionError": (".sections", "QuadricSectionError"),
+    "FiniteSectionBoundaryCurve": (
+        ".sections",
+        "FiniteSectionBoundaryCurve",
+    ),
     "UnboundedFiniteSectionError": (".sections", "UnboundedFiniteSectionError"),
     "compute_quadric_section": (".sections", "compute_quadric_section"),
+    "compute_quadric_section_boundary_curves": (
+        ".sections",
+        "compute_quadric_section_boundary_curves",
+    ),
+    "compute_section_cap_chord_curves": (
+        ".sections",
+        "compute_section_cap_chord_curves",
+    ),
     "intersect_plane_with_quadric": (".sections", "intersect_plane_with_quadric"),
     "restrict_quadric_to_plane": (".sections", "restrict_quadric_to_plane"),
+    "section_cap_chord_curve_ids": (
+        ".sections",
+        "section_cap_chord_curve_ids",
+    ),
     "FiniteSectionTopology": (".trace", "FiniteSectionTopology"),
     "QUADRIC_SECTION_TRACE_SCHEMA": (
         ".trace",
@@ -167,6 +195,14 @@ _EXPORTS: Final[dict[str, tuple[str, str]]] = {
     "BoundaryRenderIntent": (".boundary_compositing", "BoundaryRenderIntent"),
     "BoundarySectionAnchors": (".boundary_compositing", "BoundarySectionAnchors"),
     "BoundaryPlaneRelation": (".boundary_section", "BoundaryPlaneRelation"),
+    "QUADRIC_BOUNDARY_SECTION_LIMITS": (
+        ".boundary_section",
+        "QUADRIC_BOUNDARY_SECTION_LIMITS",
+    ),
+    "QuadricBoundarySectionLimits": (
+        ".boundary_section",
+        "QuadricBoundarySectionLimits",
+    ),
     "QuadricBoundarySectionSpan": (
         ".boundary_section",
         "QuadricBoundarySectionSpan",
@@ -217,6 +253,10 @@ _EXPORTS: Final[dict[str, tuple[str, str]]] = {
     ),
     "curve_boundary_source": (".surface_boundaries", "curve_boundary_source"),
     "plane_outline_sources": (".surface_boundaries", "plane_outline_sources"),
+    "section_curve_boundary_source": (
+        ".surface_boundaries",
+        "section_curve_boundary_source",
+    ),
     "surface_boundary_source_ids": (
         ".surface_boundaries",
         "surface_boundary_source_ids",
@@ -407,6 +447,7 @@ _EXPORTS: Final[dict[str, tuple[str, str]]] = {
     "QuadricManimError": (".manim", "QuadricManimError"),
     "QuadricManimLimits": (".manim", "QuadricManimLimits"),
     "QuadricManimStyle": (".manim", "QuadricManimStyle"),
+    "QuadricBoundaryStyle": (".manim", "QuadricBoundaryStyle"),
     "QuadricOcclusion3D": (".manim", "QuadricOcclusion3D"),
     "MAX_TRANSITION_INTERVAL_SLOTS": (
         ".transition_manim",

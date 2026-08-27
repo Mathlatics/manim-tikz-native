@@ -29,11 +29,16 @@ from .curves import ParametricConicBranch
 from .manim import (
     QUADRIC_MANIM_LIMITS,
     ProjectionInput,
+    QuadricBoundaryStyle,
     QuadricManimCapacityError,
     QuadricManimError,
     QuadricManimLimits,
     QuadricManimStyle,
     QuadricOcclusion3D,
+)
+from .boundary_section import (
+    QUADRIC_BOUNDARY_SECTION_LIMITS,
+    QuadricBoundarySectionLimits,
 )
 from .section_compositing import (
     QUADRIC_SECTION_COMPOSITING_LIMITS,
@@ -153,6 +158,7 @@ class QuadricSectionTransition3D:
         transition_mode: SectionTransitionMode | str = SectionTransitionMode.CROSSFADE,
         paint_policy: QuadricPaintPolicy | str = QuadricPaintPolicy.DIAGRAMMATIC,
         style: QuadricManimStyle = QuadricManimStyle(),
+        boundary_styles: Mapping[str, QuadricBoundaryStyle] | None = None,
         limits: QuadricManimLimits = QUADRIC_MANIM_LIMITS,
         max_chord_error: float = 1.0e-3,
         painter_z_band: tuple[float, float] = (20.0, 30.0),
@@ -164,6 +170,9 @@ class QuadricSectionTransition3D:
         section_max_screen_error: float = 0.08,
         section_compositing_limits: QuadricSectionCompositingLimits = (
             QUADRIC_SECTION_COMPOSITING_LIMITS
+        ),
+        boundary_section_limits: QuadricBoundarySectionLimits = (
+            QUADRIC_BOUNDARY_SECTION_LIMITS
         ),
         boundary_visibility_mode: str = "legacy",
         include_surface_boundaries: bool = True,
@@ -205,6 +214,7 @@ class QuadricSectionTransition3D:
             projection=projection,
             paint_policy=paint_policy,
             style=style,
+            boundary_styles=boundary_styles,
             limits=limits,
             max_chord_error=max_chord_error,
             context=context,
@@ -215,6 +225,7 @@ class QuadricSectionTransition3D:
             section_patch_margin=plane_patch_margin,
             section_max_screen_error=section_max_screen_error,
             section_compositing_limits=section_compositing_limits,
+            boundary_section_limits=boundary_section_limits,
             boundary_visibility_mode=boundary_visibility_mode,
             include_surface_boundaries=include_surface_boundaries,
             generator_boundaries=generator_boundaries,

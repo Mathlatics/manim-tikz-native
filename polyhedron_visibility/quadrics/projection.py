@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import json
-from math import cos, isfinite, sin, tau
+from math import acos, ceil, cos, isfinite, sin, tau
 from typing import Sequence
 
 import numpy as np
@@ -28,6 +28,7 @@ from .contract import ConeSpec, CylinderSpec, SphereSpec
 
 
 OPAQUE_PROJECTION_PROXY_SCHEMA = "manim-quadric-opaque-projection-proxy/v1"
+CONE_PROJECTION_LAYERS_SCHEMA = "manim-cone-projection-layers/v1"
 _INITIAL_SEGMENTS = 8
 _PROBE_FRACTIONS = (0.25, 0.5, 0.75)
 _EVENT_SCAN_SEGMENTS = 256
@@ -241,6 +242,86 @@ class OpaqueProjectionProxy:
             "boundaryPoints": [list(point) for point in self.boundary_points],
             "metadata": self.metadata.to_dict(),
         }
+
+
+ProjectionPath = tuple[tuple[float, float], ...]
+
+
+def _projection_path(
+    value: Sequence[Sequence[float]],
+    label: str,
+) -> ProjectionPath:
+    points = tuple(_point2(point, label) for point in value)
+    if len(points) < 3 or len(set(points)) < 3:
+        raise ProjectionProxyError(f"{label} requires three distinct points")
+    return points
+
+
+@dataclass(frozen=True, slots=True)
+class ConeProjectionSheet:
+    """Component masks for one far or near cone projection sheet."""
+
+    lateral_paths: tuple[ProjectionPath, ...]
+    cap_paths: tuple[ProjectionPath, ...] = ()
+
+    def __post_init__(self) -> None:
+        lateral = tuple(
+            _projection_path(path, "cone lateral path")
+            for path in self.lateral_paths
+        )
+        caps = tuple(
+            _projection_path(path, "cone cap path") for path in self.cap_paths
+        )
+        if not lateral:
+            raise ProjectionProxyError(
+                "a cone projection sheet requires a lateral footprint"
+            )
+        object.__setattr__(self, "lateral_paths", lateral)
+        object.__setattr__(self, "cap_paths", caps)
+
+
+@dataclass(frozen=True, slots=True)
+class ConeProjectionLayers:
+    """Renderer-neutral cap/lateral masks for one finite single-nappe cone."""
+
+    surface_id: str
+    proxy: OpaqueProjectionProxy
+    back: ConeProjectionSheet
+    front: ConeProjectionSheet
+    opaque_lateral_paths: tuple[ProjectionPath, ...]
+    opaque_cap_paths: tuple[ProjectionPath, ...]
+    terminal_front_facing: bool | None
+    schema: str = CONE_PROJECTION_LAYERS_SCHEMA
+
+    def __post_init__(self) -> None:
+        if self.schema != CONE_PROJECTION_LAYERS_SCHEMA:
+            raise ProjectionProxyError("invalid cone projection-layers schema")
+        surface_id = _identity(self.surface_id, "surface_id")
+        if self.proxy.surface_id != surface_id:
+            raise ProjectionProxyError(
+                "cone projection layers and proxy must share a surface identity"
+            )
+        if not isinstance(self.back, ConeProjectionSheet) or not isinstance(
+            self.front, ConeProjectionSheet
+        ):
+            raise TypeError("back and front must be ConeProjectionSheet values")
+        opaque_lateral = tuple(
+            _projection_path(path, "opaque cone lateral path")
+            for path in self.opaque_lateral_paths
+        )
+        opaque_caps = tuple(
+            _projection_path(path, "opaque cone cap path")
+            for path in self.opaque_cap_paths
+        )
+        if not opaque_lateral:
+            raise ProjectionProxyError(
+                "opaque cone projection requires a lateral footprint"
+            )
+        if self.terminal_front_facing not in {None, True, False}:
+            raise TypeError("terminal_front_facing must be bool or None")
+        object.__setattr__(self, "surface_id", surface_id)
+        object.__setattr__(self, "opaque_lateral_paths", opaque_lateral)
+        object.__setattr__(self, "opaque_cap_paths", opaque_caps)
 
 
 def canonical_opaque_projection_proxy_json(proxy: OpaqueProjectionProxy) -> str:
@@ -766,7 +847,163 @@ def build_opaque_projection_proxy(
     )
 
 
+def _signed_path_area(path: Sequence[Sequence[float]]) -> float:
+    points = np.asarray(path, dtype=float)
+    shifted = np.roll(points, -1, axis=0)
+    return 0.5 * float(
+        np.sum(points[:, 0] * shifted[:, 1] - points[:, 1] * shifted[:, 0])
+    )
+
+
+def build_cone_projection_layers(
+    surface: ConeSpec,
+    view: ParallelViewInput,
+    *,
+    max_chord_error: float = 1.0e-3,
+    max_segments: int = 4096,
+) -> ConeProjectionLayers:
+    """Build stable lateral/cap masks for one finite single-nappe cone.
+
+    An apex-to-rim cone has exactly one non-degenerate terminal circle.  Its
+    projected disk replaces one sheet of a closed cone and removes that sheet
+    from an open shell.  The opposite sheet remains lateral.  This models the
+    lighter one-hit region visible through an open mouth without creating any
+    renderer objects.
+
+    Frusta have two non-degenerate terminals and need polygon-union masks.  No
+    approximation is guessed for that unimplemented case; callers receive an
+    explicit error and may fall back to the ordinary uniform surface style.
+    """
+
+    if not isinstance(surface, ConeSpec):
+        raise TypeError("surface must be a ConeSpec")
+    if surface.nappe_count != 1:
+        raise ProjectionProxyError(
+            "cone projection layers require one nappe; expand an open double "
+            "cone into its stable render_components first"
+        )
+    parallel_view = _coerce_view(view)
+    tolerance = _positive(max_chord_error, "max_chord_error")
+    segment_limit = _segment_limit(max_segments)
+    proxy = build_opaque_projection_proxy(
+        surface,
+        parallel_view,
+        max_chord_error=tolerance,
+        max_segments=segment_limit,
+    )
+    terminals = (
+        tuple(surface.trim_rims) if surface.is_open_shell else tuple(surface.end_caps)
+    )
+    if len(terminals) != 1:
+        raise ProjectionProxyError(
+            "component-aware cone shading currently requires an apex-to-one-rim "
+            "finite cone; frusta with two non-degenerate terminals are not "
+            "silently approximated"
+        )
+    terminal = terminals[0]
+    frame = terminal.frame
+    screen = np.asarray(parallel_view.matrix[:2], dtype=float)
+    center = screen @ np.asarray(terminal.center, dtype=float)
+    first = terminal.radius * screen @ np.asarray(frame.x_axis, dtype=float)
+    second = terminal.radius * screen @ np.asarray(frame.y_axis, dtype=float)
+    screen_radius = float(
+        np.linalg.svd(np.column_stack((first, second)), compute_uv=False)[0]
+    )
+    outer = tuple(proxy.vertices)
+    if screen_radius <= tolerance:
+        full = ConeProjectionSheet((outer,))
+        return ConeProjectionLayers(
+            surface.surface_id,
+            proxy,
+            full,
+            full,
+            (outer,),
+            (),
+            None,
+        )
+    ratio = min(1.0, max(0.0, tolerance / screen_radius))
+    maximum_step = 2.0 * acos(max(-1.0, min(1.0, 1.0 - ratio)))
+    if maximum_step <= 0.0:
+        observed = screen_radius * (1.0 - cos(0.5 * tau / segment_limit))
+        if observed > tolerance:
+            raise ProjectionSubdivisionError(
+                max_chord_error=tolerance,
+                observed_chord_error=observed,
+                max_segments=segment_limit,
+                current_segments=segment_limit,
+            )
+        count = segment_limit
+    else:
+        count = max(_INITIAL_SEGMENTS, int(ceil(tau / maximum_step)))
+    if count > segment_limit:
+        observed = screen_radius * (1.0 - cos(0.5 * tau / segment_limit))
+        raise ProjectionSubdivisionError(
+            max_chord_error=tolerance,
+            observed_chord_error=observed,
+            max_segments=segment_limit,
+            current_segments=segment_limit,
+        )
+    rim_points = tuple(
+        tuple(
+            float(item)
+            for item in (
+                center
+                + cos(index * tau / count) * first
+                + sin(index * tau / count) * second
+            )
+        )
+        for index in range(count)
+    )
+    area = _signed_path_area(rim_points)
+    area_floor = tolerance * tolerance
+    if abs(area) <= area_floor:
+        full = ConeProjectionSheet((outer,))
+        return ConeProjectionLayers(
+            surface.surface_id,
+            proxy,
+            full,
+            full,
+            (outer,),
+            (),
+            None,
+        )
+    rim = rim_points if area > 0.0 else tuple(reversed(rim_points))
+    hole = tuple(reversed(rim))
+    full = ConeProjectionSheet((outer,))
+    terminal_sheet = ConeProjectionSheet(
+        (outer, hole),
+        () if surface.is_open_shell else (rim,),
+    )
+    facing = float(
+        np.dot(
+            np.asarray(terminal.normal, dtype=float),
+            np.asarray(parallel_view.view_direction, dtype=float),
+        )
+    )
+    front_facing = facing > 0.0
+    back = full if front_facing else terminal_sheet
+    front = terminal_sheet if front_facing else full
+    opaque_lateral = (
+        full.lateral_paths
+        if surface.is_open_shell or not front_facing
+        else terminal_sheet.lateral_paths
+    )
+    opaque_caps = terminal_sheet.cap_paths if front_facing else ()
+    return ConeProjectionLayers(
+        surface.surface_id,
+        proxy,
+        back,
+        front,
+        opaque_lateral,
+        opaque_caps,
+        front_facing,
+    )
+
+
 __all__ = [
+    "CONE_PROJECTION_LAYERS_SCHEMA",
+    "ConeProjectionLayers",
+    "ConeProjectionSheet",
     "OPAQUE_PROJECTION_PROXY_SCHEMA",
     "OpaqueProjectionProxy",
     "ParallelViewInput",
@@ -775,5 +1012,6 @@ __all__ = [
     "ProjectionSubdivisionError",
     "QuadricSurfaceSpec",
     "build_opaque_projection_proxy",
+    "build_cone_projection_layers",
     "canonical_opaque_projection_proxy_json",
 ]

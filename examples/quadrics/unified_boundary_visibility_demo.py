@@ -17,6 +17,7 @@ from polyhedron_visibility.quadrics.compositing import QuadricPaintPolicy
 from polyhedron_visibility.quadrics.contract import ConeSpec, SectionPlane
 from polyhedron_visibility.quadrics.manim import (
     DEFAULT_QUADRIC_VIEW,
+    QuadricBoundaryStyle,
     QuadricManimLimits,
     QuadricManimStyle,
 )
@@ -155,12 +156,24 @@ class UnifiedBoundaryVisibilityComparison(Scene):
             max_chord_error=0.008,
             painter_z_band=(40.0, 50.0),
             boundary_visibility_mode="unified",
+            boundary_styles={
+                "style:teaching-accent": QuadricBoundaryStyle(
+                    visible_color="#E53935",
+                    visible_width=4.2,
+                    hidden_color="#B71C1C",
+                    hidden_width=3.0,
+                    hidden_opacity=0.94,
+                    dash_length=0.11,
+                    dash_gap=0.08,
+                ),
+            },
             include_surface_boundaries=True,
             generator_boundaries=(
                 GeneratorBoundarySpec(
                     "unified:teaching-generator",
                     right_cone.surface_id,
                     0.42,
+                    style_id="style:teaching-accent",
                 ),
             ),
         ).attach()

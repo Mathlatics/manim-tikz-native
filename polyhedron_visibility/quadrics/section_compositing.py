@@ -28,7 +28,9 @@ from enum import Enum
 from hashlib import sha256
 import json
 from math import (
+    acos,
     atan2,
+    ceil,
     copysign,
     cos,
     cosh,
@@ -90,6 +92,8 @@ QUADRIC_SECTION_COMPOSITING_SCHEMA = "manim-quadric-section-compositing/v1"
 # fixed fragment capacity for ordinary teaching scenes.
 _SECTION_BOUNDARY_CHORD_DIVISOR = 2048.0
 _NEAR_TANGENT_SECTION_BOUNDARY_CHORD_DIVISOR = 8192.0
+_OPEN_SHELL_TRIM_BOUNDARY_CHORD_DIVISOR = 16.0
+_OPEN_SHELL_TRIM_MAX_RANK_ONE_RATIO = 0.125
 
 
 QuadricSurfaceSpec = SphereSpec | CylinderSpec | ConeSpec
@@ -1484,6 +1488,81 @@ def _point_segment_distance_2d(
     return float(np.linalg.norm(point - (start + ratio * delta)))
 
 
+def _projected_trim_rim_is_proxy_owned_segment(
+    screen_center: np.ndarray,
+    dominant_direction: np.ndarray,
+    half_length: float,
+    proxy_vertices: Sequence[np.ndarray],
+    *,
+    ownership_tolerance: float,
+) -> bool:
+    """Certify that one collapsed trim rim is an outer-proxy segment.
+
+    A circular axial rim can become rank one only when the view direction lies
+    in the rim plane.  For the finite convex single-nappe cones accepted by
+    this compositor, each such terminal segment is an edge of the outer
+    projection (both terminal segments are edges for a frustum).  We still
+    certify that contract geometrically instead of silently assuming it: the
+    complete finite segment must follow the proxy boundary and the proxy must
+    remain on one side of its supporting line.
+
+    The tolerance may include the projected rim's discarded minor semiaxis
+    and the already-certified proxy chord error.  This also lets a numerically
+    near-rank-one ellipse switch to this stable segment representation without
+    an ill-conditioned matrix inverse.
+    """
+
+    center = np.asarray(screen_center, dtype=float)
+    direction = np.asarray(dominant_direction, dtype=float)
+    vertices = tuple(np.asarray(point, dtype=float) for point in proxy_vertices)
+    tolerance = float(ownership_tolerance)
+    length = float(half_length)
+    direction_length = float(np.linalg.norm(direction))
+    if (
+        center.shape != (2,)
+        or direction.shape != (2,)
+        or len(vertices) < 3
+        or any(point.shape != (2,) for point in vertices)
+        or not np.all(np.isfinite(center))
+        or not np.all(np.isfinite(direction))
+        or not all(np.all(np.isfinite(point)) for point in vertices)
+        or not isfinite(length)
+        or length <= 0.0
+        or not isfinite(tolerance)
+        or tolerance <= 0.0
+        or direction_length <= 0.0
+    ):
+        return False
+    direction = direction / direction_length
+    start = center - length * direction
+    end = center + length * direction
+
+    # A finite segment, rather than its infinite supporting line, must be
+    # covered by the proxy boundary.  Intermediate samples prevent an internal
+    # chord with boundary-touching endpoints from being mistaken for an edge.
+    boundary_distances = tuple(
+        min(
+            _point_segment_distance_2d(
+                start + fraction * (end - start),
+                vertices[index],
+                vertices[(index + 1) % len(vertices)],
+            )
+            for index in range(len(vertices))
+        )
+        for fraction in np.linspace(0.0, 1.0, 9)
+    )
+    if max(boundary_distances) > tolerance:
+        return False
+
+    support_normal = np.asarray((-direction[1], direction[0]), dtype=float)
+    signed_distances = tuple(
+        float(np.dot(point - center, support_normal)) for point in vertices
+    )
+    return all(value <= tolerance for value in signed_distances) or all(
+        value >= -tolerance for value in signed_distances
+    )
+
+
 def _section_curve_tangent_envelope_error_bound(
     curve: SegmentCurve | ParametricConicBranch,
     view: ParallelView,
@@ -2365,6 +2444,18 @@ def _surface_ray_solver(
     radius = surface.radius if is_cylinder else 0.0
     slope = 0.0 if is_cylinder else surface.slope
     if is_cylinder:
+        cap_axials = (lower, upper)
+    elif surface.is_open_shell:
+        cap_axials = ()
+    else:
+        # Match ``ConeSpec.end_caps`` without rebuilding validated cap
+        # dataclasses for every ray query.  The adaptive section compositor
+        # calls this closure many thousands of times, so that allocation would
+        # turn an otherwise constant-time model check into a major regression.
+        cap_axials = tuple(
+            axial for axial in (lower, upper) if abs(axial) * slope > 0.0
+        )
+    if is_cylinder:
         first = float(np.dot(local_direction[:2], local_direction[:2]))
     else:
         first = float(np.dot(local_direction[:2], local_direction[:2])) - (
@@ -2403,7 +2494,7 @@ def _surface_ray_solver(
             <= upper + boundary_epsilon
         ]
         if abs(float(local_direction[2])) > angular_epsilon:
-            for axial in (lower, upper):
+            for axial in cap_axials:
                 parameter = float((axial - local_point[2]) / local_direction[2])
                 radial = local_point[:2] + parameter * local_direction[:2]
                 cap_radius = radius if is_cylinder else abs(axial) * slope
@@ -2929,7 +3020,60 @@ def compute_quadric_section_compositing(
         )
     ]
 
-    if section_tangent_constraints and axial_mapping is not None:
+    if (
+        section_tangent_constraints
+        and isinstance(surface, ConeSpec)
+        and surface.is_open_shell
+    ):
+        # A finite lateral section arc does not necessarily supply tangent
+        # directions around a full turn.  Close that support envelope with the
+        # already-certified outer projection proxy, never with a fictitious
+        # axial cap.  The projected trim rim is added below as a separate
+        # internal hit-count boundary.
+        for edge_index, edge_start in enumerate(
+            display_proxy_partition.vertices
+        ):
+            edge_end = display_proxy_partition.vertices[
+                (edge_index + 1) % len(display_proxy_partition.vertices)
+            ]
+            start_coordinates = np.asarray(
+                edge_start.plane_coordinates,
+                dtype=float,
+            )
+            edge_direction = (
+                np.asarray(edge_end.plane_coordinates, dtype=float)
+                - start_coordinates
+            )
+            outward_normal = np.asarray(
+                (edge_direction[1], -edge_direction[0]),
+                dtype=float,
+            )
+            support_constraints.append(
+                _PlanePartitionHalfPlane(
+                    stable_token=f"section-proxy:{edge_index:06d}",
+                    normal=(
+                        float(outward_normal[0]),
+                        float(outward_normal[1]),
+                    ),
+                    offset=float(
+                        np.dot(outward_normal, start_coordinates)
+                    ),
+                )
+            )
+
+    # A filled cylinder/cone cap closes the finite section with a real line
+    # segment in the cutting plane.  An open cone shell has no such cap: its
+    # lateral section arc ends on the projected trim rim instead.  Adding the
+    # axial half-plane for an open shell would invent a straight chord between
+    # those endpoints and turn that chord into a false plane-depth boundary.
+    # Keep the tangent envelope free of that cap; the outer proxy bounds it and
+    # the explicit projected trim-rim partition below supplies the curved
+    # internal boundary.
+    if (
+        section_tangent_constraints
+        and axial_mapping is not None
+        and not (isinstance(surface, ConeSpec) and surface.is_open_shell)
+    ):
         axial_direction, axial_offset, lower, upper = axial_mapping
         axial_norm_squared = float(np.dot(axial_direction, axial_direction))
         if axial_norm_squared > coordinate_epsilon * coordinate_epsilon:
@@ -2972,7 +3116,186 @@ def compute_quadric_section_compositing(
         raise QuadricSectionCompositingError(
             "finite section tangent partition unexpectedly became empty"
         )
-    if section_partition is not None:
+
+    # A projected trim rim is an internal hit-count boundary for an open cone
+    # shell.  It is not, in general, part of the convex outer projection proxy:
+    # the visible mouth arc can lie strictly inside that proxy.  Represent each
+    # non-degenerate projected rim disk by a circumscribed tangent polygon so
+    # the adaptive role partition can split on the real curved boundary.  In
+    # particular, this prevents the finite lateral-section envelope from being
+    # closed by an artificial chord between its two trim-rim endpoints.
+    open_shell_trim_partitions: list[_PlanePartitionPolygon] = []
+    if isinstance(surface, ConeSpec) and surface.is_open_shell:
+        trim_chord_error = max(
+            screen_epsilon * 32.0,
+            error / _OPEN_SHELL_TRIM_BOUNDARY_CHORD_DIVISOR,
+        )
+        if trim_chord_error > error:
+            raise QuadricSectionCompositingError(
+                "floating-point screen tolerance cannot certify the requested "
+                f"max_screen_error={error:.9g} for an open-shell trim rim"
+            )
+        screen_matrix = np.asarray(view.matrix[:2], dtype=float)
+        for rim_index, rim in enumerate(surface.trim_rims):
+            rim_frame = rim.frame
+            rim_screen_center = screen_matrix @ np.asarray(rim.center, dtype=float)
+            rim_screen_basis = rim.radius * np.column_stack(
+                (
+                    screen_matrix @ np.asarray(rim_frame.x_axis, dtype=float),
+                    screen_matrix @ np.asarray(rim_frame.y_axis, dtype=float),
+                )
+            )
+            (
+                rim_left_vectors,
+                rim_singular_values,
+                rim_right_transpose,
+            ) = np.linalg.svd(
+                rim_screen_basis,
+                full_matrices=False,
+            )
+            if rim_singular_values[0] <= screen_epsilon:
+                continue
+            rim_rank_ratio = (
+                rim_singular_values[-1] / rim_singular_values[0]
+            )
+            rank_one_ratio_limit = max(
+                256.0 * np.finfo(float).eps,
+                min(
+                    _OPEN_SHELL_TRIM_MAX_RANK_ONE_RATIO,
+                    trim_chord_error / rim_singular_values[0],
+                ),
+            )
+            use_rank_one_segment = (
+                rim_singular_values[-1] <= trim_chord_error
+                and rim_rank_ratio <= rank_one_ratio_limit
+            )
+            if use_rank_one_segment:
+                # The exact rank-one image of a circular rim is a finite
+                # segment.  A sufficiently thin ellipse is display-equivalent
+                # to the same segment within ``trim_chord_error``.  ConeSpec's
+                # axial terminal rims can only reach this rank while lying on
+                # the outer projection; certify that ownership before omitting
+                # a duplicate internal partition.  In particular, never split
+                # the complete cutting plane along the segment's infinite
+                # supporting line.
+                dominant_direction = np.asarray(
+                    rim_left_vectors[:, 0],
+                    dtype=float,
+                )
+                first_nonzero = next(
+                    (
+                        value
+                        for value in dominant_direction
+                        if abs(float(value)) > 64.0 * np.finfo(float).eps
+                    ),
+                    1.0,
+                )
+                if first_nonzero < 0.0:
+                    dominant_direction *= -1.0
+                ownership_tolerance = (
+                    float(rim_singular_values[-1])
+                    + float(proxy.metadata.max_chord_error)
+                    + 64.0 * screen_epsilon
+                )
+                if not _projected_trim_rim_is_proxy_owned_segment(
+                    rim_screen_center,
+                    dominant_direction,
+                    float(rim_singular_values[0]),
+                    proxy_polygon,
+                    ownership_tolerance=ownership_tolerance,
+                ):
+                    raise QuadricSectionCompositingError(
+                        f"open-shell trim rim {rim.rim_id!r} has a rank-one "
+                        "finite projection which is not certified as part of "
+                        "the outer projection proxy"
+                    )
+                continue
+            relative_error = trim_chord_error / rim_singular_values[0]
+            half_step = acos(
+                min(1.0, max(-1.0, 1.0 / (1.0 + relative_error)))
+            )
+            if half_step <= 0.0:
+                raise QuadricSectionCompositingError(
+                    f"open-shell trim rim {rim.rim_id!r} cannot certify "
+                    f"max_screen_error={error:.9g} at floating-point resolution"
+                )
+            rim_segment_count = max(
+                16,
+                int(ceil((0.5 * tau) / half_step)),
+            )
+            if rim_segment_count > limits.max_plane_fragments:
+                raise QuadricSectionCompositingError(
+                    f"open-shell trim rim {rim.rim_id!r} needs "
+                    f"{rim_segment_count} support segments, exceeding "
+                    f"max_plane_fragments={limits.max_plane_fragments}"
+            )
+            rim_support_constraints: list[_PlanePartitionHalfPlane] = []
+            for support_index in range(rim_segment_count):
+                angle = support_index * tau / rim_segment_count
+                parameter_direction = np.asarray(
+                    (cos(angle), sin(angle)),
+                    dtype=float,
+                )
+                # Use the already-computed SVD and normalize in screen space.
+                # The rank-one branch above keeps this inverse away from the
+                # ill-conditioned side-view regime.
+                screen_normal = rim_left_vectors @ (
+                    (rim_right_transpose @ parameter_direction)
+                    / rim_singular_values
+                )
+                screen_normal_length = float(np.linalg.norm(screen_normal))
+                if screen_normal_length <= screen_epsilon:
+                    raise QuadricSectionCompositingError(
+                        f"open-shell trim rim {rim.rim_id!r} has an unstable "
+                        "projected support normal"
+                    )
+                screen_normal /= screen_normal_length
+                screen_support_point = (
+                    rim_screen_center
+                    + rim_screen_basis @ parameter_direction
+                )
+                plane_normal = screen_basis.T @ screen_normal
+                rim_support_constraints.append(
+                    _PlanePartitionHalfPlane(
+                        stable_token=(
+                            f"trim-rim:{rim_index:02d}:"
+                            f"{support_index:06d}"
+                        ),
+                        normal=(
+                            float(plane_normal[0]),
+                            float(plane_normal[1]),
+                        ),
+                        offset=float(
+                            np.dot(screen_normal, screen_support_point - screen_origin)
+                        ),
+                    )
+                )
+            rim_partition = _intersect_convex_support_half_planes(
+                f"trim-rim:{surface.surface_id}:{rim.rim_id}",
+                rim_support_constraints,
+                partition_registry,
+                coordinate_epsilon,
+            )
+            if rim_partition is None:
+                raise QuadricSectionCompositingError(
+                    f"open-shell trim rim {rim.rim_id!r} has no stable "
+                    "projected partition"
+                )
+            clipped_rim, _outside_display_proxy = (
+                _partition_convex_polygon_by_convex_boundary(
+                    rim_partition,
+                    display_proxy_partition,
+                    partition_registry,
+                    coordinate_epsilon,
+                )
+            )
+            if clipped_rim:
+                open_shell_trim_partitions.append(clipped_rim[0])
+    trim_partitions = tuple(open_shell_trim_partitions)
+
+    if section_partition is not None and not (
+        isinstance(surface, ConeSpec) and surface.is_open_shell
+    ):
         stable_interior = np.mean(
             np.asarray(
                 tuple(
@@ -3183,6 +3506,62 @@ def compute_quadric_section_compositing(
     def partition_inside_depth_roles(
         polygon: _PlanePartitionPolygon,
     ) -> tuple[tuple[PlaneDepthRole, _PlanePartitionPolygon], ...] | None:
+        if isinstance(surface, ConeSpec) and surface.is_open_shell:
+            candidates = (polygon,)
+            for boundary in tuple(
+                item
+                for item in (section_partition, *trim_partitions)
+                if item is not None
+            ):
+                split_candidates: list[_PlanePartitionPolygon] = []
+                for candidate in candidates:
+                    inside, outside = _partition_convex_polygon_by_convex_boundary(
+                        candidate,
+                        boundary,
+                        partition_registry,
+                        coordinate_epsilon,
+                    )
+                    split_candidates.extend((*inside, *outside))
+                candidates = tuple(split_candidates)
+            result: list[tuple[PlaneDepthRole, _PlanePartitionPolygon]] = []
+            for candidate in candidates:
+                role = polygon_role(candidate)
+                if role is None:
+                    # Stable probes deliberately step across nearby analytic
+                    # boundaries.  Once the cell has been cut by the certified
+                    # rim envelope, that step can leave an otherwise uniform
+                    # cell.  Accept only unanimous direct probes; any genuinely
+                    # mixed cell still returns None and refines.
+                    vertices = tuple(
+                        np.asarray(vertex.screen_point, dtype=float)
+                        for vertex in candidate.vertices
+                    )
+                    centroid = np.mean(vertices, axis=0)
+                    direct_samples = [centroid]
+                    direct_samples.extend(
+                        0.2 * vertices[index] + 0.8 * centroid
+                        for index in range(min(4, len(vertices)))
+                    )
+                    direct_roles = {
+                        classify(np.asarray(sample, dtype=float))
+                        for sample in direct_samples
+                    }
+                    if len(direct_roles) == 1:
+                        role = next(iter(direct_roles))
+                        if role is PlaneDepthRole.OUTSIDE_PROJECTION:
+                            role = None
+                if role is None:
+                    return None
+                result.append((role, candidate))
+            if not result:
+                return None
+            return tuple(
+                sorted(
+                    result,
+                    key=lambda item: (item[0].value, item[1].stable_token),
+                )
+            )
+
         if section_partition is None:
             between: tuple[_PlanePartitionPolygon, ...] = ()
             exterior = (polygon,)
@@ -3196,7 +3575,10 @@ def compute_quadric_section_compositing(
         result: list[tuple[PlaneDepthRole, _PlanePartitionPolygon]] = []
         for candidate in between:
             role = polygon_role(candidate)
-            if role is not PlaneDepthRole.BETWEEN_SURFACE_SHEETS:
+            if role is None or (
+                not (isinstance(surface, ConeSpec) and surface.is_open_shell)
+                and role is not PlaneDepthRole.BETWEEN_SURFACE_SHEETS
+            ):
                 return None
             result.append((role, candidate))
         for candidate in exterior:
@@ -4062,21 +4444,27 @@ def compute_quadric_section_compositing(
             )
             return
         if depth >= limits.maximum_subdivision_depth:
-            if section_partition is None:
-                diagnostic_candidates = (inside[0],)
-            else:
-                diagnostic_between, diagnostic_exterior = (
-                    _partition_convex_polygon_by_convex_boundary(
-                        inside[0],
-                        section_partition,
-                        partition_registry,
-                        coordinate_epsilon,
+            diagnostic_candidates = (inside[0],)
+            diagnostic_boundaries = tuple(
+                item
+                for item in (section_partition, *trim_partitions)
+                if item is not None
+            )
+            for diagnostic_boundary in diagnostic_boundaries:
+                split_diagnostics: list[_PlanePartitionPolygon] = []
+                for diagnostic_candidate in diagnostic_candidates:
+                    diagnostic_inside, diagnostic_outside = (
+                        _partition_convex_polygon_by_convex_boundary(
+                            diagnostic_candidate,
+                            diagnostic_boundary,
+                            partition_registry,
+                            coordinate_epsilon,
+                        )
                     )
-                )
-                diagnostic_candidates = (
-                    *diagnostic_between,
-                    *diagnostic_exterior,
-                )
+                    split_diagnostics.extend(
+                        (*diagnostic_inside, *diagnostic_outside)
+                    )
+                diagnostic_candidates = tuple(split_diagnostics)
             diagnostics = "; ".join(
                 polygon_role_diagnostics(polygon)
                 for polygon in diagnostic_candidates
@@ -4091,7 +4479,10 @@ def compute_quadric_section_compositing(
         for index, child in enumerate(_subdivide_triangle(world)):
             visit(child, f"{path}.{index}", depth + 1)
 
-    if section_partition is None:
+    use_adaptive_open_shell_partition = (
+        isinstance(surface, ConeSpec) and surface.is_open_shell
+    )
+    if section_partition is None or use_adaptive_open_shell_partition:
         for root_index, indices in enumerate(((0, 1, 2), (0, 2, 3))):
             visit(patch_corners[list(indices)], str(root_index), 0)
     else:

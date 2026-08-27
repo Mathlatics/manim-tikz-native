@@ -444,8 +444,13 @@ combined managed band.
 renderer-neutral contracts and solvers does not import Manim.  Its main entry
 points are:
 
-- `SphereSpec`, `CylinderSpec`, `ConeSpec`, `SectionPlane`;
-- `compute_quadric_section()` and `section_trace_curves()`;
+- `SphereSpec`, `CylinderSpec`, `ConeSpec`, `ConeModel`,
+  `CircularTrimRimSpec`, and `SectionPlane`;
+- `build_cone_projection_layers()`, `ConeProjectionLayers`, and
+  `ConeProjectionSheet`;
+- `compute_quadric_section()`, `section_trace_curves()`,
+  `compute_quadric_section_boundary_curves()`, and
+  `section_cap_chord_curve_ids()`;
 - `compute_quadric_visibility()` and
   `compute_projected_curve_crossings()`;
 - `compute_quadric_compositing()` and
@@ -457,7 +462,8 @@ points are:
   `track_scheduled_plane_section()`, and `track_moving_section_point()`;
 - `build_section_transition_plan()` and
   `QuadricSectionTransition3D`;
-- `QuadricOcclusion3D`, `QuadricManimStyle`, and `QuadricManimLimits`.
+- `QuadricOcclusion3D`, `QuadricManimStyle`, `QuadricBoundaryStyle`, and
+  `QuadricManimLimits`.
 
 The Manim binding accepts immutable surface/curve sequences or callbacks that
 return a new sequence for the current frame.  IDs and counts remain fixed for
@@ -472,6 +478,11 @@ Mobjects, and commits each prepared painter frame transactionally.  Its default
 `surface_order_mode="automatic"` recomputes the certified global frame on each
 update and exposes the committed evidence through `last_global_frame`;
 `surface_order_mode="explicit"` retains the legacy manual-constraint path.
+In unified mode, `boundary_styles={style_id: QuadricBoundaryStyle(...)}` is an
+immutable renderer-level registry. A `GeneratorBoundarySpec.style_id` must
+resolve in that registry; unknown identities and fixed dash-slot overflow fail
+before a frame is committed. Built-in IDs preserve the historical curve,
+surface-boundary, silhouette, and section-outline appearance.
 Pass `section_plane=plane` to place one finite display patch, the two projected
 surface sheets, the section curves, and every visible/hidden curve fragment in
 one painter graph.  The patch is adaptively split into regions behind the
@@ -480,11 +491,42 @@ projection.  The Manim layer merges those cells back into continuous compound
 contours, so the geometric subdivision does not leave triangle seams.  No
 Mobject is created during an update, and `last_section_frame` exposes the
 committed renderer-neutral split.
+`section_plane` partitions and paints the finite display patch but deliberately
+does not invent section ink. Pass explicit curves from
+`compute_quadric_section_boundary_curves()` when the complete finite section
+boundary should be drawn. Filled end caps contribute stable `SegmentCurve`
+chords; open cone trim rims do not. For a moving cut, add the potential IDs
+from `section_cap_chord_curve_ids()` to `allocated_curve_ids` so a chord can
+appear and disappear without changing Mobject identity. A cap chord is only
+accepted when both endpoints match open endpoints of the lateral trace; an
+unresolved near-parallel cut or a lateral/cap tolerance mismatch raises an
+explicit geometry error rather than guessing a boundary.
 When `projection` is omitted, both `QuadricOcclusion3D` and
 `QuadricSectionTransition3D` use a true orthographic isometric view.  Its
 screen basis is orthonormal, all three world axes have equal projected scale,
 and world-z is vertical on screen.  Pass `ParallelView.from_matrix(...)` to
 override it for a deliberate general parallel view.
+
+`ConeSpec(model=...)` distinguishes the finite teaching object instead of
+inferring a cap from a silhouette. `CLOSED_SINGLE` contains one lateral
+surface and one planar base; `OPEN_SINGLE` contains the lateral surface and
+one trim rim; `OPEN_DOUBLE` contains two finite open nappes, two trim rims,
+and one shared apex. The double shell is expanded once into stable component
+IDs, so updates do not replace Mobjects. `ANALYTIC_DOUBLE` is a compatibility
+support for exact section mathematics and is not directly renderable. No
+public model silently represents an infinite cone.
+
+Set `QuadricManimStyle.cone_lateral_fill_colors` and/or
+`cone_cap_fill_colors` to opt into fixed component-aware cone shading. The
+renderer-neutral projection layer keeps the cap and lateral masks separate;
+an open mouth therefore receives one translucent lateral sheet instead of a
+fake base disk. `cone_lateral_sheen_direction` and
+`cone_cap_sheen_direction` are independent because a side highlight and a
+planar-base highlight need not point the same way. All component slots are
+preallocated and included in transactional rollback. Component-aware masks
+currently require an apex-to-one-rim cone. Leave the component color options
+unset for a two-terminal frustum; opting in there raises an explicit error
+rather than approximating an unimplemented polygon union.
 
 `QuadricSectionTransition3D` is the topology-changing companion to
 `QuadricOcclusion3D`.  It consumes a `ScheduledSectionAnimation` and a
@@ -498,11 +540,15 @@ Its cutting plane is shown and unified by default; use `show_plane=False` only
 when a scene intentionally wants the section curve without a displayed plane.
 
 Global ordering accepts a bounded set of pairwise-strictly-separated convex
-spheres, capped finite cylinders, and one-nappe cones/frusta.  Intersecting
-entities and a real cyclic surface order fail explicitly because
+spheres, capped finite cylinders, and one-nappe cones/frusta. The two stable
+components of one `OPEN_DOUBLE` may share their apex when their projected
+interiors do not overlap; a view requiring interleaved multi-sheet order fails
+explicitly. Intersecting entities and a real cyclic surface order fail because
 quadric-to-quadric surface-cell splitting is outside the current contract.
 That restriction does not apply to the supported one-quadric/one-cutting-plane
-compositor described above.  Full details and a minimal example are in
+compositor described above. It supports `OPEN_SINGLE`; a whole `OPEN_DOUBLE`
+expands to two surfaces and is therefore outside that one-surface compositor.
+Full details and a minimal example are in
 [quadric-occlusion.md](quadric-occlusion.md).
 
 ## TikZ visibility adapters
@@ -563,9 +609,31 @@ The renderer-neutral boundary sidecar is exported from
   `BoundaryRenderIntent`;
 - `GeneratorBoundarySpec`, `build_surface_boundary_sources`,
   `compute_boundary_visibility`, and `compute_quadric_boundary_compositing`;
-- `BoundaryPlaneRelation`, `QuadricBoundarySectionSpan`, and
+- `BoundaryPlaneRelation`, `QuadricBoundarySectionSpan`,
+  `QuadricBoundarySectionLimits`, `QUADRIC_BOUNDARY_SECTION_LIMITS`, and
   `compute_boundary_section_spans`.
 
-These additive contracts use `manim-quadric-boundary-compositing/v1`. Existing
-quadric v1 schemas and canonical JSON remain unchanged. The Manim controller
-selects the new path only when `boundary_visibility_mode="unified"` is supplied.
+The boundary painter frame uses
+`manim-quadric-boundary-compositing/v2`. The short-lived v1 boundary frame is
+superseded rather than maintained as a second runtime path: generated boundary
+frames and caches must be rebuilt. Other quadric v1 surface, visibility, and
+section schemas remain unchanged. The Manim controller selects the unified path
+only when `boundary_visibility_mode="unified"` is supplied.
+When a cutting plane is active, semantic boundaries are partitioned at the
+actual `PlaneDepthRole` contours before midpoint classification. Exact section
+curves use their analytic surface/plane identity and visibility events instead
+of inheriting the display mesh's chord count. `boundary_section_limits` places
+explicit fixed bounds on role-contour segments and split parameters; exceeding
+either bound raises rather than guessing or allocating more objects mid-frame.
+
+`QuadricBoundaryPaintFragment.surface_visibility_kind` records visibility
+against the selected quadratic surfaces only.
+`effective_visibility_kind` is the result after also considering the finite
+section-plane patch. Canonical v2 JSON names these fields
+`surfaceVisibilityKind` and `effectiveVisibilityKind`; the ambiguous v1
+`visibilityKind` field is not emitted. `plane_occluded` and
+`plane_occluder_item_ids` preserve the renderer-neutral evidence when a
+fragment projects inside that patch and lies behind it;
+`occluder_surface_ids` continues to contain quadratic-surface identities only.
+Consequently a true silhouette can remain visible against its owning cone or
+cylinder while still becoming hidden behind a cutting plane.

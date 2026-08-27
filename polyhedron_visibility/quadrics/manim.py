@@ -15,6 +15,7 @@ from __future__ import annotations
 from contextlib import contextmanager
 from dataclasses import dataclass
 from math import isfinite, sqrt
+from types import MappingProxyType
 from typing import Callable, Iterator, Mapping, Sequence
 
 import numpy as np
@@ -61,6 +62,7 @@ from .boundary_compositing import (
     compute_quadric_boundary_compositing,
 )
 from .contract import (
+    ConeModel,
     ConeSpec,
     CylinderSpec,
     PlaneDisplayPatchSpec,
@@ -78,9 +80,11 @@ from .global_occlusion import (
     compute_global_quadric_frame,
 )
 from .projection import (
+    ConeProjectionLayers,
     OpaqueProjectionProxy,
     ProjectionProxyError,
     ProjectionSubdivisionError,
+    build_cone_projection_layers,
     build_opaque_projection_proxy,
 )
 from .plane_patch import PlanePatchFitError, fit_plane_display_patch
@@ -94,12 +98,17 @@ from .section_compositing import (
     quadric_plane_fragment_contours,
 )
 from .visibility import compute_quadric_visibility
-from .boundary_section import compute_boundary_section_spans
+from .boundary_section import (
+    QUADRIC_BOUNDARY_SECTION_LIMITS,
+    QuadricBoundarySectionLimits,
+    compute_boundary_section_spans,
+)
 from .surface_boundaries import (
     GeneratorBoundarySpec,
     build_surface_boundary_sources,
     curve_boundary_source,
     plane_outline_sources,
+    section_curve_boundary_source,
     surface_boundary_source_ids,
 )
 
@@ -164,6 +173,53 @@ def _non_negative(value: object, label: str) -> float:
 
 
 @dataclass(frozen=True, slots=True)
+class QuadricBoundaryStyle:
+    """One immutable visible/hidden stroke pair in the boundary registry."""
+
+    visible_color: object = WHITE
+    visible_width: float = 3.0
+    visible_opacity: float = 1.0
+    hidden_color: object = WHITE
+    hidden_width: float = 2.4
+    hidden_opacity: float = 0.78
+    dash_length: float = 0.08
+    dash_gap: float = 0.06
+    background_color: object = WHITE
+    background_width: float = 0.0
+    background_opacity: float = 0.0
+    cap_style: object | None = None
+    joint_type: object | None = None
+    hidden_cap_style: object | None = None
+    hidden_joint_type: object | None = None
+
+    def __post_init__(self) -> None:
+        for name in (
+            "visible_width",
+            "visible_opacity",
+            "hidden_width",
+            "hidden_opacity",
+            "background_width",
+            "background_opacity",
+        ):
+            object.__setattr__(self, name, _non_negative(getattr(self, name), name))
+        object.__setattr__(
+            self, "dash_length", _positive(self.dash_length, "dash_length")
+        )
+        object.__setattr__(self, "dash_gap", _non_negative(self.dash_gap, "dash_gap"))
+        for name in (
+            "visible_opacity",
+            "hidden_opacity",
+            "background_opacity",
+        ):
+            if getattr(self, name) > 1.0:
+                raise ValueError(f"{name} must not exceed 1")
+
+    @property
+    def dash_period(self) -> float:
+        return self.dash_length + self.dash_gap
+
+
+@dataclass(frozen=True, slots=True)
 class QuadricManimStyle:
     """Static display style for one managed quadric painter graph."""
 
@@ -192,6 +248,10 @@ class QuadricManimStyle:
     section_plane_stroke_color: object = "#2C8C7A"
     section_plane_stroke_width: float = 1.4
     section_plane_stroke_opacity: float = 0.65
+    cone_lateral_fill_colors: tuple[object, ...] | None = None
+    cone_cap_fill_colors: tuple[object, ...] | None = None
+    cone_lateral_sheen_direction: tuple[float, float, float] = (1.0, 0.0, 0.0)
+    cone_cap_sheen_direction: tuple[float, float, float] = (-1.0, 1.0, 0.0)
 
     def __post_init__(self) -> None:
         for name in (
@@ -224,10 +284,52 @@ class QuadricManimStyle:
         ):
             if getattr(self, name) > 1.0:
                 raise ValueError(f"{name} must not exceed 1")
+        for name in ("cone_lateral_fill_colors", "cone_cap_fill_colors"):
+            raw = getattr(self, name)
+            if raw is None:
+                continue
+            if isinstance(raw, (str, bytes)):
+                colors = (raw,)
+            else:
+                try:
+                    colors = tuple(raw)
+                except TypeError as exc:
+                    raise ValueError(
+                        f"{name} must be a non-empty color sequence"
+                    ) from exc
+            if not colors:
+                raise ValueError(f"{name} must be a non-empty color sequence")
+            object.__setattr__(self, name, colors)
+        for name in (
+            "cone_lateral_sheen_direction",
+            "cone_cap_sheen_direction",
+        ):
+            try:
+                direction = np.asarray(getattr(self, name), dtype=float)
+            except (TypeError, ValueError, OverflowError) as exc:
+                raise ValueError(f"{name} must contain three finite values") from exc
+            if (
+                direction.shape != (3,)
+                or not np.all(np.isfinite(direction))
+                or float(np.linalg.norm(direction)) <= 0.0
+            ):
+                raise ValueError(f"{name} must contain three finite non-zero values")
+            object.__setattr__(
+                self,
+                name,
+                tuple(float(item) for item in direction / np.linalg.norm(direction)),
+            )
 
     @property
     def dash_period(self) -> float:
         return self.dash_length + self.dash_gap
+
+    @property
+    def cone_component_shading(self) -> bool:
+        return (
+            self.cone_lateral_fill_colors is not None
+            or self.cone_cap_fill_colors is not None
+        )
 
     def compositor_style(self, *, max_projected_length: float) -> OcclusionStyle:
         """Return the renderer-neutral style descriptor used by the graph."""
@@ -260,6 +362,7 @@ class QuadricManimLimits:
     max_projected_length: float = 16.0
     max_total_mobjects: int = 100000
     max_boundary_sources: int = 64
+    max_boundary_styles: int = 64
 
     def __post_init__(self) -> None:
         for name in (
@@ -271,6 +374,7 @@ class QuadricManimLimits:
             "max_dashes_per_fragment",
             "max_total_mobjects",
             "max_boundary_sources",
+            "max_boundary_styles",
         ):
             value = getattr(self, name)
             if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
@@ -283,6 +387,105 @@ class QuadricManimLimits:
 
 
 QUADRIC_MANIM_LIMITS = QuadricManimLimits()
+
+
+def _boundary_style_from_curve_style(
+    style: QuadricManimStyle,
+) -> QuadricBoundaryStyle:
+    return QuadricBoundaryStyle(
+        visible_color=style.visible_curve_color,
+        visible_width=style.visible_curve_width,
+        visible_opacity=style.visible_curve_opacity,
+        hidden_color=style.hidden_curve_color,
+        hidden_width=style.hidden_curve_width,
+        hidden_opacity=style.hidden_curve_opacity,
+        dash_length=style.dash_length,
+        dash_gap=style.dash_gap,
+        background_color=style.background_color,
+        background_width=style.background_width,
+        background_opacity=style.background_opacity,
+        cap_style=style.cap_style,
+        joint_type=style.joint_type,
+        hidden_cap_style=style.hidden_cap_style,
+        hidden_joint_type=style.hidden_joint_type,
+    )
+
+
+def _boundary_style_from_base_stroke(
+    style: QuadricManimStyle,
+    *,
+    color: object,
+    width: float,
+    opacity: float,
+) -> QuadricBoundaryStyle:
+    hidden_width_ratio = (
+        style.hidden_curve_width / style.visible_curve_width
+        if style.visible_curve_width > 0.0
+        else 0.82
+    )
+    return QuadricBoundaryStyle(
+        visible_color=color,
+        visible_width=width,
+        visible_opacity=opacity,
+        hidden_color=color,
+        hidden_width=width * hidden_width_ratio,
+        hidden_opacity=opacity * style.hidden_curve_opacity,
+        dash_length=style.dash_length,
+        dash_gap=style.dash_gap,
+        background_color=style.background_color,
+        background_width=style.background_width,
+        background_opacity=style.background_opacity,
+        cap_style=style.cap_style,
+        joint_type=style.joint_type,
+        hidden_cap_style=style.hidden_cap_style,
+        hidden_joint_type=style.hidden_joint_type,
+    )
+
+
+def _boundary_style_registry(
+    base_style: QuadricManimStyle,
+    custom_styles: Mapping[str, QuadricBoundaryStyle] | None,
+    limits: QuadricManimLimits,
+) -> Mapping[str, QuadricBoundaryStyle]:
+    curve_style = _boundary_style_from_curve_style(base_style)
+    surface_style = _boundary_style_from_base_stroke(
+        base_style,
+        color=base_style.surface_stroke_color,
+        width=base_style.surface_stroke_width,
+        opacity=base_style.surface_stroke_opacity,
+    )
+    section_style = _boundary_style_from_base_stroke(
+        base_style,
+        color=base_style.section_plane_stroke_color,
+        width=base_style.section_plane_stroke_width,
+        opacity=base_style.section_plane_stroke_opacity,
+    )
+    result: dict[str, QuadricBoundaryStyle] = {
+        "style:curve": curve_style,
+        "style:section-outline": section_style,
+        "style:surface-boundary": surface_style,
+        "style:surface-silhouette": surface_style,
+        "style:teaching-boundary": curve_style,
+    }
+    if custom_styles is not None:
+        if not isinstance(custom_styles, Mapping):
+            raise TypeError("boundary_styles must be a mapping")
+        for raw_style_id, value in custom_styles.items():
+            if not isinstance(raw_style_id, str) or not raw_style_id.strip():
+                raise QuadricManimError(
+                    "boundary_styles keys must be non-empty style identities"
+                )
+            if not isinstance(value, QuadricBoundaryStyle):
+                raise TypeError(
+                    "boundary_styles values must be QuadricBoundaryStyle objects"
+                )
+            result[raw_style_id.strip()] = value
+    if len(result) > limits.max_boundary_styles:
+        raise QuadricManimCapacityError(
+            f"boundary style count {len(result)} exceeds fixed limit "
+            f"{limits.max_boundary_styles}"
+        )
+    return MappingProxyType(result)
 
 
 @dataclass(frozen=True, slots=True)
@@ -302,9 +505,20 @@ class _PreparedCurveFragment:
 class _PreparedBoundaryFragment:
     fragment: QuadricBoundaryPaintFragment
     source: QuadricBoundarySource
+    style: QuadricBoundaryStyle
     slot_index: int
     points: np.ndarray
     dashes: tuple[_PreparedDash, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class _PreparedConeFill:
+    opaque_lateral_paths: tuple[np.ndarray, ...]
+    opaque_cap_paths: tuple[np.ndarray, ...]
+    back_lateral_paths: tuple[np.ndarray, ...]
+    back_cap_paths: tuple[np.ndarray, ...]
+    front_lateral_paths: tuple[np.ndarray, ...]
+    front_cap_paths: tuple[np.ndarray, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -313,6 +527,7 @@ class _PreparedSurface:
     surface_id: str
     slot_index: int
     points: np.ndarray
+    cone_fill: _PreparedConeFill | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -321,6 +536,7 @@ class _PreparedSectionLayers:
     surface_points: np.ndarray
     plane_polygons: Mapping[PlaneDepthRole, tuple[np.ndarray, ...]]
     plane_outline_paths: Mapping[PlaneDepthRole, tuple[np.ndarray, ...]]
+    cone_fill: _PreparedConeFill | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -400,6 +616,8 @@ def _capture_root(root: Mobject) -> tuple[_MobjectState, ...]:
             "fill_opacity",
             "stroke_opacity",
             "background_stroke_opacity",
+            "sheen_direction",
+            "sheen_factor",
         ):
             if hasattr(member, name):
                 attributes[name] = _copy_value(getattr(member, name))
@@ -498,6 +716,83 @@ def _set_open_subpaths(
             )
         value.start_new_path(points[0])
         value.add_points_as_corners(points[1:])
+
+
+def _projection_paths_3d(
+    paths: Sequence[Sequence[Sequence[float]]],
+) -> tuple[np.ndarray, ...]:
+    return tuple(
+        np.asarray([(x, y, 0.0) for x, y in path], dtype=float)
+        for path in paths
+    )
+
+
+def _prepared_cone_fill(layers: ConeProjectionLayers) -> _PreparedConeFill:
+    if not isinstance(layers, ConeProjectionLayers):
+        raise TypeError("layers must be ConeProjectionLayers")
+    return _PreparedConeFill(
+        _projection_paths_3d(layers.opaque_lateral_paths),
+        _projection_paths_3d(layers.opaque_cap_paths),
+        _projection_paths_3d(layers.back.lateral_paths),
+        _projection_paths_3d(layers.back.cap_paths),
+        _projection_paths_3d(layers.front.lateral_paths),
+        _projection_paths_3d(layers.front.cap_paths),
+    )
+
+
+def _style_component_fill(
+    value: VMobject,
+    paths: Sequence[np.ndarray],
+    *,
+    colors: tuple[object, ...],
+    sheen_direction: Sequence[float],
+    opacity: float,
+) -> None:
+    if not paths:
+        _hide_vmobject(value)
+        value.clear_points()
+        return
+    _set_closed_subpaths(value, paths)
+    color: object = colors[0] if len(colors) == 1 else colors
+    value.set_sheen_direction(np.asarray(sheen_direction, dtype=float))
+    value.set_fill(color=color, opacity=opacity)
+    value.set_stroke(opacity=0.0)
+
+
+class _SurfacePaintSlot:
+    """One fixed painter item with optional cone component children."""
+
+    def __init__(self) -> None:
+        self.base = VMobject()
+        self.back_lateral = VMobject()
+        self.back_cap = VMobject()
+        self.front_lateral = VMobject()
+        self.front_cap = VMobject()
+        self.root = VGroup(
+            self.back_lateral,
+            self.back_cap,
+            self.front_lateral,
+            self.front_cap,
+            self.base,
+        )
+        self.hide()
+
+    def hide(self) -> None:
+        _hide_vmobject(self.base)
+        for component in self.components:
+            _hide_vmobject(component)
+
+    @property
+    def components(self) -> tuple[VMobject, ...]:
+        return (
+            self.back_lateral,
+            self.back_cap,
+            self.front_lateral,
+            self.front_cap,
+        )
+
+    def identities(self) -> tuple[int, ...]:
+        return tuple(id(item) for item in self.root.get_family())
 
 
 class _CurveFragmentSlot:
@@ -880,11 +1175,18 @@ def _dash_polyline_anchored(
 def _surface_items(
     value: Sequence[QuadricSurfaceSpec],
 ) -> tuple[QuadricSurfaceSpec, ...]:
-    result = tuple(value)
-    if not result or not all(
-        isinstance(item, (SphereSpec, CylinderSpec, ConeSpec)) for item in result
+    authored = tuple(value)
+    if not authored or not all(
+        isinstance(item, (SphereSpec, CylinderSpec, ConeSpec)) for item in authored
     ):
         raise TypeError("surfaces must contain at least one supported quadric spec")
+    expanded: list[QuadricSurfaceSpec] = []
+    for item in authored:
+        if isinstance(item, ConeSpec) and item.model is ConeModel.OPEN_DOUBLE:
+            expanded.extend(item.render_components)
+        else:
+            expanded.append(item)
+    result = tuple(expanded)
     identities = tuple(item.surface_id for item in result)
     if len(set(identities)) != len(identities):
         raise QuadricManimError("surface identities must be unique")
@@ -927,6 +1229,7 @@ class QuadricOcclusion3D:
         projection: ProjectionInput | None = None,
         paint_policy: QuadricPaintPolicy | str = QuadricPaintPolicy.DIAGRAMMATIC,
         style: QuadricManimStyle = QuadricManimStyle(),
+        boundary_styles: Mapping[str, QuadricBoundaryStyle] | None = None,
         limits: QuadricManimLimits = QUADRIC_MANIM_LIMITS,
         max_chord_error: float = 1.0e-3,
         context: GeometryContext | ResolvedGeometryContext | None = None,
@@ -941,6 +1244,9 @@ class QuadricOcclusion3D:
         section_max_screen_error: float = 0.08,
         section_compositing_limits: QuadricSectionCompositingLimits = (
             QUADRIC_SECTION_COMPOSITING_LIMITS
+        ),
+        boundary_section_limits: QuadricBoundarySectionLimits = (
+            QUADRIC_BOUNDARY_SECTION_LIMITS
         ),
         boundary_visibility_mode: str = "legacy",
         include_surface_boundaries: bool = True,
@@ -990,6 +1296,11 @@ class QuadricOcclusion3D:
                 "section_compositing_limits must be a "
                 "QuadricSectionCompositingLimits"
             )
+        if not isinstance(boundary_section_limits, QuadricBoundarySectionLimits):
+            raise TypeError(
+                "boundary_section_limits must be a "
+                "QuadricBoundarySectionLimits"
+            )
         self.scene = scene
         self._surface_input = surfaces
         self._curve_input = curves
@@ -999,6 +1310,25 @@ class QuadricOcclusion3D:
         self.paint_policy = policy
         self.style = style
         self.limits = limits
+        self.boundary_styles = _boundary_style_registry(
+            style,
+            boundary_styles,
+            limits,
+        )
+        if boundary_visibility_mode == "unified":
+            unknown_generator_styles = sorted(
+                {
+                    spec.style_id
+                    for spec in generators
+                    if spec.style_id is not None
+                    and spec.style_id not in self.boundary_styles
+                }
+            )
+            if unknown_generator_styles:
+                raise QuadricManimError(
+                    "generator boundaries reference unknown boundary styles: "
+                    + ", ".join(unknown_generator_styles)
+                )
         self.max_chord_error = _positive(max_chord_error, "max_chord_error")
         self.context = context
         self.surface_constraints = tuple(surface_constraints)
@@ -1017,6 +1347,7 @@ class QuadricOcclusion3D:
             section_max_screen_error, "section_max_screen_error"
         )
         self.section_compositing_limits = section_compositing_limits
+        self.boundary_section_limits = boundary_section_limits
         self._section_enabled = section_plane is not None
         self._attached = False
         self._fixed_frame_camera: ThreeDCamera | None = None
@@ -1119,8 +1450,8 @@ class QuadricOcclusion3D:
             )
 
         estimated_mobjects = (
-            len(self._surface_ids)
-            + (10 if self._section_enabled else 0)
+            6 * len(self._surface_ids)
+            + (20 if self._section_enabled else 0)
             + 1
             + len(self._slot_source_ids)
             * (
@@ -1135,7 +1466,12 @@ class QuadricOcclusion3D:
                 f"limit {limits.max_total_mobjects}"
             )
 
-        self._surface_slots = tuple(VMobject() for _ in self._surface_ids)
+        self._surface_paint_slots = tuple(
+            _SurfacePaintSlot() for _ in self._surface_ids
+        )
+        self._surface_slots = tuple(
+            slot.root for slot in self._surface_paint_slots
+        )
         self._surface_slot_by_id = {
             surface_id: index for index, surface_id in enumerate(self._surface_ids)
         }
@@ -1149,8 +1485,18 @@ class QuadricOcclusion3D:
         self._fragment_slot_maps: dict[str, dict[str, int]] = {
             curve_id: {} for curve_id in self._slot_source_ids
         }
+        self._section_surface_paint_slots = (
+            {1: _SurfacePaintSlot(), 4: _SurfacePaintSlot()}
+            if self._section_enabled
+            else {}
+        )
         self._section_slots = (
-            tuple(VMobject() for _index in range(10))
+            tuple(
+                self._section_surface_paint_slots[index].root
+                if index in self._section_surface_paint_slots
+                else VMobject()
+                for index in range(10)
+            )
             if self._section_enabled
             else ()
         )
@@ -1252,6 +1598,30 @@ class QuadricOcclusion3D:
         )
         return _coerce_view(value)
 
+    def _prepare_cone_fill_for_surface(
+        self,
+        surface: QuadricSurfaceSpec,
+        view: ParallelView,
+    ) -> _PreparedConeFill | None:
+        if not self.style.cone_component_shading or not isinstance(
+            surface, ConeSpec
+        ):
+            return None
+        try:
+            layers = build_cone_projection_layers(
+                surface,
+                view,
+                max_chord_error=self.max_chord_error,
+                max_segments=self.limits.max_surface_segments,
+            )
+        except ProjectionSubdivisionError as exc:
+            raise QuadricManimCapacityError(str(exc)) from exc
+        except ProjectionProxyError as exc:
+            raise QuadricManimError(
+                f"cone component shading failed: {exc}"
+            ) from exc
+        return _prepared_cone_fill(layers)
+
     def _resolve_curve_opacities(
         self, active_curve_ids: Sequence[str]
     ) -> dict[str, float]:
@@ -1333,6 +1703,28 @@ class QuadricOcclusion3D:
                 result[item_id] = next(free)
         return result
 
+    def _boundary_style_for_source(
+        self,
+        source: QuadricBoundarySource,
+    ) -> QuadricBoundaryStyle:
+        style_id = source.style_id
+        if style_id is None:
+            if source.semantic_kind is BoundarySemanticKind.DISPLAY_FRAME:
+                style_id = "style:section-outline"
+            elif source.semantic_kind is BoundarySemanticKind.TRUE_SILHOUETTE:
+                style_id = "style:surface-silhouette"
+            elif source.semantic_kind is BoundarySemanticKind.SURFACE_BOUNDARY:
+                style_id = "style:surface-boundary"
+            else:
+                style_id = "style:curve"
+        try:
+            return self.boundary_styles[style_id]
+        except KeyError as exc:
+            raise QuadricManimError(
+                f"boundary source {source.source_id!r} references unknown "
+                f"style_id {style_id!r}"
+            ) from exc
+
     def _boundary_sources_for_frame(
         self,
         surfaces: Sequence[QuadricSurfaceSpec],
@@ -1342,9 +1734,19 @@ class QuadricOcclusion3D:
         patch: PlaneDisplayPatchSpec | None,
     ) -> tuple[QuadricBoundarySource, ...]:
         result = [
-            curve_boundary_source(
-                curve,
-                style_id="style:curve",
+            (
+                section_curve_boundary_source(
+                    curve,
+                    surfaces[0],
+                    plane,
+                    context=self.context,
+                    style_id="style:curve",
+                )
+                if plane is not None and len(surfaces) == 1
+                else curve_boundary_source(
+                    curve,
+                    style_id="style:curve",
+                )
             )
             for curve in curves
         ]
@@ -1583,6 +1985,7 @@ class QuadricOcclusion3D:
                 surface_points,
                 plane_polygons,
                 {role: () for role in PlaneDepthRole},
+                self._prepare_cone_fill_for_surface(surface, view),
             )
             item_mobjects.update(
                 {
@@ -1598,6 +2001,7 @@ class QuadricOcclusion3D:
                 surface.surface_id: section_frame.paint_items.surface_front
             }
         else:
+            surface_by_id = {surface.surface_id: surface for surface in surfaces}
             for item in frame.surface_items:
                 slot_index = self._surface_slot_by_id[item.surface_id]
                 points = np.asarray(
@@ -1605,7 +2009,15 @@ class QuadricOcclusion3D:
                     dtype=float,
                 )
                 surface_plans.append(
-                    _PreparedSurface(item.item_id, item.surface_id, slot_index, points)
+                    _PreparedSurface(
+                        item.item_id,
+                        item.surface_id,
+                        slot_index,
+                        points,
+                        self._prepare_cone_fill_for_surface(
+                            surface_by_id[item.surface_id], view
+                        ),
+                    )
                 )
                 item_mobjects[item.item_id] = self._surface_slots[slot_index]
             parent_ids = frame.draw_order
@@ -1644,7 +2056,10 @@ class QuadricOcclusion3D:
                 section_frame,
                 view,
                 crossings,
+                surface=surfaces[0],
+                visibility_spans_by_source=spans,
                 context=self.context,
+                limits=self.boundary_section_limits,
             )
         )
         try:
@@ -1687,6 +2102,7 @@ class QuadricOcclusion3D:
         }
         for source_id in sorted(by_source):
             source = source_map[source_id]
+            boundary_style = self._boundary_style_for_source(source)
             fragments = tuple(
                 sorted(by_source[source_id], key=lambda item: item.item_id)
             )
@@ -1729,8 +2145,8 @@ class QuadricOcclusion3D:
                             source_points,
                             fragment.interval.start,
                         ),
-                        dash_length=self.style.dash_length,
-                        dash_gap=self.style.dash_gap,
+                        dash_length=boundary_style.dash_length,
+                        dash_gap=boundary_style.dash_gap,
                         capacity=self.limits.max_dashes_per_fragment,
                     )
                     if fragment.render_intent is BoundaryRenderIntent.DASHED
@@ -1741,6 +2157,7 @@ class QuadricOcclusion3D:
                     _PreparedBoundaryFragment(
                         fragment,
                         source,
+                        boundary_style,
                         slot_index,
                         points,
                         dashes,
@@ -1927,6 +2344,7 @@ class QuadricOcclusion3D:
                 surface_points,
                 plane_polygons,
                 plane_outline_paths,
+                self._prepare_cone_fill_for_surface(surface, view),
             )
             if len(self._section_slots) != len(section_frame.paint_items.ordered):
                 raise QuadricManimCapacityError(
@@ -1942,6 +2360,7 @@ class QuadricOcclusion3D:
             )
             painter_draw_order = section_frame.draw_order
         else:
+            surface_by_id = {surface.surface_id: surface for surface in surfaces}
             for item in frame.surface_items:
                 slot_index = self._surface_slot_by_id[item.surface_id]
                 points = np.asarray(
@@ -1949,7 +2368,15 @@ class QuadricOcclusion3D:
                     dtype=float,
                 )
                 surface_plans.append(
-                    _PreparedSurface(item.item_id, item.surface_id, slot_index, points)
+                    _PreparedSurface(
+                        item.item_id,
+                        item.surface_id,
+                        slot_index,
+                        points,
+                        self._prepare_cone_fill_for_surface(
+                            surface_by_id[item.surface_id], view
+                        ),
+                    )
                 )
                 item_mobjects[item.item_id] = self._surface_slots[slot_index]
 
@@ -2061,13 +2488,15 @@ class QuadricOcclusion3D:
         *,
         draw_stroke: bool = True,
     ) -> None:
-        slot = self._surface_slots[prepared.slot_index]
-        slot.set_points_as_corners(prepared.points)
-        slot.set_fill(
+        slot = self._surface_paint_slots[prepared.slot_index]
+        representative_opacity = self.style.surface_fill_opacity * opacity
+        slot.root.set_fill(
             color=self.style.surface_fill_color,
-            opacity=self.style.surface_fill_opacity * opacity,
+            opacity=representative_opacity,
+            family=False,
         )
-        slot.set_stroke(
+        slot.base.set_points_as_corners(prepared.points)
+        slot.base.set_stroke(
             color=self.style.surface_stroke_color,
             width=self.style.surface_stroke_width,
             opacity=(
@@ -2076,6 +2505,55 @@ class QuadricOcclusion3D:
                 else 0.0
             ),
         )
+        if prepared.cone_fill is None:
+            slot.base.set_fill(
+                color=self.style.surface_fill_color,
+                opacity=representative_opacity,
+            )
+            for component in slot.components:
+                _hide_vmobject(component)
+            return
+        slot.base.set_fill(opacity=0.0)
+        lateral_colors = self.style.cone_lateral_fill_colors or (
+            self.style.surface_fill_color,
+        )
+        cap_colors = self.style.cone_cap_fill_colors or lateral_colors
+        sheet_opacity = 1.0 - sqrt(
+            max(0.0, 1.0 - min(1.0, representative_opacity))
+        )
+        for component, paths, colors, direction in (
+            (
+                slot.back_lateral,
+                prepared.cone_fill.back_lateral_paths,
+                lateral_colors,
+                self.style.cone_lateral_sheen_direction,
+            ),
+            (
+                slot.back_cap,
+                prepared.cone_fill.back_cap_paths,
+                cap_colors,
+                self.style.cone_cap_sheen_direction,
+            ),
+            (
+                slot.front_lateral,
+                prepared.cone_fill.front_lateral_paths,
+                lateral_colors,
+                self.style.cone_lateral_sheen_direction,
+            ),
+            (
+                slot.front_cap,
+                prepared.cone_fill.front_cap_paths,
+                cap_colors,
+                self.style.cone_cap_sheen_direction,
+            ),
+        ):
+            _style_component_fill(
+                component,
+                paths,
+                colors=colors,
+                sheen_direction=direction,
+                opacity=sheet_opacity,
+            )
 
     def _apply_section_layers(
         self,
@@ -2090,26 +2568,32 @@ class QuadricOcclusion3D:
                 "section painter slots were not allocated"
             )
         slots = dict(zip(frame.paint_items.ordered, self._section_slots))
-        surface_back = slots[frame.paint_items.surface_back]
-        surface_front = slots[frame.paint_items.surface_front]
+        surface_back = self._section_surface_paint_slots[1]
+        surface_front = self._section_surface_paint_slots[4]
+        if slots[frame.paint_items.surface_back] is not surface_back.root:
+            raise QuadricManimCapacityError("section back-sheet slot changed identity")
+        if slots[frame.paint_items.surface_front] is not surface_front.root:
+            raise QuadricManimCapacityError("section front-sheet slot changed identity")
 
-        surface_back.set_points_as_corners(prepared.surface_points)
-        surface_front.set_points_as_corners(prepared.surface_points)
+        surface_back.base.set_points_as_corners(prepared.surface_points)
+        surface_front.base.set_points_as_corners(prepared.surface_points)
         combined_surface_opacity = min(
             1.0,
             self.style.surface_fill_opacity * opacity,
         )
         sheet_opacity = 1.0 - sqrt(max(0.0, 1.0 - combined_surface_opacity))
-        surface_back.set_fill(
+        surface_back.root.set_fill(
             color=self.style.surface_fill_color,
             opacity=sheet_opacity,
+            family=False,
         )
-        surface_back.set_stroke(opacity=0.0)
-        surface_front.set_fill(
+        surface_front.root.set_fill(
             color=self.style.surface_fill_color,
             opacity=sheet_opacity,
+            family=False,
         )
-        surface_front.set_stroke(
+        surface_back.base.set_stroke(opacity=0.0)
+        surface_front.base.set_stroke(
             color=self.style.surface_stroke_color,
             width=self.style.surface_stroke_width,
             opacity=(
@@ -2118,6 +2602,57 @@ class QuadricOcclusion3D:
                 else 0.0
             ),
         )
+        if prepared.cone_fill is None:
+            surface_back.base.set_fill(
+                color=self.style.surface_fill_color,
+                opacity=sheet_opacity,
+            )
+            surface_front.base.set_fill(
+                color=self.style.surface_fill_color,
+                opacity=sheet_opacity,
+            )
+            for component_slot in (surface_back, surface_front):
+                for component in component_slot.components:
+                    _hide_vmobject(component)
+        else:
+            surface_back.base.set_fill(opacity=0.0)
+            surface_front.base.set_fill(opacity=0.0)
+            lateral_colors = self.style.cone_lateral_fill_colors or (
+                self.style.surface_fill_color,
+            )
+            cap_colors = self.style.cone_cap_fill_colors or lateral_colors
+            for component_slot, lateral, cap, lateral_paths, cap_paths in (
+                (
+                    surface_back,
+                    surface_back.back_lateral,
+                    surface_back.back_cap,
+                    prepared.cone_fill.back_lateral_paths,
+                    prepared.cone_fill.back_cap_paths,
+                ),
+                (
+                    surface_front,
+                    surface_front.front_lateral,
+                    surface_front.front_cap,
+                    prepared.cone_fill.front_lateral_paths,
+                    prepared.cone_fill.front_cap_paths,
+                ),
+            ):
+                for component in component_slot.components:
+                    _hide_vmobject(component)
+                _style_component_fill(
+                    lateral,
+                    lateral_paths,
+                    colors=lateral_colors,
+                    sheen_direction=self.style.cone_lateral_sheen_direction,
+                    opacity=sheet_opacity,
+                )
+                _style_component_fill(
+                    cap,
+                    cap_paths,
+                    colors=cap_colors,
+                    sheen_direction=self.style.cone_cap_sheen_direction,
+                    opacity=sheet_opacity,
+                )
 
         fill_item_by_role = {
             PlaneDepthRole.BEHIND_SURFACE: frame.paint_items.plane_behind,
@@ -2158,45 +2693,13 @@ class QuadricOcclusion3D:
         prepared: _PreparedBoundaryFragment,
         opacity: float,
     ) -> tuple[object, float, float]:
-        semantic = prepared.source.semantic_kind
         hidden = prepared.fragment.render_intent is BoundaryRenderIntent.DASHED
-        if semantic is BoundarySemanticKind.DISPLAY_FRAME:
-            color = self.style.section_plane_stroke_color
-            width = self.style.section_plane_stroke_width
-            base_opacity = self.style.section_plane_stroke_opacity
-        elif semantic in {
-            BoundarySemanticKind.SURFACE_BOUNDARY,
-            BoundarySemanticKind.TRUE_SILHOUETTE,
-        }:
-            color = self.style.surface_stroke_color
-            width = self.style.surface_stroke_width
-            base_opacity = self.style.surface_stroke_opacity
-        else:
-            color = (
-                self.style.hidden_curve_color
-                if hidden
-                else self.style.visible_curve_color
-            )
-            width = (
-                self.style.hidden_curve_width
-                if hidden
-                else self.style.visible_curve_width
-            )
-            base_opacity = (
-                self.style.hidden_curve_opacity
-                if hidden
-                else self.style.visible_curve_opacity
-            )
-            return color, width, base_opacity * opacity
-        if hidden:
-            ratio = (
-                self.style.hidden_curve_width / self.style.visible_curve_width
-                if self.style.visible_curve_width > 0.0
-                else 0.82
-            )
-            width *= ratio
-            base_opacity *= self.style.hidden_curve_opacity
-        return color, width, base_opacity * opacity
+        style = prepared.style
+        return (
+            style.hidden_color if hidden else style.visible_color,
+            style.hidden_width if hidden else style.visible_width,
+            (style.hidden_opacity if hidden else style.visible_opacity) * opacity,
+        )
 
     def _apply_boundary_fragment(
         self,
@@ -2208,6 +2711,7 @@ class QuadricOcclusion3D:
         color, width, stroke_opacity = self._boundary_stroke_style(
             prepared, opacity
         )
+        style = prepared.style
         if prepared.fragment.render_intent is BoundaryRenderIntent.SOLID:
             slot.solid.set_points_as_corners(prepared.points)
             slot.solid.set_fill(opacity=0.0)
@@ -2215,15 +2719,15 @@ class QuadricOcclusion3D:
                 color=color, width=width, opacity=stroke_opacity
             )
             slot.solid.set_stroke(
-                color=self.style.background_color,
-                width=self.style.background_width,
-                opacity=self.style.background_opacity * opacity,
+                color=style.background_color,
+                width=style.background_width,
+                opacity=style.background_opacity * opacity,
                 background=True,
             )
-            if self.style.cap_style is not None:
-                slot.solid.set_cap_style(self.style.cap_style)
-            if self.style.joint_type is not None:
-                slot.solid.joint_type = self.style.joint_type
+            if style.cap_style is not None:
+                slot.solid.set_cap_style(style.cap_style)
+            if style.joint_type is not None:
+                slot.solid.joint_type = style.joint_type
             for dash in slot.dashes:
                 _hide_vmobject(dash)
             return
@@ -2238,20 +2742,20 @@ class QuadricOcclusion3D:
                 color=color, width=width, opacity=stroke_opacity
             )
             dash.set_stroke(
-                color=self.style.background_color,
-                width=self.style.background_width,
-                opacity=self.style.background_opacity * opacity,
+                color=style.background_color,
+                width=style.background_width,
+                opacity=style.background_opacity * opacity,
                 background=True,
             )
             cap = (
-                self.style.cap_style
-                if self.style.hidden_cap_style is None
-                else self.style.hidden_cap_style
+                style.cap_style
+                if style.hidden_cap_style is None
+                else style.hidden_cap_style
             )
             joint = (
-                self.style.joint_type
-                if self.style.hidden_joint_type is None
-                else self.style.hidden_joint_type
+                style.joint_type
+                if style.hidden_joint_type is None
+                else style.hidden_joint_type
             )
             if cap is not None:
                 dash.set_cap_style(cap)
@@ -2598,6 +3102,7 @@ __all__ = [
     "DEFAULT_QUADRIC_VIEW",
     "PreparedQuadricManimFrame",
     "QUADRIC_MANIM_LIMITS",
+    "QuadricBoundaryStyle",
     "QuadricManimCapacityError",
     "QuadricManimError",
     "QuadricManimLimits",

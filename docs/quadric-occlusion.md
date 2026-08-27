@@ -12,8 +12,9 @@ The public contract targets finite, opaque teaching solids built from:
 
 - spheres;
 - right circular cylinders, with explicit axial bounds and optional caps;
-- right circular cones, with explicit axial bounds, nappe selection, and
-  optional caps;
+- right circular cones, with explicit axial bounds and one of three finite
+  teaching models: a closed single cone, an open single shell, or an open
+  double shell;
 - infinite mathematical cutting planes whose display patches are described
   separately.
 
@@ -64,6 +65,32 @@ axial interval, nappe selection, and cap policy are therefore part of the
 solid contract and are not encoded by `Q`.  This prevents a non-existent
 infinite extension from hiding a curve.
 
+### Finite cone models
+
+`ConeSpec.model` makes the authored object explicit:
+
+- `ConeModel.CLOSED_SINGLE` is one finite nappe with its lateral surface and
+  one non-degenerate planar base. The base circle is a cap rim.
+- `ConeModel.OPEN_SINGLE` is one finite nappe with no planar base. Its
+  non-degenerate terminal circle is a trim rim: it is real boundary ink, but
+  it contributes no disk to volume membership, ray hits, or section depth.
+- `ConeModel.OPEN_DOUBLE` is two finite open nappes sharing one apex. The
+  renderer expands it once into stable `:nappe:negative` and
+  `:nappe:positive` components; each has one trim rim and no planar cap.
+
+There is no infinite renderable cone model. The compatibility-only
+`ConeModel.ANALYTIC_DOUBLE` retains the historical finite cross-apex support
+used by exact conic-section calculations, but it fails if passed directly to
+the renderer. Omitting `model` preserves old construction rules: a one-sided
+axial range means `CLOSED_SINGLE`, while a range crossing the apex means
+`ANALYTIC_DOUBLE`. New authoring code should always state the model.
+
+Open shells deliberately have no `contains()` volume relation. Calling it is
+an error rather than an implicit claim that the shell is a solid. Their
+lateral ray intersections still participate in curve and boundary occlusion.
+The open double model is not a closed double-cone solid and does not invent an
+apex cap or two terminal disks.
+
 A mathematical section plane is also independent of its Manim display patch.
 Changing how large the translucent rectangle is drawn must never change the
 computed section.
@@ -102,7 +129,26 @@ separately.  A finite cylinder section can, for example, retain only one or
 more lateral conic arcs after the axial trim is applied.  End caps participate
 in solid containment and ray occlusion; the section trace itself describes the
 intersection with the lateral quadric and does not invent cap-boundary
-segments.
+segments.  Use `compute_quadric_section_boundary_curves()` when the displayed
+ink must be the complete one-dimensional boundary of the finite entity's
+section.  It adapts the lateral trace and adds every non-degenerate
+plane/end-cap chord as a `SegmentCurve`.  A closed cone can therefore change
+from one closed lateral conic to a lateral arc plus a stable cap chord, while
+an open cone shell keeps only the lateral arc because it has no filled cap.
+Tangency does not create a zero-length placeholder, and a plane coincident
+with a cap does not duplicate the lateral rim. The compatibility-only
+`ANALYTIC_DOUBLE` remains available through `compute_quadric_section()` but
+fails explicitly in the finite display-boundary helper because it has no
+directly renderable cap model. Every active chord must join two certified open
+endpoints of the clipped lateral trace. If cap and lateral clipping disagree
+inside the configured numerical resolution, the helper fails explicitly
+instead of returning a closed conic with a spurious interior chord.
+
+For an open single shell, local cutting-plane compositing classifies the plane
+against the lateral ray intersections only. It uses adaptive certified cells
+because the region inside the projected mouth may have a different depth role
+from a closed cone's filled base. A closed single cone retains the existing
+exact boundary-conforming solid partition.
 
 Branch identifiers are semantic and stable.  Frame-local paint-fragment
 identifiers may change when a new critical point appears, but the Manim layer
@@ -292,14 +338,12 @@ from polyhedron_visibility.quadrics import (
     QuadricOcclusion3D,
     SectionPlane,
     SphereSpec,
-    compute_quadric_section,
-    section_trace_curves,
+    compute_quadric_section_boundary_curves,
 )
 
 sphere = SphereSpec("sphere", (0, 0, 0), 2)
 plane = SectionPlane("cut", (0.4, 0, 0), (1, 0.3, 0.2))
-trace = compute_quadric_section("section", sphere, plane)
-curves = section_trace_curves(trace)
+curves = compute_quadric_section_boundary_curves("section", sphere, plane)
 
 controller = QuadricOcclusion3D(
     self,
@@ -309,6 +353,13 @@ controller = QuadricOcclusion3D(
     paint_policy="diagrammatic",
 ).attach()
 ```
+
+For a moving finite cone or cylinder, reserve
+`section_cap_chord_curve_ids(section_id, surface)` together with the active
+lateral IDs through `allocated_curve_ids`.  The chord then changes between
+inactive and active without creating, removing, or replacing a Manim object.
+`compute_quadric_section()` plus `section_trace_curves()` remains available
+when a caller intentionally wants only the lateral support-quadric trace.
 
 Change `paint_policy` to `"depth_aware_diagrammatic"` to use front-sheet
 attenuated hidden dashes.  This option changes painter order only; visibility
@@ -427,7 +478,8 @@ constraint path; that mode does not recompute or recertify supplied relations.
 
 ## Implemented acceptance boundary
 
-- finite sphere, cylinder, cone/frustum contracts and homogeneous forms;
+- finite sphere, cylinder, closed-single-cone, open-single-shell, and
+  open-double-shell contracts and homogeneous forms;
 - circle, ellipse, parabola, hyperbola, and degenerate plane sections;
 - exact event equations followed by isolated-root validation and finite trim;
 - semantic segments, circular/elliptical arcs, and conic branches;
@@ -441,7 +493,11 @@ constraint path; that mode does not recompute or recertify supplied relations.
 - automatic fixed-capacity Manim handoff across ellipse, exact parabola, and
   hyperbola families;
 - automatic plane-display-patch fitting;
-- global ordering for a bounded set of strictly separated convex quadrics.
+- global ordering for a bounded set of strictly separated convex quadrics;
+- component-aware cone projection layers that distinguish lateral paint from
+  a real cap and leave an open mouth as a one-sheet region;
+- fixed-capacity Manim component slots and independent lateral/cap color
+  gradients without updater-time Mobject creation.
 
 The regression suite exercises scales from `1e-6` through `1e6`, large common
 world translations, equivalent scaled projection rows, repeated updates, Fade
@@ -452,9 +508,23 @@ installs the wheel in an isolated environment.
 
 ## Deliberate limitations
 
-- The global multi-surface solver requires pairwise strict 3D separation.  It
-  rejects touching/intersecting solids and true surface painter cycles rather
-  than guessing.  Quadratic surface-cell splitting is not implemented yet.
+- The global multi-surface solver requires pairwise strict 3D separation,
+  except for the certified shared-apex contact between the two components of
+  one `OPEN_DOUBLE` shell. Those siblings are accepted only when their
+  projected interiors do not overlap. An oblique view that needs interleaved
+  multi-sheet ordering fails explicitly. Other touching/intersecting entities
+  and true surface painter cycles are still rejected; quadratic surface-cell
+  splitting is not implemented yet.
+- One cutting-plane compositor accepts exactly one finite convex surface.
+  `OPEN_SINGLE` is supported. An `OPEN_DOUBLE` first expands into two
+  components, so it must be shown without that local plane compositor or its
+  nappes must be handled separately; no combined double-shell section order is
+  guessed.
+- Component-aware lateral/cap shading currently accepts apex-to-one-rim cone
+  components. A frustum with two non-degenerate terminals still uses the
+  historical uniform surface style; enabling component colors for that
+  unimplemented mask case fails explicitly instead of guessing a polygon
+  union.
 - `QuadricOcclusion3D` itself has fixed topology while attached.  Use
   `QuadricSectionTransition3D` for scheduled ellipse/parabola/hyperbola family
   changes.  Unscheduled or ambiguous topology changes still fail explicitly.
@@ -484,11 +554,14 @@ fragment-level boundary compositing with `boundary_visibility_mode="unified"`.
 The unified sidecar preserves the existing v1 surface, visibility, and section
 frames while adding one deterministic painter frame for ordinary analytic
 curves, the four finite display-patch edges, cap rims, true silhouettes, and
-explicit teaching generators.
+explicit teaching generators. That painter frame is the separately versioned
+`manim-quadric-boundary-compositing/v2` contract; it has one runtime path and
+does not generate the superseded boundary-compositing v1 payload.
 
 ```python
 from polyhedron_visibility.quadrics import (
     GeneratorBoundarySpec,
+    QuadricBoundaryStyle,
     QuadricOcclusion3D,
 )
 
@@ -499,21 +572,44 @@ controller = QuadricOcclusion3D(
     section_plane=plane,
     paint_policy="depth_aware_diagrammatic",
     boundary_visibility_mode="unified",
+    boundary_styles={
+        "style:emphasis": QuadricBoundaryStyle(
+            visible_color="#E53935",
+            visible_width=4.5,
+            hidden_color="#B71C1C",
+            hidden_width=3.0,
+            dash_length=0.10,
+            dash_gap=0.07,
+        ),
+    },
     generator_boundaries=(
-        GeneratorBoundarySpec("teaching-generator", cone.surface_id, 0.42),
+        GeneratorBoundarySpec(
+            "teaching-generator",
+            cone.surface_id,
+            0.42,
+            style_id="style:emphasis",
+        ),
     ),
 ).attach()
 ```
 
-The three painter policies have one meaning for every semantic boundary:
+The controller snapshots this registry during construction. Frame updates only
+resolve an existing `style_id` and mutate preallocated solid/dash slots; they
+never add a style or create a Mobject. Unknown IDs, too many registered styles,
+and a dash pattern that exceeds `max_dashes_per_fragment` raise explicitly.
+
+The three painter policies consume one effective visibility result for every
+semantic boundary. A fragment is effectively hidden when either a selected
+quadratic surface hides it or it projects inside the finite section-plane patch
+and lies behind that plane:
 
 - `physical`: visible fragments are solid and hidden fragments are omitted;
 - `diagrammatic`: visible fragments are solid and hidden fragments are dashed
   teaching overlays above their occluders;
 - `depth_aware_diagrammatic`: hidden fragments remain dashed, but every
-  certified farther surface is painted first and every named occluding surface
-  is painted afterward. A translucent front sheet attenuates the dash, while
-  an opaque front sheet can cover it completely.
+  certified farther object is painted first and every actual occluder is
+  painted afterward. A translucent front sheet or section-plane role fill
+  attenuates the dash, while an opaque occluder can cover it completely.
 
 A true projection silhouette is not the same object as a cap rim or a display
 frame. Sphere silhouettes and the lateral silhouette generators of finite
@@ -521,8 +617,33 @@ cylinders/cones use external-only occlusion, so their owning surface never
 turns them into hidden dashes. Circular cap rims and explicitly authored
 surface generators are ordinary owner-aware semantic boundaries: their front
 parts are solid and their rear parts follow the selected hidden-line policy.
+Open-shell trim rims follow the same owner-aware rule, but never create a
+planar occluder.
 The rectangular plane-patch outline reuses its existing exact
 `PlaneDepthRole` partition instead of solving visibility again.
+
+External-only applies to quadratic-surface selection, not to every possible
+occluder. A finite cutting plane may still hide part of a true cone or cylinder
+silhouette. In depth-aware mode that case is bracketed as
+`surface_front -> silhouette dash -> plane role fill`; outside the patch, or
+where the silhouette is in front of the plane, the same source remains solid.
+The fragment contract records the original surface result separately from the
+effective result as `surfaceVisibilityKind` and `effectiveVisibilityKind`, and
+names plane painter items without pretending that the plane is a quadratic
+surface. The ambiguous v1 `visibilityKind` field is not part of the v2 payload.
+
+At a projected crossing with the finite plane outline, diagrammatic hidden ink
+keeps its documented top-overlay precedence. Crossings between ordinary entity
+boundaries continue to use their certified far-to-near depth order.
+
+Every other semantic boundary is also split where it crosses a plane-role
+contour. A midpoint labels only an already partitioned open interval; three
+interior probes must agree or preparation fails closed. Curves analytically
+certified as the surface/plane section are partitioned by their exact
+visibility events, so increasing the plane triangulation density does not
+consume additional fixed Manim fragment slots. Use
+`boundary_section_limits=QuadricBoundarySectionLimits(...)` to set explicit
+role-contour and per-source split capacities.
 
 Unified boundary painter fragments use fixed preallocated solid/dash families.
 Dash phase is anchored to the complete semantic source, so a moving visibility

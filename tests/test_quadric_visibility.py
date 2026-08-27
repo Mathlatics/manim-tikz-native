@@ -1,14 +1,21 @@
 from __future__ import annotations
 
 import json
-from math import asinh, pi, tau
+from math import asinh, cos, pi, sin, sqrt, tau
 import unittest
+
+import numpy as np
 
 from polyhedron_visibility.parallel_solver import ParallelView
 from polyhedron_visibility.topology import ParameterInterval, assert_exact_partition
 from polyhedron_visibility.visibility import VisibilityKind
 from polyhedron_visibility.quadrics.conics import ConicKind, ConicParameterization
-from polyhedron_visibility.quadrics.contract import ConeSpec, CylinderSpec, SphereSpec
+from polyhedron_visibility.quadrics.contract import (
+    ConeModel,
+    ConeSpec,
+    CylinderSpec,
+    SphereSpec,
+)
 from polyhedron_visibility.quadrics.critical import (
     CriticalEventKind,
     compute_curve_critical_events,
@@ -22,6 +29,9 @@ from polyhedron_visibility.quadrics.curves import (
 from polyhedron_visibility.quadrics.visibility import (
     compute_curve_visibility,
     compute_quadric_visibility,
+)
+from polyhedron_visibility.quadrics.surface_boundaries import (
+    build_surface_boundary_sources,
 )
 
 
@@ -37,6 +47,13 @@ POSITIVE_X_VIEW = ParallelView.from_matrix(
         (0.0, 1.0, 0.0),
         (0.0, 0.0, 1.0),
         (1.0, 0.0, 0.0),
+    )
+)
+ISOMETRIC_VIEW = ParallelView.from_matrix(
+    (
+        (-1.0 / sqrt(2.0), 1.0 / sqrt(2.0), 0.0),
+        (-1.0 / sqrt(6.0), -1.0 / sqrt(6.0), 2.0 / sqrt(6.0)),
+        (1.0 / sqrt(3.0), 1.0 / sqrt(3.0), 1.0 / sqrt(3.0)),
     )
 )
 
@@ -145,6 +162,99 @@ class QuadricCriticalEventTests(unittest.TestCase):
 
 
 class QuadricCurveVisibilityTests(unittest.TestCase):
+    def test_near_edge_on_trim_rim_factors_its_on_surface_discriminant(
+        self,
+    ) -> None:
+        angle = 0.0024
+        view = ParallelView.from_matrix(
+            (
+                (1.0, 0.0, 0.0),
+                (0.0, -sin(angle), cos(angle)),
+                (0.0, -cos(angle), -sin(angle)),
+            )
+        )
+        cone = ConeSpec(
+            "near-edge-on-open-cone",
+            (0.0, 0.0, 0.0),
+            (0.0, 0.0, 1.0),
+            pi / 4.0,
+            (0.0, 2.0),
+            radial_axis=(1.0, 0.0, 0.0),
+            model=ConeModel.OPEN_SINGLE,
+        )
+        rim = next(
+            source
+            for source in build_surface_boundary_sources((cone,), view)
+            if source.source_id.endswith("trim_max:rim")
+        )
+
+        record = compute_curve_visibility(rim.curve, (cone,), view)
+
+        _assert_complete(self, record)
+        self.assertEqual(
+            tuple(span.kind for span in record.spans),
+            (
+                VisibilityKind.VISIBLE,
+                VisibilityKind.HIDDEN,
+                VisibilityKind.VISIBLE,
+            ),
+        )
+        factored = tuple(
+            evidence
+            for event in record.critical_events
+            for evidence in event.evidence
+            if evidence.equation == "ray_discriminant_on_surface_factor"
+        )
+        self.assertTrue(factored)
+        self.assertTrue(
+            all(
+                evidence.kind is CriticalEventKind.SUPPORT_TANGENCY
+                and evidence.multiplicity % 2 == 0
+                for evidence in factored
+            )
+        )
+
+    def test_translated_cone_cap_merges_one_geometric_switch_event(self) -> None:
+        records = []
+        for horizontal in (0.0, 3.25):
+            shift = horizontal * np.asarray(ISOMETRIC_VIEW.matrix[0])
+            cone = ConeSpec(
+                f"cone:{horizontal}",
+                tuple(shift + np.asarray((0.0, 0.0, -2.45))),
+                (0.0, 0.0, 1.0),
+                pi / 6.0,
+                (0.0, 4.0),
+                radial_axis=(1.0, 0.0, 0.0),
+            )
+            rim = next(
+                item
+                for item in build_surface_boundary_sources(
+                    (cone,), ISOMETRIC_VIEW
+                )
+                if item.source_id.endswith("cap_max:rim")
+            )
+            records.append(
+                compute_curve_visibility(
+                    rim.curve,
+                    (cone,),
+                    ISOMETRIC_VIEW,
+                )
+            )
+
+        for record in records:
+            self.assertEqual(len(record.spans), 1)
+            self.assertIs(record.spans[0].kind, VisibilityKind.VISIBLE)
+            self.assertTrue(
+                any(
+                    {
+                        CriticalEventKind.SUPPORT_TANGENCY,
+                        CriticalEventKind.SELF_OCCLUSION_SWITCH,
+                    }
+                    <= set(event.kinds)
+                    for event in record.critical_events
+                )
+            )
+
     def test_sphere_great_circle_has_front_visible_and_back_hidden(self) -> None:
         sphere = SphereSpec("sphere", (0.0, 0.0, 0.0), 1.0)
         circle = CircleArcCurve(

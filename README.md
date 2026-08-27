@@ -48,8 +48,11 @@ to SVG. Unsupported syntax is reported explicitly.
   convex solids, while hidden dashes remain unchanged;
 - automatic line occlusion and face ordering for finite open convex faces and
   articulated hinges;
-- analytic finite spheres, capped cylinders, and one-nappe cones/frusta under
-  parallel projection, including plane sections, front-solid/hidden-dashed
+- analytic finite spheres, capped cylinders, closed single cones, open single
+  cone shells, and finite open double shells under parallel projection; cone
+  caps and open trim rims remain different geometry, while fixed lateral/cap
+  paint slots give an open mouth a real one-sheet appearance; including plane
+  sections, front-solid/hidden-dashed
   conic arcs, projected curve/curve depth ordering, rotating-plane topology
   schedules, automatic ellipse/parabola/hyperbola Manim handoff, strictly
   separated multi-solid painter graphs, and seam-free local compositing of one
