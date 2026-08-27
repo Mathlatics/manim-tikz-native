@@ -1,0 +1,82 @@
+{
+  "schema": "manim-quadric-section-cairo-baseline/v1",
+  "contract_id": "quadric-section-v1",
+  "renderer": "cairo",
+  "reference_environment": {
+    "manim_community": "0.20.1",
+    "comparison_policy": "semantic masks and stable interior probes; no platform-specific whole-image hash"
+  },
+  "profiles": {
+    "standard": {
+      "pixel_width": 320,
+      "pixel_height": 180,
+      "frame_rate": 8
+    },
+    "complete_release_frame": {
+      "pixel_width": 960,
+      "pixel_height": 540,
+      "frame_rate": 8
+    }
+  },
+  "fixtures": {
+    "closed_vs_open_finite_cone_semantics": {
+      "test": "tests.test_cone_models_cairo.ConeModelCairoTests.test_closed_base_and_open_mouth_have_distinct_center_pixels",
+      "profile": "standard",
+      "invariants": {
+        "closed_red_over_open_min": 60.0,
+        "open_blue_over_closed_min": 20.0,
+        "open_red_max": 8.0
+      }
+    },
+    "section_ink_component_shading": {
+      "test": "tests.test_cone_models_cairo.ConeModelCairoTests.test_true_section_ink_and_closed_cap_chord_survive_component_shading",
+      "profile": "standard",
+      "invariants": {
+        "rgb_difference_threshold": 12.0,
+        "closed_changed_pixels_min": 80,
+        "open_changed_pixels_min": 60,
+        "component_shading_changed_pixels_min": 100,
+        "component_to_legacy_overlap_min": 0.9,
+        "closed_chord_corridor_difference_min": 20.0,
+        "open_chord_corridor_difference_max": 8.0
+      }
+    },
+    "open_shell_oblique_offset_0_48": {
+      "test": "tests.test_cone_models_cairo.ConeModelCairoTests.test_open_shell_trim_rim_removes_the_false_chord_fill_band",
+      "profile": "standard",
+      "screen_probe_points": [
+        [0.68337608, 0.21844136],
+        [0.39171439, 1.1749629]
+      ],
+      "invariants": {
+        "green_channel_min": 160.0,
+        "probe_rgb_delta_max": 8.0
+      }
+    },
+    "complete_plane_comparison_offset_0_48": {
+      "test": "tests.test_cone_models_cairo.ConeModelCairoTests.test_complete_offset_point_48_demo_frame_has_no_open_shell_corridor_leak",
+      "profile": "complete_release_frame",
+      "invariants": {
+        "yellow_mask": {
+          "red_min": 180.0,
+          "green_min": 120.0,
+          "blue_max": 170.0,
+          "pixel_count_min": 500
+        },
+        "cyan_mask": {
+          "red_max": 160.0,
+          "green_min": 150.0,
+          "blue_min": 150.0,
+          "pixel_count_min": 1000
+        },
+        "corridor_sample_count": 11,
+        "corridor_role": "in_front_of_surface",
+        "corridor_green_min": 100.0,
+        "corridor_background_rgb": [16.0, 24.0, 32.0],
+        "corridor_background_distance_min": 80.0,
+        "open_trim_rim_count": 1,
+        "open_section_cap_chord_count": 0
+      }
+    }
+  }
+}

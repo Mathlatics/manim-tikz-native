@@ -23,6 +23,7 @@ to SVG. Unsupported syntax is reported explicitly.
 [中文说明](README.zh-CN.md) · [Public API](docs/public-api.md) ·
 [Automatic occlusion](docs/automatic-occlusion.md) ·
 [Quadrics and conic sections](docs/quadric-occlusion.md) ·
+[Finite-cone section v1 contract](docs/quadric-section-v1-contract.md) ·
 [Supported TikZ subset](docs/supported-tikz.md) ·
 [Source-authoritative projects](docs/source-authoritative-projects.md)
 
@@ -80,6 +81,25 @@ to SVG. Unsupported syntax is reported explicitly.
   geometric center;
 - readable native Manim source generation and versioned JSON bridges;
 - strict, component-level compatibility identities for cached integrations.
+
+## Finite-cone section v1 boundary
+
+The frozen [finite-cone section v1 contract](docs/quadric-section-v1-contract.md)
+is the authority for release claims. In short, v1 supports closed finite single
+cones, open finite single shells, frustum sections with ordinary shading,
+rank-one trim rims in exact side views, parallel projection, and one finite
+convex quadric with one non-edge-on cutting plane. The fixed-capacity Manim
+production binding is Cairo-only.
+
+V1 does not claim perspective projection, an OpenGL production binding,
+unified cutting-plane compositing for an open double shell, local compositing
+of multiple intersecting quadrics, or independent component-aware shading for
+both terminal caps of a frustum. The documented explicit-failure paths are
+part of the contract; unsupported combinations are not approximated silently.
+The machine-readable geometry fixtures and Cairo acceptance thresholds live in
+[`tests/fixtures/quadric-section-v1-contract.json`](tests/fixtures/quadric-section-v1-contract.json)
+and
+[`tests/baselines/quadric-section-v1-cairo.json`](tests/baselines/quadric-section-v1-cairo.json).
 
 ## Requirements
 

@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import json
 from math import pi, tau
+from pathlib import Path
 import unittest
 
 import numpy as np
@@ -38,10 +40,31 @@ else:
     CAIRO_AVAILABLE = True
 
 
-WIDTH = 320
-HEIGHT = 180
-FULL_WIDTH = 960
-FULL_HEIGHT = 540
+CAIRO_BASELINE_PATH = (
+    Path(__file__).parent / "baselines" / "quadric-section-v1-cairo.json"
+)
+with CAIRO_BASELINE_PATH.open(encoding="utf-8") as _baseline_file:
+    CAIRO_BASELINE = json.load(_baseline_file)
+
+_STANDARD_PROFILE = CAIRO_BASELINE["profiles"]["standard"]
+_COMPLETE_PROFILE = CAIRO_BASELINE["profiles"]["complete_release_frame"]
+_CLOSED_OPEN_BASELINE = CAIRO_BASELINE["fixtures"][
+    "closed_vs_open_finite_cone_semantics"
+]["invariants"]
+_SECTION_INK_BASELINE = CAIRO_BASELINE["fixtures"][
+    "section_ink_component_shading"
+]["invariants"]
+_OPEN_SHELL_BASELINE = CAIRO_BASELINE["fixtures"][
+    "open_shell_oblique_offset_0_48"
+]
+_COMPLETE_FRAME_BASELINE = CAIRO_BASELINE["fixtures"][
+    "complete_plane_comparison_offset_0_48"
+]["invariants"]
+
+WIDTH = int(_STANDARD_PROFILE["pixel_width"])
+HEIGHT = int(_STANDARD_PROFILE["pixel_height"])
+FULL_WIDTH = int(_COMPLETE_PROFILE["pixel_width"])
+FULL_HEIGHT = int(_COMPLETE_PROFILE["pixel_height"])
 AXIAL_VIEW = ParallelView.from_matrix(np.eye(3))
 SECTION_VIEW = ParallelView.from_matrix(
     (
@@ -52,8 +75,10 @@ SECTION_VIEW = ParallelView.from_matrix(
 )
 OPEN_SHELL_REGRESSION_FRONT_POINTS = (
     # Opposite sides of the former false chord; both are truly in front.
-    (0.68337608, 0.21844136),
-    (0.39171439, 1.17496290),
+    *(
+        tuple(float(value) for value in point)
+        for point in _OPEN_SHELL_BASELINE["screen_probe_points"]
+    ),
 )
 
 
@@ -393,7 +418,7 @@ class ConeModelCairoTests(unittest.TestCase):
                 "renderer": "cairo",
                 "pixel_width": WIDTH,
                 "pixel_height": HEIGHT,
-                "frame_rate": 8,
+                "frame_rate": int(_STANDARD_PROFILE["frame_rate"]),
                 "write_to_movie": False,
                 "save_last_frame": False,
                 "disable_caching": True,
@@ -408,9 +433,19 @@ class ConeModelCairoTests(unittest.TestCase):
 
             # A closed base adds the red cap sheet. The open mouth keeps only
             # the blue far-side lateral sheet at the same projected point.
-            self.assertGreater(closed_rgb[0], open_rgb[0] + 60.0)
-            self.assertGreater(open_rgb[2], closed_rgb[2] + 20.0)
-            self.assertLess(open_rgb[0], 8.0)
+            self.assertGreater(
+                closed_rgb[0],
+                open_rgb[0] + _CLOSED_OPEN_BASELINE["closed_red_over_open_min"],
+            )
+            self.assertGreater(
+                open_rgb[2],
+                closed_rgb[2]
+                + _CLOSED_OPEN_BASELINE["open_blue_over_closed_min"],
+            )
+            self.assertLess(
+                open_rgb[0],
+                _CLOSED_OPEN_BASELINE["open_red_max"],
+            )
 
             closed_slot = closed._surface_paint_slots[0]
             open_slot = opened._surface_paint_slots[0]
@@ -429,7 +464,7 @@ class ConeModelCairoTests(unittest.TestCase):
                 "renderer": "cairo",
                 "pixel_width": WIDTH,
                 "pixel_height": HEIGHT,
-                "frame_rate": 8,
+                "frame_rate": int(_STANDARD_PROFILE["frame_rate"]),
                 "write_to_movie": False,
                 "save_last_frame": False,
                 "disable_caching": True,
@@ -473,29 +508,47 @@ class ConeModelCairoTests(unittest.TestCase):
                 closed_difference = np.linalg.norm(closed_on - closed_off, axis=2)
                 open_difference = np.linalg.norm(open_on - open_off, axis=2)
                 legacy_difference = np.linalg.norm(legacy_on - legacy_off, axis=2)
+                difference_threshold = _SECTION_INK_BASELINE[
+                    "rgb_difference_threshold"
+                ]
                 self.assertGreater(
-                    int(np.count_nonzero(closed_difference > 12.0)),
-                    80,
+                    int(
+                        np.count_nonzero(
+                            closed_difference > difference_threshold
+                        )
+                    ),
+                    _SECTION_INK_BASELINE["closed_changed_pixels_min"],
                 )
                 self.assertGreater(
-                    int(np.count_nonzero(open_difference > 12.0)),
-                    60,
+                    int(
+                        np.count_nonzero(
+                            open_difference > difference_threshold
+                        )
+                    ),
+                    _SECTION_INK_BASELINE["open_changed_pixels_min"],
                 )
                 self.assertGreater(
-                    int(np.count_nonzero(np.linalg.norm(closed_off - legacy_off, axis=2) > 12.0)),
-                    100,
+                    int(
+                        np.count_nonzero(
+                            np.linalg.norm(closed_off - legacy_off, axis=2)
+                            > difference_threshold
+                        )
+                    ),
+                    _SECTION_INK_BASELINE[
+                        "component_shading_changed_pixels_min"
+                    ],
                 )
-                component_mask = closed_difference > 12.0
-                legacy_mask = legacy_difference > 12.0
+                component_mask = closed_difference > difference_threshold
+                legacy_mask = legacy_difference > difference_threshold
                 self.assertGreater(
                     float(np.count_nonzero(component_mask & _dilate(legacy_mask)))
                     / float(np.count_nonzero(component_mask)),
-                    0.9,
+                    _SECTION_INK_BASELINE["component_to_legacy_overlap_min"],
                 )
                 self.assertGreater(
                     float(np.count_nonzero(legacy_mask & _dilate(component_mask)))
                     / float(np.count_nonzero(legacy_mask)),
-                    0.9,
+                    _SECTION_INK_BASELINE["component_to_legacy_overlap_min"],
                 )
 
                 chord_id = section_cap_chord_curve_ids(
@@ -540,8 +593,18 @@ class ConeModelCairoTests(unittest.TestCase):
                     open_corridor.append(
                         _neighborhood_max(open_difference, row, column)
                     )
-                self.assertGreater(min(closed_corridor), 20.0)
-                self.assertLess(max(open_corridor), 8.0)
+                self.assertGreater(
+                    min(closed_corridor),
+                    _SECTION_INK_BASELINE[
+                        "closed_chord_corridor_difference_min"
+                    ],
+                )
+                self.assertLess(
+                    max(open_corridor),
+                    _SECTION_INK_BASELINE[
+                        "open_chord_corridor_difference_max"
+                    ],
+                )
             finally:
                 for controller in reversed(controllers):
                     controller.restore()
@@ -552,7 +615,7 @@ class ConeModelCairoTests(unittest.TestCase):
                 "renderer": "cairo",
                 "pixel_width": WIDTH,
                 "pixel_height": HEIGHT,
-                "frame_rate": 8,
+                "frame_rate": int(_STANDARD_PROFILE["frame_rate"]),
                 "write_to_movie": False,
                 "save_last_frame": False,
                 "disable_caching": True,
@@ -568,10 +631,14 @@ class ConeModelCairoTests(unittest.TestCase):
                 # Both points are geometrically in front of the open shell.
                 # The old false chord put the first point below the front
                 # surface and produced the dark band from the reported image.
-                self.assertGreater(min(sample[1] for sample in samples), 160.0)
+                invariants = _OPEN_SHELL_BASELINE["invariants"]
+                self.assertGreater(
+                    min(sample[1] for sample in samples),
+                    invariants["green_channel_min"],
+                )
                 self.assertLess(
                     float(np.max(np.abs(samples[0] - samples[1]))),
-                    8.0,
+                    invariants["probe_rgb_delta_max"],
                 )
             finally:
                 controller.restore()
@@ -584,7 +651,7 @@ class ConeModelCairoTests(unittest.TestCase):
                 "renderer": "cairo",
                 "pixel_width": FULL_WIDTH,
                 "pixel_height": FULL_HEIGHT,
-                "frame_rate": 8,
+                "frame_rate": int(_COMPLETE_PROFILE["frame_rate"]),
                 "write_to_movie": False,
                 "save_last_frame": False,
                 "disable_caching": True,
@@ -600,18 +667,26 @@ class ConeModelCairoTests(unittest.TestCase):
                 # The exact production combination is active: analytic yellow
                 # section ink, cyan semantic boundaries, component-aware cone
                 # shading, and the translucent unified section plane.
+                yellow = _COMPLETE_FRAME_BASELINE["yellow_mask"]
+                cyan = _COMPLETE_FRAME_BASELINE["cyan_mask"]
                 yellow_mask = (
-                    (pixels[:, :, 0] > 180.0)
-                    & (pixels[:, :, 1] > 120.0)
-                    & (pixels[:, :, 2] < 170.0)
+                    (pixels[:, :, 0] > yellow["red_min"])
+                    & (pixels[:, :, 1] > yellow["green_min"])
+                    & (pixels[:, :, 2] < yellow["blue_max"])
                 )
                 cyan_mask = (
-                    (pixels[:, :, 0] < 160.0)
-                    & (pixels[:, :, 1] > 150.0)
-                    & (pixels[:, :, 2] > 150.0)
+                    (pixels[:, :, 0] < cyan["red_max"])
+                    & (pixels[:, :, 1] > cyan["green_min"])
+                    & (pixels[:, :, 2] > cyan["blue_min"])
                 )
-                self.assertGreater(int(np.count_nonzero(yellow_mask)), 500)
-                self.assertGreater(int(np.count_nonzero(cyan_mask)), 1000)
+                self.assertGreater(
+                    int(np.count_nonzero(yellow_mask)),
+                    yellow["pixel_count_min"],
+                )
+                self.assertGreater(
+                    int(np.count_nonzero(cyan_mask)),
+                    cyan["pixel_count_min"],
+                )
                 self.assertTrue(open_controller.style.cone_component_shading)
                 self.assertTrue(closed_controller.style.cone_component_shading)
 
@@ -635,12 +710,16 @@ class ConeModelCairoTests(unittest.TestCase):
                     for source in boundary_frame.sources
                     if source.source_kind is BoundarySourceKind.SURFACE_TRIM_RIM
                 )
-                self.assertEqual(len(trim_sources), 1)
-                self.assertFalse(
-                    any(
+                self.assertEqual(
+                    len(trim_sources),
+                    _COMPLETE_FRAME_BASELINE["open_trim_rim_count"],
+                )
+                self.assertEqual(
+                    sum(
                         source.source_kind is BoundarySourceKind.SECTION_CAP_CHORD
                         for source in boundary_frame.sources
-                    )
+                    ),
+                    _COMPLETE_FRAME_BASELINE["open_section_cap_chord_count"],
                 )
                 trim_fragments = tuple(
                     sorted(
@@ -676,7 +755,11 @@ class ConeModelCairoTests(unittest.TestCase):
                 second = (
                     np.asarray(OPEN_SHELL_REGRESSION_FRONT_POINTS[1]) + shift
                 )
-                for fraction in np.linspace(0.0, 1.0, 11):
+                for fraction in np.linspace(
+                    0.0,
+                    1.0,
+                    int(_COMPLETE_FRAME_BASELINE["corridor_sample_count"]),
+                ):
                     point = (1.0 - fraction) * first + fraction * second
                     self.assertEqual(
                         _roles_at_screen(open_controller, tuple(point)),
@@ -684,14 +767,24 @@ class ConeModelCairoTests(unittest.TestCase):
                     )
                     row, column = _screen_to_pixel(tuple(point))
                     pixel = pixels[row, column]
-                    self.assertGreater(pixel[1], 100.0)
+                    self.assertGreater(
+                        pixel[1],
+                        _COMPLETE_FRAME_BASELINE["corridor_green_min"],
+                    )
                     self.assertGreater(
                         float(
                             np.linalg.norm(
-                                pixel - np.asarray((16.0, 24.0, 32.0))
+                                pixel
+                                - np.asarray(
+                                    _COMPLETE_FRAME_BASELINE[
+                                        "corridor_background_rgb"
+                                    ]
+                                )
                             )
                         ),
-                        80.0,
+                        _COMPLETE_FRAME_BASELINE[
+                            "corridor_background_distance_min"
+                        ],
                     )
             finally:
                 for controller in reversed(controllers):

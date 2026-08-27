@@ -50,6 +50,24 @@ TikZ 图压成一张 SVG 或图片。转换后的直线、面、点、标签仍�
 `show_plane=False` 表示完整关闭截平面填充、边框、深度分区和它对曲线的遮挡，
 并不只是把绿色矩形设为透明。
 
+## 圆锥截口 v1 的明确边界
+
+当前发布能力以
+[圆锥截口 v1 支持契约](docs/quadric-section-v1-contract.md)为准，不应概括成
+“所有圆锥情况都已支持”。v1 完整支持封闭有限单锥、张口有限单锥壳、圆台截线
+与普通遮挡、平行投影，以及“一个有限凸二次曲面 + 一个本身不是完全侧视的
+截平面”。圆锥的开口圆周即使在精确侧视时投影成有限线段，也属于已支持情况。
+Manim 的正式生产绑定目前只支持 Cairo。
+
+暂不支持的范围包括：透视投影、OpenGL 正式绑定、张口双锥壳与截平面的统一
+局部合成、多个相交二次曲面与同一个截平面的局部合成，以及圆台两个终端面的
+独立 component shading（分组件明暗）。截平面本身完全侧视时也会明确失败。
+这些情况不会靠猜测或临时图层补丁生成一个看似可用的画面。机器可读的场景
+参数与 Cairo 验收阈值分别固定在
+[`tests/fixtures/quadric-section-v1-contract.json`](tests/fixtures/quadric-section-v1-contract.json)
+和
+[`tests/baselines/quadric-section-v1-cairo.json`](tests/baselines/quadric-section-v1-cairo.json)。
+
 在闭合凸多面体上，还可以继续加入两类对象：
 
 - 独立直线：自动计算直线进入、穿过和离开实体的位置，实体内部的部分自动画成
@@ -187,6 +205,7 @@ SVG 或位图。这样做的目的，是保证动画中的每个对象都可读�
 - [公共 API](docs/public-api.md)
 - [自动遮挡](docs/automatic-occlusion.md)
 - [二次曲面与圆锥曲线遮挡](docs/quadric-occlusion.md)
+- [圆锥截口 v1 支持契约](docs/quadric-section-v1-contract.md)
 - [支持的 TikZ 子集](docs/supported-tikz.md)
 - [架构说明](docs/architecture.md)
 
