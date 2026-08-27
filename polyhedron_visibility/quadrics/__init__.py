@@ -96,8 +96,13 @@ _EXPORTS: Final[dict[str, tuple[str, str]]] = {
         ".sections",
         "FiniteSectionBoundaryCurve",
     ),
+    "QuadricSectionBoundary": (".sections", "QuadricSectionBoundary"),
     "UnboundedFiniteSectionError": (".sections", "UnboundedFiniteSectionError"),
     "compute_quadric_section": (".sections", "compute_quadric_section"),
+    "compute_quadric_section_boundary": (
+        ".sections",
+        "compute_quadric_section_boundary",
+    ),
     "compute_quadric_section_boundary_curves": (
         ".sections",
         "compute_quadric_section_boundary_curves",
@@ -449,6 +454,12 @@ _EXPORTS: Final[dict[str, tuple[str, str]]] = {
     "QuadricManimStyle": (".manim", "QuadricManimStyle"),
     "QuadricBoundaryStyle": (".manim", "QuadricBoundaryStyle"),
     "QuadricOcclusion3D": (".manim", "QuadricOcclusion3D"),
+    "PlaneInput": (".authoring", "PlaneInput"),
+    "QuadricSection3D": (".authoring", "QuadricSection3D"),
+    "QuadricSectionAuthoringError": (
+        ".authoring",
+        "QuadricSectionAuthoringError",
+    ),
     "MAX_TRANSITION_INTERVAL_SLOTS": (
         ".transition_manim",
         "MAX_TRANSITION_INTERVAL_SLOTS",

@@ -9,6 +9,7 @@ open arcs (or nothing).
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from math import acos, atan2, cos, cosh, exp, isfinite, log, sin, sinh, sqrt, tau
 from typing import Callable, Sequence
 
@@ -58,6 +59,37 @@ class QuadricSectionError(ValueError):
 
 class UnboundedFiniteSectionError(QuadricSectionError):
     """An authored finite entity failed to bound a supporting branch."""
+
+
+@dataclass(frozen=True, slots=True)
+class QuadricSectionBoundary:
+    """One exact lateral trace plus the complete finite display boundary."""
+
+    trace: QuadricSectionTrace
+    curves: tuple[FiniteSectionBoundaryCurve, ...]
+    cap_chords: tuple[SegmentCurve, ...]
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.trace, QuadricSectionTrace):
+            raise TypeError("trace must be a QuadricSectionTrace")
+        if not all(
+            isinstance(item, (ParametricConicBranch, SegmentCurve))
+            for item in self.curves
+        ):
+            raise TypeError(
+                "curves must contain ParametricConicBranch or SegmentCurve objects"
+            )
+        if not all(isinstance(item, SegmentCurve) for item in self.cap_chords):
+            raise TypeError("cap_chords must contain SegmentCurve objects")
+        identities = tuple(item.curve_id for item in self.curves)
+        if len(set(identities)) != len(identities):
+            raise QuadricSectionError(
+                "finite section boundary curves must have unique identities"
+            )
+        if not set(self.cap_chords).issubset(self.curves):
+            raise QuadricSectionError(
+                "cap_chords must be included in the complete boundary curves"
+            )
 
 
 def _identity(value: object, label: str) -> str:
@@ -973,20 +1005,21 @@ def intersect_plane_with_quadric(
     return compute_quadric_section(section_id, surface, plane, **kwargs)
 
 
-def compute_quadric_section_boundary_curves(
+def compute_quadric_section_boundary(
     section_id: str,
     surface: QuadricSurfaceSpec,
     plane: SectionPlane,
     *,
     context: ContextInput = None,
     coefficient_tolerance: float | None = None,
-) -> tuple[FiniteSectionBoundaryCurve, ...]:
-    """Return the complete one-dimensional boundary of a finite section.
+) -> QuadricSectionBoundary:
+    """Solve one trace and its complete finite boundary under one context.
 
     The existing :func:`compute_quadric_section` trace remains the exact
-    lateral supporting-conic result.  This convenience adapter adds any
-    non-degenerate chords contributed by filled planar end caps.  It never
-    adds a chord for an open cone shell.
+    lateral supporting-conic result.  The returned boundary also includes any
+    non-degenerate chords contributed by filled planar end caps.  Returning
+    both products prevents animation bindings from solving the same section
+    twice or silently omitting the cap contribution.
     """
 
     _validate_finite_boundary_surface(surface)
@@ -1015,20 +1048,40 @@ def compute_quadric_section_boundary_curves(
         *section_trace_curves(trace),
         *chords,
     )
-    identities = tuple(item.curve_id for item in result)
-    if len(set(identities)) != len(identities):
-        raise QuadricSectionError(
-            "finite section boundary curves must have unique identities"
-        )
-    return tuple(sorted(result, key=lambda item: item.curve_id))
+    return QuadricSectionBoundary(
+        trace=trace,
+        curves=tuple(sorted(result, key=lambda item: item.curve_id)),
+        cap_chords=tuple(sorted(chords, key=lambda item: item.curve_id)),
+    )
+
+
+def compute_quadric_section_boundary_curves(
+    section_id: str,
+    surface: QuadricSurfaceSpec,
+    plane: SectionPlane,
+    *,
+    context: ContextInput = None,
+    coefficient_tolerance: float | None = None,
+) -> tuple[FiniteSectionBoundaryCurve, ...]:
+    """Return the complete one-dimensional boundary of a finite section."""
+
+    return compute_quadric_section_boundary(
+        section_id,
+        surface,
+        plane,
+        context=context,
+        coefficient_tolerance=coefficient_tolerance,
+    ).curves
 
 
 __all__ = [
     "FiniteSectionBoundaryCurve",
+    "QuadricSectionBoundary",
     "QuadricSectionError",
     "QuadricSurfaceSpec",
     "UnboundedFiniteSectionError",
     "compute_quadric_section",
+    "compute_quadric_section_boundary",
     "compute_quadric_section_boundary_curves",
     "compute_section_cap_chord_curves",
     "intersect_plane_with_quadric",

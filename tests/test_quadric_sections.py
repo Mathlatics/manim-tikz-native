@@ -20,6 +20,7 @@ from polyhedron_visibility.quadrics.contract import (
 from polyhedron_visibility.quadrics.sections import (
     QuadricSectionError,
     compute_quadric_section,
+    compute_quadric_section_boundary,
     compute_quadric_section_boundary_curves,
     compute_section_cap_chord_curves,
     restrict_quadric_to_plane,
@@ -721,11 +722,12 @@ class FiniteSectionBoundaryCurveTests(unittest.TestCase):
             (),
         )
 
-        closed_curves = compute_quadric_section_boundary_curves(
+        closed_boundary = compute_quadric_section_boundary(
             section_id,
             closed,
             post_plane,
         )
+        closed_curves = closed_boundary.curves
         open_curves = compute_quadric_section_boundary_curves(
             section_id,
             opened,
@@ -745,6 +747,11 @@ class FiniteSectionBoundaryCurveTests(unittest.TestCase):
         )
         self.assertEqual(len(closed_lateral), 1)
         self.assertEqual(len(closed_chords), 1)
+        self.assertEqual(closed_boundary.cap_chords, closed_chords)
+        self.assertEqual(
+            tuple(item.curve_id for item in section_trace_curves(closed_boundary.trace)),
+            tuple(item.curve_id for item in closed_lateral),
+        )
         self.assertEqual(len(open_lateral), 1)
         self.assertEqual(open_chords, ())
 

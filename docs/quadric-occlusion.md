@@ -335,31 +335,56 @@ The shortest static section workflow is:
 
 ```python
 from polyhedron_visibility.quadrics import (
-    QuadricOcclusion3D,
+    QuadricSection3D,
     SectionPlane,
     SphereSpec,
-    compute_quadric_section_boundary_curves,
 )
 
 sphere = SphereSpec("sphere", (0, 0, 0), 2)
 plane = SectionPlane("cut", (0.4, 0, 0), (1, 0.3, 0.2))
-curves = compute_quadric_section_boundary_curves("section", sphere, plane)
 
-controller = QuadricOcclusion3D(
+controller = QuadricSection3D(
     self,
-    surfaces=(sphere,),
-    curves=curves,
-    section_plane=plane,
+    surface=sphere,
+    section_id="section",
+    plane=plane,
     paint_policy="diagrammatic",
 ).attach()
 ```
 
-For a moving finite cone or cylinder, reserve
-`section_cap_chord_curve_ids(section_id, surface)` together with the active
-lateral IDs through `allocated_curve_ids`.  The chord then changes between
-inactive and active without creating, removing, or replacing a Manim object.
+`QuadricSection3D` computes the complete finite boundary by default and keeps
+it synchronized with the same current plane used by the unified compositor.
+For a fixed-topology moving cut, pass a plane callback.  Potential finite-cone
+or cylinder cap-chord IDs are reserved automatically, so a chord can activate
+or disappear without creating, removing, or replacing a Manim object.  Set
+`draw_section_boundary=False` only when the intended lesson needs the plane
+partition and surface boundaries but deliberately omits the true section ink.
+The callback may not change the lateral conic family, branch count, component
+count, or empty/non-empty state. Such a change introduces new curve identities,
+fails before commit, and rolls back; use the scheduled form below instead.
+
+For an ellipse/parabola/hyperbola topology change, pass the existing analytic
+schedule instead of `surface`, `section_id`, and `plane`:
+
+```python
+controller = QuadricSection3D(
+    self,
+    scheduled=track_scheduled_plane_section("section", cone, motion),
+    progress=progress,
+).attach()
+```
+
+This mode delegates to `QuadricSectionTransition3D`; the static mode delegates
+to `QuadricOcclusion3D`.  The facade does not contain a second section solver,
+painter graph, Manim slot pool, or rollback implementation.  Advanced callers
+may still use the lower-level controllers directly.  When doing so, a moving
+finite cone or cylinder must reserve `section_cap_chord_curve_ids()` together
+with the initially active lateral IDs through `allocated_curve_ids`.
 `compute_quadric_section()` plus `section_trace_curves()` remains available
 when a caller intentionally wants only the lateral support-quadric trace.
+`compute_quadric_section_boundary()` returns both that exact trace and the
+complete finite boundary from one solve; its existing
+`compute_quadric_section_boundary_curves()` adapter returns only the curves.
 
 Change `paint_policy` to `"depth_aware_diagrammatic"` to use front-sheet
 attenuated hidden dashes.  This option changes painter order only; visibility
@@ -426,12 +451,18 @@ Both banks still enter the same surface-visibility calculation and painter
 graph.  Finite trim tangencies that do not change the conic family use an
 instantaneous bank handoff instead of holding a numerically repeated tangency
 root across several display frames.  The analytic schedule itself always
-retains the exact event.
+retains the exact event. Filled cap chords are different: their semantic role
+does not change with the lateral conic family, so each `cap_min` or `cap_max`
+uses one fixed slot computed from the actual current plane. A critical-bank
+plane is never submitted as if it were the current plane's authoritative cap
+chord.
 
 The transition controller displays and unifies the moving cutting plane by
 default.  Its plane patch is fitted again from the same immutable surface and
-current plane, while the renderer identities remain fixed.  Pass
-`show_plane=False` only for a curve-only presentation.
+current plane, while the renderer identities remain fixed.  Passing
+`show_plane=False` disables the complete section-plane compositor, including
+its fill, outline, depth partition, and curve attenuation; it does not merely
+make the rectangle transparent. Use it only for a curve-only presentation.
 
 If the schedule was created with an explicit `GeometryContext` or
 `coefficient_tolerance`, pass the same values to

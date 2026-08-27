@@ -58,6 +58,14 @@ to SVG. Unsupported syntax is reported explicitly.
   separated multi-solid painter graphs, and seam-free local compositing of one
   cutting plane through one quadric using rear/between/front plane regions and
   two smooth surface sheets;
+- a high-level `QuadricSection3D` authoring facade that derives the complete
+  finite section from the same live plane used for compositing, automatically
+  reserves potential cap-chord slots, and delegates topology changes to the
+  existing fixed-capacity transition controller; during a conic-family
+  cross-fade, the two lateral traces use separate banks while each real end-cap
+  chord keeps one stable semantic identity on the current cutting plane;
+  `show_plane=False` deliberately disables the complete plane compositor, not
+  only the visible patch;
 - a reusable source-to-copy identity handoff: a whole solid or any registered
   face/edge subset keeps explicit semantic lineage, lets the copy own exactly
   coincident pixels, and fades only the paired source primitives back in as

@@ -2,11 +2,11 @@
 
 ``QuadricSectionTransition3D`` consumes an analytic
 :class:`~polyhedron_visibility.quadrics.plane_motion.ScheduledSectionAnimation`
-and a normalized Manim progress source.  It reserves two banks of finite
-section curves once, then feeds one or two bank subsets into the ordinary
-``QuadricOcclusion3D`` compositor.  No Mobject is created by a frame updater,
-and both sides of a cross-fade retain full surface occlusion and painter-graph
-ordering.
+and a normalized Manim progress source.  It reserves two banks of lateral
+section curves plus stable current-plane cap-chord slots once, then feeds the
+active subset into the ordinary ``QuadricOcclusion3D`` compositor.  No Mobject
+is created by a frame updater, and both sides of a cross-fade retain full
+surface occlusion and painter-graph ordering.
 """
 
 from __future__ import annotations
@@ -24,8 +24,8 @@ from .animation import (
     match_tracked_section_frame,
 )
 from .compositing import QuadricPaintPolicy, SurfaceConstraintInput
-from .contract import SectionPlane
-from .curves import ParametricConicBranch
+from .contract import ConeModel, ConeSpec, SectionPlane
+from .curves import ParametricConicBranch, SegmentCurve
 from .manim import (
     QUADRIC_MANIM_LIMITS,
     ProjectionInput,
@@ -46,7 +46,13 @@ from .section_compositing import (
 )
 from .surface_boundaries import GeneratorBoundarySpec
 from .plane_motion import ScheduledSectionAnimation
-from .sections import compute_quadric_section
+from .sections import (
+    FiniteSectionBoundaryCurve,
+    QuadricSurfaceSpec,
+    compute_quadric_section,
+    compute_quadric_section_boundary,
+    section_cap_chord_curve_ids,
+)
 from .transition import (
     SectionTransitionFrame,
     SectionTransitionMode,
@@ -101,13 +107,37 @@ def _curve_slot_id(
     )
 
 
-def _allocated_curve_ids(section_id: str) -> tuple[str, ...]:
-    return tuple(
+def _allocated_curve_ids(
+    section_id: str,
+    cap_curve_ids: Sequence[str],
+) -> tuple[str, ...]:
+    lateral = tuple(
         _curve_slot_id(section_id, bank, slot, interval)
         for bank in (0, 1)
         for slot in (0, 1)
         for interval in range(MAX_TRANSITION_INTERVAL_SLOTS)
     )
+    return (*lateral, *tuple(sorted(cap_curve_ids)))
+
+
+def _scheduled_surface(
+    scheduled: ScheduledSectionAnimation,
+) -> QuadricSurfaceSpec:
+    surface = scheduled.schedule.samples[0].surface
+    if any(sample.surface != surface for sample in scheduled.schedule.samples):
+        raise QuadricSectionTransitionManimError(
+            "scheduled section rendering requires one immutable surface"
+        )
+    if isinstance(surface, ConeSpec):
+        if surface.model is ConeModel.OPEN_DOUBLE:
+            raise QuadricSectionTransitionManimError(
+                "OPEN_DOUBLE unified section compositing is outside the v1 contract"
+            )
+        if surface.model is ConeModel.ANALYTIC_DOUBLE:
+            raise QuadricSectionTransitionManimError(
+                "ANALYTIC_DOUBLE is not a directly renderable finite surface"
+            )
+    return surface
 
 
 @dataclass(frozen=True, slots=True)
@@ -115,15 +145,20 @@ class PreparedSectionTransitionGeometry:
     """Renderer-neutral geometry selected for one Manim update."""
 
     transition_frame: SectionTransitionFrame
-    curves: tuple[ParametricConicBranch, ...]
+    curves: tuple[FiniteSectionBoundaryCurve, ...]
     curve_opacities: Mapping[str, float]
     signatures: tuple[SectionTopologySignature, ...]
 
     def __post_init__(self) -> None:
         if not isinstance(self.transition_frame, SectionTransitionFrame):
             raise TypeError("transition_frame must be a SectionTransitionFrame")
-        if not all(isinstance(item, ParametricConicBranch) for item in self.curves):
-            raise TypeError("curves must contain ParametricConicBranch objects")
+        if not all(
+            isinstance(item, (ParametricConicBranch, SegmentCurve))
+            for item in self.curves
+        ):
+            raise TypeError(
+                "curves must contain ParametricConicBranch or SegmentCurve objects"
+            )
         curve_ids = tuple(item.curve_id for item in self.curves)
         if len(set(curve_ids)) != len(curve_ids):
             raise QuadricSectionTransitionManimError(
@@ -143,8 +178,11 @@ class QuadricSectionTransition3D:
     """Automatic fixed-capacity handoff for a scheduled moving section.
 
     The caller animates one normalized progress source from ``0`` to ``1``.
-    Analytic schedule events select the correct live and critical sections;
-    this controller only manages their preallocated render banks.
+    Analytic schedule events select the correct live and critical lateral
+    sections; this controller manages their preallocated render banks and the
+    current plane's stable finite-cap chords.  Set
+    ``draw_section_boundary=False`` to keep the scheduled plane partition while
+    deliberately omitting those banks and their section ink.
     """
 
     def __init__(
@@ -165,6 +203,7 @@ class QuadricSectionTransition3D:
         surface_constraints: Sequence[SurfaceConstraintInput] = (),
         context: GeometryContext | ResolvedGeometryContext | None = None,
         coefficient_tolerance: float | None = None,
+        draw_section_boundary: bool = True,
         show_plane: bool = True,
         plane_patch_margin: float = 0.08,
         section_max_screen_error: float = 0.08,
@@ -181,6 +220,7 @@ class QuadricSectionTransition3D:
     ) -> None:
         if not isinstance(scheduled, ScheduledSectionAnimation):
             raise TypeError("scheduled must be a ScheduledSectionAnimation")
+        surface = _scheduled_surface(scheduled)
         self.scene = scene
         self.scheduled = scheduled
         self.progress_source = progress
@@ -197,19 +237,32 @@ class QuadricSectionTransition3D:
             )
         self.context = context
         self.coefficient_tolerance = coefficient_tolerance
+        if not isinstance(draw_section_boundary, bool):
+            raise TypeError("draw_section_boundary must be a bool")
+        self.draw_section_boundary = draw_section_boundary
         if not isinstance(show_plane, bool):
             raise TypeError("show_plane must be a bool")
         self.show_plane = show_plane
-        self._allocated_curve_ids = _allocated_curve_ids(self.plan.section_id)
+        self._cap_curve_ids = (
+            section_cap_chord_curve_ids(self.plan.section_id, surface)
+            if draw_section_boundary
+            else ()
+        )
+        self._allocated_curve_ids = (
+            _allocated_curve_ids(self.plan.section_id, self._cap_curve_ids)
+            if draw_section_boundary
+            else ()
+        )
         self._cache_progress: float | None = None
         self._cache_geometry: PreparedSectionTransitionGeometry | None = None
 
-        surface = scheduled.schedule.samples[0].surface
         self._controller = QuadricOcclusion3D(
             scene,
             surfaces=(surface,),
-            curves=self._active_curves,
-            curve_opacities=self._active_curve_opacities,
+            curves=(self._active_curves if draw_section_boundary else ()),
+            curve_opacities=(
+                self._active_curve_opacities if draw_section_boundary else None
+            ),
             allocated_curve_ids=self._allocated_curve_ids,
             projection=projection,
             paint_policy=paint_policy,
@@ -242,22 +295,39 @@ class QuadricSectionTransition3D:
         if self._cache_progress == progress and self._cache_geometry is not None:
             return self._cache_geometry
         transition_frame = self.plan.sample(progress)
-        curves: list[ParametricConicBranch] = []
+        curves: list[FiniteSectionBoundaryCurve] = []
         opacities: dict[str, float] = {}
         signatures: list[SectionTopologySignature] = []
+        current_cap_chords: tuple[SegmentCurve, ...] | None = None
         motion = self.scheduled.schedule.motion
         surface = self.scheduled.schedule.samples[0].surface
         frames = self.scheduled.animation.frames
 
         for layer in transition_frame.layers:
             plane = motion.plane_at(layer.geometry_progress)
-            trace = compute_quadric_section(
-                self.plan.section_id,
-                surface,
-                plane,
-                context=self.context,
-                coefficient_tolerance=self.coefficient_tolerance,
-            )
+            is_current_plane = abs(layer.geometry_progress - progress) <= 1.0e-12
+            if self.draw_section_boundary and is_current_plane:
+                boundary = compute_quadric_section_boundary(
+                    self.plan.section_id,
+                    surface,
+                    plane,
+                    context=self.context,
+                    coefficient_tolerance=self.coefficient_tolerance,
+                )
+                trace = boundary.trace
+                if current_cap_chords is not None:  # pragma: no cover - plan invariant
+                    raise QuadricSectionTransitionManimError(
+                        "transition frame exposes more than one current-plane layer"
+                    )
+                current_cap_chords = boundary.cap_chords
+            else:
+                trace = compute_quadric_section(
+                    self.plan.section_id,
+                    surface,
+                    plane,
+                    context=self.context,
+                    coefficient_tolerance=self.coefficient_tolerance,
+                )
             signature = SectionTopologySignature.from_trace(trace)
             reference = frames[layer.reference_frame_index]
             try:
@@ -301,6 +371,27 @@ class QuadricSectionTransition3D:
                     )
                     opacities[curve_id] = layer.opacity
 
+        if self.draw_section_boundary:
+            if current_cap_chords is None:
+                # A pure trim-tangency event deliberately samples a neighboring
+                # lateral trace instead of repeating the singular event trace.
+                # The cap boundary still belongs to the actual current plane,
+                # so solve that complete boundary once and use only its chords.
+                current_cap_chords = compute_quadric_section_boundary(
+                    self.plan.section_id,
+                    surface,
+                    motion.plane_at(progress),
+                    context=self.context,
+                    coefficient_tolerance=self.coefficient_tolerance,
+                ).cap_chords
+            for chord in current_cap_chords:
+                if chord.curve_id not in self._cap_curve_ids:  # pragma: no cover
+                    raise QuadricSectionTransitionManimError(
+                        f"active cap chord {chord.curve_id!r} was not preallocated"
+                    )
+                curves.append(chord)
+                opacities[chord.curve_id] = 1.0
+
         prepared = PreparedSectionTransitionGeometry(
             transition_frame=transition_frame,
             curves=tuple(sorted(curves, key=lambda item: item.curve_id)),
@@ -311,7 +402,7 @@ class QuadricSectionTransition3D:
         self._cache_geometry = prepared
         return prepared
 
-    def _active_curves(self) -> tuple[ParametricConicBranch, ...]:
+    def _active_curves(self) -> tuple[FiniteSectionBoundaryCurve, ...]:
         return self._resolve_geometry().curves
 
     def _active_curve_opacities(self) -> Mapping[str, float]:

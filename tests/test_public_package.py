@@ -13,12 +13,15 @@ from polyhedron_visibility.open_faces import OpenFaceScene3D
 from polyhedron_visibility.quadrics import (
     ConeSpec,
     CylinderSpec,
+    QuadricSectionBoundary,
+    QuadricSection3D,
     QuadricSectionTransition3D,
     SectionPlane,
     SectionTransitionPlan,
     SphereSpec,
     build_section_transition_plan,
     compute_quadric_section,
+    compute_quadric_section_boundary,
     compute_quadric_section_boundary_curves,
     section_cap_chord_curve_ids,
 )
@@ -57,11 +60,14 @@ class PublicPackageTests(unittest.TestCase):
         self.assertEqual(ConeSpec.__name__, "ConeSpec")
         self.assertEqual(SectionPlane.__name__, "SectionPlane")
         self.assertEqual(SectionTransitionPlan.__name__, "SectionTransitionPlan")
+        self.assertEqual(QuadricSectionBoundary.__name__, "QuadricSectionBoundary")
+        self.assertEqual(QuadricSection3D.__name__, "QuadricSection3D")
         self.assertEqual(
             QuadricSectionTransition3D.__name__, "QuadricSectionTransition3D"
         )
         self.assertTrue(callable(build_section_transition_plan))
         self.assertTrue(callable(compute_quadric_section))
+        self.assertTrue(callable(compute_quadric_section_boundary))
         self.assertTrue(callable(compute_quadric_section_boundary_curves))
         self.assertTrue(callable(section_cap_chord_curve_ids))
 
@@ -72,9 +78,12 @@ class PublicPackageTests(unittest.TestCase):
                 (
                     "import sys; from polyhedron_visibility.quadrics import "
                     "SectionTransitionPlan, build_section_transition_plan, "
+                    "QuadricSectionBoundary, compute_quadric_section_boundary, "
                     "compute_quadric_section_boundary_curves, "
                     "section_cap_chord_curve_ids; "
                     "assert SectionTransitionPlan.__name__; "
+                    "assert QuadricSectionBoundary.__name__; "
+                    "assert callable(compute_quadric_section_boundary); "
                     "assert callable(build_section_transition_plan); "
                     "assert callable(compute_quadric_section_boundary_curves); "
                     "assert callable(section_cap_chord_curve_ids); "

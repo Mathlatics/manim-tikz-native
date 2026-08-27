@@ -4,6 +4,15 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+- add `QuadricSection3D` as the preferred high-level finite-section authoring
+  facade: one plane source now drives both the complete analytic boundary and
+  unified plane compositor, potential cap-chord slots are reserved
+  automatically, an explicit boundary opt-out retains plane partitioning, and
+  topology-changing schedules continue through the existing fixed-capacity
+  transition controller and transactional Cairo renderer; scheduled closed
+  cones, frusta, and cylinders keep complete current-plane cap chords in stable
+  semantic slots while their lateral conic families use the two transition
+  banks;
 - distinguish finite closed single cones, open single cone shells, and open
   double cone shells in the public contract; keep planar caps separate from
   non-solid trim rims, expand a double shell into stable single-nappe IDs,

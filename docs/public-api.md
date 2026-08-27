@@ -462,6 +462,7 @@ points are:
   `track_scheduled_plane_section()`, and `track_moving_section_point()`;
 - `build_section_transition_plan()` and
   `QuadricSectionTransition3D`;
+- `QuadricSection3D`, the preferred finite-section authoring facade;
 - `QuadricOcclusion3D`, `QuadricManimStyle`, `QuadricBoundaryStyle`, and
   `QuadricManimLimits`.
 
@@ -483,9 +484,31 @@ immutable renderer-level registry. A `GeneratorBoundarySpec.style_id` must
 resolve in that registry; unknown identities and fixed dash-slot overflow fail
 before a frame is committed. Built-in IDs preserve the historical curve,
 surface-boundary, silhouette, and section-outline appearance.
-Pass `section_plane=plane` to place one finite display patch, the two projected
-surface sheets, the section curves, and every visible/hidden curve fragment in
-one painter graph.  The patch is adaptively split into regions behind the
+For ordinary section authoring, prefer `QuadricSection3D(surface=...,
+section_id=..., plane=...)`. It computes the complete finite section boundary,
+reserves every potential cap-chord identity, and passes the same current plane
+and active curves to the existing unified `QuadricOcclusion3D`. A plane
+callback supports fixed-topology motion. For a scheduled ellipse/parabola/
+hyperbola change, pass `scheduled=track_scheduled_plane_section(...)` and
+`progress=...`; the facade delegates to the existing
+`QuadricSectionTransition3D`. `draw_section_boundary=False` is the explicit
+opt-out that retains plane/surface partitioning without adding true section
+ink. `OPEN_DOUBLE` unified section compositing and direct `ANALYTIC_DOUBLE`
+rendering fail at facade construction rather than after Manim slot allocation.
+Neither mode creates a second renderer or a second rollback path.
+
+A plane callback may move a section only while its lateral conic topology and
+curve identities stay fixed. Cap chords may activate or disappear because all
+authored cap identities are reserved independently. An empty/non-empty change,
+a component-count change, or an ellipse/parabola/hyperbola family change must
+use a scheduled transition. If such a change is sent through the callback
+mode, the newly named curve is rejected as unallocated and the last committed
+frame is restored.
+
+At the lower level, pass `section_plane=plane` to place one finite display
+patch, the two projected surface sheets, the section curves, and every
+visible/hidden curve fragment in one painter graph.  The patch is adaptively
+split into regions behind the
 solid, between its far and near sheets, in front of the solid, or outside its
 projection.  The Manim layer merges those cells back into continuous compound
 contours, so the geometric subdivision does not leave triangle seams.  No
@@ -535,9 +558,16 @@ the exact analytic event frames to hand off ellipse, parabola, and hyperbola
 families.  Cross-fading curves from both banks stay inside one ordinary
 quadric visibility solve and one painter graph.  The updater therefore neither
 creates nor removes Manim objects, and sampling the same progress gives the
-same result in forward or reverse playback.
-Its cutting plane is shown and unified by default; use `show_plane=False` only
-when a scene intentionally wants the section curve without a displayed plane.
+same result in forward or reverse playback. Filled end-cap chords do not need a
+topology bank: each cap role has one stable slot, is recomputed from the actual
+current plane, and remains a certified part of the complete finite boundary
+while the lateral conics cross-fade.
+
+Its cutting plane is shown and unified by default. `show_plane=False` means
+more than hiding the rectangle: it removes the plane fill, outline, depth
+partition, and plane/curve occlusion from the painter graph, so
+`last_section_frame` is `None`. Use it only for an intentionally curve-only
+presentation.
 
 Global ordering accepts a bounded set of pairwise-strictly-separated convex
 spheres, capped finite cylinders, and one-nappe cones/frusta. The two stable

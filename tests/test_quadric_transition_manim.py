@@ -12,7 +12,13 @@ from manim import Mobject, Scene, ValueTracker, linear, tempconfig
 from polyhedron_visibility.geometry import GeometryContext
 from polyhedron_visibility.parallel_solver import ParallelView
 from polyhedron_visibility.quadrics.compositing import QuadricPaintPolicy
-from polyhedron_visibility.quadrics.contract import ConeSpec, SectionPlane, SphereSpec
+from polyhedron_visibility.quadrics.contract import (
+    ConeModel,
+    ConeSpec,
+    CylinderSpec,
+    SectionPlane,
+    SphereSpec,
+)
 from polyhedron_visibility.quadrics.curves import SegmentCurve
 from polyhedron_visibility.quadrics.manim import (
     DEFAULT_QUADRIC_VIEW,
@@ -26,6 +32,7 @@ from polyhedron_visibility.quadrics.plane_motion import (
     AxisAnglePlaneMotion,
     track_scheduled_plane_section,
 )
+from polyhedron_visibility.quadrics.sections import section_cap_chord_curve_ids
 from polyhedron_visibility.quadrics.transition import SectionTransitionRole
 from polyhedron_visibility.quadrics.transition_manim import (
     QuadricSectionTransition3D,
@@ -41,7 +48,7 @@ VIEW = ParallelView.from_matrix(
 def _limits(**overrides: object) -> QuadricManimLimits:
     values: dict[str, object] = {
         "max_surfaces": 2,
-        "max_curves": 8,
+        "max_curves": 10,
         "max_fragments_per_curve": 16,
         "max_segments_per_fragment": 256,
         "max_surface_segments": 512,
@@ -191,6 +198,50 @@ class AllocatedCurveBankTests(unittest.TestCase):
 
 
 class QuadricSectionTransitionControllerTests(unittest.TestCase):
+    def test_transition_rejects_double_cone_section_models_before_allocation(
+        self,
+    ) -> None:
+        for model in (ConeModel.OPEN_DOUBLE, ConeModel.ANALYTIC_DOUBLE):
+            with self.subTest(model=model.value):
+                cone = ConeSpec(
+                    f"{model.value}-cone",
+                    (0.0, 0.0, 0.0),
+                    (0.0, 0.0, 1.0),
+                    pi / 4.0,
+                    (-2.0, 2.0),
+                    radial_axis=(1.0, 0.0, 0.0),
+                    model=model,
+                )
+                motion = AxisAnglePlaneMotion(
+                    f"{model.value}-motion",
+                    SectionPlane(
+                        f"{model.value}-plane",
+                        (0.0, 0.0, 0.2),
+                        (0.0, 0.0, 1.0),
+                        u_axis=(1.0, 0.0, 0.0),
+                    ),
+                    (0.0, 0.0, 0.2),
+                    (0.0, 1.0, 0.0),
+                    0.0,
+                    0.2,
+                )
+                scheduled = track_scheduled_plane_section(
+                    f"{model.value}-section",
+                    cone,
+                    motion,
+                )
+                with self.assertRaisesRegex(
+                    QuadricSectionTransitionManimError,
+                    model.name,
+                ):
+                    QuadricSectionTransition3D(
+                        Scene(),
+                        scheduled=scheduled,
+                        progress=0.0,
+                        projection=VIEW,
+                        limits=_limits(),
+                    )
+
     def test_boundary_style_registry_is_forwarded_to_inner_controller(self) -> None:
         accent = QuadricBoundaryStyle(visible_color="#E53935")
         controller = QuadricSectionTransition3D(
@@ -305,6 +356,131 @@ class QuadricSectionTransitionControllerTests(unittest.TestCase):
         controller.update()
         self.assertEqual(controller.slot_identities(), identities)
         controller.restore()
+
+    def test_scheduled_closed_cone_keeps_one_current_plane_cap_chord(self) -> None:
+        scheduled = _scheduled()
+        progress = ValueTracker(0.85)
+        controller = QuadricSectionTransition3D(
+            Scene(),
+            scheduled=scheduled,
+            progress=progress,
+            projection=VIEW,
+            transition_fraction=0.05,
+            paint_policy=QuadricPaintPolicy.DEPTH_AWARE_DIAGRAMMATIC,
+            boundary_visibility_mode="unified",
+            style=_style(),
+            limits=_limits(max_total_mobjects=30000, max_boundary_sources=32),
+            max_chord_error=0.02,
+        ).attach()
+        identities = controller.slot_identities()
+        surface = scheduled.schedule.samples[0].surface
+        semantic_cap_ids = section_cap_chord_curve_ids(
+            controller.plan.section_id,
+            surface,
+        )
+        self.assertEqual(semantic_cap_ids, ("section:cap:cap_max:chord",))
+        allocated_cap_ids = {"section:cap:cap_max:chord"}
+        self.assertTrue(
+            allocated_cap_ids.issubset(controller.controller.allocated_curve_ids)
+        )
+
+        prepared = controller._resolve_geometry()
+        active_chords = {
+            item.curve_id: item
+            for item in prepared.curves
+            if isinstance(item, SegmentCurve)
+        }
+        expected_active_ids = {"section:cap:cap_max:chord"}
+        self.assertEqual(set(active_chords), expected_active_ids)
+        self.assertEqual(prepared.curve_opacities["section:cap:cap_max:chord"], 1.0)
+
+        frame = controller.controller.last_boundary_frame
+        assert frame is not None
+        source_ids = {item.source_id for item in frame.sources}
+        self.assertTrue(expected_active_ids.issubset(source_ids))
+
+        progress.set_value(0.2)
+        with patch.object(
+            Mobject,
+            "__init__",
+            side_effect=AssertionError("cap-chord updater allocated a Mobject"),
+        ):
+            controller.update()
+        self.assertFalse(
+            any(
+                isinstance(item, SegmentCurve)
+                for item in controller._resolve_geometry().curves
+            )
+        )
+        self.assertEqual(controller.slot_identities(), identities)
+        controller.restore()
+
+    def test_scheduled_cylinder_reserves_both_semantic_cap_chords(self) -> None:
+        cylinder = CylinderSpec(
+            "cylinder",
+            (0.0, 0.0, 0.0),
+            (0.0, 0.0, 1.0),
+            1.0,
+            (-1.0, 1.0),
+            radial_axis=(1.0, 0.0, 0.0),
+        )
+        motion = AxisAnglePlaneMotion(
+            "cylinder-motion",
+            SectionPlane(
+                "cylinder-plane",
+                (0.0, 0.0, 0.0),
+                (1.0, 0.0, 0.2),
+                u_axis=(0.0, 1.0, 0.0),
+            ),
+            (0.0, 0.0, 0.0),
+            (0.0, 0.0, 1.0),
+            0.0,
+            0.2,
+        )
+        scheduled = track_scheduled_plane_section(
+            "cylinder-section",
+            cylinder,
+            motion,
+        )
+        controller = QuadricSectionTransition3D(
+            Scene(),
+            scheduled=scheduled,
+            progress=0.5,
+            projection=VIEW,
+            boundary_visibility_mode="unified",
+            limits=_limits(max_total_mobjects=30000, max_boundary_sources=32),
+        ).attach()
+        try:
+            cap_ids = {
+                "cylinder-section:cap:cap_min:chord",
+                "cylinder-section:cap:cap_max:chord",
+            }
+            self.assertTrue(
+                cap_ids.issubset(controller.controller.allocated_curve_ids)
+            )
+            active = {
+                item.curve_id
+                for item in controller._resolve_geometry().curves
+                if isinstance(item, SegmentCurve)
+            }
+            self.assertEqual(active, cap_ids)
+        finally:
+            controller.restore()
+
+    def test_scheduled_cap_slots_fail_closed_when_curve_capacity_is_too_small(
+        self,
+    ) -> None:
+        with self.assertRaisesRegex(
+            QuadricManimCapacityError,
+            "curve count exceeds fixed limit 8",
+        ):
+            QuadricSectionTransition3D(
+                Scene(),
+                scheduled=_scheduled(),
+                progress=0.0,
+                projection=VIEW,
+                limits=_limits(max_curves=8),
+            )
 
     def test_unified_boundaries_survive_all_topology_families(self) -> None:
         progress = ValueTracker(0.0)
@@ -436,9 +612,10 @@ class QuadricSectionTransitionControllerTests(unittest.TestCase):
                 families: set[str] = set()
                 maximum_layers = 0
                 unified_frame_count = 0
+                cap_chord_frame_count = 0
 
                 def capture(value: Mobject, dt: float) -> None:
-                    nonlocal maximum_layers, unified_frame_count
+                    nonlocal maximum_layers, unified_frame_count, cap_chord_frame_count
                     del value, dt
                     families.update(
                         item.conic_family.value
@@ -449,6 +626,14 @@ class QuadricSectionTransitionControllerTests(unittest.TestCase):
                     )
                     if controller.controller.last_boundary_frame is not None:
                         unified_frame_count += 1
+                        source_ids = {
+                            item.source_id
+                            for item in controller.controller.last_boundary_frame.sources
+                        }
+                        if any(
+                            ":cap:cap_max:chord" in item for item in source_ids
+                        ):
+                            cap_chord_frame_count += 1
 
                 controller.controller._update_driver.add_updater(capture)
                 inner_self.play(
@@ -459,6 +644,7 @@ class QuadricSectionTransitionControllerTests(unittest.TestCase):
                 inner_self.families = families
                 inner_self.maximum_layers = maximum_layers
                 inner_self.unified_frame_count = unified_frame_count
+                inner_self.cap_chord_frame_count = cap_chord_frame_count
                 inner_self.identity_stable = identities == controller.slot_identities()
                 controller.restore()
 
@@ -483,6 +669,7 @@ class QuadricSectionTransitionControllerTests(unittest.TestCase):
             self.assertEqual(scene.families, {"oval", "parabola", "hyperbola"})
             self.assertEqual(scene.maximum_layers, 2)
             self.assertGreater(scene.unified_frame_count, 0)
+            self.assertGreater(scene.cap_chord_frame_count, 0)
             self.assertTrue(scene.identity_stable)
 
 
