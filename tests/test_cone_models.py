@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-from math import pi
+from math import cos, pi, sin
 import unittest
+from unittest.mock import patch
 
 import numpy as np
-from manim import Scene
+from manim import Mobject, Scene
 
 from polyhedron_visibility.parallel_solver import ParallelView
 from polyhedron_visibility.quadrics.boundary_compositing import (
@@ -22,6 +23,7 @@ from polyhedron_visibility.quadrics.contract import (
     SectionPlane,
 )
 from polyhedron_visibility.quadrics.manim import (
+    QuadricManimLimits,
     QuadricManimStyle,
     QuadricOcclusion3D,
 )
@@ -39,6 +41,9 @@ from polyhedron_visibility.quadrics.section_compositing import (
     PlaneDepthRole,
     compute_quadric_section_compositing,
     quadric_plane_fragment_contours,
+)
+from polyhedron_visibility.quadrics.sections import (
+    compute_quadric_section_boundary_curves,
 )
 from polyhedron_visibility.quadrics.surface_boundaries import (
     build_surface_boundary_sources,
@@ -59,6 +64,16 @@ OBLIQUE_VIEW = ParallelView.from_matrix(
         (0.5773502691896258, 0.5773502691896258, 0.5773502691896258),
     )
 )
+
+
+def _near_side_view(angle: float) -> ParallelView:
+    return ParallelView.from_matrix(
+        (
+            (1.0, 0.0, 0.0),
+            (0.0, -sin(angle), cos(angle)),
+            (0.0, -cos(angle), -sin(angle)),
+        )
+    )
 
 
 def _cone(model: ConeModel, axial_range: tuple[float, float]) -> ConeSpec:
@@ -265,6 +280,56 @@ class ConeProjectionAndSectionTests(unittest.TestCase):
         self.assertLess(len(frame.plane_fragments), 8192)
         self.assertLess(frame.ray_classification_count, 65536)
 
+    def test_side_view_open_cone_and_frustum_use_proxy_owned_rim_segments(
+        self,
+    ) -> None:
+        plane = SectionPlane(
+            "side-view-cut",
+            (0.0, 0.5, 0.0),
+            (0.0, 1.0, 0.0),
+            u_axis=(1.0, 0.0, 0.0),
+        )
+        patch = PlaneDisplayPatchSpec(
+            "side-view-patch",
+            plane.plane_id,
+            3.0,
+            3.0,
+        )
+        for axial_range, expected_proxy_vertices, expected_rims in (
+            ((0.0, 2.0), 3, 1),
+            ((1.0, 2.0), 4, 2),
+        ):
+            with self.subTest(axial_range=axial_range):
+                cone = _cone(ConeModel.OPEN_SINGLE, axial_range)
+                proxy = build_opaque_projection_proxy(
+                    cone,
+                    SIDE_VIEW,
+                    max_chord_error=0.008,
+                    max_segments=768,
+                )
+                base = compute_quadric_compositing(
+                    compute_quadric_visibility((), (cone,), SIDE_VIEW),
+                    (proxy,),
+                )
+                frame = compute_quadric_section_compositing(
+                    base,
+                    cone,
+                    plane,
+                    patch,
+                    SIDE_VIEW,
+                    max_screen_error=0.08,
+                )
+
+                self.assertEqual(len(cone.trim_rims), expected_rims)
+                self.assertEqual(len(proxy.vertices), expected_proxy_vertices)
+                self.assertTrue(frame.plane_fragments)
+                self.assertLess(len(frame.plane_fragments), 8192)
+                self.assertLess(frame.ray_classification_count, 65536)
+                self.assertIn(
+                    PlaneDepthRole.IN_FRONT_OF_SURFACE,
+                    {fragment.role for fragment in frame.plane_fragments},
+                )
+
 
 class ConeBoundaryAndBindingTests(unittest.TestCase):
     def test_open_trim_rim_has_owner_aware_solid_and_hidden_halves(self) -> None:
@@ -307,6 +372,92 @@ class ConeBoundaryAndBindingTests(unittest.TestCase):
         controller.update()
         self.assertEqual(controller.slot_identities(), identities)
         controller.restore()
+
+    def test_near_side_rim_rank_switch_preserves_slots_and_commits_every_frame(
+        self,
+    ) -> None:
+        state = {"angle": 0.015}
+
+        def current_view(scene: object) -> ParallelView:
+            del scene
+            return _near_side_view(state["angle"])
+
+        cone = _cone(ConeModel.OPEN_SINGLE, (0.0, 2.0))
+        plane = SectionPlane(
+            "animated-side-cut",
+            (0.0, 0.5, 0.0),
+            (0.0, 1.0, 0.0),
+            u_axis=(1.0, 0.0, 0.0),
+        )
+        patch_spec = PlaneDisplayPatchSpec(
+            "animated-side-patch",
+            plane.plane_id,
+            3.0,
+            3.0,
+        )
+        section_curves = compute_quadric_section_boundary_curves(
+            "animated-side-section",
+            cone,
+            plane,
+        )
+        controller = QuadricOcclusion3D(
+            Scene(),
+            surfaces=(cone,),
+            curves=section_curves,
+            projection=current_view,
+            section_plane=plane,
+            section_patch=patch_spec,
+            boundary_visibility_mode="unified",
+            include_surface_boundaries=True,
+            max_chord_error=0.008,
+            section_max_screen_error=0.08,
+            limits=QuadricManimLimits(
+                max_surfaces=1,
+                max_curves=1,
+                max_fragments_per_curve=16,
+                max_segments_per_fragment=96,
+                max_surface_segments=768,
+                max_dashes_per_fragment=40,
+                max_projected_length=12.0,
+                max_total_mobjects=10000,
+                max_boundary_sources=16,
+            ),
+            style=QuadricManimStyle(
+                cone_lateral_fill_colors=None,
+                cone_cap_fill_colors=None,
+            ),
+        ).attach()
+        try:
+            identities = controller.slot_identities()
+            previous_frame = controller.last_section_frame
+            committed_counts = []
+            with patch.object(
+                Mobject,
+                "__init__",
+                side_effect=AssertionError("rank switch allocated a Mobject"),
+            ):
+                for angle in (
+                    0.005,
+                    0.0026,
+                    0.0025,
+                    0.0024,
+                    0.0,
+                    -0.0024,
+                    -0.0026,
+                    -0.005,
+                    -0.015,
+                ):
+                    state["angle"] = angle
+                    controller.update()
+                    frame = controller.last_section_frame
+                    self.assertIsNotNone(frame)
+                    self.assertIsNot(frame, previous_frame)
+                    self.assertEqual(controller.slot_identities(), identities)
+                    committed_counts.append(len(frame.plane_fragments))
+                    previous_frame = frame
+            self.assertGreater(len(set(committed_counts)), 1)
+        finally:
+            controller.restore()
 
     def test_unrelated_open_shells_cannot_claim_the_double_apex_exception(self) -> None:
         impostors = (

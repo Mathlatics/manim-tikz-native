@@ -750,7 +750,15 @@ def compute_quadric_boundary_compositing(
                     item
                     for item in section_spans.get(source.source_id, ())
                     if item.interval.contains(
-                        interval.midpoint, tolerance=tolerance
+                        # Section spans already form an exact partition and
+                        # every emitted piece has length greater than the
+                        # splitter tolerance.  Expanding both adjacent closed
+                        # spans by that same tolerance can make the midpoint
+                        # of a tiny, but valid, piece appear in both.  Query
+                        # the strict interior midpoint instead; a genuine
+                        # positive overlap still yields multiple matches.
+                        interval.midpoint,
+                        tolerance=0.0,
                     )
                 ]
                 if len(placement_matches) > 1:

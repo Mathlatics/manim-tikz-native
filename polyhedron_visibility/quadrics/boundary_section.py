@@ -1413,7 +1413,16 @@ def compute_boundary_section_spans(
                             for role in roles
                             if role is not PlaneDepthRole.OUTSIDE_PROJECTION
                         )
-                        if not inner_roles:
+                        if inner_roles:
+                            # The source is analytically certified on the
+                            # finite surface.  A polygonal proxy chord may put
+                            # the exact tangent solve microscopically outside,
+                            # but an adjacent non-outside contour role remains
+                            # valid geometric evidence.  Drop only the false
+                            # outside role so one cell cannot change ownership
+                            # as its probes straddle that chord.
+                            roles = inner_roles
+                        else:
                             # A repeated tangent root can round just below
                             # zero.  Since the complete authored curve is
                             # certified on the surface, the source/plane depth

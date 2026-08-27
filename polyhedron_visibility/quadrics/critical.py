@@ -769,17 +769,58 @@ def compute_curve_critical_events(
             matrix,
             direction,
         )
-        entries.extend(
-            _equation_events(
+        curve_on_support = _equation_identity(
+            _normalized_coefficients(c),
+            c_scale,
+        )
+        if curve_on_support:
+            # Along a curve already contained in the quadric support, c=0 and
+            # the ray discriminant is exactly b**2.  Solving that expanded
+            # repeated-root polynomial is needlessly ill-conditioned when a
+            # projected circle approaches rank one.  Solve its analytic
+            # factor instead, while retaining support-tangency evidence and
+            # the doubled multiplicity of the original discriminant root.
+            factored_tangencies = _equation_events(
                 chart,
-                kind=CriticalEventKind.SUPPORT_TANGENCY,
-                equation="ray_discriminant",
+                # The factor has the same chart degree as the linear ray
+                # coefficient.  Rewrite its evidence kind below after the
+                # chart-pole accounting has used that correct degree.
+                kind=CriticalEventKind.SELF_OCCLUSION_SWITCH,
+                equation="ray_discriminant_on_surface_factor",
                 surface_id=surface.surface_id,
-                polynomial=discriminant,
-                scale=discriminant_scale,
+                polynomial=b,
+                scale=b_scale,
                 context=resolved,
             )
-        )
+            entries.extend(
+                (
+                    parameter,
+                    CriticalEvidence(
+                        CriticalEventKind.SUPPORT_TANGENCY,
+                        evidence.equation,
+                        evidence.surface_id,
+                        evidence.chart,
+                        evidence.coefficients,
+                        evidence.root_value,
+                        2 * evidence.multiplicity,
+                        evidence.residual,
+                        evidence.identically_zero,
+                    ),
+                )
+                for parameter, evidence in factored_tangencies
+            )
+        else:
+            entries.extend(
+                _equation_events(
+                    chart,
+                    kind=CriticalEventKind.SUPPORT_TANGENCY,
+                    equation="ray_discriminant",
+                    surface_id=surface.surface_id,
+                    polynomial=discriminant,
+                    scale=discriminant_scale,
+                    context=resolved,
+                )
+            )
         entries.extend(
             _equation_events(
                 chart,

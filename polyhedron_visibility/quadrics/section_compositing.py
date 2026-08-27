@@ -93,6 +93,7 @@ QUADRIC_SECTION_COMPOSITING_SCHEMA = "manim-quadric-section-compositing/v1"
 _SECTION_BOUNDARY_CHORD_DIVISOR = 2048.0
 _NEAR_TANGENT_SECTION_BOUNDARY_CHORD_DIVISOR = 8192.0
 _OPEN_SHELL_TRIM_BOUNDARY_CHORD_DIVISOR = 16.0
+_OPEN_SHELL_TRIM_MAX_RANK_ONE_RATIO = 0.125
 
 
 QuadricSurfaceSpec = SphereSpec | CylinderSpec | ConeSpec
@@ -1485,6 +1486,81 @@ def _point_segment_distance_2d(
     ratio = float(np.dot(point - start, delta) / length_squared)
     ratio = min(1.0, max(0.0, ratio))
     return float(np.linalg.norm(point - (start + ratio * delta)))
+
+
+def _projected_trim_rim_is_proxy_owned_segment(
+    screen_center: np.ndarray,
+    dominant_direction: np.ndarray,
+    half_length: float,
+    proxy_vertices: Sequence[np.ndarray],
+    *,
+    ownership_tolerance: float,
+) -> bool:
+    """Certify that one collapsed trim rim is an outer-proxy segment.
+
+    A circular axial rim can become rank one only when the view direction lies
+    in the rim plane.  For the finite convex single-nappe cones accepted by
+    this compositor, each such terminal segment is an edge of the outer
+    projection (both terminal segments are edges for a frustum).  We still
+    certify that contract geometrically instead of silently assuming it: the
+    complete finite segment must follow the proxy boundary and the proxy must
+    remain on one side of its supporting line.
+
+    The tolerance may include the projected rim's discarded minor semiaxis
+    and the already-certified proxy chord error.  This also lets a numerically
+    near-rank-one ellipse switch to this stable segment representation without
+    an ill-conditioned matrix inverse.
+    """
+
+    center = np.asarray(screen_center, dtype=float)
+    direction = np.asarray(dominant_direction, dtype=float)
+    vertices = tuple(np.asarray(point, dtype=float) for point in proxy_vertices)
+    tolerance = float(ownership_tolerance)
+    length = float(half_length)
+    direction_length = float(np.linalg.norm(direction))
+    if (
+        center.shape != (2,)
+        or direction.shape != (2,)
+        or len(vertices) < 3
+        or any(point.shape != (2,) for point in vertices)
+        or not np.all(np.isfinite(center))
+        or not np.all(np.isfinite(direction))
+        or not all(np.all(np.isfinite(point)) for point in vertices)
+        or not isfinite(length)
+        or length <= 0.0
+        or not isfinite(tolerance)
+        or tolerance <= 0.0
+        or direction_length <= 0.0
+    ):
+        return False
+    direction = direction / direction_length
+    start = center - length * direction
+    end = center + length * direction
+
+    # A finite segment, rather than its infinite supporting line, must be
+    # covered by the proxy boundary.  Intermediate samples prevent an internal
+    # chord with boundary-touching endpoints from being mistaken for an edge.
+    boundary_distances = tuple(
+        min(
+            _point_segment_distance_2d(
+                start + fraction * (end - start),
+                vertices[index],
+                vertices[(index + 1) % len(vertices)],
+            )
+            for index in range(len(vertices))
+        )
+        for fraction in np.linspace(0.0, 1.0, 9)
+    )
+    if max(boundary_distances) > tolerance:
+        return False
+
+    support_normal = np.asarray((-direction[1], direction[0]), dtype=float)
+    signed_distances = tuple(
+        float(np.dot(point - center, support_normal)) for point in vertices
+    )
+    return all(value <= tolerance for value in signed_distances) or all(
+        value >= -tolerance for value in signed_distances
+    )
 
 
 def _section_curve_tangent_envelope_error_bound(
@@ -3069,17 +3145,71 @@ def compute_quadric_section_compositing(
                     screen_matrix @ np.asarray(rim_frame.y_axis, dtype=float),
                 )
             )
-            rim_singular_values = np.linalg.svd(
+            (
+                rim_left_vectors,
+                rim_singular_values,
+                rim_right_transpose,
+            ) = np.linalg.svd(
                 rim_screen_basis,
-                compute_uv=False,
+                full_matrices=False,
             )
             if rim_singular_values[0] <= screen_epsilon:
                 continue
-            if rim_singular_values[-1] <= screen_epsilon:
-                raise QuadricSectionCompositingError(
-                    f"open-shell trim rim {rim.rim_id!r} projects edge-on; "
-                    "its plane-depth boundary has no certifiable display area"
+            rim_rank_ratio = (
+                rim_singular_values[-1] / rim_singular_values[0]
+            )
+            rank_one_ratio_limit = max(
+                256.0 * np.finfo(float).eps,
+                min(
+                    _OPEN_SHELL_TRIM_MAX_RANK_ONE_RATIO,
+                    trim_chord_error / rim_singular_values[0],
+                ),
+            )
+            use_rank_one_segment = (
+                rim_singular_values[-1] <= trim_chord_error
+                and rim_rank_ratio <= rank_one_ratio_limit
+            )
+            if use_rank_one_segment:
+                # The exact rank-one image of a circular rim is a finite
+                # segment.  A sufficiently thin ellipse is display-equivalent
+                # to the same segment within ``trim_chord_error``.  ConeSpec's
+                # axial terminal rims can only reach this rank while lying on
+                # the outer projection; certify that ownership before omitting
+                # a duplicate internal partition.  In particular, never split
+                # the complete cutting plane along the segment's infinite
+                # supporting line.
+                dominant_direction = np.asarray(
+                    rim_left_vectors[:, 0],
+                    dtype=float,
                 )
+                first_nonzero = next(
+                    (
+                        value
+                        for value in dominant_direction
+                        if abs(float(value)) > 64.0 * np.finfo(float).eps
+                    ),
+                    1.0,
+                )
+                if first_nonzero < 0.0:
+                    dominant_direction *= -1.0
+                ownership_tolerance = (
+                    float(rim_singular_values[-1])
+                    + float(proxy.metadata.max_chord_error)
+                    + 64.0 * screen_epsilon
+                )
+                if not _projected_trim_rim_is_proxy_owned_segment(
+                    rim_screen_center,
+                    dominant_direction,
+                    float(rim_singular_values[0]),
+                    proxy_polygon,
+                    ownership_tolerance=ownership_tolerance,
+                ):
+                    raise QuadricSectionCompositingError(
+                        f"open-shell trim rim {rim.rim_id!r} has a rank-one "
+                        "finite projection which is not certified as part of "
+                        "the outer projection proxy"
+                    )
+                continue
             relative_error = trim_chord_error / rim_singular_values[0]
             half_step = acos(
                 min(1.0, max(-1.0, 1.0 / (1.0 + relative_error)))
@@ -3106,10 +3236,20 @@ def compute_quadric_section_compositing(
                     (cos(angle), sin(angle)),
                     dtype=float,
                 )
-                screen_normal = np.linalg.solve(
-                    rim_screen_basis.T,
-                    parameter_direction,
+                # Use the already-computed SVD and normalize in screen space.
+                # The rank-one branch above keeps this inverse away from the
+                # ill-conditioned side-view regime.
+                screen_normal = rim_left_vectors @ (
+                    (rim_right_transpose @ parameter_direction)
+                    / rim_singular_values
                 )
+                screen_normal_length = float(np.linalg.norm(screen_normal))
+                if screen_normal_length <= screen_epsilon:
+                    raise QuadricSectionCompositingError(
+                        f"open-shell trim rim {rim.rim_id!r} has an unstable "
+                        "projected support normal"
+                    )
+                screen_normal /= screen_normal_length
                 screen_support_point = (
                     rim_screen_center
                     + rim_screen_basis @ parameter_direction
