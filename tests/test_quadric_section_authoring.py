@@ -26,6 +26,7 @@ from polyhedron_visibility.quadrics.contract import (
     SectionPlane,
 )
 from polyhedron_visibility.quadrics.manim import (
+    QuadricManimCapacityError,
     QuadricManimError,
     QuadricManimLimits,
     QuadricManimStyle,
@@ -63,7 +64,7 @@ SIDE_VIEW = ParallelView.from_matrix(
 def _limits(**overrides: object) -> QuadricManimLimits:
     values: dict[str, object] = {
         "max_surfaces": 2,
-        "max_curves": 8,
+        "max_curves": 10,
         "max_fragments_per_curve": 32,
         "max_segments_per_fragment": 256,
         "max_surface_segments": 512,
@@ -346,6 +347,7 @@ class QuadricSectionAuthoringTests(unittest.TestCase):
             min(1.0, 0.5 * (parabolic.right_end + 1.0)),
         )
         families: set[SectionConicFamily] = set()
+        saw_cap_chord = False
         for index, sample in enumerate(samples):
             progress.set_value(sample)
             context = (
@@ -364,6 +366,11 @@ class QuadricSectionAuthoringTests(unittest.TestCase):
             families.update(item.conic_family for item in controller.active_signatures)
             self.assertEqual(controller.slot_identities(), identities)
             self.assertIsNotNone(controller.last_boundary_frame)
+            assert controller.last_boundary_frame is not None
+            saw_cap_chord = saw_cap_chord or any(
+                ":cap:cap_max:chord" in item.source_id
+                for item in controller.last_boundary_frame.sources
+            )
         self.assertEqual(
             families,
             {
@@ -372,6 +379,7 @@ class QuadricSectionAuthoringTests(unittest.TestCase):
                 SectionConicFamily.HYPERBOLA,
             },
         )
+        self.assertTrue(saw_cap_chord)
         controller.restore()
 
     def test_scheduled_boundary_opt_out_keeps_the_live_plane_partition(self) -> None:
@@ -461,6 +469,98 @@ class QuadricSectionAuthoringTests(unittest.TestCase):
             "requires progress",
         ):
             QuadricSection3D(Scene(), scheduled=_scheduled())
+
+    def test_facade_rejects_double_cone_section_models_before_scene_mutation(
+        self,
+    ) -> None:
+        for model in (ConeModel.OPEN_DOUBLE, ConeModel.ANALYTIC_DOUBLE):
+            with self.subTest(model=model.value):
+                scene = Scene()
+                cone = ConeSpec(
+                    f"{model.value}-cone",
+                    (0.0, 0.0, 0.0),
+                    (0.0, 0.0, 1.0),
+                    pi / 4.0,
+                    (-2.0, 2.0),
+                    radial_axis=(1.0, 0.0, 0.0),
+                    model=model,
+                )
+                with self.assertRaisesRegex(
+                    QuadricSectionAuthoringError,
+                    model.name,
+                ):
+                    QuadricSection3D(
+                        scene,
+                        surface=cone,
+                        section_id=f"{model.value}-section",
+                        plane=SectionPlane(
+                            f"{model.value}-plane",
+                            (0.0, 0.0, 0.2),
+                            (0.0, 0.0, 1.0),
+                            u_axis=(1.0, 0.0, 0.0),
+                        ),
+                    )
+                self.assertEqual(scene.mobjects, [])
+
+    def test_show_plane_false_disables_the_plane_compositor_not_section_ink(
+        self,
+    ) -> None:
+        controller = QuadricSection3D(
+            Scene(),
+            surface=_cone("curve-only-cone"),
+            section_id="curve-only-section",
+            plane=_plane(1.5, "curve-only-plane"),
+            projection=VIEW,
+            show_plane=False,
+            limits=_limits(),
+            max_chord_error=0.01,
+        ).attach()
+        try:
+            self.assertIsNone(controller.last_section_frame)
+            frame = controller.last_boundary_frame
+            assert frame is not None
+            source_ids = {item.source_id for item in frame.sources}
+            self.assertTrue(
+                any(item.startswith("curve-only-section:") for item in source_ids)
+            )
+            self.assertFalse(
+                any(
+                    item.startswith("boundary:plane:curve-only-plane:edge:")
+                    for item in source_ids
+                )
+            )
+        finally:
+            controller.restore()
+
+    def test_fixed_topology_callback_rejects_a_conic_family_change_and_rolls_back(
+        self,
+    ) -> None:
+        scheduled = _scheduled()
+        motion = scheduled.schedule.motion
+        surface = scheduled.schedule.samples[0].surface
+        state = {"progress": 0.2}
+        controller = QuadricSection3D(
+            Scene(),
+            surface=surface,
+            section_id="fixed-topology-section",
+            plane=lambda: motion.plane_at(state["progress"]),
+            projection=VIEW,
+            limits=_limits(),
+            max_chord_error=0.02,
+        ).attach()
+        snapshot = controller.slot_snapshot()
+        identities = controller.slot_identities()
+        committed = controller.last_boundary_frame
+        state["progress"] = 0.95
+        with self.assertRaisesRegex(
+            QuadricManimCapacityError,
+            "curve identities were not preallocated",
+        ):
+            controller.update()
+        self.assertEqual(controller.slot_snapshot(), snapshot)
+        self.assertEqual(controller.slot_identities(), identities)
+        self.assertIs(controller.last_boundary_frame, committed)
+        controller.restore()
 
     def test_real_cairo_animation_uses_the_facade_update_path(self) -> None:
         class FacadeScene(Scene):

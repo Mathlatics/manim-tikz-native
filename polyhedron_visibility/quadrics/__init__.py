@@ -96,8 +96,13 @@ _EXPORTS: Final[dict[str, tuple[str, str]]] = {
         ".sections",
         "FiniteSectionBoundaryCurve",
     ),
+    "QuadricSectionBoundary": (".sections", "QuadricSectionBoundary"),
     "UnboundedFiniteSectionError": (".sections", "UnboundedFiniteSectionError"),
     "compute_quadric_section": (".sections", "compute_quadric_section"),
+    "compute_quadric_section_boundary": (
+        ".sections",
+        "compute_quadric_section_boundary",
+    ),
     "compute_quadric_section_boundary_curves": (
         ".sections",
         "compute_quadric_section_boundary_curves",

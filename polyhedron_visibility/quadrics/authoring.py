@@ -26,7 +26,7 @@ from .compositing import (
     QuadricPaintPolicy,
     SurfaceConstraintInput,
 )
-from .contract import ConeSpec, CylinderSpec, SectionPlane, SphereSpec
+from .contract import ConeModel, ConeSpec, CylinderSpec, SectionPlane, SphereSpec
 from .global_occlusion import GlobalQuadricFrame
 from .manim import (
     QUADRIC_MANIM_LIMITS,
@@ -71,6 +71,21 @@ def _section_identity(value: object) -> str:
             "section_id must be a non-empty string"
         )
     return value.strip()
+
+
+def _authoring_surface(surface: object) -> QuadricSurfaceSpec:
+    if not isinstance(surface, (SphereSpec, CylinderSpec, ConeSpec)):
+        raise TypeError("surface must be SphereSpec, CylinderSpec, or ConeSpec")
+    if isinstance(surface, ConeSpec):
+        if surface.model is ConeModel.OPEN_DOUBLE:
+            raise QuadricSectionAuthoringError(
+                "OPEN_DOUBLE unified section compositing is outside the v1 contract"
+            )
+        if surface.model is ConeModel.ANALYTIC_DOUBLE:
+            raise QuadricSectionAuthoringError(
+                "ANALYTIC_DOUBLE is not a directly renderable finite surface"
+            )
+    return surface
 
 
 class QuadricSection3D:
@@ -180,7 +195,9 @@ class QuadricSection3D:
                     "scheduled mode requires progress"
                 )
             self.mode: Literal["static", "scheduled"] = "scheduled"
-            self.surface = scheduled.schedule.samples[0].surface
+            self.surface = _authoring_surface(
+                scheduled.schedule.samples[0].surface
+            )
             self.section_id = scheduled.animation.section_id
             self._transition = QuadricSectionTransition3D(
                 scene,
@@ -215,8 +232,7 @@ class QuadricSection3D:
             raise QuadricSectionAuthoringError(
                 "static mode requires " + ", ".join(missing)
             )
-        if not isinstance(surface, (SphereSpec, CylinderSpec, ConeSpec)):
-            raise TypeError("surface must be SphereSpec, CylinderSpec, or ConeSpec")
+        surface = _authoring_surface(surface)
         assert plane is not None
         self.mode = "static"
         self.surface = surface

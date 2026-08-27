@@ -20,6 +20,7 @@ import numpy as np
 from manim import DOWN, UP, Scene, Text, ValueTracker, smooth
 
 from polyhedron_visibility.parallel_solver import ParallelView
+from polyhedron_visibility.quadrics.authoring import QuadricSection3D
 from polyhedron_visibility.quadrics.contract import (
     ConeSpec,
     CylinderSpec,
@@ -38,9 +39,6 @@ from polyhedron_visibility.quadrics.plane_motion import (
 )
 from polyhedron_visibility.quadrics.sections import compute_quadric_section
 from polyhedron_visibility.quadrics.trace import section_trace_curves
-from polyhedron_visibility.quadrics.transition_manim import (
-    QuadricSectionTransition3D,
-)
 
 
 GLOBAL_VIEW = ParallelView.from_matrix(
@@ -282,7 +280,7 @@ class ConeSectionTopologyTransitionDemo(Scene):
         )
         self.add(*labels)
 
-        controller = QuadricSectionTransition3D(
+        controller = QuadricSection3D(
             self,
             scheduled=scheduled,
             progress=progress,
