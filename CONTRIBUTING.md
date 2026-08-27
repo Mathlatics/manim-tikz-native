@@ -8,8 +8,14 @@ Bug reports and focused additions to the documented TikZ subset are welcome.
 python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install -e ".[dev]"
-python -m unittest discover -s tests -p "test_*.py"
+python scripts/run_ci_test_tier.py core
+python scripts/run_ci_test_tier.py cairo-smoke
 ```
+
+The complete local suite remains available through
+`python -m unittest discover -s tests -p "test_*.py"`. High-resolution Cairo
+frames and full videos run separately; see
+[`docs/extended-quadric-ci.md`](docs/extended-quadric-ci.md).
 
 ## Design rules
 
@@ -21,5 +27,7 @@ python -m unittest discover -s tests -p "test_*.py"
   normal and exceptional exit.
 - Document new accepted syntax in `tikz_native/subset_v0_1.json`.
 - Component revision changes must be deliberate and covered by revision tests.
+- Assign every direct movie render to the reviewed small-smoke or extended-Cairo
+  tier; do not silently add a long render to ordinary pull-request CI.
 
 Please include a minimal `.tex` fixture when changing the compiler.

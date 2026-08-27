@@ -24,6 +24,11 @@ manim -pql examples/quadrics/section_plane_cone_boundary_demo.py \
 
 manim -pql examples/quadrics/cone_model_comparison_demo.py \
   ConeModelComparisonDemo ConeModelPlaneComparisonDemo
+
+manim -pql examples/quadrics/extended_acceptance_demo.py \
+  ClosedOpenComparisonAcceptance SectionTopologyAcceptance \
+  CurvePolicyComparisonAcceptance SideViewTrimRimAcceptance \
+  CapChordActivationAcceptance
 ```
 
 - `MovingSphereSectionDemo` recomputes a moving circular section and its
@@ -61,6 +66,10 @@ manim -pql examples/quadrics/cone_model_comparison_demo.py \
   closed solid activates a stable yellow cap chord. The open shell retains one
   open lateral arc. Cyan plane-hidden generator/trim-rim dashes remain beneath
   the plane in the depth-aware painter order.
+- The five `*Acceptance` scenes are the video sources for the nightly/release
+  evidence bundle. Their shared builders also produce the 960x540 semantic
+  keyframes, so the videos and JSON painter evidence consume the same public
+  controller path.
 
 `QuadricOcclusion3D` remains the fixed-topology controller for ordinary scenes.
 For a topology-changing rotating-plane section, first build the analytic

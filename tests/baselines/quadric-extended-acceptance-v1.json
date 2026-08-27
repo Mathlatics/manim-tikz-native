@@ -1,0 +1,67 @@
+{
+  "schema": "manim-quadric-extended-acceptance-baseline/v1",
+  "contract_id": "quadric-section-v1",
+  "renderer": "cairo",
+  "profile": {
+    "pixel_width": 960,
+    "pixel_height": 540,
+    "frame_rate": 8
+  },
+  "pixel_policy": {
+    "fill_rgb_euclidean_tolerance": 96.0,
+    "boundary_rgb_euclidean_tolerance": 128.0,
+    "probe_search_radius_pixels": 28,
+    "whole_image_hash": false
+  },
+  "performance_budgets": {
+    "single_keyframe_seconds": 150.0,
+    "single_video_seconds": 900.0,
+    "all_keyframes_seconds": 900.0,
+    "all_motion_sweeps_seconds": 1200.0,
+    "all_videos_seconds": 2400.0,
+    "workflow_timeout_minutes": 90
+  },
+  "scenarios": [
+    {
+      "id": "closed_open_comparison",
+      "video_scene": "ClosedOpenComparisonAcceptance",
+      "keyframes": [0.0, 0.5, 1.0],
+      "keyframe_labels": ["start", "mid-plane", "terminal contact"],
+      "motion_samples": 35,
+      "contact_sheet": "closed-open-comparison.png"
+    },
+    {
+      "id": "section_topology",
+      "video_scene": "SectionTopologyAcceptance",
+      "keyframes": [0.0, 0.8726646259971649, 1.0],
+      "keyframe_labels": ["ellipse", "exact parabola", "hyperbola"],
+      "motion_samples": 49,
+      "critical_progresses": [0.8726646259971649],
+      "contact_sheet": "ellipse-parabola-hyperbola.png"
+    },
+    {
+      "id": "hidden_curve_policies",
+      "video_scene": "CurvePolicyComparisonAcceptance",
+      "keyframes": [1.0],
+      "keyframe_labels": ["physical / diagrammatic / depth-aware"],
+      "motion_samples": 35,
+      "contact_sheet": "physical-diagrammatic-depth-aware.png"
+    },
+    {
+      "id": "side_view_trim_rim",
+      "video_scene": "SideViewTrimRimAcceptance",
+      "keyframes": [0.0, 0.5, 1.0],
+      "keyframe_labels": ["near side +", "exact rank one", "near side -"],
+      "motion_samples": 35,
+      "contact_sheet": "side-view-trim-rim-sequence.png"
+    },
+    {
+      "id": "cap_chord_activation",
+      "video_scene": "CapChordActivationAcceptance",
+      "keyframes": [0.0, 0.5, 1.0],
+      "keyframe_labels": ["inactive", "approaching base", "active cap chord"],
+      "motion_samples": 35,
+      "contact_sheet": "cap-chord-activation-sequence.png"
+    }
+  ]
+}

@@ -1,0 +1,43 @@
+{
+  "schema": "manim-tikz-native-ci-test-tiers/v1",
+  "default_tier": "core",
+  "tier_environment": {
+    "extended-cairo": {
+      "RUN_TIKZ_NATIVE_MOTION_3D_RENDER_TEST": "1",
+      "RUN_TIKZ_NATIVE_MOTION_RENDER_TEST": "1"
+    }
+  },
+  "tiers": {
+    "cairo-smoke": [
+      "test_open_face_visibility_manim.OpenFaceOcclusion3DManimTests.test_real_cairo_minimal_fold_renders_and_restores",
+      "test_polyhedron_visibility_manim_binding.AutoOcclusion3DManimTests.test_real_cairo_render_accepts_rotate_tracker_and_wait",
+      "test_quadric_section_authoring.QuadricSectionAuthoringTests.test_real_cairo_animation_uses_the_facade_update_path",
+      "test_quadric_transition_manim.QuadricSectionTransitionControllerTests.test_real_cairo_animation_visits_all_three_conic_families"
+    ],
+    "extended-cairo": [
+      "test_cone_models_cairo.ConeModelCairoTests.test_complete_offset_point_48_demo_frame_has_no_open_shell_corridor_leak",
+      "test_convex_section_manim.ConvexSection3DManimTests.test_real_cairo_exact_transparency_renders_and_restores",
+      "test_convex_section_manim.ConvexSection3DManimTests.test_real_cairo_moving_section_renders_and_restores",
+      "test_derived_dihedral_manim.ExtractedDihedralManimTests.test_real_cairo_render_splits_intersecting_faces_and_cleans_up",
+      "test_face_depth_cue_manim.FaceDepthCueManimTests.test_real_cairo_render_removes_depth_cue_family",
+      "test_open_face_fill_order_manim.OpenFaceFillOrderManimTests.test_real_cairo_render_uses_and_removes_fill_proxy_family",
+      "test_open_face_unified_manim.OpenFaceUnifiedManimTests.test_fixed_frame_fade_detach_and_reattach_do_not_leak",
+      "test_open_face_unified_manim.OpenFaceUnifiedManimTests.test_real_cairo_fade_lifecycle_uses_display_mobject",
+      "test_polyhedron_visibility_manim_binding.AutoOcclusion3DManimTests.test_real_three_d_scene_alignment_for_world_and_fixed_display_paths",
+      "test_quadric_manim.QuadricManimCairoRenderTests.test_depth_aware_hidden_curve_is_attenuated_only_by_nearer_surface",
+      "test_quadric_manim.QuadricManimCairoRenderTests.test_real_cairo_keeps_preexisting_static_art_during_motion_and_wait",
+      "test_quadric_manim.QuadricManimCairoRenderTests.test_real_cairo_recomputes_automatic_global_surface_order",
+      "test_quadric_manim.QuadricManimCairoRenderTests.test_real_cairo_render_updates_during_fade_without_losing_lifecycle",
+      "test_quadric_section_cairo.QuadricSectionCairoRegressionTests.test_continuous_cairo_motion_has_no_seam_or_near_tangent_jump",
+      "test_quadric_section_cairo.QuadricSectionCairoRegressionTests.test_high_resolution_role_boundaries_have_no_cairo_gaps",
+      "test_source_project_real_v3.SourceProjectRealV3Tests.test_real_source_project_build_reaches_v3_bridge_and_unified_runtime",
+      "test_tikz_native_bridge.TikzNativeBridgeTests.test_cli_render_stdout_is_one_clean_json_document",
+      "test_tikz_native_bridge.TikzNativeBridgeTests.test_fixed_view_three_d_job_renders_a_static_png",
+      "test_tikz_native_motion_3d_bridge.TikzNativeMotion3DBridgeTests.test_real_fixed_profile_render_publishes_complete_atomic_package",
+      "test_tikz_native_motion_3d_runtime.EmbeddedMotion3DRuntimeTests.test_real_manim_entry_wait_has_no_pixel_jump",
+      "test_tikz_native_motion_3d_runtime.EmbeddedMotion3DRuntimeTests.test_real_manim_render_accepts_the_host_default_timeline",
+      "test_tikz_native_motion_bridge.TikzNativeMotionBridgeTests.test_real_low_resolution_render_publishes_a_complete_atomic_package",
+      "test_tikz_native_open_face_visibility_3d_manim.TikzNativeOpenFaceVisibility3DManimTests.test_real_cairo_page9_fold_and_camera_render_restores_transactionally"
+    ]
+  }
+}
