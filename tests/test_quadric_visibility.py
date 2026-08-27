@@ -14,6 +14,7 @@ from polyhedron_visibility.quadrics.contract import (
     ConeModel,
     ConeSpec,
     CylinderSpec,
+    SectionPlane,
     SphereSpec,
 )
 from polyhedron_visibility.quadrics.critical import (
@@ -29,6 +30,9 @@ from polyhedron_visibility.quadrics.curves import (
 from polyhedron_visibility.quadrics.visibility import (
     compute_curve_visibility,
     compute_quadric_visibility,
+)
+from polyhedron_visibility.quadrics.sections import (
+    compute_quadric_section_boundary,
 )
 from polyhedron_visibility.quadrics.surface_boundaries import (
     build_surface_boundary_sources,
@@ -162,6 +166,48 @@ class QuadricCriticalEventTests(unittest.TestCase):
 
 
 class QuadricCurveVisibilityTests(unittest.TestCase):
+    def test_near_parabolic_ellipse_uses_only_its_authored_tan_chart(self) -> None:
+        normal_angle = 59.5 * pi / 180.0
+        cases = (
+            ("cone", (0.0, 3.0), 0.02),
+            ("frustum", (1.0, 3.0), 3.0 + sqrt(3.0)),
+        )
+        for name, axial_range, height in cases:
+            with self.subTest(case=name):
+                cone = ConeSpec(
+                    name,
+                    (0.0, 0.0, 0.0),
+                    (0.0, 0.0, 1.0),
+                    pi / 6.0,
+                    axial_range,
+                    radial_axis=(1.0, 0.0, 0.0),
+                    model=ConeModel.CLOSED_SINGLE,
+                )
+                plane = SectionPlane(
+                    f"{name}-plane",
+                    (0.0, 0.0, height),
+                    (sin(normal_angle), 0.0, cos(normal_angle)),
+                    u_axis=(0.0, 1.0, 0.0),
+                )
+                boundary = compute_quadric_section_boundary(
+                    f"{name}-section",
+                    cone,
+                    plane,
+                )
+
+                frame = compute_quadric_visibility(
+                    boundary.curves,
+                    (cone,),
+                    ISOMETRIC_VIEW,
+                )
+
+                self.assertEqual(
+                    tuple(record.curve_id for record in frame.records),
+                    tuple(curve.curve_id for curve in boundary.curves),
+                )
+                for record in frame.records:
+                    _assert_complete(self, record)
+
     def test_near_edge_on_trim_rim_factors_its_on_surface_discriminant(
         self,
     ) -> None:

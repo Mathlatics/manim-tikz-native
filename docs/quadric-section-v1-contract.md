@@ -9,6 +9,9 @@ Machine-readable contract:
 Version-specific implementation evidence:
 [`release/quadric-section-v1-release-manifest.json`](../release/quadric-section-v1-release-manifest.json)
 
+Deterministic parameter-space regression matrix:
+[`docs/quadric-section-parameter-sweep.md`](quadric-section-parameter-sweep.md)
+
 This document fixes the supported boundary of finite-cone sections and their
 automatic occlusion. It is deliberately narrower than “all cone geometry”. A
 supported row means that the renderer-neutral geometry path and, where
@@ -119,6 +122,12 @@ offset-`0.48` failure corridor.
 These files are release fixtures, not generated screenshots to be hand-edited
 until a test passes. A deliberate baseline change requires a review that names
 the changed support promise and provides a freshly inspected Cairo frame.
+
+The release fixtures are complemented by a deterministic parameter-space
+regression: 252 analytic section/visibility cases, 32 reviewed compositor
+cases across critical section families and parallel views, and two scheduled
+Manim topology sequences. The matrix freezes semantic digests and structural
+invariants; it does not use random fuzzing in ordinary pull-request CI.
 
 ## Explicit failure policy
 
