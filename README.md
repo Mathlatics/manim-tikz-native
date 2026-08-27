@@ -24,6 +24,7 @@ to SVG. Unsupported syntax is reported explicitly.
 [Automatic occlusion](docs/automatic-occlusion.md) ·
 [Quadrics and conic sections](docs/quadric-occlusion.md) ·
 [Finite-cone section v1 contract](docs/quadric-section-v1-contract.md) ·
+[Fast and extended Cairo acceptance](docs/extended-quadric-ci.md) ·
 [Supported TikZ subset](docs/supported-tikz.md) ·
 [Source-authoritative projects](docs/source-authoritative-projects.md)
 
@@ -103,6 +104,9 @@ evidence mapping live in
 [`release/quadric-section-v1-release-manifest.json`](release/quadric-section-v1-release-manifest.json),
 while Cairo acceptance thresholds live in
 [`tests/baselines/quadric-section-v1-cairo.json`](tests/baselines/quadric-section-v1-cairo.json).
+The [layered CI guide](docs/extended-quadric-ci.md) explains which checks stay
+on every pull request and which 960x540 frames, motion scans, videos, and
+machine-readable painter evidence run nightly or for releases.
 
 ## Requirements
 

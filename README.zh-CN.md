@@ -70,6 +70,9 @@ Manim 的正式生产绑定目前只支持 Cairo。
 [`release/quadric-section-v1-release-manifest.json`](release/quadric-section-v1-release-manifest.json)
 ；Cairo 验收阈值固定在
 [`tests/baselines/quadric-section-v1-cairo.json`](tests/baselines/quadric-section-v1-cairo.json)。
+普通 PR 为什么只保留快速测试、哪些 960×540 关键帧和完整动画改在夜间或发布时
+运行，以及证据包中每个 JSON、CSV 和视频的含义，见
+[分层 Cairo 验收说明](docs/extended-quadric-ci.md)。
 
 在闭合凸多面体上，还可以继续加入两类对象：
 
@@ -209,6 +212,7 @@ SVG 或位图。这样做的目的，是保证动画中的每个对象都可读�
 - [自动遮挡](docs/automatic-occlusion.md)
 - [二次曲面与圆锥曲线遮挡](docs/quadric-occlusion.md)
 - [圆锥截口 v1 支持契约](docs/quadric-section-v1-contract.md)
+- [快速 CI 与扩展 Cairo 验收](docs/extended-quadric-ci.md)
 - [支持的 TikZ 子集](docs/supported-tikz.md)
 - [架构说明](docs/architecture.md)
 
