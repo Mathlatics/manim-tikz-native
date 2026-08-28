@@ -32,6 +32,7 @@ from .manim import (
     QUADRIC_MANIM_LIMITS,
     ProjectionInput,
     QuadricBoundaryStyle,
+    QuadricGeometryPrototype,
     QuadricManimError,
     QuadricManimLimits,
     QuadricManimStyle,
@@ -138,6 +139,8 @@ class QuadricSection3D:
         include_surface_boundaries: bool = True,
         generator_boundaries: Sequence[GeneratorBoundarySpec] = (),
         allocated_boundary_ids: Sequence[str] | None = None,
+        geometry_prototype: QuadricGeometryPrototype | None = None,
+        display_offset: Sequence[float] = (0.0, 0.0),
     ) -> None:
         if not isinstance(draw_section_boundary, bool):
             raise TypeError("draw_section_boundary must be a bool")
@@ -171,6 +174,8 @@ class QuadricSection3D:
             "include_surface_boundaries": include_surface_boundaries,
             "generator_boundaries": generator_boundaries,
             "allocated_boundary_ids": allocated_boundary_ids,
+            "geometry_prototype": geometry_prototype,
+            "display_offset": display_offset,
         }
 
         if scheduled is not None:

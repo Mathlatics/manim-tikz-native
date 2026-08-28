@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+- add `QuadricGeometryPrototype` for coordinated paint-policy variants: exact
+  local surface/plane/view inputs share one bounded section partition and
+  contour result, exact diagrammatic boundary/section placement spans are
+  shared when all of their geometric evidence matches, each controller rebuilds
+  only its policy-specific boundary painter graph, and a display-only screen
+  offset lays out comparison columns without changing depth; the classroom and
+  extended three-policy scenes now use this path;
 - project each painted analytic source once per prepared frame, force every
   semantic-fragment endpoint into that certified source polyline, and derive
   solid/dashed fragment paths by parameter slicing instead of repeating the

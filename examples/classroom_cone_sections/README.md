@@ -88,6 +88,10 @@ manim -qh --fps 30 examples/classroom_cone_sections/classroom_cone_sections.py C
 - 比较中栏和右栏虚线亮度，解释透明表面的前后绘制层级。
 - 强调策略切换不是重新求了一条不同的圆锥曲线。
 
+实现上，三栏使用同一个 `QuadricGeometryPrototype`：截平面分区只计算
+一次，三栏分别生成自己的绘制策略和固定 Manim 槽位；横向排列使用
+不改变深度的屏幕偏移。
+
 关键帧：[较低截面 → 并排比较 → 较高截面](gallery/contact-sheets/hidden_curve_policies.png)
 
 ```bash

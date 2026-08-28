@@ -40,6 +40,7 @@ from polyhedron_visibility.quadrics.section_compositing import (
     canonical_quadric_section_compositing_json,
     compute_quadric_section_compositing,
     quadric_plane_fragment_contours,
+    repaint_quadric_section_compositing,
     _adaptive_section_curve_parameters,
     _CanonicalVertexRegistry,
     _point_segment_distance_2d,
@@ -1347,6 +1348,68 @@ class PlanePartitionInfrastructureTests(unittest.TestCase):
 
 
 class QuadricSectionCompositingTests(unittest.TestCase):
+    def test_repaint_reuses_geometry_and_matches_each_cold_policy_frame(self) -> None:
+        sphere = SphereSpec("repaint-sphere", (0.0, 0.0, 0.0), 1.0)
+        curve = CircleArcCurve(
+            "repaint-hidden-circle",
+            (0.0, 0.0, -1.2),
+            0.6,
+            (0.0, 0.0, 1.0),
+            radial_axis=(1.0, 0.0, 0.0),
+        )
+        plane = SectionPlane(
+            "repaint-plane",
+            (0.0, 0.0, 0.0),
+            (0.7, 0.0, 1.0),
+            u_axis=(0.0, 1.0, 0.0),
+        )
+        patch = fit_plane_display_patch(
+            "repaint-patch",
+            plane,
+            (sphere,),
+            margin_ratio=0.1,
+        ).patch
+        proxy = build_opaque_projection_proxy(
+            sphere,
+            IDENTITY_VIEW,
+            max_chord_error=0.01,
+        )
+        visibility = compute_quadric_visibility(
+            (curve,),
+            (sphere,),
+            IDENTITY_VIEW,
+        )
+        bases = {
+            policy: compute_quadric_compositing(
+                visibility,
+                (proxy,),
+                paint_policy=policy,
+            )
+            for policy in QuadricPaintPolicy
+        }
+        geometry = compute_quadric_section_compositing(
+            bases[QuadricPaintPolicy.PHYSICAL],
+            sphere,
+            plane,
+            patch,
+            IDENTITY_VIEW,
+        )
+
+        for policy, base in bases.items():
+            with self.subTest(policy=policy.value):
+                repainted = repaint_quadric_section_compositing(geometry, base)
+                cold = compute_quadric_section_compositing(
+                    base,
+                    sphere,
+                    plane,
+                    patch,
+                    IDENTITY_VIEW,
+                )
+                self.assertEqual(
+                    canonical_quadric_section_compositing_json(repainted),
+                    canonical_quadric_section_compositing_json(cold),
+                )
+
     def test_adversarial_flat_conic_uses_certified_tangent_bounds(self) -> None:
         start = 2.75084
         end = 5.94173

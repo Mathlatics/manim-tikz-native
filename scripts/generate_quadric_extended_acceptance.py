@@ -168,6 +168,22 @@ def _screen_to_pixel(point: Sequence[float]) -> tuple[int, int]:
     )
 
 
+def _display_screen_point(
+    controller,
+    point: Sequence[float],
+) -> np.ndarray:
+    """Map renderer-neutral screen coordinates into this display instance."""
+
+    local = np.asarray(point, dtype=float)
+    offset = np.asarray(
+        getattr(controller, "display_offset", (0.0, 0.0)),
+        dtype=float,
+    )
+    if local.shape != (2,) or offset.shape != (2,):
+        raise ValueError("screen points and display offsets must be two-dimensional")
+    return local + offset
+
+
 def _nearest_rgb(
     pixels: np.ndarray,
     row: int,
@@ -219,7 +235,10 @@ def _fill_probes(
         if not candidates:
             continue
         fragment = max(candidates, key=lambda item: _area(item.screen_vertices))
-        point = np.mean(np.asarray(fragment.screen_vertices, dtype=float), axis=0)
+        geometry_point = np.mean(
+            np.asarray(fragment.screen_vertices, dtype=float), axis=0
+        )
+        point = _display_screen_point(controller, geometry_point)
         row, column = _screen_to_pixel(point)
         expected = _expected_role_rgb(role)
         actual = pixels[row, column].astype(float)
@@ -230,6 +249,9 @@ def _fill_probes(
                 "theoretical_role": role.value,
                 "fragment_id": fragment.fragment_id,
                 "screen_point": [float(value) for value in point],
+                "geometry_screen_point": [
+                    float(value) for value in geometry_point
+                ],
                 "pixel": {"row": row, "column": column},
                 "expected_rgb": [round(float(value), 6) for value in expected],
                 "actual_rgb": [int(value) for value in actual],
@@ -289,7 +311,8 @@ def _boundary_probes(
         source = source_map[fragment.source_id]
         parameter = 0.5 * (fragment.interval.start + fragment.interval.end)
         world = np.asarray(source.curve.point(parameter), dtype=float)
-        screen = np.asarray(projection.matrix[:2] @ world, dtype=float)
+        geometry_screen = np.asarray(projection.matrix[:2] @ world, dtype=float)
+        screen = _display_screen_point(controller, geometry_screen)
         projected_row, projected_column = _screen_to_pixel(screen)
         ink, opacity = _boundary_target(source, fragment)
         target = _source_over(_hex_rgb(BACKGROUND_COLOR), ink, opacity)
@@ -312,6 +335,9 @@ def _boundary_probes(
             "source_id": source.source_id,
             "fragment_id": fragment.item_id,
             "screen_point": [float(value) for value in screen],
+            "geometry_screen_point": [
+                float(value) for value in geometry_screen
+            ],
             "pixel": {"row": row, "column": column},
             "projected_pixel": {
                 "row": projected_row,
@@ -391,6 +417,7 @@ def _controller_evidence(label: str, controller) -> dict[str, object]:
     return {
         "controller_id": label,
         "paint_policy": controller.paint_policy.value,
+        "display_offset": [float(value) for value in controller.display_offset],
         "draw_order": list(draw_order),
         "draw_order_digest": _semantic_digest(list(draw_order)),
         "surface_count": len(base.surface_items),

@@ -314,6 +314,10 @@ _EXPORTS: Final[dict[str, tuple[str, str]]] = {
         ".section_compositing",
         "compute_quadric_section_compositing",
     ),
+    "repaint_quadric_section_compositing": (
+        ".section_compositing",
+        "repaint_quadric_section_compositing",
+    ),
     "quadric_plane_fragment_contours": (
         ".section_compositing",
         "quadric_plane_fragment_contours",
@@ -453,6 +457,7 @@ _EXPORTS: Final[dict[str, tuple[str, str]]] = {
     "QuadricManimLimits": (".manim", "QuadricManimLimits"),
     "QuadricManimStyle": (".manim", "QuadricManimStyle"),
     "QuadricBoundaryStyle": (".manim", "QuadricBoundaryStyle"),
+    "QuadricGeometryPrototype": (".manim", "QuadricGeometryPrototype"),
     "QuadricOcclusion3D": (".manim", "QuadricOcclusion3D"),
     "PlaneInput": (".authoring", "PlaneInput"),
     "QuadricSection3D": (".authoring", "QuadricSection3D"),

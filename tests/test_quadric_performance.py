@@ -7,9 +7,11 @@ import os
 import unittest
 from unittest.mock import patch
 
+import numpy as np
 from manim import Line, Scene, tempconfig
 
 import polyhedron_visibility.quadrics.manim_runtime as manim_runtime
+import polyhedron_visibility.quadrics.manim as manim_binding
 from polyhedron_visibility.parallel_solver import ParallelView
 from polyhedron_visibility.quadrics.composite_authoring import (
     CompositeQuadricSection3D,
@@ -26,6 +28,7 @@ from polyhedron_visibility.quadrics.contract import (
 )
 from polyhedron_visibility.quadrics.manim import (
     QuadricManimError,
+    QuadricGeometryPrototype,
     QuadricManimLimits,
     QuadricManimStyle,
     QuadricOcclusion3D,
@@ -75,7 +78,15 @@ def _limits(**overrides: object) -> QuadricManimLimits:
     return QuadricManimLimits(**values)  # type: ignore[arg-type]
 
 
-def _single_controller(scene: Scene) -> QuadricOcclusion3D:
+def _single_controller(
+    scene: Scene,
+    *,
+    paint_policy: QuadricPaintPolicy = (
+        QuadricPaintPolicy.DEPTH_AWARE_DIAGRAMMATIC
+    ),
+    geometry_prototype: QuadricGeometryPrototype | None = None,
+    display_offset: tuple[float, float] = (0.0, 0.0),
+) -> QuadricOcclusion3D:
     cone = ConeSpec(
         "perf-cone",
         (0.0, 0.0, -1.0),
@@ -107,16 +118,145 @@ def _single_controller(scene: Scene) -> QuadricOcclusion3D:
         curves=curves,
         allocated_curve_ids=allocated,
         projection=VIEW,
-        paint_policy=QuadricPaintPolicy.DEPTH_AWARE_DIAGRAMMATIC,
+        paint_policy=paint_policy,
         style=QuadricManimStyle(dash_length=0.3, dash_gap=0.2),
         limits=_limits(),
         section_plane=plane,
         boundary_visibility_mode="unified",
         include_surface_boundaries=True,
+        geometry_prototype=geometry_prototype,
+        display_offset=display_offset,
     )
 
 
 class QuadricPerformanceTraceTests(unittest.TestCase):
+    def test_paint_variants_share_section_geometry_and_translate_only_display(
+        self,
+    ) -> None:
+        prototype = QuadricGeometryPrototype()
+        policies = tuple(QuadricPaintPolicy)
+        offsets = ((-3.0, 0.2), (0.0, 0.2), (3.0, 0.2))
+        controllers = tuple(
+            _single_controller(
+                Scene(),
+                paint_policy=policy,
+                geometry_prototype=prototype,
+                display_offset=offset,
+            )
+            for policy, offset in zip(policies, offsets, strict=True)
+        )
+        with (
+            patch.dict(os.environ, {QUADRIC_PERFORMANCE_TRACE_ENV: "1"}),
+            tempconfig({"renderer": "cairo"}),
+            patch.object(
+                manim_binding,
+                "compute_quadric_section_compositing",
+                wraps=manim_binding.compute_quadric_section_compositing,
+            ) as section_geometry,
+            patch.object(
+                manim_binding,
+                "compute_boundary_section_spans",
+                wraps=manim_binding.compute_boundary_section_spans,
+            ) as boundary_section_spans,
+        ):
+            for controller in controllers:
+                controller._performance_enabled = True
+                controller.attach()
+
+        self.assertEqual(section_geometry.call_count, 1)
+        self.assertEqual(boundary_section_spans.call_count, 2)
+        identity_sets = tuple(
+            frozenset(controller.slot_identities()) for controller in controllers
+        )
+        self.assertTrue(
+            all(
+                not identity_sets[first] & identity_sets[second]
+                for first in range(len(identity_sets))
+                for second in range(first + 1, len(identity_sets))
+            )
+        )
+        frames = tuple(controller.last_section_frame for controller in controllers)
+        self.assertTrue(all(frame is not None for frame in frames))
+        self.assertEqual(
+            tuple(controller.paint_policy for controller in controllers),
+            policies,
+        )
+        base_points = controllers[1]._last_prepared_frame.numeric.section_layers.surface_points
+        for controller, offset in zip(controllers, offsets, strict=True):
+            prepared = controller._last_prepared_frame
+            assert prepared is not None and prepared.numeric.section_layers is not None
+            observed = prepared.numeric.section_layers.surface_points
+            expected_delta = np.asarray(
+                (offset[0] - offsets[1][0], offset[1] - offsets[1][1], 0.0)
+            )
+            np.testing.assert_allclose(
+                observed - base_points,
+                np.broadcast_to(expected_delta, observed.shape),
+                atol=1.0e-12,
+                rtol=0.0,
+            )
+        snapshots = tuple(controller.performance_snapshot() for controller in controllers)
+        self.assertEqual(snapshots[0].cache_misses["shared_section_geometry"], 1)
+        self.assertTrue(
+            all(
+                snapshot.cache_hits["shared_section_geometry"] == 1
+                for snapshot in snapshots[1:]
+            )
+        )
+        self.assertEqual(
+            snapshots[0].cache_misses["shared_boundary_section_spans"],
+            1,
+        )
+        self.assertEqual(
+            snapshots[1].cache_misses["shared_boundary_section_spans"],
+            1,
+        )
+        self.assertEqual(
+            snapshots[2].cache_hits["shared_boundary_section_spans"],
+            1,
+        )
+        center = controllers[1]
+        before = center._last_prepared_frame
+        assert before is not None and before.numeric.section_layers is not None
+        before_points = before.numeric.section_layers.surface_points.copy()
+        before_identities = center.slot_identities()
+        before_scene_mobjects = tuple(center.scene.mobjects)
+        center.display_offset = (1.0, 0.5)
+        center.update()
+        after = center._last_prepared_frame
+        assert after is not None and after.numeric.section_layers is not None
+        np.testing.assert_allclose(
+            after.numeric.section_layers.surface_points - before_points,
+            np.broadcast_to(
+                np.asarray(
+                    (1.0 - offsets[1][0], 0.5 - offsets[1][1], 0.0)
+                ),
+                before_points.shape,
+            ),
+            atol=1.0e-12,
+            rtol=0.0,
+        )
+        changed = center.performance_snapshot()
+        assert changed is not None
+        self.assertEqual(changed.cache_misses["dirty_frame"], 1)
+        self.assertEqual(changed.cache_hits["shared_section_geometry"], 1)
+        self.assertEqual(
+            changed.cache_hits["shared_boundary_section_spans"],
+            1,
+        )
+        self.assertEqual(center.slot_identities(), before_identities)
+        self.assertEqual(tuple(center.scene.mobjects), before_scene_mobjects)
+        with self.assertRaisesRegex(
+            QuadricManimError,
+            "display_offset must contain two finite values",
+        ):
+            center.display_offset = (1.0, 2.0, 3.0)
+        for controller in controllers:
+            controller.restore()
+        self.assertTrue(prototype._cache._entries)
+        prototype.clear()
+        self.assertEqual(prototype._cache._entries, {})
+
     def test_unified_boundary_projects_each_painted_source_only_once(self) -> None:
         with tempconfig({"renderer": "cairo"}):
             controller = _single_controller(Scene())
