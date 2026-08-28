@@ -7,7 +7,7 @@ import os
 import unittest
 from unittest.mock import patch
 
-from manim import Scene, tempconfig
+from manim import Line, Scene, tempconfig
 
 from polyhedron_visibility.parallel_solver import ParallelView
 from polyhedron_visibility.quadrics.composite_authoring import (
@@ -21,6 +21,7 @@ from polyhedron_visibility.quadrics.contract import (
     SphereSpec,
 )
 from polyhedron_visibility.quadrics.manim import (
+    QuadricManimError,
     QuadricManimLimits,
     QuadricManimStyle,
     QuadricOcclusion3D,
@@ -123,6 +124,12 @@ class QuadricPerformanceTraceTests(unittest.TestCase):
             with tempconfig({"renderer": "cairo"}):
                 controller = _single_controller(Scene()).attach()
                 controller.update()
+                with patch(
+                    "polyhedron_visibility.quadrics.manim."
+                    "compute_quadric_section_compositing",
+                    side_effect=AssertionError("clean frame recomputed geometry"),
+                ):
+                    controller.update()
                 snapshot = controller.performance_snapshot()
                 self.assertIsNotNone(snapshot)
                 assert snapshot is not None
@@ -136,6 +143,118 @@ class QuadricPerformanceTraceTests(unittest.TestCase):
                     0,
                 )
                 self.assertEqual(snapshot.counts["modified_mobject_count"], 0)
+                self.assertEqual(snapshot.cache_hits["dirty_frame"], 1)
+                self.assertEqual(snapshot.cache_hits["prepared_numeric"], 1)
+                self.assertIn("dirty_frame_shortcut", snapshot.stage_durations_ns)
+                self.assertNotIn("section_compositing", snapshot.stage_durations_ns)
+                self.assertNotIn("boundary_visibility", snapshot.stage_durations_ns)
+                controller.restore()
+
+    def test_dynamic_inputs_are_resolved_once_per_update(self) -> None:
+        with tempconfig({"renderer": "cairo"}):
+            controller = _single_controller(Scene()).attach()
+            names = (
+                "_resolve_surfaces",
+                "_resolve_curves",
+                "_resolve_curve_opacities",
+                "_resolve_view",
+                "_resolve_section_plane",
+                "_resolve_section_patch",
+            )
+            wrappers = {
+                name: patch.object(
+                    controller,
+                    name,
+                    wraps=getattr(controller, name),
+                )
+                for name in names
+            }
+            mocks = {name: wrapper.start() for name, wrapper in wrappers.items()}
+            try:
+                controller.update()
+            finally:
+                for wrapper in wrappers.values():
+                    wrapper.stop()
+            self.assertTrue(all(mock.call_count == 1 for mock in mocks.values()))
+            controller.restore()
+
+    def test_root_opacity_reuses_numeric_frame_but_updates_display(self) -> None:
+        with patch.dict(os.environ, {QUADRIC_PERFORMANCE_TRACE_ENV: "1"}):
+            with tempconfig({"renderer": "cairo"}):
+                controller = _single_controller(Scene()).attach()
+                controller.update()
+                controller.display_mobject.set_opacity(0.3)
+                with patch(
+                    "polyhedron_visibility.quadrics.manim."
+                    "compute_quadric_section_compositing",
+                    side_effect=AssertionError("opacity frame recomputed geometry"),
+                ):
+                    controller.update()
+                snapshot = controller.performance_snapshot()
+                assert snapshot is not None
+                self.assertEqual(snapshot.cache_hits["prepared_numeric"], 1)
+                self.assertGreater(snapshot.counts["display_changed_slot_count"], 0)
+                self.assertGreater(snapshot.counts["modified_mobject_count"], 0)
+                self.assertNotIn("section_compositing", snapshot.stage_durations_ns)
+                self.assertNotIn("dirty_frame_shortcut", snapshot.stage_durations_ns)
+                controller.restore()
+
+    def test_curve_opacity_reuses_geometry_and_changes_active_slots(self) -> None:
+        state = {"opacity": 1.0}
+        with patch.dict(os.environ, {QUADRIC_PERFORMANCE_TRACE_ENV: "1"}):
+            with tempconfig({"renderer": "cairo"}):
+                controller = _single_controller(Scene()).attach()
+                active_ids = tuple(
+                    item.curve_id for item in controller._resolve_curves()
+                )
+                controller._curve_opacity_input = lambda: {
+                    curve_id: state["opacity"] for curve_id in active_ids
+                }
+                controller.update()
+                state["opacity"] = 0.2
+                with patch(
+                    "polyhedron_visibility.quadrics.manim."
+                    "compute_quadric_section_compositing",
+                    side_effect=AssertionError("draw-only frame recomputed geometry"),
+                ):
+                    controller.update()
+                snapshot = controller.performance_snapshot()
+                assert snapshot is not None
+                self.assertEqual(snapshot.cache_hits["prepared_numeric"], 1)
+                self.assertGreater(snapshot.counts["display_changed_slot_count"], 0)
+                self.assertNotIn("section_compositing", snapshot.stage_durations_ns)
+                controller.restore()
+
+    def test_cached_frame_still_rejects_a_painter_band_intruder(self) -> None:
+        with patch.dict(os.environ, {QUADRIC_PERFORMANCE_TRACE_ENV: "1"}):
+            with tempconfig({"renderer": "cairo"}):
+                scene = Scene()
+                controller = _single_controller(scene).attach()
+                controller.update()
+                committed = controller.last_frame
+                cached = controller._last_prepared_frame
+                intruder = Line((-2, 2, 0), (2, 2, 0)).set_z_index(25.0)
+                scene.add(intruder)
+                with self.assertRaisesRegex(
+                    QuadricManimError,
+                    "managed painter z band",
+                ):
+                    controller.update()
+                self.assertIs(controller.last_frame, committed)
+                self.assertIs(controller._last_prepared_frame, cached)
+                failed = controller.performance_snapshot()
+                assert failed is not None
+                self.assertEqual(failed.status, "failed")
+                scene.remove(intruder)
+                controller.update()
+                recovered = controller.performance_snapshot()
+                assert recovered is not None
+                self.assertEqual(recovered.cache_hits["dirty_frame"], 1)
+                self.assertGreater(recovered.counts["surface_count"], 0)
+                self.assertIn(
+                    "dirty_frame_shortcut",
+                    recovered.stage_durations_ns,
+                )
                 controller.restore()
 
     def test_changed_frame_snapshots_only_active_mutation_families(self) -> None:
@@ -153,6 +272,7 @@ class QuadricPerformanceTraceTests(unittest.TestCase):
                     projection=VIEW,
                     limits=_limits(),
                 ).attach()
+                controller.update()
                 state["x"] = 0.25
                 controller.update()
                 snapshot = controller.performance_snapshot()
@@ -167,6 +287,46 @@ class QuadricPerformanceTraceTests(unittest.TestCase):
                 self.assertLess(
                     snapshot.counts["modified_mobject_count"],
                     snapshot.counts["mobject_family_count"],
+                )
+                self.assertEqual(snapshot.cache_misses["dirty_frame"], 1)
+                controller.restore()
+
+    def test_failed_full_recompute_keeps_the_last_clean_cache(self) -> None:
+        state = {"x": 0.0}
+
+        def surfaces() -> tuple[SphereSpec, ...]:
+            return (SphereSpec("cached-sphere", (state["x"], 0.0, 0.0), 1.0),)
+
+        with patch.dict(os.environ, {QUADRIC_PERFORMANCE_TRACE_ENV: "1"}):
+            with tempconfig({"renderer": "cairo"}):
+                controller = QuadricOcclusion3D(
+                    Scene(),
+                    surfaces=surfaces,
+                    curves=(),
+                    projection=VIEW,
+                    limits=_limits(),
+                ).attach()
+                controller.update()
+                committed = controller.last_frame
+                cached = controller._last_prepared_frame
+                state["x"] = 0.25
+                with patch(
+                    "polyhedron_visibility.quadrics.manim."
+                    "compute_global_quadric_frame",
+                    side_effect=RuntimeError("synthetic geometry failure"),
+                ):
+                    with self.assertRaisesRegex(RuntimeError, "synthetic geometry"):
+                        controller.update()
+                self.assertIs(controller.last_frame, committed)
+                self.assertIs(controller._last_prepared_frame, cached)
+                state["x"] = 0.0
+                controller.update()
+                recovered = controller.performance_snapshot()
+                assert recovered is not None
+                self.assertEqual(recovered.cache_hits["dirty_frame"], 1)
+                self.assertIn(
+                    "dirty_frame_shortcut",
+                    recovered.stage_durations_ns,
                 )
                 controller.restore()
 
@@ -277,6 +437,7 @@ class QuadricPerformanceTraceTests(unittest.TestCase):
                 self.assertGreater(snapshot.counts["plane_fragment_count"], 0)
                 self.assertIn("contour_union", snapshot.stage_durations_ns)
                 controller.update()
+                controller.update()
                 repeated = controller.performance_snapshot()
                 self.assertIsNotNone(repeated)
                 assert repeated is not None
@@ -286,6 +447,35 @@ class QuadricPerformanceTraceTests(unittest.TestCase):
                     0,
                 )
                 self.assertEqual(repeated.counts["modified_mobject_count"], 0)
+                self.assertEqual(repeated.cache_hits["dirty_frame"], 1)
+                self.assertIn(
+                    "dirty_frame_shortcut",
+                    repeated.stage_durations_ns,
+                )
+                self.assertNotIn(
+                    "section_compositing",
+                    repeated.stage_durations_ns,
+                )
+                controller.display_mobject.set_opacity(0.4)
+                with patch.object(
+                    controller,
+                    "_local_frames",
+                    side_effect=AssertionError(
+                        "composite opacity frame recomputed geometry"
+                    ),
+                ):
+                    controller.update()
+                faded = controller.performance_snapshot()
+                assert faded is not None
+                self.assertEqual(faded.cache_hits["prepared_numeric"], 1)
+                self.assertGreater(
+                    faded.counts["display_changed_slot_count"],
+                    0,
+                )
+                self.assertNotIn(
+                    "section_compositing",
+                    faded.stage_durations_ns,
+                )
                 controller.restore()
 
 

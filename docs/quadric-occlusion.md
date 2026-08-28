@@ -632,6 +632,19 @@ that commit. Trace counts expose active, changed, unchanged, hidden, mutation-
 target, and snapshot sizes; this optimization does not weaken capacity checks
 or create Mobjects during an updater.
 
+Before preparing an updater frame, both the single-surface and open-double
+Cairo controllers resolve every dynamic input exactly once and compute exact
+geometry, draw, and root-opacity signatures. An unchanged signature reuses the
+last certified prepared frame and skips both renderer-neutral geometry and the
+Manim display transaction. A curve-opacity-only or root-opacity-only change
+reuses the numeric frame but still updates the affected fixed slots. Any
+surface, curve, view, section-plane, patch, tolerance, style, or policy change
+continues through the complete fail-closed preparation path. Signatures are
+not rounded, topology changes are still validated before reuse, and even a
+clean frame rechecks that no unrelated Scene drawable has entered the reserved
+painter band. Restore clears the cache; a failed attempt never replaces its
+last-good contents.
+
 The extended Cairo acceptance generator enables this trace automatically. Its
 keyframe JSON and fragment/ray CSV contain the controller measurements. Video
 subprocesses additionally publish a per-rendered-frame trace with the Cairo
