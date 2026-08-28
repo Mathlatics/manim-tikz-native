@@ -140,7 +140,7 @@ QUADRIC_VISIBILITY_REVISION = (
     "source-sha256:08d76d9326089bdf865aac97ee83bcde239fc1a4c3ba45d783a80b54ca17ab0e"
 )
 QUADRIC_MANIM_REVISION = (
-    "source-sha256:8e3a9e6f2272323e8968f39aaff093682907e517f80f48d1c239fda9519eb19c"
+    "source-sha256:d44f3b6d62ae3f0c5bd6cf5f0a613654cffb6d51f9d92822b9c97a9de5279595"
 )
 CONVEX_SECTION_3D_REVISION = (
     "source-sha256:5cfd664e136caf4f68876ac76f81674d99c15b3b275c3859a84c174d738729b5"
@@ -528,6 +528,20 @@ print(json.dumps({
         baseline = provider_component_revisions()
         mutated = self._probe_copy(
             "@tool/polyhedron_visibility/quadrics/manim.py"
+        )
+        components = mutated["components"]
+        self.assertNotEqual(
+            components[COMPONENT_QUADRIC_MANIM],
+            baseline[COMPONENT_QUADRIC_MANIM],
+        )
+        for component in baseline:
+            if component != COMPONENT_QUADRIC_MANIM:
+                self.assertEqual(components[component], baseline[component])
+
+    def test_editing_shared_quadric_manim_runtime_changes_only_manim(self) -> None:
+        baseline = provider_component_revisions()
+        mutated = self._probe_copy(
+            "@tool/polyhedron_visibility/quadrics/manim_runtime.py"
         )
         components = mutated["components"]
         self.assertNotEqual(

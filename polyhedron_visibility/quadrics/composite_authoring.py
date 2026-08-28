@@ -13,7 +13,6 @@ from __future__ import annotations
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from itertools import combinations
-from math import sqrt
 from typing import Callable, Iterator, Mapping, Sequence
 
 import numpy as np
@@ -36,7 +35,6 @@ from ..painter_band import (
 from ..parallel_solver import ParallelView
 from ..visibility import VisibilityKind
 from .boundary_compositing import (
-    BoundaryRenderIntent,
     BoundarySectionAnchors,
     BoundarySemanticKind,
     BoundarySourceKind,
@@ -79,25 +77,29 @@ from .manim import (
     QuadricManimError,
     QuadricManimLimits,
     QuadricManimStyle,
+)
+from .manim_runtime import (
     _CurveSlots,
     _ManagedQuadricDisplayGroup,
     _PreparedBoundaryFragment,
     _PreparedConeFill,
-    _PreparedDash,
     _SurfacePaintSlot,
-    _adaptive_project_curve,
-    _adaptive_project_curve_samples,
+    _apply_boundary_fragment as _apply_runtime_boundary_fragment,
+    _apply_surface_sheet_pair,
     _boundary_style_registry,
     _capture_root,
     _coerce_view,
-    _dash_polyline_anchored,
     _hide_vmobject,
-    _polyline_lengths,
+    _invalidate_cairo_static_image,
+    _prepare_boundary_fragments,
     _prepared_cone_fill,
+    _register_fixed_frame,
+    _remove_fixed_frame,
+    _remove_owned_identities,
     _restore_root,
+    _rollback_display_transaction,
+    _scene_containers,
     _set_closed_subpaths,
-    _source_distance_at_parameter,
-    _style_component_fill,
 )
 from .plane_patch import PlanePatchFitError, fit_plane_display_patch
 from .projection import (
@@ -835,32 +837,6 @@ class CompositeQuadricSection3D:
                 f"unknown boundary style {style_id!r}"
             ) from exc
 
-    def _assign_fragment_slots(
-        self,
-        source_id: str,
-        active_ids: Sequence[str],
-    ) -> dict[str, int]:
-        active = tuple(active_ids)
-        if len(active) > self.limits.max_fragments_per_curve:
-            raise QuadricManimCapacityError(
-                f"boundary {source_id!r} has {len(active)} painted fragments; "
-                f"capacity is {self.limits.max_fragments_per_curve}"
-            )
-        previous = self._fragment_slot_maps[source_id]
-        result = {
-            item_id: previous[item_id] for item_id in active if item_id in previous
-        }
-        used = set(result.values())
-        free = iter(
-            index
-            for index in range(self.limits.max_fragments_per_curve)
-            if index not in used
-        )
-        for item_id in active:
-            if item_id not in result:
-                result[item_id] = next(free)
-        return result
-
     def _prepare_cone_fill(
         self,
         surface: ConeSpec,
@@ -1011,86 +987,18 @@ class CompositeQuadricSection3D:
             back, front = self._surface_sheet_slots[sheet.child_surface_id]
             item_mobjects[sheet.surface_back] = back.root
             item_mobjects[sheet.surface_front] = front.root
-        source_map = {item.source_id: item for item in sources}
-        by_source: dict[str, list[QuadricBoundaryPaintFragment]] = {
-            item.source_id: [] for item in sources
-        }
-        for fragment in boundary_frame.fragments:
-            if fragment.painted:
-                by_source[fragment.source_id].append(fragment)
-        prepared_by_source: dict[
-            str, tuple[_PreparedBoundaryFragment, ...]
-        ] = {}
-        next_maps: dict[str, Mapping[str, int]] = {
-            source_id: {} for source_id in self._boundary_source_ids
-        }
-        for source_id in sorted(by_source):
-            source = source_map[source_id]
-            style = self._boundary_style_for_source(source)
-            fragments = tuple(
-                sorted(by_source[source_id], key=lambda item: item.item_id)
-            )
-            assignment = self._assign_fragment_slots(
-                source_id,
-                tuple(item.item_id for item in fragments),
-            )
-            next_maps[source_id] = assignment
-            parameters, source_points = _adaptive_project_curve_samples(
-                source.curve,
-                view,
-                max_chord_error=self.max_chord_error,
-                max_segments=self.limits.max_segments_per_fragment,
-            )
-            values: list[_PreparedBoundaryFragment] = []
-            for fragment in fragments:
-                points = _adaptive_project_curve(
-                    source.curve,
-                    view,
-                    fragment.interval.start,
-                    fragment.interval.end,
-                    max_chord_error=self.max_chord_error,
-                    max_segments=self.limits.max_segments_per_fragment,
-                )
-                _cumulative, length = _polyline_lengths(points)
-                allowance = max(
-                    1.0e-12,
-                    self.limits.max_projected_length * 1.0e-9,
-                )
-                if length > self.limits.max_projected_length + allowance:
-                    raise QuadricManimCapacityError(
-                        f"boundary {source_id!r} fragment length {length:.9g} "
-                        "exceeds max_projected_length"
-                    )
-                dashes = (
-                    _dash_polyline_anchored(
-                        points,
-                        source_distance_start=_source_distance_at_parameter(
-                            parameters,
-                            source_points,
-                            fragment.interval.start,
-                        ),
-                        dash_length=style.dash_length,
-                        dash_gap=style.dash_gap,
-                        capacity=self.limits.max_dashes_per_fragment,
-                    )
-                    if fragment.render_intent is BoundaryRenderIntent.DASHED
-                    else ()
-                )
-                slot_index = assignment[fragment.item_id]
-                values.append(
-                    _PreparedBoundaryFragment(
-                        fragment,
-                        source,
-                        style,
-                        slot_index,
-                        points,
-                        dashes,
-                    )
-                )
-                item_mobjects[fragment.item_id] = self._curve_slots[
-                    source_id
-                ].fragments[slot_index].root
-            prepared_by_source[source_id] = tuple(values)
+        boundary_batch = _prepare_boundary_fragments(
+            sources=sources,
+            frame=boundary_frame,
+            view=view,
+            style_for_source=self._boundary_style_for_source,
+            previous_slot_maps=self._fragment_slot_maps,
+            curve_slots=self._curve_slots,
+            slot_source_ids=self._boundary_source_ids,
+            max_chord_error=self.max_chord_error,
+            limits=self.limits,
+        )
+        item_mobjects.update(boundary_batch.item_mobjects)
         if set(item_mobjects) != set(boundary_frame.draw_order):
             raise CompositeQuadricSectionAuthoringError(
                 "prepared Mobjects do not cover the composite boundary draw order"
@@ -1100,24 +1008,14 @@ class CompositeQuadricSection3D:
             prepared_surfaces,
             plane_polygons,
             boundary_frame,
-            prepared_by_source,
-            next_maps,
+            boundary_batch.fragments,
+            boundary_batch.fragment_slot_maps,
             item_mobjects,
             boundary_frame.draw_order,
         )
 
     def _scene_containers(self) -> tuple[list[object], ...]:
-        result: list[list[object]] = []
-        for name in (
-            "mobjects",
-            "foreground_mobjects",
-            "moving_mobjects",
-            "static_mobjects",
-        ):
-            value = getattr(self.scene, name, None)
-            if isinstance(value, list) and all(value is not item for item in result):
-                result.append(value)
-        return tuple(result)
+        return _scene_containers(self.scene)
 
     def _prepare_painter(
         self,
@@ -1149,69 +1047,16 @@ class CompositeQuadricSection3D:
         opacity: float,
     ) -> None:
         back, front = self._surface_sheet_slots[prepared.child_surface_id]
-        for slot in (back, front):
-            slot.base.set_points_as_corners(prepared.surface_points)
-        combined = min(1.0, self.style.surface_fill_opacity * opacity)
-        sheet_opacity = 1.0 - sqrt(max(0.0, 1.0 - combined))
-        back.root.set_fill(
-            color=self.style.surface_fill_color,
-            opacity=sheet_opacity,
-            family=False,
+        _apply_surface_sheet_pair(
+            back,
+            front,
+            prepared.surface_points,
+            prepared.cone_fill,
+            self.style,
+            opacity,
+            configure_front_stroke=False,
+            draw_front_stroke=False,
         )
-        front.root.set_fill(
-            color=self.style.surface_fill_color,
-            opacity=sheet_opacity,
-            family=False,
-        )
-        back.base.set_stroke(opacity=0.0)
-        front.base.set_stroke(opacity=0.0)
-        if prepared.cone_fill is None:
-            for slot in (back, front):
-                slot.base.set_fill(
-                    color=self.style.surface_fill_color,
-                    opacity=sheet_opacity,
-                )
-                for component in slot.components:
-                    _hide_vmobject(component)
-            return
-        back.base.set_fill(opacity=0.0)
-        front.base.set_fill(opacity=0.0)
-        lateral_colors = self.style.cone_lateral_fill_colors or (
-            self.style.surface_fill_color,
-        )
-        cap_colors = self.style.cone_cap_fill_colors or lateral_colors
-        for slot, lateral, cap, lateral_paths, cap_paths in (
-            (
-                back,
-                back.back_lateral,
-                back.back_cap,
-                prepared.cone_fill.back_lateral_paths,
-                prepared.cone_fill.back_cap_paths,
-            ),
-            (
-                front,
-                front.front_lateral,
-                front.front_cap,
-                prepared.cone_fill.front_lateral_paths,
-                prepared.cone_fill.front_cap_paths,
-            ),
-        ):
-            for component in slot.components:
-                _hide_vmobject(component)
-            _style_component_fill(
-                lateral,
-                lateral_paths,
-                colors=lateral_colors,
-                sheen_direction=self.style.cone_lateral_sheen_direction,
-                opacity=sheet_opacity,
-            )
-            _style_component_fill(
-                cap,
-                cap_paths,
-                colors=cap_colors,
-                sheen_direction=self.style.cone_cap_sheen_direction,
-                opacity=sheet_opacity,
-            )
 
     def _apply_boundary_fragment(
         self,
@@ -1219,67 +1064,12 @@ class CompositeQuadricSection3D:
         prepared: _PreparedBoundaryFragment,
         opacity: float,
     ) -> None:
-        slot = self._curve_slots[source_id].fragments[prepared.slot_index]
-        hidden = prepared.fragment.render_intent is BoundaryRenderIntent.DASHED
-        style = prepared.style
-        color = style.hidden_color if hidden else style.visible_color
-        width = style.hidden_width if hidden else style.visible_width
-        stroke_opacity = (
-            style.hidden_opacity if hidden else style.visible_opacity
-        ) * opacity
-        if prepared.fragment.render_intent is BoundaryRenderIntent.SOLID:
-            slot.solid.set_points_as_corners(prepared.points)
-            slot.solid.set_fill(opacity=0.0)
-            slot.solid.set_stroke(
-                color=color,
-                width=width,
-                opacity=stroke_opacity,
-            )
-            slot.solid.set_stroke(
-                color=style.background_color,
-                width=style.background_width,
-                opacity=style.background_opacity * opacity,
-                background=True,
-            )
-            if style.cap_style is not None:
-                slot.solid.set_cap_style(style.cap_style)
-            if style.joint_type is not None:
-                slot.solid.joint_type = style.joint_type
-            for dash in slot.dashes:
-                _hide_vmobject(dash)
-            return
-        _hide_vmobject(slot.solid)
-        for index, dash in enumerate(slot.dashes):
-            if index >= len(prepared.dashes):
-                _hide_vmobject(dash)
-                continue
-            dash.set_points_as_corners(prepared.dashes[index].points)
-            dash.set_fill(opacity=0.0)
-            dash.set_stroke(
-                color=color,
-                width=width,
-                opacity=stroke_opacity,
-            )
-            dash.set_stroke(
-                color=style.background_color,
-                width=style.background_width,
-                opacity=style.background_opacity * opacity,
-                background=True,
-            )
-            cap = (
-                style.cap_style
-                if style.hidden_cap_style is None
-                else style.hidden_cap_style
-            )
-            joint = (
-                style.joint_type
-                if style.hidden_joint_type is None
-                else style.hidden_joint_type
-            )
-            if cap is not None:
-                dash.set_cap_style(cap)
-            if joint is not None:
-                dash.joint_type = joint
+        _apply_runtime_boundary_fragment(
+            self._curve_slots,
+            source_id,
+            prepared,
+            opacity,
+        )
 
     def apply(self, prepared: PreparedCompositeQuadricSectionFrame) -> None:
         if not self._attached:
@@ -1290,17 +1080,45 @@ class CompositeQuadricSection3D:
             raise TypeError(
                 "prepared must be a PreparedCompositeQuadricSectionFrame"
             )
-        root_state = _capture_root(self.root)
-        band_state = self._band.capture_active_state()
-        previous_maps = {
-            source_id: dict(values)
-            for source_id, values in self._fragment_slot_maps.items()
-        }
-        previous_frame = self._last_frame
-        previous_boundary = self._last_boundary_frame
-        previous_lineage = self._last_lineage
+
+        def capture_controller_state() -> tuple[
+            dict[str, dict[str, int]],
+            CompositeQuadricSectionCompositingFrame | None,
+            QuadricBoundaryCompositingFrame | None,
+            tuple[CompositeSectionBranchLineage, ...],
+        ]:
+            return (
+                {
+                    source_id: dict(values)
+                    for source_id, values in self._fragment_slot_maps.items()
+                },
+                self._last_frame,
+                self._last_boundary_frame,
+                self._last_lineage,
+            )
+
+        def restore_controller_state(
+            state: tuple[
+                dict[str, dict[str, int]],
+                CompositeQuadricSectionCompositingFrame | None,
+                QuadricBoundaryCompositingFrame | None,
+                tuple[CompositeSectionBranchLineage, ...],
+            ],
+        ) -> None:
+            (
+                self._fragment_slot_maps,
+                self._last_frame,
+                self._last_boundary_frame,
+                self._last_lineage,
+            ) = state
+
         opacity = self.root.opacity_multiplier
-        try:
+        with _rollback_display_transaction(
+            self.root,
+            self._band,
+            capture_controller_state=capture_controller_state,
+            restore_controller_state=restore_controller_state,
+        ):
             for slots in self._surface_sheet_slots.values():
                 for slot in slots:
                     slot.hide()
@@ -1330,14 +1148,6 @@ class CompositeQuadricSection3D:
             self._last_frame = prepared.frame
             self._last_boundary_frame = prepared.boundary_frame
             self._last_lineage = prepared.frame.branch_lineage
-        except Exception:
-            _restore_root(root_state)
-            self._band.restore_active_state(band_state)
-            self._fragment_slot_maps = previous_maps
-            self._last_frame = previous_frame
-            self._last_boundary_frame = previous_boundary
-            self._last_lineage = previous_lineage
-            raise
 
     @property
     def attached(self) -> bool:
@@ -1430,26 +1240,17 @@ class CompositeQuadricSection3D:
         return self
 
     def _register_fixed_frame(self) -> None:
-        camera = getattr(self.scene, "camera", None)
-        if isinstance(camera, ThreeDCamera):
-            self._fixed_frame_camera = camera
-            camera.add_fixed_in_frame_mobjects(self.root)
+        self._fixed_frame_camera = _register_fixed_frame(self.scene, self.root)
 
     def _remove_fixed_frame(self) -> None:
-        if self._fixed_frame_camera is not None:
-            self._fixed_frame_camera.remove_fixed_in_frame_mobjects(self.root)
-            self._fixed_frame_camera = None
+        _remove_fixed_frame(self._fixed_frame_camera, self.root)
+        self._fixed_frame_camera = None
 
     def _remove_owned_identities(self) -> None:
-        owned = {id(item) for item in self.root.get_family()}
-        owned.update(id(item) for item in self._update_driver.get_family())
-        for container in self._scene_containers():
-            container[:] = [item for item in container if id(item) not in owned]
+        _remove_owned_identities(self.scene, self.root, self._update_driver)
 
     def _invalidate_cairo_static_image(self) -> None:
-        renderer = getattr(self.scene, "renderer", None)
-        if renderer is not None and hasattr(renderer, "static_image"):
-            renderer.static_image = None
+        _invalidate_cairo_static_image(self.scene)
 
     def restore(self) -> "CompositeQuadricSection3D":
         self._attached = False
