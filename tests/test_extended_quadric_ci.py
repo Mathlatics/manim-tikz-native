@@ -173,6 +173,7 @@ class ExtendedQuadricCIContractTests(unittest.TestCase):
         self.assertIn("schedule:", extended)
         self.assertIn("release:", extended)
         self.assertIn("scripts/run_ci_test_tier.py extended-cairo", extended)
+        self.assertIn("--motion-sweep-workers 2", extended)
         self.assertIn("--render-videos", extended)
         self.assertIn(
             "path: ${{ runner.temp }}/quadric-section-acceptance", extended

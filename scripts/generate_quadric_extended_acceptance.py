@@ -11,11 +11,13 @@ fixed Manim identity hashes at every rendered progress sample.
 from __future__ import annotations
 
 import argparse
+from concurrent.futures import ProcessPoolExecutor
 import csv
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import hashlib
 import json
+from multiprocessing import get_context
 import os
 from pathlib import Path
 import platform
@@ -51,6 +53,7 @@ BASELINE_PATH = (
     ROOT / "tests" / "baselines" / "quadric-extended-acceptance-v1.json"
 )
 SCENE_PATH = ROOT / "examples" / "quadrics" / "extended_acceptance_demo.py"
+MAX_MOTION_SWEEP_WORKERS = 2
 
 
 def _read_json(path: Path) -> dict[str, object]:
@@ -398,6 +401,14 @@ class CaptureResult:
     rows: tuple[dict[str, object], ...]
 
 
+@dataclass(frozen=True, slots=True)
+class _MotionSweepTask:
+    scenario_id: str
+    sample_count: int
+    output: str
+    critical_progresses: tuple[float, ...]
+
+
 def _capture_keyframe(
     scenario_id: str,
     progress: float,
@@ -533,7 +544,7 @@ def _motion_sweep(
             "pixel_height": 180,
             "frame_rate": 8,
             "disable_caching": True,
-            "media_dir": str(output / "_sweep-media"),
+            "media_dir": str(output / "_sweep-media" / scenario_id),
         }
     ):
         scene = Scene()
@@ -757,6 +768,89 @@ def _write_counts_csv(path: Path, rows: Iterable[Mapping[str, object]]) -> None:
         writer.writerows(rows)
 
 
+def _execute_motion_sweep(
+    task: _MotionSweepTask,
+) -> tuple[dict[str, object], tuple[dict[str, object], ...]]:
+    """Run one isolated sweep and persist evidence even if another task fails."""
+
+    output = Path(task.output)
+    evidence_directory = output / "evidence" / "motion-sweeps"
+    evidence_path = evidence_directory / f"{task.scenario_id}.json"
+    counts_path = evidence_directory / f"{task.scenario_id}.csv"
+    started = perf_counter()
+    try:
+        sweep, rows = _motion_sweep(
+            task.scenario_id,
+            task.sample_count,
+            output=output,
+            critical_progresses=task.critical_progresses,
+        )
+        _write_counts_csv(counts_path, rows)
+        _atomic_json(
+            evidence_path,
+            {
+                "schema": "manim-quadric-motion-sweep-evidence/v1",
+                "status": "passed",
+                "scenario_id": task.scenario_id,
+                "elapsed_seconds": round(perf_counter() - started, 6),
+                "counts_csv": str(counts_path.relative_to(output)),
+                "sweep": sweep,
+            },
+        )
+        return sweep, rows
+    except Exception as exc:
+        _atomic_json(
+            evidence_path,
+            {
+                "schema": "manim-quadric-motion-sweep-evidence/v1",
+                "status": "failed",
+                "scenario_id": task.scenario_id,
+                "elapsed_seconds": round(perf_counter() - started, 6),
+                "error": f"{type(exc).__name__}: {exc}",
+            },
+        )
+        raise
+
+
+def _run_motion_sweeps(
+    scenarios: Sequence[Mapping[str, object]],
+    *,
+    output: Path,
+    workers: int,
+) -> tuple[tuple[dict[str, object], tuple[dict[str, object], ...]], ...]:
+    """Run independent scenarios in a bounded spawn-based process pool."""
+
+    if isinstance(workers, bool) or workers <= 0:
+        raise ValueError("motion sweep worker count must be positive")
+    if workers > MAX_MOTION_SWEEP_WORKERS:
+        raise ValueError(
+            "motion sweep worker count must not exceed "
+            f"{MAX_MOTION_SWEEP_WORKERS}"
+        )
+    tasks = tuple(
+        _MotionSweepTask(
+            scenario_id=str(scenario["id"]),
+            sample_count=int(scenario["motion_samples"]),
+            output=str(output),
+            critical_progresses=tuple(
+                float(value)
+                for value in scenario.get("critical_progresses", ())
+            ),
+        )
+        for scenario in scenarios
+    )
+    if not tasks:
+        return ()
+    worker_count = min(workers, len(tasks))
+    if worker_count == 1:
+        return tuple(_execute_motion_sweep(task) for task in tasks)
+    with ProcessPoolExecutor(
+        max_workers=worker_count,
+        mp_context=get_context("spawn"),
+    ) as executor:
+        return tuple(executor.map(_execute_motion_sweep, tasks))
+
+
 def _git_commit() -> str | None:
     result = subprocess.run(
         ["git", "rev-parse", "HEAD"],
@@ -808,6 +902,12 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         "--skip-motion-sweeps",
         action="store_true",
         help="Skip the per-frame fixed-identity progress scan.",
+    )
+    parser.add_argument(
+        "--motion-sweep-workers",
+        type=int,
+        default=1,
+        help="Bounded worker-process count for independent scenario sweeps.",
     )
     parser.add_argument(
         "--keyframe-limit",
@@ -891,16 +991,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         sweeps = []
         sweep_started = perf_counter()
         if not args.skip_motion_sweeps:
-            for scenario in scenarios:
-                sweep, rows = _motion_sweep(
-                    str(scenario["id"]),
-                    int(scenario["motion_samples"]),
-                    output=output,
-                    critical_progresses=tuple(
-                        float(value)
-                        for value in scenario.get("critical_progresses", ())
-                    ),
-                )
+            sweep_results = _run_motion_sweeps(
+                scenarios,
+                output=output,
+                workers=args.motion_sweep_workers,
+            )
+            for sweep, rows in sweep_results:
                 sweeps.append(sweep)
                 counts.extend(rows)
         sweep_elapsed = perf_counter() - sweep_started
@@ -943,6 +1039,11 @@ def main(argv: Sequence[str] | None = None) -> int:
                 "budgets": budgets,
                 "keyframes_seconds": round(keyframe_elapsed, 6),
                 "motion_sweeps_seconds": round(sweep_elapsed, 6),
+                "motion_sweep_workers": (
+                    0
+                    if args.skip_motion_sweeps
+                    else min(args.motion_sweep_workers, len(scenarios))
+                ),
                 "videos_seconds": round(video_elapsed, 6),
                 "total_seconds": round(perf_counter() - started, 6),
             },

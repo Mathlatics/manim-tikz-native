@@ -80,6 +80,7 @@ jobs:
         run: |
           python scripts/generate_quadric_extended_acceptance.py \
             --output "${RUNNER_TEMP}/quadric-section-acceptance" \
+            --motion-sweep-workers 2 \
             --render-videos
 
       - name: Upload exact acceptance evidence directory
