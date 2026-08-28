@@ -506,9 +506,11 @@ remain fixed, while `branch_lineage` links nappe-owned physical curve IDs to
 the common mathematical conic branches. A plane callback may move within a
 fixed curve-identity topology. A scheduled composite ellipse/parabola/
 hyperbola handoff is not yet available. The current coordinator also requires
-the projected nappe interiors to be disjoint except at the shared apex; a view
-with positive-area overlap fails transactionally instead of guessing an
-interleaved order.
+the complete projected contact set to be zero-dimensional and contained inside
+the shared-apex tolerance. It records `contact_dimension`, `contact_extent`,
+the maximum distance from the apex, and the retained contact points. A remote
+point, nonzero coincident segment, or positive-area overlap fails
+transactionally instead of guessing an interleaved order.
 
 A plane callback may move a section only while its lateral conic topology and
 curve identities stay fixed. Cap chords may activate or disappear because all
@@ -595,7 +597,7 @@ That restriction does not apply to the supported one-quadric/one-cutting-plane
 compositor described above. It supports `OPEN_SINGLE` directly. A whole
 `OPEN_DOUBLE` remains outside that one-surface compositor, but its two
 canonical nappes may be coordinated by `CompositeQuadricSection3D` under the
-shared-apex/disjoint-projection constraint.
+certified apex-only contact constraint.
 Full details and a minimal example are in
 [quadric-occlusion.md](quadric-occlusion.md).
 

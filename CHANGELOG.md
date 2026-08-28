@@ -9,8 +9,11 @@ All notable changes to this project will be documented in this file.
   projected contact, conserve and paint one common plane partition, merge the
   two surface-sheet pairs and semantic boundaries into one Cairo painter
   order, preserve two fixed slot banks with transactional rollback, and expose
-  physical-to-mathematical branch lineage; positive-area nappe overlap and
-  unscheduled topology-family changes remain explicit failures;
+  physical-to-mathematical branch lineage; retain rank-zero, rank-one, and
+  area contact while certifying the proxy intersection, publish its contact
+  dimension and extent, and explicitly reject remote point contact, nonzero
+  coincident segments, positive-area overlap, and unscheduled topology-family
+  changes;
 - split the finite-cone section v1 semantic support contract from its
   version-specific release manifest, and require every support-matrix row to
   resolve to runnable renderer-neutral, Manim, Cairo, or explicit-failure

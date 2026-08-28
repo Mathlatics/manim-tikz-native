@@ -74,7 +74,9 @@ to SVG. Unsupported syntax is reported explicitly.
   nappes, reuses the ordinary one-surface section solver twice, paints the
   shared plane once, preserves two fixed slot banks, and records physical-to-
   mathematical branch lineage; this coordinated path requires the projected
-  nappe interiors to be disjoint except for their shared apex;
+  nappe contact set to be one zero-dimensional point inside the shared-apex
+  tolerance; a remote point, a nonzero contact segment, or area overlap fails
+  explicitly;
 - a reusable source-to-copy identity handoff: a whole solid or any registered
   face/edge subset keeps explicit semantic lineage, lets the copy own exactly
   coincident pixels, and fades only the paired source primitives back in as
@@ -102,10 +104,11 @@ Manim production binding is Cairo-only.
 
 V1 explicitly rejects perspective projection and an OpenGL production binding,
 general local compositing of multiple intersecting quadrics, or an open-double
-view in which the two nappe projections overlap with positive area. Scheduled
-topology-family changes for the composite controller are also not yet
-supported. The documented explicit-failure paths are part of the contract;
-unsupported combinations are not approximated silently.
+view in which the two nappe projections meet anywhere beyond one certified
+shared-apex point. Scheduled topology-family changes for the composite
+controller are also not yet supported. The documented explicit-failure paths
+are part of the contract; unsupported combinations are not approximated
+silently.
 The stable support promise lives in
 [`tests/fixtures/quadric-section-v1-contract.json`](tests/fixtures/quadric-section-v1-contract.json).
 The exact implementation commit, component digests, build checksums, and

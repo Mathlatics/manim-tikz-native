@@ -5,12 +5,13 @@ The ordinary section compositor deliberately owns one convex surface.  An
 ``OPEN_SINGLE`` siblings, so this module combines two independently certified
 local frames instead of teaching that local solver about multiple surfaces.
 
-The two projected interiors must be disjoint apart from their authored shared
+The complete projected contact set must be one point at the authored shared
 apex.  Under that contract, local non-outside plane cells can be retained
 verbatim and the common outside region is the first local outside partition
 minus the second convex projection proxy.  The result paints the cutting plane
 once, keeps both pairs of surface sheets, and supplies one deterministic
-far-to-near painter graph.  Positive-area nappe overlap fails explicitly.
+far-to-near painter graph.  Remote point contact, a nonzero coincident segment,
+or positive-area nappe overlap fails explicitly.
 """
 
 from __future__ import annotations
@@ -27,6 +28,7 @@ from ..compositor import (
     PainterConstraint,
     stable_topological_sort,
 )
+from ..path_compositing import segment_intersection_parameters
 from ..topology import ParameterInterval, assert_exact_partition
 from .compositing import QuadricPaintRelation
 from .contract import ConeModel, ConeSpec, PlaneDisplayPatchSpec, SectionPlane
@@ -104,6 +106,10 @@ class CompositeSharedApexEvidence:
     screen_point: tuple[float, float]
     projected_overlap_area: float
     boundary_tolerance: float
+    contact_dimension: int = 0
+    contact_extent: float = 0.0
+    max_contact_distance_from_apex: float = 0.0
+    contact_points: tuple[tuple[float, float], ...] = ()
 
     def __post_init__(self) -> None:
         world = np.asarray(self.world_point, dtype=float)
@@ -117,20 +123,101 @@ class CompositeSharedApexEvidence:
                 "shared apex screen_point must be finite two-dimensional"
             )
         if (
+            isinstance(self.contact_dimension, bool)
+            or not isinstance(self.contact_dimension, int)
+            or self.contact_dimension not in {0, 1, 2}
+        ):
+            raise CompositeQuadricSectionCompositingError(
+                "shared-apex contact_dimension must be 0, 1, or 2"
+            )
+        points = tuple(
+            tuple(float(value) for value in point)
+            for point in self.contact_points
+        )
+        if not points:
+            points = (tuple(float(value) for value in screen),)
+        point_array = np.asarray(points, dtype=float)
+        if (
+            not points
+            or point_array.ndim != 2
+            or point_array.shape[1] != 2
+            or not np.all(np.isfinite(point_array))
+        ):
+            raise CompositeQuadricSectionCompositingError(
+                "shared-apex contact_points must contain finite 2D points"
+            )
+        if (
             not isfinite(self.projected_overlap_area)
             or self.projected_overlap_area < 0.0
+            or not isfinite(self.contact_extent)
+            or self.contact_extent < 0.0
+            or not isfinite(self.max_contact_distance_from_apex)
+            or self.max_contact_distance_from_apex < 0.0
             or not isfinite(self.boundary_tolerance)
             or self.boundary_tolerance <= 0.0
         ):
             raise CompositeQuadricSectionCompositingError(
                 "shared-apex evidence tolerances must be finite and valid"
             )
+        computed_extent = max(
+            (
+                float(np.linalg.norm(right - left))
+                for index, left in enumerate(point_array)
+                for right in point_array[index + 1 :]
+            ),
+            default=0.0,
+        )
+        computed_max_distance = max(
+            float(np.linalg.norm(point - screen)) for point in point_array
+        )
+        consistency_tolerance = max(
+            np.finfo(float).eps
+            * 256.0
+            * max(computed_extent, computed_max_distance, 1.0),
+            self.boundary_tolerance * 1.0e-9,
+        )
+        if (
+            abs(self.contact_extent - computed_extent) > consistency_tolerance
+            or abs(
+                self.max_contact_distance_from_apex - computed_max_distance
+            )
+            > consistency_tolerance
+        ):
+            raise CompositeQuadricSectionCompositingError(
+                "shared-apex contact metrics disagree with contact_points"
+            )
+        if self.contact_dimension != 0:
+            raise CompositeQuadricSectionCompositingError(
+                "certified shared-apex contact must be zero-dimensional"
+            )
+        if (
+            self.contact_extent > self.boundary_tolerance
+            or self.max_contact_distance_from_apex > self.boundary_tolerance
+        ):
+            raise CompositeQuadricSectionCompositingError(
+                "certified contact must lie inside the shared-apex tolerance"
+            )
+        object.__setattr__(
+            self,
+            "world_point",
+            tuple(float(value) for value in world),
+        )
+        object.__setattr__(
+            self,
+            "screen_point",
+            tuple(float(value) for value in screen),
+        )
+        object.__setattr__(self, "contact_points", points)
 
     def to_dict(self) -> dict[str, object]:
         return {
             "worldPoint": list(self.world_point),
             "screenPoint": list(self.screen_point),
             "projectedOverlapArea": self.projected_overlap_area,
+            "contactDimension": self.contact_dimension,
+            "contactExtent": self.contact_extent,
+            "maxContactDistanceFromApex": self.max_contact_distance_from_apex,
+            "contactPoints": [list(point) for point in self.contact_points],
             "boundaryTolerance": self.boundary_tolerance,
         }
 
@@ -557,6 +644,180 @@ def _convex_intersection(
     return result
 
 
+@dataclass(frozen=True, slots=True)
+class _ConvexContactSet:
+    """Closed convex-polygon intersection, including rank-zero/one contact."""
+
+    points: tuple[np.ndarray, ...]
+    dimension: int
+    extent: float
+    area: float
+
+
+def _point_in_convex_polygon(
+    point: np.ndarray,
+    polygon: Sequence[np.ndarray],
+    epsilon: float,
+) -> bool:
+    return all(
+        _cross2(end - start, point - start)
+        >= -epsilon * max(float(np.linalg.norm(end - start)), epsilon)
+        for start, end in zip(polygon, (*polygon[1:], polygon[0]))
+    )
+
+
+def _segment_contact_points(
+    first_start: np.ndarray,
+    first_end: np.ndarray,
+    second_start: np.ndarray,
+    second_end: np.ndarray,
+    epsilon: float,
+) -> tuple[np.ndarray, ...]:
+    first_direction = first_end - first_start
+    second_direction = second_end - second_start
+    intersection = segment_intersection_parameters(
+        first_start,
+        first_end,
+        second_start,
+        second_end,
+        epsilon,
+    )
+    if intersection is None:
+        return ()
+    kind, parameters = intersection
+    if kind == "point":
+        first_parameter, second_parameter = parameters
+        first_point = first_start + first_parameter * first_direction
+        second_point = second_start + second_parameter * second_direction
+        return (0.5 * (first_point + second_point),)
+    first_start_parameter, first_end_parameter, _, _ = parameters
+    return (
+        first_start + first_start_parameter * first_direction,
+        first_start + first_end_parameter * first_direction,
+    )
+
+
+def _dedupe_contact_points(
+    points: Sequence[np.ndarray],
+    epsilon: float,
+) -> tuple[np.ndarray, ...]:
+    result: list[np.ndarray] = []
+    for point in sorted(
+        (np.asarray(value, dtype=float) for value in points),
+        key=lambda value: (float(value[0]), float(value[1])),
+    ):
+        if not any(
+            float(np.linalg.norm(point - existing)) <= epsilon
+            for existing in result
+        ):
+            result.append(point)
+    return tuple(result)
+
+
+def _contact_hull(
+    points: Sequence[np.ndarray],
+    epsilon: float,
+) -> tuple[np.ndarray, ...]:
+    values = _dedupe_contact_points(points, epsilon)
+    if len(values) <= 1:
+        return values
+
+    def append_point(chain: list[np.ndarray], point: np.ndarray) -> None:
+        while len(chain) >= 2:
+            first, second = chain[-2], chain[-1]
+            first_edge = second - first
+            second_edge = point - second
+            tolerance = epsilon * max(
+                float(np.linalg.norm(first_edge)),
+                float(np.linalg.norm(second_edge)),
+                epsilon,
+            )
+            if _cross2(first_edge, second_edge) > tolerance:
+                break
+            chain.pop()
+        chain.append(point)
+
+    lower: list[np.ndarray] = []
+    for point in values:
+        append_point(lower, point)
+    upper: list[np.ndarray] = []
+    for point in reversed(values):
+        append_point(upper, point)
+    return tuple((*lower[:-1], *upper[:-1]))
+
+
+def _convex_contact_set(
+    first: Sequence[np.ndarray],
+    second: Sequence[np.ndarray],
+    *,
+    epsilon: float,
+    point_tolerance: float,
+) -> _ConvexContactSet:
+    candidates: list[np.ndarray] = []
+    candidates.extend(
+        point
+        for point in first
+        if _point_in_convex_polygon(point, second, epsilon)
+    )
+    candidates.extend(
+        point
+        for point in second
+        if _point_in_convex_polygon(point, first, epsilon)
+    )
+    for first_start, first_end in zip(first, (*first[1:], first[0])):
+        for second_start, second_end in zip(second, (*second[1:], second[0])):
+            candidates.extend(
+                _segment_contact_points(
+                    first_start,
+                    first_end,
+                    second_start,
+                    second_end,
+                    epsilon,
+                )
+            )
+    hull = _contact_hull(candidates, epsilon)
+    if not hull:
+        return _ConvexContactSet((), -1, 0.0, 0.0)
+    farthest: tuple[np.ndarray, np.ndarray] | None = None
+    extent = 0.0
+    for index, first_point in enumerate(hull):
+        for second_point in hull[index + 1 :]:
+            distance = float(np.linalg.norm(second_point - first_point))
+            if distance > extent:
+                extent = distance
+                farthest = (first_point, second_point)
+    area = abs(_signed_area(hull)) if len(hull) >= 3 else 0.0
+    if extent <= point_tolerance or farthest is None:
+        dimension = 0
+    else:
+        start, end = farthest
+        direction = end - start
+        maximum_normal_distance = max(
+            abs(_cross2(direction, point - start)) / extent for point in hull
+        )
+        dimension = 1 if maximum_normal_distance <= point_tolerance else 2
+    return _ConvexContactSet(hull, dimension, extent, area)
+
+
+def _point_to_polygon_boundary_distance(
+    point: np.ndarray,
+    polygon: Sequence[np.ndarray],
+) -> float:
+    distances = []
+    for start, end in zip(polygon, (*polygon[1:], polygon[0])):
+        direction = end - start
+        squared_length = float(np.dot(direction, direction))
+        if squared_length <= np.finfo(float).tiny:
+            distances.append(float(np.linalg.norm(point - start)))
+            continue
+        parameter = float(np.dot(point - start, direction) / squared_length)
+        parameter = min(1.0, max(0.0, parameter))
+        distances.append(
+            float(np.linalg.norm(point - (start + parameter * direction)))
+        )
+    return min(distances, default=float("inf"))
+
+
 def _subtract_convex(
     subject: Sequence[np.ndarray],
     clipper: Sequence[np.ndarray],
@@ -780,26 +1041,62 @@ def compute_composite_quadric_section_compositing(
         raise CompositeQuadricSectionCompositingError(
             "each local surface proxy must retain positive display area"
         )
-    overlap = _convex_intersection(proxies[0], proxies[1], epsilon)
-    overlap_area = abs(_signed_area(overlap)) if overlap else 0.0
-    if overlap_area > area_tolerance:
+    apex = np.asarray(parent_surface.apex, dtype=float)
+    screen_apex = projection[:2] @ apex
+    apex_tolerance = max(epsilon * 64.0, 1.0e-9 * scale)
+    contact = _convex_contact_set(
+        proxies[0],
+        proxies[1],
+        epsilon=epsilon,
+        point_tolerance=epsilon,
+    )
+    if contact.area > area_tolerance:
         raise CompositeQuadricSectionCompositingError(
             "open-double nappe projections have positive-area overlap; "
             "interleaved multi-sheet ordering is outside this coordinator"
         )
-    apex = np.asarray(parent_surface.apex, dtype=float)
-    screen_apex = projection[:2] @ apex
-    apex_tolerance = max(epsilon * 64.0, 1.0e-9 * scale)
     for frame, proxy in zip(frames, proxies):
-        if min(float(np.linalg.norm(point - screen_apex)) for point in proxy) > apex_tolerance:
+        if (
+            _point_to_polygon_boundary_distance(screen_apex, proxy)
+            > apex_tolerance
+        ):
             raise CompositeQuadricSectionCompositingError(
                 f"local proxy {frame.surface_id!r} does not own the shared apex"
             )
+    if not contact.points:
+        raise CompositeQuadricSectionCompositingError(
+            "open-double nappe projections have no certifiable shared-apex contact"
+        )
+    if contact.dimension == 1:
+        raise CompositeQuadricSectionCompositingError(
+            "open-double nappe projections share a nonzero-length contact "
+            f"segment (extent {contact.extent:.9g}); only point contact at the "
+            "shared apex is supported"
+        )
+    if contact.dimension == 2:
+        raise CompositeQuadricSectionCompositingError(
+            "open-double nappe projection contact is two-dimensional even "
+            "though its area lies below the positive-overlap tolerance"
+        )
+    max_contact_distance = max(
+        float(np.linalg.norm(point - screen_apex)) for point in contact.points
+    )
+    if max_contact_distance > apex_tolerance:
+        raise CompositeQuadricSectionCompositingError(
+            "open-double nappe projection contact lies away from the shared "
+            f"apex (maximum distance {max_contact_distance:.9g})"
+        )
     shared_apex = CompositeSharedApexEvidence(
-        tuple(float(item) for item in apex),
-        tuple(float(item) for item in screen_apex),
-        overlap_area,
-        apex_tolerance,
+        world_point=tuple(float(item) for item in apex),
+        screen_point=tuple(float(item) for item in screen_apex),
+        projected_overlap_area=contact.area,
+        contact_dimension=contact.dimension,
+        contact_extent=contact.extent,
+        max_contact_distance_from_apex=max_contact_distance,
+        contact_points=tuple(
+            tuple(float(value) for value in point) for point in contact.points
+        ),
+        boundary_tolerance=apex_tolerance,
     )
 
     polygon_records: list[

@@ -205,6 +205,12 @@ class CompositeQuadricSectionCairoTests(unittest.TestCase):
                 frame = controller.last_composite_frame
                 assert frame is not None
                 self.assertEqual(frame.shared_apex.projected_overlap_area, 0.0)
+                self.assertEqual(frame.shared_apex.contact_dimension, 0)
+                self.assertEqual(frame.shared_apex.contact_extent, 0.0)
+                self.assertEqual(
+                    frame.shared_apex.max_contact_distance_from_apex,
+                    0.0,
+                )
                 self.assertEqual(len(controller.branch_lineage), 2)
             finally:
                 controller.restore()
