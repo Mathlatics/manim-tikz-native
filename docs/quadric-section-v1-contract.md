@@ -28,7 +28,7 @@ case.
 | Finite cone frustum: section, clipping, ordinary occlusion | Supported | Uniform styling, automatic boundary visibility, and up to two real cap chords are supported |
 | Frustum: component-aware lateral and two-terminal-cap shading | Supported | Both terminal disks remain separate depth components; exact edge-on zero-area cap fills are omitted without inventing area |
 | Finite open double shell: display and general occlusion | Supported with constraints | It expands once into two stable open single-nappe components |
-| Finite open double shell: unified cutting-plane compositing | Supported with constraints | `CompositeQuadricSection3D` coordinates the two canonical nappes when their projected interiors meet only at the shared apex; positive-area projection overlap and topology-family changes fail explicitly |
+| Finite open double shell: unified cutting-plane compositing | Supported with constraints | `CompositeQuadricSection3D` coordinates the two canonical nappes only when their complete projected contact set is one zero-dimensional point inside the shared-apex tolerance; remote points, nonzero segments, area overlap, and topology-family changes fail explicitly |
 | One finite convex quadric and one cutting plane | Supported | This is the complete local section-compositor scope |
 | Multiple intersecting quadrics and one cutting plane | Unsupported; explicit failure | No local multi-surface plane arrangement is guessed |
 | Parallel projection | Supported | Orthographic and general affine-free parallel views use `ParallelView` |
@@ -47,8 +47,11 @@ multi-surface arrangement. Each nappe is still solved by the ordinary
 one-surface compositor. The coordinator certifies their projected interiors,
 retains both local rear/front sheet pairs, replaces the two local outside
 partitions with one area-conserving common plane partition, and publishes one
-draw order. It refuses views that require the two curved surfaces to be
-interleaved over a positive screen area.
+draw order. Degenerate polygon intersection is not discarded during this
+certificate: the evidence records `contact_dimension`, `contact_extent`, the
+maximum distance from the apex, and all retained contact points. Only
+dimension zero inside the apex tolerance succeeds. A nonzero contact segment,
+a remote point, or positive-area contact is an explicit failure.
 
 An individual cone trim rim may project rank one, meaning it becomes a finite
 line segment in an exact side view. That case is supported. The compositor
@@ -124,7 +127,8 @@ and evidence test names for these cases:
 5. a closed frustum with separate lateral/two-cap masks, two real terminal rims,
    and two simultaneously active cap chords;
 6. an open double shell whose two local section frames share one plane, one
-   apex certificate, two fixed slot banks, and one Cairo painter order;
+   zero-dimensional apex-only contact certificate, two fixed slot banks, and
+   one Cairo painter order;
 7. a scheduled ellipse/parabola/hyperbola handoff that reaches a real end cap
    and keeps the current-plane cap chord in its stable semantic slot.
 
@@ -161,8 +165,9 @@ V1 never guesses an image outside the matrix:
 - the ordinary local section controller with zero or more than one expanded
   surface fails with `QuadricManimError`; an `OPEN_DOUBLE` must use the
   dedicated composite coordinator;
-- the composite coordinator rejects non-canonical children, positive-area
-  nappe projection overlap, and unscheduled curve-identity topology changes;
+- the composite coordinator rejects non-canonical children, contact outside
+  the shared apex, nonzero coincident contact segments, positive-area nappe
+  projection overlap, and unscheduled curve-identity topology changes;
 - a completely edge-on cutting plane fails during frame preparation; an
   attached animation retains its prior committed state;
 - OpenGL attachment fails before the controller adds display slots to the

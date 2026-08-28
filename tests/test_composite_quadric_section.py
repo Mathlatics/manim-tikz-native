@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import json
 from collections import Counter
 from dataclasses import replace
-from math import pi
+from math import cos, pi, sin
 import unittest
 
 import numpy as np
@@ -36,6 +37,7 @@ from polyhedron_visibility.quadrics.manim import (
 from polyhedron_visibility.quadrics.plane_patch import fit_plane_display_patch
 from polyhedron_visibility.quadrics.section_compositing import (
     PlaneDepthRole,
+    QuadricSectionCompositingError,
     compute_quadric_section_compositing,
     merge_quadric_plane_fragment_contours,
 )
@@ -78,6 +80,16 @@ def _side_plane(offset: float = 0.5) -> SectionPlane:
         (0.0, offset, 0.0),
         (0.0, 1.0, 0.0),
         u_axis=(1.0, 0.0, 0.0),
+    )
+
+
+def _view_at_axis_angle(angle: float) -> ParallelView:
+    return ParallelView.from_matrix(
+        (
+            (1.0, 0.0, 0.0),
+            (0.0, cos(angle), -sin(angle)),
+            (0.0, sin(angle), cos(angle)),
+        )
     )
 
 
@@ -178,6 +190,28 @@ def _renderer_neutral_frame(
     )
 
 
+def _frame_with_proxy_vertices(
+    frame,
+    vertices: tuple[tuple[float, float], ...],
+):
+    area_twice = sum(
+        start[0] * end[1] - start[1] * end[0]
+        for start, end in zip(vertices, (*vertices[1:], vertices[0]))
+    )
+    ordered = vertices if area_twice > 0.0 else tuple(reversed(vertices))
+    closed = (*ordered, ordered[0])
+    metadata = replace(
+        frame.surface_proxy.metadata,
+        segment_count=len(ordered),
+    )
+    proxy = replace(
+        frame.surface_proxy,
+        boundary_points=closed,
+        metadata=metadata,
+    )
+    return replace(frame, surface_proxy=proxy)
+
+
 class CompositeRendererNeutralTests(unittest.TestCase):
     def test_two_local_frames_merge_into_one_area_conserving_plane_partition(
         self,
@@ -188,6 +222,10 @@ class CompositeRendererNeutralTests(unittest.TestCase):
             ("double:nappe:negative", "double:nappe:positive"),
         )
         self.assertEqual(frame.shared_apex.projected_overlap_area, 0.0)
+        self.assertEqual(frame.shared_apex.contact_dimension, 0)
+        self.assertEqual(frame.shared_apex.contact_extent, 0.0)
+        self.assertEqual(frame.shared_apex.max_contact_distance_from_apex, 0.0)
+        self.assertEqual(frame.shared_apex.contact_points, ((0.0, 0.0),))
         self.assertEqual(len(frame.paint_items.surface_sheets), 2)
         self.assertEqual(len(frame.paint_items.ordered), 12)
         self.assertEqual(set(frame.draw_order), set(frame.paint_items.ordered))
@@ -228,6 +266,11 @@ class CompositeRendererNeutralTests(unittest.TestCase):
         first = canonical_composite_quadric_section_compositing_json(frame)
         second = canonical_composite_quadric_section_compositing_json(frame)
         self.assertEqual(first, second)
+        shared_apex = json.loads(first)["sharedApex"]
+        self.assertEqual(shared_apex["contactDimension"], 0)
+        self.assertEqual(shared_apex["contactExtent"], 0.0)
+        self.assertEqual(shared_apex["maxContactDistanceFromApex"], 0.0)
+        self.assertEqual(shared_apex["contactPoints"], [[0.0, 0.0]])
 
     def test_shared_mathematical_generator_lineage_keeps_separate_physical_ids(
         self,
@@ -284,6 +327,129 @@ class CompositeRendererNeutralTests(unittest.TestCase):
                 cone,
                 "axial-section",
                 frames,
+            )
+
+    def test_far_single_point_contact_is_not_mistaken_for_shared_apex(self) -> None:
+        cone = _double("far-contact-double")
+        ordinary = _renderer_neutral_frame(cone, _side_plane())
+        delta = 1.0e-10
+        frames = (
+            _frame_with_proxy_vertices(
+                ordinary.child_frames[0],
+                ((-delta, delta), (1.0, 0.0), (0.5, 0.8)),
+            ),
+            _frame_with_proxy_vertices(
+                ordinary.child_frames[1],
+                ((delta, -delta), (0.5, -0.8), (1.0, 0.0)),
+            ),
+        )
+        with self.assertRaisesRegex(
+            CompositeQuadricSectionCompositingError,
+            "contact lies away from the shared apex",
+        ):
+            compute_composite_quadric_section_compositing(
+                cone,
+                "far-contact-section",
+                frames,
+            )
+
+    def test_nonzero_collinear_contact_through_apex_fails_explicitly(self) -> None:
+        cone = _double("segment-contact-double")
+        ordinary = _renderer_neutral_frame(cone, _side_plane())
+        frames = (
+            _frame_with_proxy_vertices(
+                ordinary.child_frames[0],
+                ((0.0, 0.0), (1.0, 0.0), (0.0, 1.0)),
+            ),
+            _frame_with_proxy_vertices(
+                ordinary.child_frames[1],
+                ((0.0, 0.0), (0.0, -1.0), (1.0, 0.0)),
+            ),
+        )
+        with self.assertRaisesRegex(
+            CompositeQuadricSectionCompositingError,
+            "nonzero-length contact segment",
+        ):
+            compute_composite_quadric_section_compositing(
+                cone,
+                "segment-contact-section",
+                frames,
+            )
+
+    def test_critical_view_scan_never_accepts_uncertified_contact(self) -> None:
+        cone = _double("critical-scan-double")
+        plane = _side_plane()
+        critical = pi / 4.0
+        for offset in (0.08, 0.01, 1.0e-4):
+            frame = _renderer_neutral_frame(
+                cone,
+                plane,
+                _view_at_axis_angle(critical + offset),
+            )
+            self.assertEqual(frame.shared_apex.contact_dimension, 0)
+            self.assertLessEqual(
+                frame.shared_apex.contact_extent,
+                frame.shared_apex.boundary_tolerance,
+            )
+        critical_frame = _renderer_neutral_frame(
+            cone,
+            plane,
+            _view_at_axis_angle(critical),
+        )
+        self.assertEqual(critical_frame.shared_apex.contact_dimension, 0)
+        self.assertLessEqual(
+            critical_frame.shared_apex.max_contact_distance_from_apex,
+            critical_frame.shared_apex.boundary_tolerance,
+        )
+        for offset in (-1.0e-4, -0.01):
+            with self.assertRaisesRegex(
+                CompositeQuadricSectionCompositingError,
+                "positive-area overlap|contact is two-dimensional",
+            ):
+                _renderer_neutral_frame(
+                    cone,
+                    plane,
+                    _view_at_axis_angle(critical + offset),
+                )
+        for offset in (
+            1.0e-6,
+            1.0e-8,
+            1.0e-10,
+            1.0e-12,
+            -1.0e-12,
+            -1.0e-10,
+            -1.0e-8,
+            -1.0e-6,
+        ):
+            try:
+                frame = _renderer_neutral_frame(
+                    cone,
+                    plane,
+                    _view_at_axis_angle(critical + offset),
+                )
+            except (
+                CompositeQuadricSectionCompositingError,
+                QuadricSectionCompositingError,
+            ):
+                continue
+            evidence = frame.shared_apex
+            self.assertEqual(evidence.contact_dimension, 0)
+            self.assertLessEqual(
+                evidence.contact_extent,
+                evidence.boundary_tolerance,
+            )
+            self.assertLessEqual(
+                evidence.max_contact_distance_from_apex,
+                evidence.boundary_tolerance,
+            )
+            self.assertTrue(
+                all(
+                    np.linalg.norm(
+                        np.asarray(point) - np.asarray(evidence.screen_point)
+                    )
+                    <= evidence.boundary_tolerance
+                    for point in evidence.contact_points
+                )
             )
 
     def test_composite_plane_fragment_capacity_fails_explicitly(self) -> None:

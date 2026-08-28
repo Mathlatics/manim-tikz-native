@@ -72,7 +72,10 @@
         "single_plane_alpha_rgb_tolerance": 7.0,
         "double_plane_alpha_rgb_distance_min": 16.0,
         "shared_apex_background_distance_min": 20.0,
-        "projected_overlap_area": 0.0
+        "projected_overlap_area": 0.0,
+        "contact_dimension": 0,
+        "contact_extent": 0.0,
+        "max_contact_distance_from_apex": 0.0
       }
     },
     "open_shell_oblique_offset_0_48": {

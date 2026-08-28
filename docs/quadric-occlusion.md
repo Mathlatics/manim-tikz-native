@@ -41,6 +41,9 @@ two-dimensional area, and parallel projection. A separate
 `CompositeQuadricSection3D` coordinator may apply that same local solver to the
 two canonical nappes of one `OPEN_DOUBLE`, then merge their disjoint projected
 interiors around the certified shared apex and paint the common plane once.
+Certification retains point, segment, and area intersections instead of
+discarding degenerate contact: only a zero-dimensional contact set contained
+inside the shared-apex tolerance succeeds.
 This does not create a general multi-surface plane arrangement. Multiple
 strictly disjoint quadrics may still use the global occlusion graph; multiple
 intersecting quadrics do not gain a shared local plane arrangement. The Manim
@@ -569,7 +572,7 @@ installs the wheel in an isolated environment.
   `OPEN_SINGLE` is supported directly. `CompositeQuadricSection3D` is a narrow
   coordinator for the two canonical components of one `OPEN_DOUBLE`: it keeps
   two local surface-sheet pairs but one common plane partition and painter
-  order. If the two projected interiors overlap with positive area, or if a
+  order. If their contact is not one certified shared-apex point, or if a
   callback changes the curve identity/topology family, it fails and retains
   the last committed frame. It does not guess an interleaved surface order.
 - `QuadricOcclusion3D` itself has fixed topology while attached.  Use

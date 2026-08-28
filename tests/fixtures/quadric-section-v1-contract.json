@@ -19,6 +19,12 @@
       "projection": "parallel",
       "surface_limit_for_local_section_compositor": 1,
       "open_double_composite_child_limit": 2,
+      "open_double_contact_contract": {
+        "allowed_dimension": 0,
+        "max_distance_from_shared_apex": "boundary_tolerance",
+        "reject_nonzero_segment": true,
+        "reject_positive_area": true
+      },
       "cutting_plane_limit": 1,
       "cutting_plane_requires_display_area": true
     },
@@ -98,6 +104,9 @@
       "cairo_binding": true,
       "evidence_ids": [
         "open_double_composite_partition",
+        "open_double_composite_critical_view_scan",
+        "open_double_composite_far_point_failure",
+        "open_double_composite_segment_failure",
         "open_double_composite_binding",
         "open_double_composite_cairo",
         "open_double_composite_overlap_failure",
