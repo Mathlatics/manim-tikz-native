@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from dataclasses import dataclass, field
+from functools import partial
 from math import sqrt
 from typing import Callable, Iterator, Mapping, Sequence
 
@@ -119,11 +120,13 @@ from .manim_runtime import (
     QuadricBoundaryStyle,
     QuadricManimCapacityError,
     QuadricManimError,
+    _CommittedDisplaySlot,
     _CurveSlots,
     _ManagedQuadricDisplayGroup,
     _PreparedBoundaryFragment,
     _PreparedConeFill,
     _PreparedDash,
+    _PreparedDisplayAction,
     _SurfacePaintSlot,
     _adaptive_project_curve,
     _apply_boundary_fragment as _apply_runtime_boundary_fragment,
@@ -141,6 +144,7 @@ from .manim_runtime import (
     _polyline_lengths,
     _positive,
     _prepare_boundary_fragments,
+    _prepare_display_delta,
     _prepared_cone_fill,
     _register_fixed_frame,
     _remove_fixed_frame,
@@ -150,6 +154,9 @@ from .manim_runtime import (
     _scene_containers,
     _set_closed_subpaths,
     _set_open_subpaths,
+    _apply_display_delta,
+    _display_digest,
+    _painter_band_signature,
 )
 
 QuadricSurfaceSpec = SphereSpec | CylinderSpec | ConeSpec
@@ -614,6 +621,10 @@ class QuadricOcclusion3D:
         self._performance_enabled = quadric_performance_tracing_enabled()
         self._performance_frame_index = 0
         self._last_performance_snapshot: QuadricPerformanceSnapshot | None = None
+        self._display_slot_state: dict[str, _CommittedDisplaySlot] = {}
+        self._last_painter_band_signature: tuple[
+            tuple[str, int, float], ...
+        ] = ()
 
         initial_surfaces = self._resolve_surfaces()
         initial_curves = self._resolve_curves()
@@ -1971,6 +1982,118 @@ class QuadricOcclusion3D:
         if joint is not None:
             slot.dashed.joint_type = joint
 
+    def _prepare_display_actions(
+        self,
+        prepared: PreparedQuadricManimFrame,
+        opacity: float,
+    ) -> tuple[_PreparedDisplayAction, ...]:
+        """Describe only the fixed slots which should be active this frame."""
+
+        actions: list[_PreparedDisplayAction] = []
+        unified = prepared.numeric.boundary_frame is not None
+        for surface in prepared.numeric.surfaces:
+            slot = self._surface_paint_slots[surface.slot_index]
+            actions.append(
+                _PreparedDisplayAction(
+                    f"surface:{surface.slot_index}",
+                    (slot.root,),
+                    _display_digest(
+                        "surface",
+                        surface.points,
+                        surface.cone_fill,
+                        self.style,
+                        opacity,
+                        not unified,
+                    ),
+                    partial(
+                        self._apply_surface,
+                        surface,
+                        opacity,
+                        draw_stroke=not unified,
+                    ),
+                )
+            )
+
+        section = prepared.numeric.section_layers
+        if section is not None:
+            actions.append(
+                _PreparedDisplayAction(
+                    "section:layers",
+                    tuple(self._section_slots),
+                    _display_digest(
+                        "section",
+                        section.surface_points,
+                        section.plane_polygons,
+                        section.plane_outline_paths,
+                        section.cone_fill,
+                        section.frame.paint_items.ordered,
+                        self.style,
+                        opacity,
+                        not unified,
+                    ),
+                    partial(
+                        self._apply_section_layers,
+                        section,
+                        opacity,
+                        draw_legacy_strokes=not unified,
+                    ),
+                )
+            )
+
+        for curve_id, fragments in prepared.numeric.fragments.items():
+            curve_opacity = opacity * prepared.numeric.curve_opacities[curve_id]
+            for fragment in fragments:
+                slot = self._curve_slots[curve_id].fragments[fragment.slot_index]
+                actions.append(
+                    _PreparedDisplayAction(
+                        f"path:{curve_id}:{fragment.slot_index}",
+                        (slot.root,),
+                        _display_digest(
+                            "curve",
+                            fragment.fragment.render_intent,
+                            fragment.points,
+                            tuple(item.points for item in fragment.dashes),
+                            self.style,
+                            curve_opacity,
+                        ),
+                        partial(
+                            self._apply_curve_fragment,
+                            curve_id,
+                            fragment,
+                            curve_opacity,
+                        ),
+                    )
+                )
+
+        boundary_opacities = prepared.numeric.boundary_opacities or {}
+        for source_id, fragments in (
+            prepared.numeric.boundary_fragments or {}
+        ).items():
+            source_opacity = opacity * boundary_opacities.get(source_id, 1.0)
+            for fragment in fragments:
+                slot = self._curve_slots[source_id].fragments[fragment.slot_index]
+                actions.append(
+                    _PreparedDisplayAction(
+                        f"path:{source_id}:{fragment.slot_index}",
+                        (slot.root,),
+                        _display_digest(
+                            "boundary",
+                            fragment.fragment.render_intent,
+                            fragment.points,
+                            tuple(item.points for item in fragment.dashes),
+                            fragment.style,
+                            source_opacity,
+                        ),
+                        partial(
+                            self._apply_boundary_fragment,
+                            source_id,
+                            fragment,
+                            source_opacity,
+                        ),
+                    )
+                )
+        return tuple(actions)
+
     def apply(self, prepared: PreparedQuadricManimFrame) -> None:
         """Commit one already validated frame, rolling back on any exception."""
 
@@ -1985,6 +2108,8 @@ class QuadricOcclusion3D:
             GlobalQuadricFrame | None,
             QuadricSectionCompositingFrame | None,
             QuadricBoundaryCompositingFrame | None,
+            dict[str, _CommittedDisplaySlot],
+            tuple[tuple[str, int, float], ...],
         ]:
             return (
                 {
@@ -1995,6 +2120,8 @@ class QuadricOcclusion3D:
                 self._last_global_frame,
                 self._last_section_frame,
                 self._last_boundary_frame,
+                dict(self._display_slot_state),
+                self._last_painter_band_signature,
             )
 
         def restore_controller_state(
@@ -2004,6 +2131,8 @@ class QuadricOcclusion3D:
                 GlobalQuadricFrame | None,
                 QuadricSectionCompositingFrame | None,
                 QuadricBoundaryCompositingFrame | None,
+                dict[str, _CommittedDisplaySlot],
+                tuple[tuple[str, int, float], ...],
             ],
         ) -> None:
             (
@@ -2012,6 +2141,8 @@ class QuadricOcclusion3D:
                 self._last_global_frame,
                 self._last_section_frame,
                 self._last_boundary_frame,
+                self._display_slot_state,
+                self._last_painter_band_signature,
             ) = state
 
         attempt = prepared._performance_attempt
@@ -2019,55 +2150,47 @@ class QuadricOcclusion3D:
             attempt = self._new_performance_attempt()
         opacity = self.root.opacity_multiplier
         try:
+            actions = self._prepare_display_actions(prepared, opacity)
+            delta = _prepare_display_delta(self._display_slot_state, actions)
+            painter_signature = _painter_band_signature(prepared.painter_band)
+            painter_changed = (
+                painter_signature != self._last_painter_band_signature
+            )
+            painter_roots = (
+                tuple(item.mobject for item in prepared.painter_band.items)
+                if painter_changed
+                else ()
+            )
+            mutation_roots = (*delta.mutation_roots, *painter_roots)
+            if attempt is not None:
+                attempt.set_count("display_active_slot_count", len(actions))
+                attempt.set_count(
+                    "display_changed_slot_count", len(delta.changed)
+                )
+                attempt.set_count(
+                    "display_unchanged_slot_count",
+                    len(delta.unchanged_slot_ids),
+                )
+                attempt.set_count("display_hidden_slot_count", len(delta.hidden))
+                attempt.set_count(
+                    "painter_band_changed_count", int(painter_changed)
+                )
+                attempt.set_count(
+                    "mutation_target_root_count",
+                    len({id(root) for root in mutation_roots}),
+                )
             with _rollback_display_transaction(
                 self.root,
                 self._band,
                 capture_controller_state=capture_controller_state,
                 restore_controller_state=restore_controller_state,
+                mutation_roots=mutation_roots,
                 performance_attempt=attempt,
             ):
                 with _performance_stage(attempt, "manim_apply"):
-                    for slot in self._surface_slots:
-                        _hide_vmobject(slot)
-                    for slot in self._section_slots:
-                        _hide_vmobject(slot)
-                    for slots in self._curve_slots.values():
-                        for slot in slots.fragments:
-                            slot.hide()
-                    unified = prepared.numeric.boundary_frame is not None
-                    for surface in prepared.numeric.surfaces:
-                        self._apply_surface(
-                            surface, opacity, draw_stroke=not unified
-                        )
-                    if prepared.numeric.section_layers is not None:
-                        self._apply_section_layers(
-                            prepared.numeric.section_layers,
-                            opacity,
-                            draw_legacy_strokes=not unified,
-                        )
-                    for curve_id, fragments in prepared.numeric.fragments.items():
-                        for fragment in fragments:
-                            self._apply_curve_fragment(
-                                curve_id,
-                                fragment,
-                                opacity
-                                * prepared.numeric.curve_opacities[curve_id],
-                            )
-                    if prepared.numeric.boundary_fragments is not None:
-                        boundary_opacities = (
-                            prepared.numeric.boundary_opacities or {}
-                        )
-                        for source_id, fragments in (
-                            prepared.numeric.boundary_fragments.items()
-                        ):
-                            for fragment in fragments:
-                                self._apply_boundary_fragment(
-                                    source_id,
-                                    fragment,
-                                    opacity
-                                    * boundary_opacities.get(source_id, 1.0),
-                                )
-                    self._band.apply(prepared.painter_band)
+                    _apply_display_delta(delta)
+                    if painter_changed:
+                        self._band.apply(prepared.painter_band)
                     self._fragment_slot_maps = {
                         curve_id: dict(values)
                         for curve_id, values in (
@@ -2078,6 +2201,8 @@ class QuadricOcclusion3D:
                     self._last_global_frame = prepared.global_frame
                     self._last_section_frame = prepared.section_frame
                     self._last_boundary_frame = prepared.boundary_frame
+                    self._display_slot_state = dict(delta.next_state)
+                    self._last_painter_band_signature = painter_signature
         except Exception as exc:
             self._finish_performance_attempt(
                 attempt,
@@ -2255,6 +2380,8 @@ class QuadricOcclusion3D:
         self._last_global_frame = None
         self._last_section_frame = None
         self._last_boundary_frame = None
+        self._display_slot_state = {}
+        self._last_painter_band_signature = ()
         self._band.restore()
         self.root.reset_opacity()
         self._invalidate_cairo_static_image()

@@ -5,6 +5,7 @@ from collections import Counter
 from dataclasses import replace
 from math import cos, pi, sin
 import unittest
+from unittest.mock import patch
 
 import numpy as np
 from manim import Scene, tempconfig
@@ -583,6 +584,68 @@ class CompositeManimBindingTests(unittest.TestCase):
                 self.assertIs(controller.last_composite_frame, frame)
                 self.assertIs(controller.last_boundary_frame, boundary)
                 self.assertEqual(controller.active_painter_z_indices, z_indices)
+            finally:
+                controller.restore()
+
+    def test_apply_failure_restores_composite_sparse_display_transaction(
+        self,
+    ) -> None:
+        with tempconfig({"renderer": "cairo"}):
+            controller = CompositeQuadricSection3D(
+                Scene(),
+                surface=_double("apply-rollback-double"),
+                section_id="apply-rollback-section",
+                plane=_side_plane(),
+                projection=SIDE_VIEW,
+                limits=_limits(),
+                max_chord_error=0.03,
+                section_max_screen_error=0.16,
+            ).attach()
+            try:
+                snapshot = controller.slot_snapshot()
+                identities = controller.slot_identities()
+                frame = controller.last_composite_frame
+                boundary = controller.last_boundary_frame
+                z_indices = controller.active_painter_z_indices
+                maps = {
+                    key: dict(value)
+                    for key, value in controller._fragment_slot_maps.items()
+                }
+                prepared = controller.prepare()
+                shifted_items = (
+                    replace(
+                        prepared.painter_band.items[0],
+                        z_index=prepared.painter_band.items[0].z_index + 0.125,
+                    ),
+                    *prepared.painter_band.items[1:],
+                )
+                prepared = replace(
+                    prepared,
+                    painter_band=replace(
+                        prepared.painter_band,
+                        items=shifted_items,
+                    ),
+                )
+                original_apply = controller._band.apply
+
+                def fail_after_commit(value) -> None:
+                    original_apply(value)
+                    raise RuntimeError("synthetic composite painter failure")
+
+                with patch.object(
+                    controller._band,
+                    "apply",
+                    side_effect=fail_after_commit,
+                ):
+                    with self.assertRaisesRegex(RuntimeError, "synthetic composite"):
+                        controller.apply(prepared)
+
+                self.assertEqual(controller.slot_snapshot(), snapshot)
+                self.assertEqual(controller.slot_identities(), identities)
+                self.assertIs(controller.last_composite_frame, frame)
+                self.assertIs(controller.last_boundary_frame, boundary)
+                self.assertEqual(controller.active_painter_z_indices, z_indices)
+                self.assertEqual(controller._fragment_slot_maps, maps)
             finally:
                 controller.restore()
 

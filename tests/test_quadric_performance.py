@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 import json
 from math import pi
 import os
@@ -17,6 +18,7 @@ from polyhedron_visibility.quadrics.contract import (
     ConeModel,
     ConeSpec,
     SectionPlane,
+    SphereSpec,
 )
 from polyhedron_visibility.quadrics.manim import (
     QuadricManimLimits,
@@ -114,6 +116,60 @@ class QuadricPerformanceTraceTests(unittest.TestCase):
                 self.assertIsNone(controller.performance_snapshot())
                 controller.restore()
 
+    def test_identical_frame_skips_slot_writes_and_transaction_snapshots(
+        self,
+    ) -> None:
+        with patch.dict(os.environ, {QUADRIC_PERFORMANCE_TRACE_ENV: "1"}):
+            with tempconfig({"renderer": "cairo"}):
+                controller = _single_controller(Scene()).attach()
+                controller.update()
+                snapshot = controller.performance_snapshot()
+                self.assertIsNotNone(snapshot)
+                assert snapshot is not None
+                self.assertGreater(snapshot.counts["display_active_slot_count"], 0)
+                self.assertEqual(snapshot.counts["display_changed_slot_count"], 0)
+                self.assertEqual(snapshot.counts["display_hidden_slot_count"], 0)
+                self.assertEqual(snapshot.counts["painter_band_changed_count"], 0)
+                self.assertEqual(snapshot.counts["mutation_target_root_count"], 0)
+                self.assertEqual(
+                    snapshot.counts["transaction_snapshot_mobject_count"],
+                    0,
+                )
+                self.assertEqual(snapshot.counts["modified_mobject_count"], 0)
+                controller.restore()
+
+    def test_changed_frame_snapshots_only_active_mutation_families(self) -> None:
+        state = {"x": 0.0}
+
+        def surfaces() -> tuple[SphereSpec, ...]:
+            return (SphereSpec("moving-sphere", (state["x"], 0.0, 0.0), 1.0),)
+
+        with patch.dict(os.environ, {QUADRIC_PERFORMANCE_TRACE_ENV: "1"}):
+            with tempconfig({"renderer": "cairo"}):
+                controller = QuadricOcclusion3D(
+                    Scene(),
+                    surfaces=surfaces,
+                    curves=(),
+                    projection=VIEW,
+                    limits=_limits(),
+                ).attach()
+                state["x"] = 0.25
+                controller.update()
+                snapshot = controller.performance_snapshot()
+                self.assertIsNotNone(snapshot)
+                assert snapshot is not None
+                self.assertGreater(snapshot.counts["display_changed_slot_count"], 0)
+                self.assertEqual(snapshot.counts["display_hidden_slot_count"], 0)
+                self.assertLess(
+                    snapshot.counts["transaction_snapshot_mobject_count"],
+                    snapshot.counts["mobject_family_count"],
+                )
+                self.assertLess(
+                    snapshot.counts["modified_mobject_count"],
+                    snapshot.counts["mobject_family_count"],
+                )
+                controller.restore()
+
     def test_single_controller_publishes_complete_json_safe_frame(self) -> None:
         with patch.dict(os.environ, {QUADRIC_PERFORMANCE_TRACE_ENV: "1"}):
             with tempconfig({"renderer": "cairo"}):
@@ -151,13 +207,28 @@ class QuadricPerformanceTraceTests(unittest.TestCase):
             with tempconfig({"renderer": "cairo"}):
                 controller = _single_controller(Scene()).attach()
                 previous = controller.last_frame
+                prepared = controller.prepare()
+                shifted_items = (
+                    replace(
+                        prepared.painter_band.items[0],
+                        z_index=prepared.painter_band.items[0].z_index + 0.125,
+                    ),
+                    *prepared.painter_band.items[1:],
+                )
+                prepared = replace(
+                    prepared,
+                    painter_band=replace(
+                        prepared.painter_band,
+                        items=shifted_items,
+                    ),
+                )
                 with patch.object(
                     controller._band,
                     "apply",
                     side_effect=RuntimeError("synthetic apply failure"),
                 ):
                     with self.assertRaisesRegex(RuntimeError, "synthetic"):
-                        controller.update()
+                        controller.apply(prepared)
                 snapshot = controller.performance_snapshot()
                 self.assertIsNotNone(snapshot)
                 assert snapshot is not None
@@ -205,6 +276,16 @@ class QuadricPerformanceTraceTests(unittest.TestCase):
                 self.assertEqual(snapshot.counts["surface_count"], 2)
                 self.assertGreater(snapshot.counts["plane_fragment_count"], 0)
                 self.assertIn("contour_union", snapshot.stage_durations_ns)
+                controller.update()
+                repeated = controller.performance_snapshot()
+                self.assertIsNotNone(repeated)
+                assert repeated is not None
+                self.assertEqual(repeated.counts["display_changed_slot_count"], 0)
+                self.assertEqual(
+                    repeated.counts["transaction_snapshot_mobject_count"],
+                    0,
+                )
+                self.assertEqual(repeated.counts["modified_mobject_count"], 0)
                 controller.restore()
 
 

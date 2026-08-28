@@ -10,7 +10,9 @@ stroke application, and rollback semantics live here exactly once.
 from __future__ import annotations
 
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field, fields, is_dataclass
+from enum import Enum
+from hashlib import sha256
 from math import isfinite, sqrt
 from types import MappingProxyType
 from typing import Callable, Iterator, Mapping, Protocol, Sequence, TypeVar
@@ -18,7 +20,7 @@ from typing import Callable, Iterator, Mapping, Protocol, Sequence, TypeVar
 import numpy as np
 from manim import BLUE_D, WHITE, Line, Mobject, ThreeDCamera, VGroup, VMobject
 
-from ..painter_band import ManagedPainterBand
+from ..painter_band import ManagedPainterBand, PreparedPainterBand
 from ..parallel_solver import ParallelView, SolverError
 from .boundary_compositing import (
     BoundaryRenderIntent,
@@ -290,17 +292,50 @@ class _MobjectState:
     attributes: dict[str, object]
 
 
+@dataclass(frozen=True, slots=True)
+class _PreparedDisplayAction:
+    """One desired fixed-slot display state with no renderer allocation."""
+
+    slot_id: str
+    roots: tuple[Mobject, ...]
+    digest: bytes
+    apply: Callable[[], None] = field(repr=False, compare=False)
+
+
+@dataclass(frozen=True, slots=True)
+class _CommittedDisplaySlot:
+    roots: tuple[Mobject, ...]
+    digest: bytes
+
+
+@dataclass(frozen=True, slots=True)
+class _PreparedDisplayDelta:
+    changed: tuple[_PreparedDisplayAction, ...]
+    unchanged_slot_ids: tuple[str, ...]
+    hidden: tuple[_CommittedDisplaySlot, ...]
+    next_state: Mapping[str, _CommittedDisplaySlot]
+    mutation_roots: tuple[Mobject, ...]
+
+
 def _copy_value(value: object) -> object:
     return value.copy() if isinstance(value, np.ndarray) else value
 
 
-def _capture_root(root: Mobject) -> tuple[_MobjectState, ...]:
-    result: list[_MobjectState] = []
+def _unique_family(roots: Sequence[Mobject]) -> tuple[Mobject, ...]:
+    result: list[Mobject] = []
     seen: set[int] = set()
-    for member in root.get_family():
-        if id(member) in seen:
-            continue
-        seen.add(id(member))
+    for root in roots:
+        for member in root.get_family():
+            if id(member) in seen:
+                continue
+            seen.add(id(member))
+            result.append(member)
+    return tuple(result)
+
+
+def _capture_roots(roots: Sequence[Mobject]) -> tuple[_MobjectState, ...]:
+    result: list[_MobjectState] = []
+    for member in _unique_family(roots):
         points = None
         if hasattr(member, "points"):
             points = np.asarray(member.points, dtype=float).copy()
@@ -327,6 +362,10 @@ def _capture_root(root: Mobject) -> tuple[_MobjectState, ...]:
     return tuple(result)
 
 
+def _capture_root(root: Mobject) -> tuple[_MobjectState, ...]:
+    return _capture_roots((root,))
+
+
 def _restore_root(states: Sequence[_MobjectState]) -> None:
     for state in states:
         if state.points is not None and hasattr(state.mobject, "points"):
@@ -335,6 +374,185 @@ def _restore_root(states: Sequence[_MobjectState]) -> None:
             setattr(state.mobject, name, _copy_value(value))
         if state.z_index is not None:
             state.mobject.z_index = state.z_index
+
+
+def _update_display_digest(hasher: object, value: object) -> None:
+    """Feed one deterministic, process-local display value into ``hasher``."""
+
+    update = getattr(hasher, "update")
+    if value is None:
+        update(b"N")
+        return
+    if isinstance(value, np.ndarray):
+        array = np.ascontiguousarray(value)
+        update(b"A")
+        update(array.dtype.str.encode("ascii"))
+        update(repr(array.shape).encode("ascii"))
+        update(array.tobytes())
+        return
+    if isinstance(value, Enum):
+        update(b"E")
+        update(type(value).__qualname__.encode("utf-8"))
+        _update_display_digest(hasher, value.value)
+        return
+    if isinstance(value, bool):
+        update(b"B1" if value else b"B0")
+        return
+    if isinstance(value, int):
+        update(b"I")
+        update(str(value).encode("ascii"))
+        update(b";")
+        return
+    if isinstance(value, float):
+        update(b"F")
+        update(np.asarray((value,), dtype=np.float64).tobytes())
+        return
+    if isinstance(value, str):
+        encoded = value.encode("utf-8")
+        update(b"S")
+        update(str(len(encoded)).encode("ascii"))
+        update(b":")
+        update(encoded)
+        return
+    if isinstance(value, bytes):
+        update(b"Y")
+        update(str(len(value)).encode("ascii"))
+        update(b":")
+        update(value)
+        return
+    if isinstance(value, Mapping):
+        update(b"M")
+        ordered = sorted(
+            value.items(),
+            key=lambda item: (type(item[0]).__qualname__, repr(item[0])),
+        )
+        for key, item in ordered:
+            _update_display_digest(hasher, key)
+            _update_display_digest(hasher, item)
+        update(b";")
+        return
+    if isinstance(value, (tuple, list)):
+        update(b"T")
+        for item in value:
+            _update_display_digest(hasher, item)
+        update(b";")
+        return
+    if is_dataclass(value) and not isinstance(value, type):
+        update(b"D")
+        update(type(value).__qualname__.encode("utf-8"))
+        for descriptor in fields(value):
+            _update_display_digest(hasher, descriptor.name)
+            _update_display_digest(hasher, getattr(value, descriptor.name))
+        update(b";")
+        return
+    update(b"R")
+    update(type(value).__qualname__.encode("utf-8"))
+    update(b":")
+    update(repr(value).encode("utf-8"))
+
+
+def _display_digest(*values: object) -> bytes:
+    hasher = sha256()
+    for value in values:
+        _update_display_digest(hasher, value)
+    return hasher.digest()
+
+
+def _unique_roots(roots: Sequence[Mobject]) -> tuple[Mobject, ...]:
+    result: list[Mobject] = []
+    seen: set[int] = set()
+    for root in roots:
+        if id(root) in seen:
+            continue
+        seen.add(id(root))
+        result.append(root)
+    return tuple(result)
+
+
+def _prepare_display_delta(
+    previous: Mapping[str, _CommittedDisplaySlot],
+    actions: Sequence[_PreparedDisplayAction],
+) -> _PreparedDisplayDelta:
+    """Compare desired fixed slots with the last committed display state."""
+
+    desired: dict[str, _PreparedDisplayAction] = {}
+    root_owners: dict[int, str] = {}
+    for action in actions:
+        if not isinstance(action.slot_id, str) or not action.slot_id:
+            raise QuadricManimError("display slot identity must be a non-empty string")
+        if action.slot_id in desired:
+            raise QuadricManimError(
+                f"display slot {action.slot_id!r} was prepared more than once"
+            )
+        if not action.roots or not all(isinstance(root, Mobject) for root in action.roots):
+            raise QuadricManimError(
+                f"display slot {action.slot_id!r} must own fixed Mobject roots"
+            )
+        for root in action.roots:
+            owner = root_owners.setdefault(id(root), action.slot_id)
+            if owner != action.slot_id:
+                raise QuadricManimError(
+                    f"fixed display root is shared by slots {owner!r} and "
+                    f"{action.slot_id!r}"
+                )
+        desired[action.slot_id] = action
+
+    changed: list[_PreparedDisplayAction] = []
+    unchanged: list[str] = []
+    next_state: dict[str, _CommittedDisplaySlot] = {}
+    mutation_roots: list[Mobject] = []
+    for action in actions:
+        committed = previous.get(action.slot_id)
+        if committed is not None and tuple(map(id, committed.roots)) != tuple(
+            map(id, action.roots)
+        ):
+            raise QuadricManimError(
+                f"fixed display slot {action.slot_id!r} changed Mobject identity"
+            )
+        record = _CommittedDisplaySlot(action.roots, bytes(action.digest))
+        next_state[action.slot_id] = record
+        if committed is not None and committed.digest == action.digest:
+            unchanged.append(action.slot_id)
+            continue
+        changed.append(action)
+        mutation_roots.extend(action.roots)
+
+    hidden = tuple(
+        previous[slot_id]
+        for slot_id in sorted(set(previous) - set(desired))
+    )
+    for record in hidden:
+        mutation_roots.extend(record.roots)
+    return _PreparedDisplayDelta(
+        tuple(changed),
+        tuple(unchanged),
+        hidden,
+        MappingProxyType(next_state),
+        _unique_roots(mutation_roots),
+    )
+
+
+def _hide_mobject_family(root: Mobject) -> None:
+    for member in root.get_family():
+        if isinstance(member, VMobject):
+            _hide_vmobject(member)
+
+
+def _apply_display_delta(delta: _PreparedDisplayDelta) -> None:
+    for record in delta.hidden:
+        for root in record.roots:
+            _hide_mobject_family(root)
+    for action in delta.changed:
+        action.apply()
+
+
+def _painter_band_signature(
+    prepared: PreparedPainterBand,
+) -> tuple[tuple[str, int, float], ...]:
+    return tuple(
+        (item.item_id, id(item.mobject), float(item.z_index))
+        for item in prepared.items
+    )
 
 
 def _state_value_equal(first: object, second: object) -> bool:
@@ -1330,14 +1548,18 @@ def _rollback_display_transaction(
     *,
     capture_controller_state: Callable[[], _ControllerState],
     restore_controller_state: Callable[[_ControllerState], None],
+    mutation_roots: Sequence[Mobject] | None = None,
     performance_attempt: _PerformanceAttempt | None = None,
 ) -> Iterator[None]:
-    """Rollback root, painter band, and controller bookkeeping together."""
+    """Rollback changed display roots, painter band, and bookkeeping together."""
 
+    capture_targets = (root,) if mutation_roots is None else tuple(mutation_roots)
     with _performance_stage(performance_attempt, "transaction_snapshot"):
-        root_state = _capture_root(root)
+        root_state = _capture_roots(capture_targets)
     if performance_attempt is not None:
-        performance_attempt.set_count("mobject_family_count", len(root_state))
+        performance_attempt.set_count(
+            "mobject_family_count", len(_unique_family((root,)))
+        )
         performance_attempt.set_count(
             "transaction_snapshot_mobject_count", len(root_state)
         )

@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
+from functools import partial
 from itertools import combinations
 from typing import Callable, Iterator, Mapping, Sequence
 
@@ -79,20 +80,25 @@ from .manim import (
     QuadricManimStyle,
 )
 from .manim_runtime import (
+    _CommittedDisplaySlot,
     _CurveSlots,
     _ManagedQuadricDisplayGroup,
     _PreparedBoundaryFragment,
     _PreparedConeFill,
+    _PreparedDisplayAction,
     _SurfacePaintSlot,
+    _apply_display_delta,
     _apply_boundary_fragment as _apply_runtime_boundary_fragment,
     _apply_surface_sheet_pair,
     _boundary_style_registry,
     _capture_root,
     _coerce_view,
     _curve_slots_family_capacity,
+    _display_digest,
     _hide_vmobject,
     _invalidate_cairo_static_image,
     _prepare_boundary_fragments,
+    _prepare_display_delta,
     _prepared_cone_fill,
     _register_fixed_frame,
     _remove_fixed_frame,
@@ -101,6 +107,7 @@ from .manim_runtime import (
     _rollback_display_transaction,
     _scene_containers,
     _set_closed_subpaths,
+    _painter_band_signature,
 )
 from .plane_patch import PlanePatchFitError, fit_plane_display_patch
 from .projection import (
@@ -506,6 +513,10 @@ class CompositeQuadricSection3D:
         self._performance_enabled = quadric_performance_tracing_enabled()
         self._performance_frame_index = 0
         self._last_performance_snapshot: QuadricPerformanceSnapshot | None = None
+        self._display_slot_state: dict[str, _CommittedDisplaySlot] = {}
+        self._last_painter_band_signature: tuple[
+            tuple[str, int, float], ...
+        ] = ()
 
     def _resolve_plane(self, *, expected_id: str | None = None) -> SectionPlane:
         value = (
@@ -1177,6 +1188,82 @@ class CompositeQuadricSection3D:
             opacity,
         )
 
+    def _apply_plane_roles(
+        self,
+        numeric: _PreparedCompositeNumeric,
+        opacity: float,
+    ) -> None:
+        for role, item_id in self._plane_item_ids.items():
+            slot = self._plane_slots[item_id]
+            _set_closed_subpaths(slot, numeric.plane_polygons[role])
+            slot.set_fill(
+                color=self.style.section_plane_fill_color,
+                opacity=self.style.section_plane_fill_opacity * opacity,
+            )
+            slot.set_stroke(opacity=0.0)
+
+    def _prepare_display_actions(
+        self,
+        prepared: PreparedCompositeQuadricSectionFrame,
+        opacity: float,
+    ) -> tuple[_PreparedDisplayAction, ...]:
+        actions: list[_PreparedDisplayAction] = []
+        for surface in prepared.numeric.surfaces:
+            slots = self._surface_sheet_slots[surface.child_surface_id]
+            actions.append(
+                _PreparedDisplayAction(
+                    f"surface-pair:{surface.child_surface_id}",
+                    tuple(slot.root for slot in slots),
+                    _display_digest(
+                        "composite-surface-pair",
+                        surface.surface_points,
+                        surface.cone_fill,
+                        self.style,
+                        opacity,
+                    ),
+                    partial(self._apply_surface_pair, surface, opacity),
+                )
+            )
+
+        actions.append(
+            _PreparedDisplayAction(
+                "section:plane-roles",
+                tuple(self._plane_slots.values()),
+                _display_digest(
+                    "composite-plane-roles",
+                    prepared.numeric.plane_polygons,
+                    self.style,
+                    opacity,
+                ),
+                partial(self._apply_plane_roles, prepared.numeric, opacity),
+            )
+        )
+
+        for source_id, fragments in prepared.numeric.boundary_fragments.items():
+            for fragment in fragments:
+                slot = self._curve_slots[source_id].fragments[fragment.slot_index]
+                actions.append(
+                    _PreparedDisplayAction(
+                        f"path:{source_id}:{fragment.slot_index}",
+                        (slot.root,),
+                        _display_digest(
+                            "boundary",
+                            fragment.fragment.render_intent,
+                            fragment.points,
+                            tuple(item.points for item in fragment.dashes),
+                            fragment.style,
+                            opacity,
+                        ),
+                        partial(
+                            self._apply_boundary_fragment,
+                            source_id,
+                            fragment,
+                            opacity,
+                        ),
+                    )
+                )
+        return tuple(actions)
+
     def apply(self, prepared: PreparedCompositeQuadricSectionFrame) -> None:
         if not self._attached:
             raise CompositeQuadricSectionAuthoringError(
@@ -1192,6 +1279,8 @@ class CompositeQuadricSection3D:
             CompositeQuadricSectionCompositingFrame | None,
             QuadricBoundaryCompositingFrame | None,
             tuple[CompositeSectionBranchLineage, ...],
+            dict[str, _CommittedDisplaySlot],
+            tuple[tuple[str, int, float], ...],
         ]:
             return (
                 {
@@ -1201,6 +1290,8 @@ class CompositeQuadricSection3D:
                 self._last_frame,
                 self._last_boundary_frame,
                 self._last_lineage,
+                dict(self._display_slot_state),
+                self._last_painter_band_signature,
             )
 
         def restore_controller_state(
@@ -1209,6 +1300,8 @@ class CompositeQuadricSection3D:
                 CompositeQuadricSectionCompositingFrame | None,
                 QuadricBoundaryCompositingFrame | None,
                 tuple[CompositeSectionBranchLineage, ...],
+                dict[str, _CommittedDisplaySlot],
+                tuple[tuple[str, int, float], ...],
             ],
         ) -> None:
             (
@@ -1216,6 +1309,8 @@ class CompositeQuadricSection3D:
                 self._last_frame,
                 self._last_boundary_frame,
                 self._last_lineage,
+                self._display_slot_state,
+                self._last_painter_band_signature,
             ) = state
 
         attempt = prepared._performance_attempt
@@ -1223,44 +1318,47 @@ class CompositeQuadricSection3D:
             attempt = self._new_performance_attempt()
         opacity = self.root.opacity_multiplier
         try:
+            actions = self._prepare_display_actions(prepared, opacity)
+            delta = _prepare_display_delta(self._display_slot_state, actions)
+            painter_signature = _painter_band_signature(prepared.painter_band)
+            painter_changed = (
+                painter_signature != self._last_painter_band_signature
+            )
+            painter_roots = (
+                tuple(item.mobject for item in prepared.painter_band.items)
+                if painter_changed
+                else ()
+            )
+            mutation_roots = (*delta.mutation_roots, *painter_roots)
+            if attempt is not None:
+                attempt.set_count("display_active_slot_count", len(actions))
+                attempt.set_count(
+                    "display_changed_slot_count", len(delta.changed)
+                )
+                attempt.set_count(
+                    "display_unchanged_slot_count",
+                    len(delta.unchanged_slot_ids),
+                )
+                attempt.set_count("display_hidden_slot_count", len(delta.hidden))
+                attempt.set_count(
+                    "painter_band_changed_count", int(painter_changed)
+                )
+                attempt.set_count(
+                    "mutation_target_root_count",
+                    len({id(root) for root in mutation_roots}),
+                )
             with _rollback_display_transaction(
                 self.root,
                 self._band,
                 capture_controller_state=capture_controller_state,
                 restore_controller_state=restore_controller_state,
+                mutation_roots=mutation_roots,
                 performance_attempt=attempt,
             ):
                 with _performance_stage(attempt, "manim_apply"):
-                    for slots in self._surface_sheet_slots.values():
-                        for slot in slots:
-                            slot.hide()
-                    for slot in self._plane_slots.values():
-                        _hide_vmobject(slot)
-                    for slots in self._curve_slots.values():
-                        for slot in slots.fragments:
-                            slot.hide()
-                    for surface in prepared.numeric.surfaces:
-                        self._apply_surface_pair(surface, opacity)
-                    for role, item_id in self._plane_item_ids.items():
-                        slot = self._plane_slots[item_id]
-                        _set_closed_subpaths(
-                            slot, prepared.numeric.plane_polygons[role]
-                        )
-                        slot.set_fill(
-                            color=self.style.section_plane_fill_color,
-                            opacity=(
-                                self.style.section_plane_fill_opacity * opacity
-                            ),
-                        )
-                        slot.set_stroke(opacity=0.0)
-                    for source_id, fragments in (
-                        prepared.numeric.boundary_fragments.items()
-                    ):
-                        for fragment in fragments:
-                            self._apply_boundary_fragment(
-                                source_id, fragment, opacity
-                            )
-                    self._band.apply(prepared.painter_band)
+                    _apply_display_delta(delta)
+                    if painter_changed:
+                        self._band.apply(prepared.painter_band)
                     self._fragment_slot_maps = {
                         source_id: dict(values)
                         for source_id, values in (
@@ -1270,6 +1368,8 @@ class CompositeQuadricSection3D:
                     self._last_frame = prepared.frame
                     self._last_boundary_frame = prepared.boundary_frame
                     self._last_lineage = prepared.frame.branch_lineage
+                    self._display_slot_state = dict(delta.next_state)
+                    self._last_painter_band_signature = painter_signature
         except Exception as exc:
             self._finish_performance_attempt(
                 attempt,
@@ -1421,6 +1521,8 @@ class CompositeQuadricSection3D:
         self._last_frame = None
         self._last_boundary_frame = None
         self._last_lineage = ()
+        self._display_slot_state = {}
+        self._last_painter_band_signature = ()
         self._band.restore()
         self.root.reset_opacity()
         self._invalidate_cairo_static_image()

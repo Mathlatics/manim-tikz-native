@@ -441,6 +441,18 @@ class UnifiedBoundaryManimTests(unittest.TestCase):
         }
         previous_boundary = controller.last_boundary_frame
         previous_frame = controller.last_frame
+        prepared = controller.prepare()
+        shifted_items = (
+            replace(
+                prepared.painter_band.items[0],
+                z_index=prepared.painter_band.items[0].z_index + 0.125,
+            ),
+            *prepared.painter_band.items[1:],
+        )
+        prepared = replace(
+            prepared,
+            painter_band=replace(prepared.painter_band, items=shifted_items),
+        )
         original_apply = controller._band.apply
 
         def fail_after_commit(prepared) -> None:
@@ -449,7 +461,7 @@ class UnifiedBoundaryManimTests(unittest.TestCase):
 
         with patch.object(controller._band, "apply", side_effect=fail_after_commit):
             with self.assertRaisesRegex(RuntimeError, "synthetic unified"):
-                controller.update()
+                controller.apply(prepared)
 
         self.assertEqual(controller.slot_snapshot(), snapshot)
         self.assertEqual(controller.slot_identities(), identities)

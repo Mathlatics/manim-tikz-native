@@ -623,6 +623,15 @@ rays, total/active/modified Mobjects, and cache hit/miss evidence. A failed
 attempt records its exception type and whether transactional rollback ran; it
 does not replace the controller's last-good frame.
 
+The Cairo commit itself is incremental. Each prepared fixed slot has a display
+digest derived from its certified numeric paths, style, intent, and effective
+opacity. Identical active slots are not rewritten, only formerly active slots
+are hidden, and an unchanged painter-band signature is not reapplied. The
+transaction snapshots only those fixed Mobject families which can change in
+that commit. Trace counts expose active, changed, unchanged, hidden, mutation-
+target, and snapshot sizes; this optimization does not weaken capacity checks
+or create Mobjects during an updater.
+
 The extended Cairo acceptance generator enables this trace automatically. Its
 keyframe JSON and fragment/ray CSV contain the controller measurements. Video
 subprocesses additionally publish a per-rendered-frame trace with the Cairo

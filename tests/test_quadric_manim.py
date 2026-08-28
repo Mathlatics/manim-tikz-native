@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from math import tau
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -718,6 +719,18 @@ class QuadricManimBindingTests(unittest.TestCase):
             key: dict(value) for key, value in controller._fragment_slot_maps.items()
         }
         fixture.offset = -0.4
+        prepared = controller.prepare()
+        shifted_items = (
+            replace(
+                prepared.painter_band.items[0],
+                z_index=prepared.painter_band.items[0].z_index + 0.125,
+            ),
+            *prepared.painter_band.items[1:],
+        )
+        prepared = replace(
+            prepared,
+            painter_band=replace(prepared.painter_band, items=shifted_items),
+        )
         original_apply = controller._band.apply
 
         def fail_after_commit(prepared) -> None:
@@ -726,7 +739,7 @@ class QuadricManimBindingTests(unittest.TestCase):
 
         with patch.object(controller._band, "apply", side_effect=fail_after_commit):
             with self.assertRaisesRegex(RuntimeError, "synthetic painter"):
-                controller.update()
+                controller.apply(prepared)
 
         self.assertEqual(controller.slot_snapshot(), snapshot)
         self.assertEqual(controller.slot_identities(), identities)
