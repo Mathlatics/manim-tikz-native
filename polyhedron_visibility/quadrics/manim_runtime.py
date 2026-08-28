@@ -342,6 +342,27 @@ def _classify_dirty_frame(
     return _DirtyFrameKind.CLEAN
 
 
+class _SurfaceViewCache:
+    """Fixed-size exact-signature cache for pure surface/view products."""
+
+    __slots__ = ("_entries",)
+
+    def __init__(self) -> None:
+        self._entries: dict[str, tuple[bytes, object]] = {}
+
+    def lookup(self, name: str, signature: bytes) -> tuple[bool, object | None]:
+        entry = self._entries.get(name)
+        if entry is None or entry[0] != signature:
+            return False, None
+        return True, entry[1]
+
+    def store(self, name: str, signature: bytes, value: object) -> None:
+        self._entries[name] = (bytes(signature), value)
+
+    def clear(self) -> None:
+        self._entries.clear()
+
+
 def _copy_value(value: object) -> object:
     return value.copy() if isinstance(value, np.ndarray) else value
 

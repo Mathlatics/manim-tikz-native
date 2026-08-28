@@ -128,6 +128,7 @@ from .manim_runtime import (
     _PreparedConeFill,
     _PreparedDash,
     _PreparedDisplayAction,
+    _SurfaceViewCache,
     _SurfacePaintSlot,
     _adaptive_project_curve,
     _apply_boundary_fragment as _apply_runtime_boundary_fragment,
@@ -411,6 +412,7 @@ class _ResolvedQuadricFrameInputs:
     view: ParallelView
     section_plane: SectionPlane | None
     section_patch: PlaneDisplayPatchSpec | None
+    surface_view_signature: bytes
     geometry_signature: bytes
     draw_signature: bytes
 
@@ -644,6 +646,7 @@ class QuadricOcclusion3D:
         self._last_input_opacity: float | None = None
         self._last_prepared_frame: PreparedQuadricManimFrame | None = None
         self._last_prepared_performance_counts: dict[str, int] = {}
+        self._surface_view_cache = _SurfaceViewCache()
 
         initial_surfaces = self._resolve_surfaces()
         initial_curves = self._resolve_curves()
@@ -908,6 +911,40 @@ class QuadricOcclusion3D:
             ) from exc
         return _prepared_cone_fill(layers)
 
+    def _prepare_surface_component_fills(
+        self,
+        surfaces: Sequence[QuadricSurfaceSpec],
+        view: ParallelView,
+        surface_view_signature: bytes,
+        performance_attempt: _PerformanceAttempt | None,
+    ) -> dict[str, _PreparedConeFill | None]:
+        signature = _display_digest(
+            "quadric-surface-component-fills-v1",
+            surface_view_signature,
+            self.style.cone_component_shading,
+        )
+        with _performance_stage(performance_attempt, "surface_component_fill"):
+            hit, cached = self._surface_view_cache.lookup(
+                "component_fills",
+                signature,
+            )
+            if hit:
+                if performance_attempt is not None:
+                    performance_attempt.cache_hit("surface_component_fill")
+                return dict(cached)  # type: ignore[arg-type]
+            if performance_attempt is not None:
+                performance_attempt.cache_miss("surface_component_fill")
+            prepared = tuple(
+                (surface.surface_id, self._prepare_cone_fill_for_surface(surface, view))
+                for surface in surfaces
+            )
+            self._surface_view_cache.store(
+                "component_fills",
+                signature,
+                prepared,
+            )
+            return dict(prepared)
+
     def _resolve_curve_opacities(
         self, active_curve_ids: Sequence[str]
     ) -> dict[str, float]:
@@ -958,16 +995,22 @@ class QuadricOcclusion3D:
         else:
             section_plane = None
             section_patch = None
-        geometry_signature = _display_digest(
-            "quadric-frame-inputs-v1",
+        surface_view_signature = _display_digest(
+            "quadric-surface-view-v1",
             surfaces,
-            curves,
             view.matrix,
-            section_plane,
-            section_patch,
             self.context,
             self.surface_constraints,
             self.surface_order_mode,
+            self.max_chord_error,
+            self.limits.max_surface_segments,
+        )
+        geometry_signature = _display_digest(
+            "quadric-frame-inputs-v1",
+            surface_view_signature,
+            curves,
+            section_plane,
+            section_patch,
             self.paint_policy,
             self.style,
             self.boundary_visibility_mode,
@@ -991,6 +1034,7 @@ class QuadricOcclusion3D:
             view,
             section_plane,
             section_patch,
+            surface_view_signature,
             geometry_signature,
             draw_signature,
         )
@@ -1070,6 +1114,8 @@ class QuadricOcclusion3D:
         view: ParallelView,
         plane: SectionPlane | None,
         patch: PlaneDisplayPatchSpec | None,
+        *,
+        surface_sources: Sequence[QuadricBoundarySource] | None = None,
     ) -> tuple[QuadricBoundarySource, ...]:
         result = [
             (
@@ -1088,26 +1134,9 @@ class QuadricOcclusion3D:
             )
             for curve in curves
         ]
-        if self.include_surface_boundaries:
-            result.extend(
-                build_surface_boundary_sources(
-                    surfaces,
-                    view,
-                    self._generator_boundaries,
-                    include_cap_rims=True,
-                    include_silhouettes=True,
-                )
-            )
-        elif self._generator_boundaries:
-            result.extend(
-                build_surface_boundary_sources(
-                    surfaces,
-                    view,
-                    self._generator_boundaries,
-                    include_cap_rims=False,
-                    include_silhouettes=False,
-                )
-            )
+        if surface_sources is None:
+            surface_sources = self._surface_boundary_sources(surfaces, view)
+        result.extend(surface_sources)
         if plane is not None and patch is not None:
             result.extend(plane_outline_sources(plane, patch))
         result.sort(key=lambda item: item.source_id)
@@ -1123,6 +1152,29 @@ class QuadricOcclusion3D:
                 + ", ".join(unknown)
             )
         return tuple(result)
+
+    def _surface_boundary_sources(
+        self,
+        surfaces: Sequence[QuadricSurfaceSpec],
+        view: ParallelView,
+    ) -> tuple[QuadricBoundarySource, ...]:
+        if self.include_surface_boundaries:
+            return build_surface_boundary_sources(
+                surfaces,
+                view,
+                self._generator_boundaries,
+                include_cap_rims=True,
+                include_silhouettes=True,
+            )
+        if self._generator_boundaries:
+            return build_surface_boundary_sources(
+                surfaces,
+                view,
+                self._generator_boundaries,
+                include_cap_rims=False,
+                include_silhouettes=False,
+            )
+        return ()
 
     @staticmethod
     def _section_anchors(frame: QuadricSectionCompositingFrame) -> BoundarySectionAnchors:
@@ -1175,11 +1227,19 @@ class QuadricOcclusion3D:
         sources: Sequence[QuadricBoundarySource],
         spans: Mapping[str, Sequence[QuadricBoundaryVisibilitySpan]],
         view: ParallelView,
+        *,
+        cached_source_ids: frozenset[str] = frozenset(),
+        cached_crossings: Sequence[object] = (),
     ) -> tuple[object, ...]:
         from itertools import combinations
 
-        result = []
+        result = list(cached_crossings)
         for first, second in combinations(sources, 2):
+            if (
+                first.source_id in cached_source_ids
+                and second.source_id in cached_source_ids
+            ):
+                continue
             active_intervals = None
             if self.paint_policy is QuadricPaintPolicy.PHYSICAL:
                 active_intervals = {
@@ -1219,6 +1279,52 @@ class QuadricOcclusion3D:
         by_id = {item.crossing_id: item for item in result}
         return tuple(by_id[key] for key in sorted(by_id))
 
+    def _prepare_static_surface_boundaries(
+        self,
+        surfaces: Sequence[QuadricSurfaceSpec],
+        view: ParallelView,
+        surface_view_signature: bytes,
+        performance_attempt: _PerformanceAttempt | None,
+    ) -> tuple[
+        tuple[QuadricBoundarySource, ...],
+        Mapping[str, tuple[QuadricBoundaryVisibilitySpan, ...]],
+        tuple[object, ...],
+    ]:
+        signature = _display_digest(
+            "quadric-static-surface-boundaries-v1",
+            surface_view_signature,
+            self.include_surface_boundaries,
+            self._generator_boundaries,
+            self.paint_policy,
+        )
+        hit, cached = self._surface_view_cache.lookup(
+            "static_boundaries",
+            signature,
+        )
+        if hit:
+            if performance_attempt is not None:
+                performance_attempt.cache_hit("static_surface_boundaries")
+            return cached  # type: ignore[return-value]
+        if performance_attempt is not None:
+            performance_attempt.cache_miss("static_surface_boundaries")
+        sources = self._surface_boundary_sources(surfaces, view)
+        with _performance_stage(performance_attempt, "boundary_visibility"):
+            spans = compute_boundary_visibility(
+                sources,
+                surfaces,
+                view,
+                context=self.context,
+            )
+        with _performance_stage(performance_attempt, "curve_crossings"):
+            crossings = self._boundary_crossings(sources, spans, view)
+        prepared = (sources, dict(spans), crossings)
+        self._surface_view_cache.store(
+            "static_boundaries",
+            signature,
+            prepared,
+        )
+        return prepared
+
     def _prepare_unified_numeric(
         self,
         surfaces: tuple[QuadricSurfaceSpec, ...],
@@ -1227,62 +1333,88 @@ class QuadricOcclusion3D:
         curve_opacities: Mapping[str, float],
         section_plane: SectionPlane | None,
         section_patch: PlaneDisplayPatchSpec | None,
+        surface_view_signature: bytes,
         performance_attempt: _PerformanceAttempt | None,
     ) -> _PreparedNumericFrame:
-        global_frame: GlobalQuadricFrame | None = None
+        component_fills = self._prepare_surface_component_fills(
+            surfaces,
+            view,
+            surface_view_signature,
+            performance_attempt,
+        )
         with _performance_stage(
             performance_attempt, "surface_proxy_global_frame"
         ):
-            if self.surface_order_mode == "automatic":
-                try:
-                    global_frame = compute_global_quadric_frame(
-                        (),
-                        surfaces,
-                        view,
-                        context=self.context,
-                        paint_policy=QuadricPaintPolicy.PHYSICAL,
-                        max_chord_error=self.max_chord_error,
-                        max_segments=self.limits.max_surface_segments,
-                        additional_surface_constraints=self.surface_constraints,
-                    )
-                except (
-                    ProjectionSubdivisionError,
-                    ProjectionProxyError,
-                    GlobalQuadricOcclusionError,
-                ) as exc:
-                    raise QuadricManimError(
-                        f"unified surface preparation failed: {exc}"
-                    ) from exc
-                frame = global_frame.frame
+            hit, cached = self._surface_view_cache.lookup(
+                "unified_surface_base",
+                surface_view_signature,
+            )
+            if hit:
+                if performance_attempt is not None:
+                    performance_attempt.cache_hit("surface_view_base")
+                frame, global_frame = cached  # type: ignore[misc]
             else:
-                try:
-                    proxies = tuple(
-                        build_opaque_projection_proxy(
-                            surface,
+                if performance_attempt is not None:
+                    performance_attempt.cache_miss("surface_view_base")
+                global_frame: GlobalQuadricFrame | None = None
+                if self.surface_order_mode == "automatic":
+                    try:
+                        global_frame = compute_global_quadric_frame(
+                            (),
+                            surfaces,
                             view,
-                            patch_id=f"{surface.surface_id}:opaque-projection",
+                            context=self.context,
+                            paint_policy=QuadricPaintPolicy.PHYSICAL,
                             max_chord_error=self.max_chord_error,
                             max_segments=self.limits.max_surface_segments,
+                            additional_surface_constraints=self.surface_constraints,
                         )
-                        for surface in surfaces
-                    )
-                    visibility = compute_quadric_visibility(
-                        (), surfaces, view, context=self.context
-                    )
-                    frame = compute_quadric_compositing(
-                        visibility,
-                        proxies,
-                        paint_policy=QuadricPaintPolicy.PHYSICAL,
-                        surface_constraints=self.surface_constraints,
-                    )
-                except (
-                    ProjectionSubdivisionError,
-                    ProjectionProxyError,
-                    QuadricCompositingError,
-                ) as exc:
-                    raise QuadricManimError(
-                        f"unified explicit surface preparation failed: {exc}"
-                    ) from exc
+                    except (
+                        ProjectionSubdivisionError,
+                        ProjectionProxyError,
+                        GlobalQuadricOcclusionError,
+                    ) as exc:
+                        raise QuadricManimError(
+                            f"unified surface preparation failed: {exc}"
+                        ) from exc
+                    frame = global_frame.frame
+                else:
+                    try:
+                        proxies = tuple(
+                            build_opaque_projection_proxy(
+                                surface,
+                                view,
+                                patch_id=(
+                                    f"{surface.surface_id}:opaque-projection"
+                                ),
+                                max_chord_error=self.max_chord_error,
+                                max_segments=self.limits.max_surface_segments,
+                            )
+                            for surface in surfaces
+                        )
+                        visibility = compute_quadric_visibility(
+                            (), surfaces, view, context=self.context
+                        )
+                        frame = compute_quadric_compositing(
+                            visibility,
+                            proxies,
+                            paint_policy=QuadricPaintPolicy.PHYSICAL,
+                            surface_constraints=self.surface_constraints,
+                        )
+                    except (
+                        ProjectionSubdivisionError,
+                        ProjectionProxyError,
+                        QuadricCompositingError,
+                    ) as exc:
+                        raise QuadricManimError(
+                            "unified explicit surface preparation failed: "
+                            f"{exc}"
+                        ) from exc
+                self._surface_view_cache.store(
+                    "unified_surface_base",
+                    surface_view_signature,
+                    (frame, global_frame),
+                )
 
         surface_plans: list[_PreparedSurface] = []
         item_mobjects: dict[str, Mobject] = {}
@@ -1332,16 +1464,13 @@ class QuadricOcclusion3D:
                 )
                 for role in PlaneDepthRole
             }
-            with _performance_stage(
-                performance_attempt, "surface_proxy_global_frame"
-            ):
-                section_layers = _PreparedSectionLayers(
-                    section_frame,
-                    surface_points,
-                    plane_polygons,
-                    {role: () for role in PlaneDepthRole},
-                    self._prepare_cone_fill_for_surface(surface, view),
-                )
+            section_layers = _PreparedSectionLayers(
+                section_frame,
+                surface_points,
+                plane_polygons,
+                {role: () for role in PlaneDepthRole},
+                component_fills[surface.surface_id],
+            )
             item_mobjects.update(
                 {
                     item_id: self._section_slots[index]
@@ -1356,26 +1485,19 @@ class QuadricOcclusion3D:
                 surface.surface_id: section_frame.paint_items.surface_front
             }
         else:
-            surface_by_id = {surface.surface_id: surface for surface in surfaces}
             for item in frame.surface_items:
                 slot_index = self._surface_slot_by_id[item.surface_id]
                 points = np.asarray(
                     [(x, y, 0.0) for x, y in item.proxy.boundary_points],
                     dtype=float,
                 )
-                with _performance_stage(
-                    performance_attempt, "surface_proxy_global_frame"
-                ):
-                    cone_fill = self._prepare_cone_fill_for_surface(
-                        surface_by_id[item.surface_id], view
-                    )
                 surface_plans.append(
                     _PreparedSurface(
                         item.item_id,
                         item.surface_id,
                         slot_index,
                         points,
-                        cone_fill,
+                        component_fills[item.surface_id],
                     )
                 )
                 item_mobjects[item.item_id] = self._surface_slots[slot_index]
@@ -1385,22 +1507,45 @@ class QuadricOcclusion3D:
                 item.surface_id: item.item_id for item in frame.surface_items
             }
 
+        static_sources, static_spans, static_crossings = (
+            self._prepare_static_surface_boundaries(
+                surfaces,
+                view,
+                surface_view_signature,
+                performance_attempt,
+            )
+        )
+        static_source_ids = frozenset(item.source_id for item in static_sources)
         with _performance_stage(performance_attempt, "boundary_visibility"):
             sources = self._boundary_sources_for_frame(
-                surfaces, curves, view, plane, patch
+                surfaces,
+                curves,
+                view,
+                plane,
+                patch,
+                surface_sources=static_sources,
             )
             non_plane = tuple(
                 item
                 for item in sources
                 if item.source_kind is not BoundarySourceKind.PLANE_PATCH_EDGE
             )
+            dynamic_non_plane = tuple(
+                item
+                for item in non_plane
+                if item.source_id not in static_source_ids
+            )
             try:
-                spans = compute_boundary_visibility(
-                    non_plane,
-                    surfaces,
-                    view,
-                    context=self.context,
-                )
+                spans = dict(static_spans)
+                if dynamic_non_plane:
+                    spans.update(
+                        compute_boundary_visibility(
+                            dynamic_non_plane,
+                            surfaces,
+                            view,
+                            context=self.context,
+                        )
+                    )
             except Exception as exc:
                 raise QuadricManimError(
                     f"semantic boundary visibility failed: {exc}"
@@ -1408,7 +1553,13 @@ class QuadricOcclusion3D:
             if section_frame is not None:
                 spans.update(self._plane_outline_visibility(section_frame))
         with _performance_stage(performance_attempt, "curve_crossings"):
-            crossings = self._boundary_crossings(sources, spans, view)
+            crossings = self._boundary_crossings(
+                sources,
+                spans,
+                view,
+                cached_source_ids=static_source_ids,
+                cached_crossings=static_crossings,
+            )
         with _performance_stage(performance_attempt, "boundary_section_spans"):
             section_spans = (
                 {}
@@ -1527,8 +1678,15 @@ class QuadricOcclusion3D:
                 curve_opacities,
                 resolved_inputs.section_plane,
                 resolved_inputs.section_patch,
+                resolved_inputs.surface_view_signature,
                 performance_attempt,
             )
+        component_fills = self._prepare_surface_component_fills(
+            surfaces,
+            view,
+            resolved_inputs.surface_view_signature,
+            performance_attempt,
+        )
         global_frame: GlobalQuadricFrame | None = None
         if self.surface_order_mode == "automatic":
             try:
@@ -1683,16 +1841,12 @@ class QuadricOcclusion3D:
                 )
                 for role in PlaneDepthRole
             }
-            with _performance_stage(
-                performance_attempt, "surface_proxy_global_frame"
-            ):
-                cone_fill = self._prepare_cone_fill_for_surface(surface, view)
             section_layers = _PreparedSectionLayers(
                 section_frame,
                 surface_points,
                 plane_polygons,
                 plane_outline_paths,
-                cone_fill,
+                component_fills[surface.surface_id],
             )
             if len(self._section_slots) != len(section_frame.paint_items.ordered):
                 raise QuadricManimCapacityError(
@@ -1708,26 +1862,19 @@ class QuadricOcclusion3D:
             )
             painter_draw_order = section_frame.draw_order
         else:
-            surface_by_id = {surface.surface_id: surface for surface in surfaces}
             for item in frame.surface_items:
                 slot_index = self._surface_slot_by_id[item.surface_id]
                 points = np.asarray(
                     [(x, y, 0.0) for x, y in item.proxy.boundary_points],
                     dtype=float,
                 )
-                with _performance_stage(
-                    performance_attempt, "surface_proxy_global_frame"
-                ):
-                    cone_fill = self._prepare_cone_fill_for_surface(
-                        surface_by_id[item.surface_id], view
-                    )
                 surface_plans.append(
                     _PreparedSurface(
                         item.item_id,
                         item.surface_id,
                         slot_index,
                         points,
-                        cone_fill,
+                        component_fills[item.surface_id],
                     )
                 )
                 item_mobjects[item.item_id] = self._surface_slots[slot_index]
@@ -2614,6 +2761,7 @@ class QuadricOcclusion3D:
         self._last_input_opacity = None
         self._last_prepared_frame = None
         self._last_prepared_performance_counts = {}
+        self._surface_view_cache.clear()
         self._band.restore()
         self.root.reset_opacity()
         self._invalidate_cairo_static_image()

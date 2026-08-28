@@ -87,6 +87,7 @@ from .manim_runtime import (
     _PreparedBoundaryFragment,
     _PreparedConeFill,
     _PreparedDisplayAction,
+    _SurfaceViewCache,
     _SurfacePaintSlot,
     _apply_display_delta,
     _apply_boundary_fragment as _apply_runtime_boundary_fragment,
@@ -180,6 +181,7 @@ class _ResolvedCompositeFrameInputs:
     owners: Mapping[str, ConeSpec]
     view: ParallelView
     patch: PlaneDisplayPatchSpec
+    surface_view_signature: bytes
     geometry_signature: bytes
     draw_signature: bytes
 
@@ -538,6 +540,7 @@ class CompositeQuadricSection3D:
             None
         )
         self._last_prepared_performance_counts: dict[str, int] = {}
+        self._surface_view_cache = _SurfaceViewCache()
 
     def _resolve_plane(self, *, expected_id: str | None = None) -> SectionPlane:
         value = (
@@ -627,16 +630,23 @@ class CompositeQuadricSection3D:
         self._validate_curve_topology(curves)
         view = self._resolve_view()
         patch = self._fit_patch(plane)
+        surface_view_signature = _display_digest(
+            "composite-quadric-surface-view-v1",
+            self.surface,
+            self.children,
+            view.matrix,
+            self.context,
+            self.max_chord_error,
+            self.limits.max_surface_segments,
+        )
         geometry_signature = _display_digest(
             "composite-quadric-frame-inputs-v1",
-            self.surface,
+            surface_view_signature,
             plane,
             curves,
             lineage,
             {curve_id: surface.surface_id for curve_id, surface in owner.items()},
-            view.matrix,
             patch,
-            self.context,
             self.coefficient_tolerance,
             self.draw_section_boundary,
             self.plane_patch_margin,
@@ -658,6 +668,7 @@ class CompositeQuadricSection3D:
             dict(owner),
             view,
             patch,
+            surface_view_signature,
             geometry_signature,
             _display_digest("composite-quadric-frame-draw-v1"),
         )
@@ -695,26 +706,44 @@ class CompositeQuadricSection3D:
         plane: SectionPlane,
         patch: PlaneDisplayPatchSpec,
         view: ParallelView,
+        surface_view_signature: bytes,
         performance_attempt: _PerformanceAttempt | None = None,
     ) -> tuple[QuadricSectionCompositingFrame, ...]:
-        result = []
-        for child in self.children:
-            try:
-                with _performance_stage(
-                    performance_attempt, "surface_proxy_global_frame"
-                ):
-                    base = compute_global_quadric_frame(
-                        (),
-                        (child,),
-                        view,
-                        context=self.context,
-                        paint_policy=QuadricPaintPolicy.PHYSICAL,
-                        max_chord_error=self.max_chord_error,
-                        max_segments=self.limits.max_surface_segments,
+        try:
+            with _performance_stage(
+                performance_attempt, "surface_proxy_global_frame"
+            ):
+                hit, cached = self._surface_view_cache.lookup(
+                    "composite_surface_bases",
+                    surface_view_signature,
+                )
+                if hit:
+                    if performance_attempt is not None:
+                        performance_attempt.cache_hit("surface_view_base")
+                    bases = cached  # type: ignore[assignment]
+                else:
+                    if performance_attempt is not None:
+                        performance_attempt.cache_miss("surface_view_base")
+                    bases = tuple(
+                        compute_global_quadric_frame(
+                            (),
+                            (child,),
+                            view,
+                            context=self.context,
+                            paint_policy=QuadricPaintPolicy.PHYSICAL,
+                            max_chord_error=self.max_chord_error,
+                            max_segments=self.limits.max_surface_segments,
+                        )
+                        for child in self.children
                     )
-                with _performance_stage(
-                    performance_attempt, "section_compositing"
-                ):
+                    self._surface_view_cache.store(
+                        "composite_surface_bases",
+                        surface_view_signature,
+                        bases,
+                    )
+            result = []
+            for child, base in zip(self.children, bases, strict=True):
+                with _performance_stage(performance_attempt, "section_compositing"):
                     local = compute_quadric_section_compositing(
                         base.frame,
                         child,
@@ -726,15 +755,15 @@ class CompositeQuadricSection3D:
                         limits=self.section_compositing_limits,
                     )
                 result.append(local)
-            except (
-                GlobalQuadricOcclusionError,
-                ProjectionProxyError,
-                ProjectionSubdivisionError,
-                QuadricSectionCompositingError,
-            ) as exc:
-                raise CompositeQuadricSectionAuthoringError(
-                    f"local nappe section preparation failed: {exc}"
-                ) from exc
+        except (
+            GlobalQuadricOcclusionError,
+            ProjectionProxyError,
+            ProjectionSubdivisionError,
+            QuadricSectionCompositingError,
+        ) as exc:
+            raise CompositeQuadricSectionAuthoringError(
+                f"local nappe section preparation failed: {exc}"
+            ) from exc
         return tuple(result)
 
     @staticmethod
@@ -772,6 +801,8 @@ class CompositeQuadricSection3D:
         plane: SectionPlane,
         patch: PlaneDisplayPatchSpec,
         view: ParallelView,
+        *,
+        surface_sources: Sequence[QuadricBoundarySource] | None = None,
     ) -> tuple[QuadricBoundarySource, ...]:
         result = [
             section_curve_boundary_source(
@@ -783,26 +814,9 @@ class CompositeQuadricSection3D:
             )
             for curve in curves
         ]
-        if self.include_surface_boundaries:
-            result.extend(
-                build_surface_boundary_sources(
-                    self.children,
-                    view,
-                    self._generator_boundaries,
-                    include_cap_rims=True,
-                    include_silhouettes=True,
-                )
-            )
-        elif self._generator_boundaries:
-            result.extend(
-                build_surface_boundary_sources(
-                    self.children,
-                    view,
-                    self._generator_boundaries,
-                    include_cap_rims=False,
-                    include_silhouettes=False,
-                )
-            )
+        if surface_sources is None:
+            surface_sources = self._surface_boundary_sources(view)
+        result.extend(surface_sources)
         result.extend(plane_outline_sources(plane, patch))
         result.sort(key=lambda item: item.source_id)
         ids = tuple(item.source_id for item in result)
@@ -818,15 +832,45 @@ class CompositeQuadricSection3D:
             )
         return tuple(result)
 
+    def _surface_boundary_sources(
+        self,
+        view: ParallelView,
+    ) -> tuple[QuadricBoundarySource, ...]:
+        if self.include_surface_boundaries:
+            return build_surface_boundary_sources(
+                self.children,
+                view,
+                self._generator_boundaries,
+                include_cap_rims=True,
+                include_silhouettes=True,
+            )
+        if self._generator_boundaries:
+            return build_surface_boundary_sources(
+                self.children,
+                view,
+                self._generator_boundaries,
+                include_cap_rims=False,
+                include_silhouettes=False,
+            )
+        return ()
+
     def _boundary_crossings(
         self,
         sources: Sequence[QuadricBoundarySource],
         spans: Mapping[str, Sequence[QuadricBoundaryVisibilitySpan]],
         view: ParallelView,
+        *,
+        cached_source_ids: frozenset[str] = frozenset(),
+        cached_crossings: Sequence[object] = (),
     ) -> tuple[object, ...]:
-        result = []
+        result = list(cached_crossings)
         child_ids = {child.surface_id for child in self.children}
         for first, second in combinations(sources, 2):
+            if (
+                first.source_id in cached_source_ids
+                and second.source_id in cached_source_ids
+            ):
+                continue
             active_intervals = None
             if self.paint_policy is QuadricPaintPolicy.PHYSICAL:
                 active_intervals = {
@@ -874,6 +918,51 @@ class CompositeQuadricSection3D:
                 ) from exc
         by_id = {item.crossing_id: item for item in result}
         return tuple(by_id[key] for key in sorted(by_id))
+
+    def _prepare_static_surface_boundaries(
+        self,
+        view: ParallelView,
+        surface_view_signature: bytes,
+        performance_attempt: _PerformanceAttempt | None,
+    ) -> tuple[
+        tuple[QuadricBoundarySource, ...],
+        Mapping[str, tuple[QuadricBoundaryVisibilitySpan, ...]],
+        tuple[object, ...],
+    ]:
+        signature = _display_digest(
+            "composite-static-surface-boundaries-v1",
+            surface_view_signature,
+            self.include_surface_boundaries,
+            self._generator_boundaries,
+            self.paint_policy,
+        )
+        hit, cached = self._surface_view_cache.lookup(
+            "static_boundaries",
+            signature,
+        )
+        if hit:
+            if performance_attempt is not None:
+                performance_attempt.cache_hit("static_surface_boundaries")
+            return cached  # type: ignore[return-value]
+        if performance_attempt is not None:
+            performance_attempt.cache_miss("static_surface_boundaries")
+        sources = self._surface_boundary_sources(view)
+        with _performance_stage(performance_attempt, "boundary_visibility"):
+            spans = compute_boundary_visibility(
+                sources,
+                self.children,
+                view,
+                context=self.context,
+            )
+        with _performance_stage(performance_attempt, "curve_crossings"):
+            crossings = self._boundary_crossings(sources, spans, view)
+        prepared = (sources, dict(spans), crossings)
+        self._surface_view_cache.store(
+            "static_boundaries",
+            signature,
+            prepared,
+        )
+        return prepared
 
     def _anchors_by_surface(
         self,
@@ -940,6 +1029,39 @@ class CompositeQuadricSection3D:
                 f"cone component shading failed: {exc}"
             ) from exc
 
+    def _prepare_surface_component_fills(
+        self,
+        view: ParallelView,
+        surface_view_signature: bytes,
+        performance_attempt: _PerformanceAttempt | None,
+    ) -> dict[str, _PreparedConeFill | None]:
+        signature = _display_digest(
+            "composite-surface-component-fills-v1",
+            surface_view_signature,
+            self.style.cone_component_shading,
+        )
+        with _performance_stage(performance_attempt, "surface_component_fill"):
+            hit, cached = self._surface_view_cache.lookup(
+                "component_fills",
+                signature,
+            )
+            if hit:
+                if performance_attempt is not None:
+                    performance_attempt.cache_hit("surface_component_fill")
+                return dict(cached)  # type: ignore[arg-type]
+            if performance_attempt is not None:
+                performance_attempt.cache_miss("surface_component_fill")
+            prepared = tuple(
+                (child.surface_id, self._prepare_cone_fill(child, view))
+                for child in self.children
+            )
+            self._surface_view_cache.store(
+                "component_fills",
+                signature,
+                prepared,
+            )
+            return dict(prepared)
+
     def _prepare_numeric(
         self,
         performance_attempt: _PerformanceAttempt | None = None,
@@ -958,6 +1080,12 @@ class CompositeQuadricSection3D:
             plane,
             patch,
             view,
+            resolved_inputs.surface_view_signature,
+            performance_attempt,
+        )
+        component_fills = self._prepare_surface_component_fills(
+            view,
+            resolved_inputs.surface_view_signature,
             performance_attempt,
         )
         try:
@@ -988,10 +1116,6 @@ class CompositeQuadricSection3D:
 
         prepared_surface_values = []
         for child in self.children:
-            with _performance_stage(
-                performance_attempt, "surface_proxy_global_frame"
-            ):
-                cone_fill = self._prepare_cone_fill(child, view)
             prepared_surface_values.append(
                 _PreparedCompositeSurface(
                     child.surface_id,
@@ -1004,7 +1128,7 @@ class CompositeQuadricSection3D:
                         ],
                         dtype=float,
                     ),
-                    cone_fill,
+                    component_fills[child.surface_id],
                 )
             )
         prepared_surfaces = tuple(prepared_surface_values)
@@ -1016,27 +1140,57 @@ class CompositeQuadricSection3D:
             for role in PlaneDepthRole
         }
 
+        static_sources, static_spans, static_crossings = (
+            self._prepare_static_surface_boundaries(
+                view,
+                resolved_inputs.surface_view_signature,
+                performance_attempt,
+            )
+        )
+        static_source_ids = frozenset(item.source_id for item in static_sources)
         with _performance_stage(performance_attempt, "boundary_visibility"):
-            sources = self._boundary_sources(curves, owners, plane, patch, view)
+            sources = self._boundary_sources(
+                curves,
+                owners,
+                plane,
+                patch,
+                view,
+                surface_sources=static_sources,
+            )
             non_plane = tuple(
                 item
                 for item in sources
                 if item.source_kind is not BoundarySourceKind.PLANE_PATCH_EDGE
             )
+            dynamic_non_plane = tuple(
+                item
+                for item in non_plane
+                if item.source_id not in static_source_ids
+            )
             try:
-                spans = compute_boundary_visibility(
-                    non_plane,
-                    self.children,
-                    view,
-                    context=self.context,
-                )
+                spans = dict(static_spans)
+                if dynamic_non_plane:
+                    spans.update(
+                        compute_boundary_visibility(
+                            dynamic_non_plane,
+                            self.children,
+                            view,
+                            context=self.context,
+                        )
+                    )
             except Exception as exc:
                 raise CompositeQuadricSectionAuthoringError(
                     f"semantic boundary visibility failed: {exc}"
                 ) from exc
             spans.update(self._plane_outline_visibility(frame))
         with _performance_stage(performance_attempt, "curve_crossings"):
-            crossings = self._boundary_crossings(sources, spans, view)
+            crossings = self._boundary_crossings(
+                sources,
+                spans,
+                view,
+                cached_source_ids=static_source_ids,
+                cached_crossings=static_crossings,
+            )
         section_spans: dict[str, tuple[object, ...]] = {}
         with _performance_stage(performance_attempt, "boundary_section_spans"):
             for child in self.children:
@@ -1698,6 +1852,7 @@ class CompositeQuadricSection3D:
         self._last_input_opacity = None
         self._last_prepared_frame = None
         self._last_prepared_performance_counts = {}
+        self._surface_view_cache.clear()
         self._band.restore()
         self.root.reset_opacity()
         self._invalidate_cairo_static_image()

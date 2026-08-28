@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+- cache pure surface/view products across moving-section frames with a bounded,
+  exact-signature cache shared by the single and open-double Cairo bindings:
+  reuse surface projection/global frames, cone component-fill geometry, and
+  intrinsic surface-boundary sources, self-visibility spans, and crossings;
+  plane-dependent sections and cross-relations remain freshly certified;
 - short-circuit unchanged quadric frames before renderer-neutral geometry:
   resolve each dynamic input once, compare exact geometry/draw/opacity
   signatures, reuse the last certified numeric frame for opacity-only changes,

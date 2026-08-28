@@ -13,6 +13,9 @@ from polyhedron_visibility.parallel_solver import ParallelView
 from polyhedron_visibility.quadrics.composite_authoring import (
     CompositeQuadricSection3D,
 )
+from polyhedron_visibility.quadrics.boundary_compositing import (
+    canonical_quadric_boundary_compositing_json,
+)
 from polyhedron_visibility.quadrics.compositing import QuadricPaintPolicy
 from polyhedron_visibility.quadrics.contract import (
     ConeModel,
@@ -33,6 +36,9 @@ from polyhedron_visibility.quadrics.performance import (
 from polyhedron_visibility.quadrics.sections import (
     compute_quadric_section_boundary_curves,
     section_cap_chord_curve_ids,
+)
+from polyhedron_visibility.quadrics.section_compositing import (
+    canonical_quadric_section_compositing_json,
 )
 
 
@@ -291,6 +297,116 @@ class QuadricPerformanceTraceTests(unittest.TestCase):
                 self.assertEqual(snapshot.cache_misses["dirty_frame"], 1)
                 controller.restore()
 
+    def test_moving_plane_reuses_static_surface_view_products(self) -> None:
+        with patch.dict(os.environ, {QUADRIC_PERFORMANCE_TRACE_ENV: "1"}):
+            with tempconfig({"renderer": "cairo"}):
+                controller = _single_controller(Scene()).attach()
+                plane = controller._section_plane_input
+                assert isinstance(plane, SectionPlane)
+                surface = controller._resolve_surfaces()[0]
+                controller._surface_input = lambda: (replace(surface),)
+                controller._section_plane_input = replace(
+                    plane,
+                    point=(0.0, 0.0, 0.35),
+                )
+                with (
+                    patch(
+                        "polyhedron_visibility.quadrics.manim."
+                        "compute_global_quadric_frame",
+                        side_effect=AssertionError("surface base cache missed"),
+                    ),
+                    patch(
+                        "polyhedron_visibility.quadrics.manim."
+                        "build_surface_boundary_sources",
+                        side_effect=AssertionError("surface boundary cache missed"),
+                    ),
+                    patch.object(
+                        controller,
+                        "_prepare_cone_fill_for_surface",
+                        side_effect=AssertionError("component fill cache missed"),
+                    ),
+                ):
+                    controller.update()
+                snapshot = controller.performance_snapshot()
+                assert snapshot is not None
+                self.assertEqual(snapshot.cache_hits["surface_view_base"], 1)
+                self.assertEqual(
+                    snapshot.cache_hits["surface_component_fill"],
+                    1,
+                )
+                self.assertEqual(
+                    snapshot.cache_hits["static_surface_boundaries"],
+                    1,
+                )
+                self.assertEqual(snapshot.cache_misses["dirty_frame"], 1)
+                self.assertGreater(snapshot.counts["plane_fragment_count"], 0)
+                controller.restore()
+                self.assertEqual(controller._surface_view_cache._entries, {})
+
+    def test_view_matrix_change_invalidates_every_surface_view_product(self) -> None:
+        rotated_view = ParallelView.from_matrix(
+            (
+                (-0.4082482904638631, -0.4082482904638631, 0.8164965809277261),
+                (0.7071067811865476, -0.7071067811865476, 0.0),
+                (0.5773502691896258, 0.5773502691896258, 0.5773502691896258),
+            )
+        )
+        with patch.dict(os.environ, {QUADRIC_PERFORMANCE_TRACE_ENV: "1"}):
+            with tempconfig({"renderer": "cairo"}):
+                controller = _single_controller(Scene()).attach()
+                controller._projection_input = rotated_view
+                controller.update()
+                snapshot = controller.performance_snapshot()
+                assert snapshot is not None
+                self.assertEqual(snapshot.cache_misses["surface_view_base"], 1)
+                self.assertEqual(
+                    snapshot.cache_misses["surface_component_fill"],
+                    1,
+                )
+                self.assertEqual(
+                    snapshot.cache_misses["static_surface_boundaries"],
+                    1,
+                )
+                controller.restore()
+
+    def test_cached_and_cold_surface_products_have_identical_frames(self) -> None:
+        with tempconfig({"renderer": "cairo"}):
+            cached_controller = _single_controller(Scene()).attach()
+            cached_plane = cached_controller._section_plane_input
+            assert isinstance(cached_plane, SectionPlane)
+            changed_plane = replace(
+                cached_plane,
+                point=(0.0, 0.0, 0.35),
+            )
+            cached_controller._section_plane_input = changed_plane
+            cached_controller.update()
+
+            cold_controller = _single_controller(Scene())
+            cold_controller._section_plane_input = changed_plane
+            cold_controller.attach()
+            assert cached_controller.last_section_frame is not None
+            assert cold_controller.last_section_frame is not None
+            assert cached_controller.last_boundary_frame is not None
+            assert cold_controller.last_boundary_frame is not None
+            self.assertEqual(
+                canonical_quadric_section_compositing_json(
+                    cached_controller.last_section_frame
+                ),
+                canonical_quadric_section_compositing_json(
+                    cold_controller.last_section_frame
+                ),
+            )
+            self.assertEqual(
+                canonical_quadric_boundary_compositing_json(
+                    cached_controller.last_boundary_frame
+                ),
+                canonical_quadric_boundary_compositing_json(
+                    cold_controller.last_boundary_frame
+                ),
+            )
+            cached_controller.restore()
+            cold_controller.restore()
+
     def test_failed_full_recompute_keeps_the_last_clean_cache(self) -> None:
         state = {"x": 0.0}
 
@@ -476,6 +592,72 @@ class QuadricPerformanceTraceTests(unittest.TestCase):
                     "section_compositing",
                     faded.stage_durations_ns,
                 )
+                controller.restore()
+
+    def test_composite_moving_plane_reuses_both_nappe_surface_products(
+        self,
+    ) -> None:
+        cone = ConeSpec(
+            "perf-cached-double",
+            (0.0, 0.0, 0.0),
+            (0.0, 0.0, 1.0),
+            pi / 4.0,
+            (-2.0, 2.0),
+            radial_axis=(1.0, 0.0, 0.0),
+            model=ConeModel.OPEN_DOUBLE,
+        )
+        state = {"offset": 0.5}
+
+        def plane() -> SectionPlane:
+            return SectionPlane(
+                "perf-cached-double-plane",
+                (0.0, state["offset"], 0.0),
+                (0.0, 1.0, 0.0),
+                u_axis=(1.0, 0.0, 0.0),
+            )
+
+        with patch.dict(os.environ, {QUADRIC_PERFORMANCE_TRACE_ENV: "1"}):
+            with tempconfig({"renderer": "cairo"}):
+                controller = CompositeQuadricSection3D(
+                    Scene(),
+                    surface=cone,
+                    section_id="perf-cached-double-section",
+                    plane=plane,
+                    projection=SIDE_VIEW,
+                    limits=_limits(max_total_mobjects=20000),
+                    max_chord_error=0.01,
+                ).attach()
+                state["offset"] = 0.68
+                with (
+                    patch(
+                        "polyhedron_visibility.quadrics.composite_authoring."
+                        "compute_global_quadric_frame",
+                        side_effect=AssertionError("nappe base cache missed"),
+                    ),
+                    patch(
+                        "polyhedron_visibility.quadrics.composite_authoring."
+                        "build_surface_boundary_sources",
+                        side_effect=AssertionError("surface boundary cache missed"),
+                    ),
+                    patch.object(
+                        controller,
+                        "_prepare_cone_fill",
+                        side_effect=AssertionError("component fill cache missed"),
+                    ),
+                ):
+                    controller.update()
+                snapshot = controller.performance_snapshot()
+                assert snapshot is not None
+                self.assertEqual(snapshot.cache_hits["surface_view_base"], 1)
+                self.assertEqual(
+                    snapshot.cache_hits["surface_component_fill"],
+                    1,
+                )
+                self.assertEqual(
+                    snapshot.cache_hits["static_surface_boundaries"],
+                    1,
+                )
+                self.assertEqual(snapshot.cache_misses["dirty_frame"], 1)
                 controller.restore()
 
 
