@@ -1,11 +1,11 @@
 {
   "schema": "manim-quadric-section-release-manifest/v1",
-  "release_id": "quadric-section-v1-convex-ring-ray-cache-2026-08-29",
+  "release_id": "quadric-section-v1-partition-kernel-batching-2026-08-29",
   "contract_id": "quadric-section-v1",
-  "implementation_base_commit": "07b0a5e54484c1ef052e37b87f761ac1127e44dc",
-  "implementation_head_commit": "d54afb6af1595dcba08a4e299b78baad33e0ff3e",
-  "implementation_tree_sha": "192440dae22f047766c0e252c75e4712eaf61cc6",
-  "merged_main_commit": "7279fd02ab6cab0f648cb19e5ade32b8fbc37337",
+  "implementation_base_commit": "fd5ea2238bd7419eb0a182bc949ecfc5d2740fb0",
+  "implementation_head_commit": "2466581578f2eaf69715c49b8e493b25a44d9b21",
+  "implementation_tree_sha": "7a483de241e913e07701b0b32a2d29c5a9839393",
+  "merged_main_commit": "aff48a9e4cd4966bb6613a51089ad7b8f0989b2e",
   "components": {
     "quadric_geometry": {
       "contract_revision": "tikz-native-contract:quadric_geometry/v1",
@@ -21,7 +21,7 @@
     }
   },
   "build_artifacts": {
-    "source_date_epoch": 1787947464,
+    "source_date_epoch": 1787953435,
     "builder_python": "3.12.13",
     "build_frontend": "build 1.6.0",
     "build_backend": "setuptools 84.0.0",
@@ -30,11 +30,11 @@
     "twine_check": "twine 7.0.0 passed",
     "wheel": {
       "filename": "manim_tikz_native-0.1.0-py3-none-any.whl",
-      "sha256": "eeeac0cec5571f20fe6eed6cef21f975c19e1aba9c7323fbc00b5e9f7fdc4e0c"
+      "sha256": "66b72f19b3104d80d46243aa552160e1087432f1da2eab7ec495b089978ebbc0"
     },
     "sdist": {
       "filename": "manim_tikz_native-0.1.0.tar.gz",
-      "sha256": "3a426c222f74e4f4c12894f709f6d6bf78bd64dcf48a4fe9fee7765414fe14ae",
+      "sha256": "5810d3876d77bc5e61160d626410ad36400619fbe7d8b409460d43cfc86f043c",
       "normalization": "sorted regular files and links; USTAR; uid/gid 0; root owner/group; SOURCE_DATE_EPOCH mtime; gzip -n -9 equivalent; gzip OS byte 255"
     }
   },
