@@ -676,6 +676,15 @@ angle, lives only for that one partition call, and returns the same canonical
 vertex from the existing registry. This removes repeated edge scans without
 changing subdivision, tolerances, fragment capacity, or any certified frame.
 
+Open-shell arrangement clips many small convex candidates against the same
+analytic section and trim boundaries.  Each half-plane split evaluates all
+candidate-vertex signed distances in one NumPy batch and reuses those values
+for both incident edges.  The expression is the same two-dimensional cross
+product used by the scalar implementation: no coordinate quantization,
+cross-frame state, changed epsilon, or approximate role decision is involved.
+This specifically accelerates the measured clipping hotspot; it does not
+claim that the current open-shell path is a reusable quadtree.
+
 Several controllers which differ only in paint policy may share one
 `QuadricGeometryPrototype`. The first exact surface/plane/view signature
 computes the section partition and merged contours; later variants reuse that

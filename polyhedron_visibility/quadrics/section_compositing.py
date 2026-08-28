@@ -1130,28 +1130,33 @@ def _split_convex_polygon_by_half_plane(
         )
     threshold = coordinate_epsilon * length
 
-    def signed(vertex: _PlanePartitionVertex) -> float:
-        return _cross2(
-            direction,
-            np.asarray(vertex.plane_coordinates, dtype=float) - start,
-        )
-
-    def side(value: float) -> int:
-        if value > threshold:
-            return 1
-        if value < -threshold:
-            return -1
-        return 0
-
     inside: list[_PlanePartitionVertex] = []
     outside: list[_PlanePartitionVertex] = []
     vertices = polygon.vertices
+    # The arrangement kernel invokes this split many thousands of times.  The
+    # former edge loop converted and classified both endpoints independently,
+    # so every polygon vertex paid for the same NumPy conversion and signed
+    # distance twice.  Evaluate the complete vertex batch once, then consume
+    # adjacent cached values.  Keep the arithmetic identical to ``_cross2``;
+    # this is an execution optimization, not a geometric approximation.
+    coordinates = np.asarray(
+        tuple(vertex.plane_coordinates for vertex in vertices),
+        dtype=float,
+    )
+    offsets = coordinates - start
+    signed_values = (
+        direction[0] * offsets[:, 1] - direction[1] * offsets[:, 0]
+    )
+    side_values = tuple(
+        1 if value > threshold else -1 if value < -threshold else 0
+        for value in signed_values
+    )
     for index, current in enumerate(vertices):
         following = vertices[(index + 1) % len(vertices)]
-        current_value = signed(current)
-        following_value = signed(following)
-        current_side = side(current_value)
-        following_side = side(following_value)
+        current_value = float(signed_values[index])
+        following_value = float(signed_values[(index + 1) % len(vertices)])
+        current_side = side_values[index]
+        following_side = side_values[(index + 1) % len(vertices)]
         if current_side >= 0:
             inside.append(current)
         if current_side <= 0:

@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+- batch the signed half-plane distances for every convex partition polygon,
+  so the open-shell section arrangement no longer converts and classifies
+  both endpoints of every edge independently; the batch retains the exact
+  scalar cross-product arithmetic, tolerance decisions, canonical vertices,
+  fragment identities, and fail-closed capacity contract;
 - memoize exact convex-ring ray intersections within one section-partition
   call, so repeated thin-cell coalescing reuses the same canonical vertex
   instead of rescanning every inner/outer polygon edge; no angle is rounded,

@@ -13,11 +13,11 @@
     },
     "quadric_visibility": {
       "contract_revision": "tikz-native-contract:quadric_visibility/v2",
-      "render_revision": "source-sha256:49818c763f4fb697ee2eb33197fec631578d3763b90051e618bfb8a31d4aa211"
+      "render_revision": "source-sha256:7424cdb9698b8b85ea76541472282d9d460374d720af01c2fa01872ec73d15f3"
     },
     "quadric_manim": {
       "contract_revision": "tikz-native-contract:quadric_manim/v1",
-      "render_revision": "source-sha256:db12249619cabdaecbd7d2e8feb1bc1901b49e8b86cd801b6f2382858e8ce096"
+      "render_revision": "source-sha256:b9094ef509aa3228410878e75f8d8f5e10d672cf49aa35ba1c249cac32e88ac0"
     }
   },
   "build_artifacts": {
