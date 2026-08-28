@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+- commit quadric Cairo frames incrementally: compare prepared fixed-slot
+  display digests, leave identical active slots untouched, hide only slots
+  which became inactive, skip unchanged painter bands, and snapshot only the
+  Mobject families that the transaction can mutate; failed commits still
+  restore geometry, style, z-order, slot maps, and the last-good frame;
 - compact every fixed-capacity quadric dashed fragment into one multi-subpath
   `VMobject` instead of one Mobject per possible dash, while retaining the
   numerical dash limit, source-anchored phase, cap/join/background styling,
