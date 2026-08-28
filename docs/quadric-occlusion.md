@@ -597,6 +597,34 @@ Surface filling is necessarily a finite display approximation in Manim.  The
 geometric visibility result remains analytic within the resolved numerical
 tolerance.
 
+## Opt-in per-frame performance evidence
+
+Performance measurements are diagnostic evidence, not part of the geometry or
+painter contract. They are disabled by default, so normal controller updates do
+not read a wall clock or scan the display tree solely for metrics. Enable them
+before constructing a controller:
+
+```bash
+export MANIM_TIKZ_NATIVE_QUADRIC_PERFORMANCE_TRACE=1
+```
+
+After a successful update or a rolled-back failure,
+`controller.performance_snapshot()` returns one immutable, JSON-safe snapshot.
+It separates input resolution, surface/global-frame work, section compositing,
+contour union, boundary visibility and crossings, painter-graph construction,
+adaptive projection, dash generation, painter-band preparation, transaction
+snapshot, and Manim application. Counts include plane fragments, classified
+rays, total/active/modified Mobjects, and cache hit/miss evidence. A failed
+attempt records its exception type and whether transactional rollback ran; it
+does not replace the controller's last-good frame.
+
+The extended Cairo acceptance generator enables this trace automatically. Its
+keyframe JSON and fragment/ray CSV contain the controller measurements. Video
+subprocesses additionally publish a per-rendered-frame trace with the Cairo
+render duration. Timing values are machine-dependent and are therefore used for
+profiling and performance budgets only; they never select geometry, change
+visibility, or enter deterministic frame hashes.
+
 ## Unified semantic boundary visibility
 
 `QuadricOcclusion3D` keeps its historical pixel contract by default. Opt into

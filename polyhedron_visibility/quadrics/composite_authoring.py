@@ -11,7 +11,7 @@ transactional.
 from __future__ import annotations
 
 from contextlib import contextmanager
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from itertools import combinations
 from typing import Callable, Iterator, Mapping, Sequence
 
@@ -107,6 +107,12 @@ from .projection import (
     ProjectionSubdivisionError,
     build_cone_projection_layers,
 )
+from .performance import (
+    QuadricPerformanceSnapshot,
+    _PerformanceAttempt,
+    _performance_stage,
+    quadric_performance_tracing_enabled,
+)
 from .section_compositing import (
     PlaneDepthRole,
     QUADRIC_SECTION_COMPOSITING_LIMITS,
@@ -160,6 +166,11 @@ class _PreparedCompositeNumeric:
 class PreparedCompositeQuadricSectionFrame:
     numeric: _PreparedCompositeNumeric
     painter_band: PreparedPainterBand
+    _performance_attempt: _PerformanceAttempt | None = field(
+        default=None,
+        repr=False,
+        compare=False,
+    )
 
     @property
     def frame(self) -> CompositeQuadricSectionCompositingFrame:
@@ -495,6 +506,9 @@ class CompositeQuadricSection3D:
         self._last_frame: CompositeQuadricSectionCompositingFrame | None = None
         self._last_boundary_frame: QuadricBoundaryCompositingFrame | None = None
         self._last_lineage: tuple[CompositeSectionBranchLineage, ...] = ()
+        self._performance_enabled = quadric_performance_tracing_enabled()
+        self._performance_frame_index = 0
+        self._last_performance_snapshot: QuadricPerformanceSnapshot | None = None
 
     def _resolve_plane(self, *, expected_id: str | None = None) -> SectionPlane:
         value = (
@@ -621,21 +635,27 @@ class CompositeQuadricSection3D:
         plane: SectionPlane,
         patch: PlaneDisplayPatchSpec,
         view: ParallelView,
+        performance_attempt: _PerformanceAttempt | None = None,
     ) -> tuple[QuadricSectionCompositingFrame, ...]:
         result = []
         for child in self.children:
             try:
-                base = compute_global_quadric_frame(
-                    (),
-                    (child,),
-                    view,
-                    context=self.context,
-                    paint_policy=QuadricPaintPolicy.PHYSICAL,
-                    max_chord_error=self.max_chord_error,
-                    max_segments=self.limits.max_surface_segments,
-                )
-                result.append(
-                    compute_quadric_section_compositing(
+                with _performance_stage(
+                    performance_attempt, "surface_proxy_global_frame"
+                ):
+                    base = compute_global_quadric_frame(
+                        (),
+                        (child,),
+                        view,
+                        context=self.context,
+                        paint_policy=QuadricPaintPolicy.PHYSICAL,
+                        max_chord_error=self.max_chord_error,
+                        max_segments=self.limits.max_surface_segments,
+                    )
+                with _performance_stage(
+                    performance_attempt, "section_compositing"
+                ):
+                    local = compute_quadric_section_compositing(
                         base.frame,
                         child,
                         plane,
@@ -645,7 +665,7 @@ class CompositeQuadricSection3D:
                         max_screen_error=self.section_max_screen_error,
                         limits=self.section_compositing_limits,
                     )
-                )
+                result.append(local)
             except (
                 GlobalQuadricOcclusionError,
                 ProjectionProxyError,
@@ -860,28 +880,39 @@ class CompositeQuadricSection3D:
                 f"cone component shading failed: {exc}"
             ) from exc
 
-    def _prepare_numeric(self) -> _PreparedCompositeNumeric:
-        plane, curves, lineage, owners = self._resolve_frame_inputs()
-        self._validate_curve_topology(curves)
-        view = self._resolve_view()
-        patch = self._fit_patch(plane)
-        child_frames = self._local_frames(plane, patch, view)
+    def _prepare_numeric(
+        self,
+        performance_attempt: _PerformanceAttempt | None = None,
+    ) -> _PreparedCompositeNumeric:
+        with _performance_stage(performance_attempt, "resolve_inputs"):
+            plane, curves, lineage, owners = self._resolve_frame_inputs()
+            self._validate_curve_topology(curves)
+            view = self._resolve_view()
+            patch = self._fit_patch(plane)
+        child_frames = self._local_frames(
+            plane,
+            patch,
+            view,
+            performance_attempt,
+        )
         try:
-            frame = compute_composite_quadric_section_compositing(
-                self.surface,
-                self.section_id,
-                child_frames,
-                lineage,
-                max_plane_fragments=(
-                    self.section_compositing_limits.max_plane_fragments
-                ),
-            )
-            contours = merge_quadric_plane_fragment_contours(
-                frame.plane,
-                frame.patch,
-                child_frames[0].base_frame.visibility.projection_matrix,
-                frame.plane_fragments,
-            )
+            with _performance_stage(performance_attempt, "section_compositing"):
+                frame = compute_composite_quadric_section_compositing(
+                    self.surface,
+                    self.section_id,
+                    child_frames,
+                    lineage,
+                    max_plane_fragments=(
+                        self.section_compositing_limits.max_plane_fragments
+                    ),
+                )
+            with _performance_stage(performance_attempt, "contour_union"):
+                contours = merge_quadric_plane_fragment_contours(
+                    frame.plane,
+                    frame.patch,
+                    child_frames[0].base_frame.visibility.projection_matrix,
+                    frame.plane_fragments,
+                )
         except (
             CompositeQuadricSectionCompositingError,
             QuadricSectionCompositingError,
@@ -890,22 +921,28 @@ class CompositeQuadricSection3D:
                 f"composite open-double section preparation failed: {exc}"
             ) from exc
 
-        prepared_surfaces = tuple(
-            _PreparedCompositeSurface(
-                child.surface_id,
-                np.asarray(
-                    [
-                        (x, y, 0.0)
-                        for x, y in frame.child_frame(
-                            child.surface_id
-                        ).surface_proxy.boundary_points
-                    ],
-                    dtype=float,
-                ),
-                self._prepare_cone_fill(child, view),
+        prepared_surface_values = []
+        for child in self.children:
+            with _performance_stage(
+                performance_attempt, "surface_proxy_global_frame"
+            ):
+                cone_fill = self._prepare_cone_fill(child, view)
+            prepared_surface_values.append(
+                _PreparedCompositeSurface(
+                    child.surface_id,
+                    np.asarray(
+                        [
+                            (x, y, 0.0)
+                            for x, y in frame.child_frame(
+                                child.surface_id
+                            ).surface_proxy.boundary_points
+                        ],
+                        dtype=float,
+                    ),
+                    cone_fill,
+                )
             )
-            for child in self.children
-        )
+        prepared_surfaces = tuple(prepared_surface_values)
         plane_polygons = {
             role: tuple(
                 np.asarray([(x, y, 0.0) for x, y in contour], dtype=float)
@@ -914,68 +951,74 @@ class CompositeQuadricSection3D:
             for role in PlaneDepthRole
         }
 
-        sources = self._boundary_sources(curves, owners, plane, patch, view)
-        non_plane = tuple(
-            item
-            for item in sources
-            if item.source_kind is not BoundarySourceKind.PLANE_PATCH_EDGE
-        )
-        try:
-            spans = compute_boundary_visibility(
-                non_plane,
-                self.children,
-                view,
-                context=self.context,
+        with _performance_stage(performance_attempt, "boundary_visibility"):
+            sources = self._boundary_sources(curves, owners, plane, patch, view)
+            non_plane = tuple(
+                item
+                for item in sources
+                if item.source_kind is not BoundarySourceKind.PLANE_PATCH_EDGE
             )
-        except Exception as exc:
-            raise CompositeQuadricSectionAuthoringError(
-                f"semantic boundary visibility failed: {exc}"
-            ) from exc
-        spans.update(self._plane_outline_visibility(frame))
-        crossings = self._boundary_crossings(sources, spans, view)
-        section_spans: dict[str, tuple[object, ...]] = {}
-        for child in self.children:
-            owned = tuple(
-                source
-                for source in non_plane
-                if source.owner_surface_id == child.surface_id
-            )
-            if not owned:
-                continue
             try:
-                section_spans.update(
-                    compute_boundary_section_spans(
-                        owned,
-                        frame.child_frame(child.surface_id),
-                        view,
-                        crossings,
-                        surface=child,
-                        visibility_spans_by_source=spans,
-                        context=self.context,
-                        limits=self.boundary_section_limits,
-                    )
+                spans = compute_boundary_visibility(
+                    non_plane,
+                    self.children,
+                    view,
+                    context=self.context,
                 )
-            except QuadricBoundaryCompositingError as exc:
+            except Exception as exc:
                 raise CompositeQuadricSectionAuthoringError(
-                    f"boundary/section placement failed: {exc}"
+                    f"semantic boundary visibility failed: {exc}"
                 ) from exc
+            spans.update(self._plane_outline_visibility(frame))
+        with _performance_stage(performance_attempt, "curve_crossings"):
+            crossings = self._boundary_crossings(sources, spans, view)
+        section_spans: dict[str, tuple[object, ...]] = {}
+        with _performance_stage(performance_attempt, "boundary_section_spans"):
+            for child in self.children:
+                owned = tuple(
+                    source
+                    for source in non_plane
+                    if source.owner_surface_id == child.surface_id
+                )
+                if not owned:
+                    continue
+                try:
+                    section_spans.update(
+                        compute_boundary_section_spans(
+                            owned,
+                            frame.child_frame(child.surface_id),
+                            view,
+                            crossings,
+                            surface=child,
+                            visibility_spans_by_source=spans,
+                            context=self.context,
+                            limits=self.boundary_section_limits,
+                        )
+                    )
+                except QuadricBoundaryCompositingError as exc:
+                    raise CompositeQuadricSectionAuthoringError(
+                        f"boundary/section placement failed: {exc}"
+                    ) from exc
         anchors = self._anchors_by_surface(frame)
         surface_item_by_id = {
             item.child_surface_id: item.surface_front
             for item in frame.paint_items.surface_sheets
         }
         try:
-            boundary_frame = compute_quadric_boundary_compositing(
-                sources,
-                spans,
-                paint_policy=self.paint_policy,
-                parent_item_ids=frame.draw_order,
-                parent_relations=frame.order_relations,
-                surface_item_by_id=surface_item_by_id,
-                crossings=crossings,
-                section_anchors_by_surface=anchors,
-                section_spans_by_source=section_spans,
-            )
+            with _performance_stage(
+                performance_attempt, "boundary_painter_graph"
+            ):
+                boundary_frame = compute_quadric_boundary_compositing(
+                    sources,
+                    spans,
+                    paint_policy=self.paint_policy,
+                    parent_item_ids=frame.draw_order,
+                    parent_relations=frame.order_relations,
+                    surface_item_by_id=surface_item_by_id,
+                    crossings=crossings,
+                    section_anchors_by_surface=anchors,
+                    section_spans_by_source=section_spans,
+                )
         except QuadricBoundaryCompositingError as exc:
             raise CompositeQuadricSectionAuthoringError(
                 f"semantic boundary painter graph failed: {exc}"
@@ -997,11 +1040,30 @@ class CompositeQuadricSection3D:
             slot_source_ids=self._boundary_source_ids,
             max_chord_error=self.max_chord_error,
             limits=self.limits,
+            performance_attempt=performance_attempt,
         )
         item_mobjects.update(boundary_batch.item_mobjects)
         if set(item_mobjects) != set(boundary_frame.draw_order):
             raise CompositeQuadricSectionAuthoringError(
                 "prepared Mobjects do not cover the composite boundary draw order"
+            )
+        if performance_attempt is not None:
+            performance_attempt.set_count("surface_count", len(self.children))
+            performance_attempt.set_count("curve_count", len(curves))
+            performance_attempt.set_count("boundary_source_count", len(sources))
+            performance_attempt.set_count(
+                "boundary_fragment_count", len(boundary_frame.fragments)
+            )
+            performance_attempt.set_count(
+                "painted_boundary_fragment_count",
+                len(boundary_frame.painted_fragments),
+            )
+            performance_attempt.set_count(
+                "plane_fragment_count", len(frame.plane_fragments)
+            )
+            performance_attempt.set_count(
+                "ray_classification_count",
+                sum(item.ray_classification_count for item in child_frames),
             )
         return _PreparedCompositeNumeric(
             frame,
@@ -1020,26 +1082,73 @@ class CompositeQuadricSection3D:
     def _prepare_painter(
         self,
         numeric: _PreparedCompositeNumeric,
+        performance_attempt: _PerformanceAttempt | None = None,
     ) -> PreparedCompositeQuadricSectionFrame:
         try:
-            self._band.configure(
-                containers=self._scene_containers(),
-                sources={"composite-section:reservation": self._update_driver},
-            )
-            band = self._band.prepare(
-                draw_order=numeric.draw_order,
-                item_mobjects=numeric.item_mobjects,
-            )
+            with _performance_stage(
+                performance_attempt, "painter_band_preparation"
+            ):
+                self._band.configure(
+                    containers=self._scene_containers(),
+                    sources={"composite-section:reservation": self._update_driver},
+                )
+                band = self._band.prepare(
+                    draw_order=numeric.draw_order,
+                    item_mobjects=numeric.item_mobjects,
+                )
         except ManagedPainterBandError as exc:
             raise CompositeQuadricSectionAuthoringError(str(exc)) from exc
-        return PreparedCompositeQuadricSectionFrame(numeric, band)
+        return PreparedCompositeQuadricSectionFrame(
+            numeric,
+            band,
+            performance_attempt,
+        )
+
+    def _new_performance_attempt(self) -> _PerformanceAttempt | None:
+        if not self._performance_enabled:
+            return None
+        attempt = _PerformanceAttempt(
+            "composite_quadric_section_3d",
+            self._performance_frame_index,
+        )
+        self._performance_frame_index += 1
+        return attempt
+
+    def _finish_performance_attempt(
+        self,
+        attempt: _PerformanceAttempt | None,
+        *,
+        status: str,
+        rollback_performed: bool = False,
+        error: BaseException | None = None,
+    ) -> None:
+        if attempt is None or attempt.finished:
+            return
+        self._last_performance_snapshot = attempt.finish(
+            status=status,
+            rollback_performed=rollback_performed,
+            error=error,
+        )
+
+    def _prepare_with_performance(self) -> PreparedCompositeQuadricSectionFrame:
+        attempt = self._new_performance_attempt()
+        try:
+            numeric = self._prepare_numeric(attempt)
+            return self._prepare_painter(numeric, attempt)
+        except Exception as exc:
+            self._finish_performance_attempt(
+                attempt,
+                status="failed",
+                error=exc,
+            )
+            raise
 
     def prepare(self) -> PreparedCompositeQuadricSectionFrame:
         if not self._attached:
             raise CompositeQuadricSectionAuthoringError(
                 "composite section controller is not attached"
             )
-        return self._prepare_painter(self._prepare_numeric())
+        return self._prepare_with_performance()
 
     def _apply_surface_pair(
         self,
@@ -1112,42 +1221,67 @@ class CompositeQuadricSection3D:
                 self._last_lineage,
             ) = state
 
+        attempt = prepared._performance_attempt
+        if attempt is None or attempt.finished:
+            attempt = self._new_performance_attempt()
         opacity = self.root.opacity_multiplier
-        with _rollback_display_transaction(
-            self.root,
-            self._band,
-            capture_controller_state=capture_controller_state,
-            restore_controller_state=restore_controller_state,
-        ):
-            for slots in self._surface_sheet_slots.values():
-                for slot in slots:
-                    slot.hide()
-            for slot in self._plane_slots.values():
-                _hide_vmobject(slot)
-            for slots in self._curve_slots.values():
-                for slot in slots.fragments:
-                    slot.hide()
-            for surface in prepared.numeric.surfaces:
-                self._apply_surface_pair(surface, opacity)
-            for role, item_id in self._plane_item_ids.items():
-                slot = self._plane_slots[item_id]
-                _set_closed_subpaths(slot, prepared.numeric.plane_polygons[role])
-                slot.set_fill(
-                    color=self.style.section_plane_fill_color,
-                    opacity=self.style.section_plane_fill_opacity * opacity,
-                )
-                slot.set_stroke(opacity=0.0)
-            for source_id, fragments in prepared.numeric.boundary_fragments.items():
-                for fragment in fragments:
-                    self._apply_boundary_fragment(source_id, fragment, opacity)
-            self._band.apply(prepared.painter_band)
-            self._fragment_slot_maps = {
-                source_id: dict(values)
-                for source_id, values in prepared.numeric.fragment_slot_maps.items()
-            }
-            self._last_frame = prepared.frame
-            self._last_boundary_frame = prepared.boundary_frame
-            self._last_lineage = prepared.frame.branch_lineage
+        try:
+            with _rollback_display_transaction(
+                self.root,
+                self._band,
+                capture_controller_state=capture_controller_state,
+                restore_controller_state=restore_controller_state,
+                performance_attempt=attempt,
+            ):
+                with _performance_stage(attempt, "manim_apply"):
+                    for slots in self._surface_sheet_slots.values():
+                        for slot in slots:
+                            slot.hide()
+                    for slot in self._plane_slots.values():
+                        _hide_vmobject(slot)
+                    for slots in self._curve_slots.values():
+                        for slot in slots.fragments:
+                            slot.hide()
+                    for surface in prepared.numeric.surfaces:
+                        self._apply_surface_pair(surface, opacity)
+                    for role, item_id in self._plane_item_ids.items():
+                        slot = self._plane_slots[item_id]
+                        _set_closed_subpaths(
+                            slot, prepared.numeric.plane_polygons[role]
+                        )
+                        slot.set_fill(
+                            color=self.style.section_plane_fill_color,
+                            opacity=(
+                                self.style.section_plane_fill_opacity * opacity
+                            ),
+                        )
+                        slot.set_stroke(opacity=0.0)
+                    for source_id, fragments in (
+                        prepared.numeric.boundary_fragments.items()
+                    ):
+                        for fragment in fragments:
+                            self._apply_boundary_fragment(
+                                source_id, fragment, opacity
+                            )
+                    self._band.apply(prepared.painter_band)
+                    self._fragment_slot_maps = {
+                        source_id: dict(values)
+                        for source_id, values in (
+                            prepared.numeric.fragment_slot_maps.items()
+                        )
+                    }
+                    self._last_frame = prepared.frame
+                    self._last_boundary_frame = prepared.boundary_frame
+                    self._last_lineage = prepared.frame.branch_lineage
+        except Exception as exc:
+            self._finish_performance_attempt(
+                attempt,
+                status="failed",
+                rollback_performed=True,
+                error=exc,
+            )
+            raise
+        self._finish_performance_attempt(attempt, status="committed")
 
     @property
     def attached(self) -> bool:
@@ -1156,6 +1290,11 @@ class CompositeQuadricSection3D:
     @property
     def display_mobject(self) -> Mobject:
         return self.root
+
+    def performance_snapshot(self) -> QuadricPerformanceSnapshot | None:
+        """Return the latest opt-in frame measurement, if tracing is enabled."""
+
+        return self._last_performance_snapshot
 
     @property
     def last_frame(self) -> CompositeQuadricSectionCompositingFrame | None:
@@ -1208,7 +1347,16 @@ class CompositeQuadricSection3D:
             raise CompositeQuadricSectionAuthoringError(
                 "composite display slots are already Scene-owned"
             )
-        numeric = self._prepare_numeric()
+        attempt = self._new_performance_attempt()
+        try:
+            numeric = self._prepare_numeric(attempt)
+        except Exception as exc:
+            self._finish_performance_attempt(
+                attempt,
+                status="failed",
+                error=exc,
+            )
+            raise
         root_state = _capture_root(self.root)
         previous_band = self._band.capture_active_state()
         self.root.reset_opacity()
@@ -1216,10 +1364,10 @@ class CompositeQuadricSection3D:
             self.scene.mobjects.append(self._update_driver)
             self.scene.mobjects.append(self.root)
             self._register_fixed_frame()
-            prepared = self._prepare_painter(numeric)
+            prepared = self._prepare_painter(numeric, attempt)
             self._attached = True
             self.apply(prepared)
-        except Exception:
+        except Exception as exc:
             self._attached = False
             _restore_root(root_state)
             self._band.restore_active_state(previous_band)
@@ -1227,6 +1375,12 @@ class CompositeQuadricSection3D:
             self._remove_owned_identities()
             self._band.restore()
             self._invalidate_cairo_static_image()
+            self._finish_performance_attempt(
+                attempt,
+                status="failed",
+                rollback_performed=True,
+                error=exc,
+            )
             raise
         return self
 

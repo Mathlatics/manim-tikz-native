@@ -9,7 +9,11 @@ renderer.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
 from math import cos, pi, sin
+import os
+from pathlib import Path
+from time import perf_counter_ns
 from typing import Callable, Sequence
 
 import numpy as np
@@ -34,6 +38,10 @@ from polyhedron_visibility.quadrics.manim import (
 from polyhedron_visibility.quadrics.plane_motion import (
     AxisAnglePlaneMotion,
     track_scheduled_plane_section,
+)
+from polyhedron_visibility.quadrics.performance import (
+    QUADRIC_CAIRO_FRAME_TRACE_ENV,
+    QUADRIC_CAIRO_FRAME_TRACE_SCHEMA,
 )
 from polyhedron_visibility.quadrics.sections import (
     compute_quadric_section_boundary_curves,
@@ -547,14 +555,83 @@ class _AcceptanceVideoScene(Scene):
             progress=0.0,
             with_labels=True,
         )
-        self.wait(0.30)
-        self.play(
-            state.tracker.animate.set_value(state.end_value),
-            run_time=self.run_time,
-            rate_func=self.rate_function,
-        )
-        self.wait(0.30)
-        state.restore()
+        trace_path = os.environ.get(QUADRIC_CAIRO_FRAME_TRACE_ENV, "").strip()
+        frames: list[dict[str, object]] = []
+        original_render = self.renderer.render
+
+        if trace_path:
+            def traced_render(
+                scene: Scene,
+                scene_time: float,
+                moving_mobjects=None,
+            ) -> None:
+                started_ns = perf_counter_ns()
+                original_render(scene, scene_time, moving_mobjects)
+                elapsed_ns = max(0, perf_counter_ns() - started_ns)
+                controllers = []
+                for label, controller in state.controllers:
+                    snapshot = controller.performance_snapshot()
+                    controllers.append(
+                        {
+                            "controllerId": label,
+                            "performance": (
+                                None if snapshot is None else snapshot.to_dict()
+                            ),
+                        }
+                    )
+                frames.append(
+                    {
+                        "frameIndex": len(frames),
+                        "sceneTime": float(scene_time),
+                        "cairoRenderNanoseconds": elapsed_ns,
+                        "cairoRenderSeconds": elapsed_ns / 1_000_000_000.0,
+                        "controllers": controllers,
+                    }
+                )
+
+            self.renderer.render = traced_render  # type: ignore[method-assign]
+
+        try:
+            self.wait(0.30)
+            self.play(
+                state.tracker.animate.set_value(state.end_value),
+                run_time=self.run_time,
+                rate_func=self.rate_function,
+            )
+            self.wait(0.30)
+        finally:
+            if trace_path:
+                self.renderer.render = original_render  # type: ignore[method-assign]
+            try:
+                if trace_path:
+                    destination = Path(trace_path)
+                    destination.parent.mkdir(parents=True, exist_ok=True)
+                    payload = {
+                        "schema": QUADRIC_CAIRO_FRAME_TRACE_SCHEMA,
+                        "scenarioId": self.scenario_id,
+                        "frameCount": len(frames),
+                        "cairoRenderNanoseconds": sum(
+                            int(item["cairoRenderNanoseconds"])
+                            for item in frames
+                        ),
+                        "frames": frames,
+                    }
+                    temporary = destination.with_suffix(
+                        destination.suffix + ".tmp"
+                    )
+                    temporary.write_text(
+                        json.dumps(
+                            payload,
+                            ensure_ascii=False,
+                            indent=2,
+                            sort_keys=True,
+                        )
+                        + "\n",
+                        encoding="utf-8",
+                    )
+                    temporary.replace(destination)
+            finally:
+                state.restore()
 
 
 class ClosedOpenComparisonAcceptance(_AcceptanceVideoScene):

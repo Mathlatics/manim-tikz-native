@@ -13,7 +13,7 @@ then mutate existing slots in one rollback-safe transaction.
 from __future__ import annotations
 
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from math import sqrt
 from typing import Callable, Iterator, Mapping, Sequence
 
@@ -84,6 +84,12 @@ from .projection import (
     ProjectionSubdivisionError,
     build_cone_projection_layers,
     build_opaque_projection_proxy,
+)
+from .performance import (
+    QuadricPerformanceSnapshot,
+    _PerformanceAttempt,
+    _performance_stage,
+    quadric_performance_tracing_enabled,
 )
 from .plane_patch import PlanePatchFitError, fit_plane_display_patch
 from .section_compositing import (
@@ -391,6 +397,11 @@ class _PreparedNumericFrame:
 class PreparedQuadricManimFrame:
     numeric: _PreparedNumericFrame
     painter_band: PreparedPainterBand
+    _performance_attempt: _PerformanceAttempt | None = field(
+        default=None,
+        repr=False,
+        compare=False,
+    )
 
     @property
     def frame(self) -> QuadricCompositingFrame:
@@ -599,6 +610,9 @@ class QuadricOcclusion3D:
         self._last_global_frame: GlobalQuadricFrame | None = None
         self._last_section_frame: QuadricSectionCompositingFrame | None = None
         self._last_boundary_frame: QuadricBoundaryCompositingFrame | None = None
+        self._performance_enabled = quadric_performance_tracing_enabled()
+        self._performance_frame_index = 0
+        self._last_performance_snapshot: QuadricPerformanceSnapshot | None = None
 
         initial_surfaces = self._resolve_surfaces()
         initial_curves = self._resolve_curves()
@@ -1131,58 +1145,62 @@ class QuadricOcclusion3D:
         curves: tuple[AnalyticCurve3D, ...],
         view: ParallelView,
         curve_opacities: Mapping[str, float],
+        performance_attempt: _PerformanceAttempt | None,
     ) -> _PreparedNumericFrame:
         global_frame: GlobalQuadricFrame | None = None
-        if self.surface_order_mode == "automatic":
-            try:
-                global_frame = compute_global_quadric_frame(
-                    (),
-                    surfaces,
-                    view,
-                    context=self.context,
-                    paint_policy=QuadricPaintPolicy.PHYSICAL,
-                    max_chord_error=self.max_chord_error,
-                    max_segments=self.limits.max_surface_segments,
-                    additional_surface_constraints=self.surface_constraints,
-                )
-            except (
-                ProjectionSubdivisionError,
-                ProjectionProxyError,
-                GlobalQuadricOcclusionError,
-            ) as exc:
-                raise QuadricManimError(
-                    f"unified surface preparation failed: {exc}"
-                ) from exc
-            frame = global_frame.frame
-        else:
-            try:
-                proxies = tuple(
-                    build_opaque_projection_proxy(
-                        surface,
+        with _performance_stage(
+            performance_attempt, "surface_proxy_global_frame"
+        ):
+            if self.surface_order_mode == "automatic":
+                try:
+                    global_frame = compute_global_quadric_frame(
+                        (),
+                        surfaces,
                         view,
-                        patch_id=f"{surface.surface_id}:opaque-projection",
+                        context=self.context,
+                        paint_policy=QuadricPaintPolicy.PHYSICAL,
                         max_chord_error=self.max_chord_error,
                         max_segments=self.limits.max_surface_segments,
+                        additional_surface_constraints=self.surface_constraints,
                     )
-                    for surface in surfaces
-                )
-                visibility = compute_quadric_visibility(
-                    (), surfaces, view, context=self.context
-                )
-                frame = compute_quadric_compositing(
-                    visibility,
-                    proxies,
-                    paint_policy=QuadricPaintPolicy.PHYSICAL,
-                    surface_constraints=self.surface_constraints,
-                )
-            except (
-                ProjectionSubdivisionError,
-                ProjectionProxyError,
-                QuadricCompositingError,
-            ) as exc:
-                raise QuadricManimError(
-                    f"unified explicit surface preparation failed: {exc}"
-                ) from exc
+                except (
+                    ProjectionSubdivisionError,
+                    ProjectionProxyError,
+                    GlobalQuadricOcclusionError,
+                ) as exc:
+                    raise QuadricManimError(
+                        f"unified surface preparation failed: {exc}"
+                    ) from exc
+                frame = global_frame.frame
+            else:
+                try:
+                    proxies = tuple(
+                        build_opaque_projection_proxy(
+                            surface,
+                            view,
+                            patch_id=f"{surface.surface_id}:opaque-projection",
+                            max_chord_error=self.max_chord_error,
+                            max_segments=self.limits.max_surface_segments,
+                        )
+                        for surface in surfaces
+                    )
+                    visibility = compute_quadric_visibility(
+                        (), surfaces, view, context=self.context
+                    )
+                    frame = compute_quadric_compositing(
+                        visibility,
+                        proxies,
+                        paint_policy=QuadricPaintPolicy.PHYSICAL,
+                        surface_constraints=self.surface_constraints,
+                    )
+                except (
+                    ProjectionSubdivisionError,
+                    ProjectionProxyError,
+                    QuadricCompositingError,
+                ) as exc:
+                    raise QuadricManimError(
+                        f"unified explicit surface preparation failed: {exc}"
+                    ) from exc
 
         surface_plans: list[_PreparedSurface] = []
         item_mobjects: dict[str, Mobject] = {}
@@ -1192,20 +1210,25 @@ class QuadricOcclusion3D:
         patch: PlaneDisplayPatchSpec | None = None
         if self._section_enabled:
             surface = surfaces[0]
-            plane = self._resolve_section_plane()
-            patch = self._resolve_section_patch(surface, plane)
+            with _performance_stage(performance_attempt, "resolve_inputs"):
+                plane = self._resolve_section_plane()
+                patch = self._resolve_section_patch(surface, plane)
             try:
-                section_frame = compute_quadric_section_compositing(
-                    frame,
-                    surface,
-                    plane,
-                    patch,
-                    view,
-                    context=self.context,
-                    max_screen_error=self.section_max_screen_error,
-                    limits=self.section_compositing_limits,
-                )
-                contours = quadric_plane_fragment_contours(section_frame)
+                with _performance_stage(
+                    performance_attempt, "section_compositing"
+                ):
+                    section_frame = compute_quadric_section_compositing(
+                        frame,
+                        surface,
+                        plane,
+                        patch,
+                        view,
+                        context=self.context,
+                        max_screen_error=self.section_max_screen_error,
+                        limits=self.section_compositing_limits,
+                    )
+                with _performance_stage(performance_attempt, "contour_union"):
+                    contours = quadric_plane_fragment_contours(section_frame)
             except QuadricSectionCompositingError as exc:
                 raise QuadricManimError(
                     f"unified section preparation failed: {exc}"
@@ -1224,13 +1247,16 @@ class QuadricOcclusion3D:
                 )
                 for role in PlaneDepthRole
             }
-            section_layers = _PreparedSectionLayers(
-                section_frame,
-                surface_points,
-                plane_polygons,
-                {role: () for role in PlaneDepthRole},
-                self._prepare_cone_fill_for_surface(surface, view),
-            )
+            with _performance_stage(
+                performance_attempt, "surface_proxy_global_frame"
+            ):
+                section_layers = _PreparedSectionLayers(
+                    section_frame,
+                    surface_points,
+                    plane_polygons,
+                    {role: () for role in PlaneDepthRole},
+                    self._prepare_cone_fill_for_surface(surface, view),
+                )
             item_mobjects.update(
                 {
                     item_id: self._section_slots[index]
@@ -1252,15 +1278,19 @@ class QuadricOcclusion3D:
                     [(x, y, 0.0) for x, y in item.proxy.boundary_points],
                     dtype=float,
                 )
+                with _performance_stage(
+                    performance_attempt, "surface_proxy_global_frame"
+                ):
+                    cone_fill = self._prepare_cone_fill_for_surface(
+                        surface_by_id[item.surface_id], view
+                    )
                 surface_plans.append(
                     _PreparedSurface(
                         item.item_id,
                         item.surface_id,
                         slot_index,
                         points,
-                        self._prepare_cone_fill_for_surface(
-                            surface_by_id[item.surface_id], view
-                        ),
+                        cone_fill,
                     )
                 )
                 item_mobjects[item.item_id] = self._surface_slots[slot_index]
@@ -1270,58 +1300,64 @@ class QuadricOcclusion3D:
                 item.surface_id: item.item_id for item in frame.surface_items
             }
 
-        sources = self._boundary_sources_for_frame(
-            surfaces, curves, view, plane, patch
-        )
-        non_plane = tuple(
-            item
-            for item in sources
-            if item.source_kind is not BoundarySourceKind.PLANE_PATCH_EDGE
-        )
+        with _performance_stage(performance_attempt, "boundary_visibility"):
+            sources = self._boundary_sources_for_frame(
+                surfaces, curves, view, plane, patch
+            )
+            non_plane = tuple(
+                item
+                for item in sources
+                if item.source_kind is not BoundarySourceKind.PLANE_PATCH_EDGE
+            )
+            try:
+                spans = compute_boundary_visibility(
+                    non_plane,
+                    surfaces,
+                    view,
+                    context=self.context,
+                )
+            except Exception as exc:
+                raise QuadricManimError(
+                    f"semantic boundary visibility failed: {exc}"
+                ) from exc
+            if section_frame is not None:
+                spans.update(self._plane_outline_visibility(section_frame))
+        with _performance_stage(performance_attempt, "curve_crossings"):
+            crossings = self._boundary_crossings(sources, spans, view)
+        with _performance_stage(performance_attempt, "boundary_section_spans"):
+            section_spans = (
+                {}
+                if section_frame is None
+                else compute_boundary_section_spans(
+                    sources,
+                    section_frame,
+                    view,
+                    crossings,
+                    surface=surfaces[0],
+                    visibility_spans_by_source=spans,
+                    context=self.context,
+                    limits=self.boundary_section_limits,
+                )
+            )
         try:
-            spans = compute_boundary_visibility(
-                non_plane,
-                surfaces,
-                view,
-                context=self.context,
-            )
-        except Exception as exc:
-            raise QuadricManimError(
-                f"semantic boundary visibility failed: {exc}"
-            ) from exc
-        if section_frame is not None:
-            spans.update(self._plane_outline_visibility(section_frame))
-        crossings = self._boundary_crossings(sources, spans, view)
-        section_spans = (
-            {}
-            if section_frame is None
-            else compute_boundary_section_spans(
-                sources,
-                section_frame,
-                view,
-                crossings,
-                surface=surfaces[0],
-                visibility_spans_by_source=spans,
-                context=self.context,
-                limits=self.boundary_section_limits,
-            )
-        )
-        try:
-            boundary_frame = compute_quadric_boundary_compositing(
-                sources,
-                spans,
-                paint_policy=self.paint_policy,
-                parent_item_ids=parent_ids,
-                parent_relations=parent_relations,
-                surface_item_by_id=surface_item_by_id,
-                crossings=crossings,
-                section_anchors=(
-                    None
-                    if section_frame is None
-                    else self._section_anchors(section_frame)
-                ),
-                section_spans_by_source=section_spans,
-            )
+            with _performance_stage(
+                performance_attempt, "boundary_painter_graph"
+            ):
+                boundary_frame = compute_quadric_boundary_compositing(
+                    sources,
+                    spans,
+                    paint_policy=self.paint_policy,
+                    parent_item_ids=parent_ids,
+                    parent_relations=parent_relations,
+                    surface_item_by_id=surface_item_by_id,
+                    crossings=crossings,
+                    section_anchors=(
+                        None
+                        if section_frame is None
+                        else self._section_anchors(section_frame)
+                    ),
+                    section_spans_by_source=section_spans,
+                )
         except QuadricBoundaryCompositingError as exc:
             raise QuadricManimError(
                 f"semantic boundary painter graph failed: {exc}"
@@ -1337,6 +1373,7 @@ class QuadricOcclusion3D:
             slot_source_ids=self._slot_source_ids,
             max_chord_error=self.max_chord_error,
             limits=self.limits,
+            performance_attempt=performance_attempt,
         )
         item_mobjects.update(boundary_batch.item_mobjects)
         boundary_opacities = {
@@ -1346,6 +1383,25 @@ class QuadricOcclusion3D:
         if set(item_mobjects) != set(boundary_frame.draw_order):
             raise QuadricManimError(
                 "unified Manim items do not cover boundary draw_order"
+            )
+        if performance_attempt is not None:
+            performance_attempt.set_count("surface_count", len(surfaces))
+            performance_attempt.set_count("curve_count", len(curves))
+            performance_attempt.set_count("boundary_source_count", len(sources))
+            performance_attempt.set_count(
+                "boundary_fragment_count", len(boundary_frame.fragments)
+            )
+            performance_attempt.set_count(
+                "painted_boundary_fragment_count",
+                len(boundary_frame.painted_fragments),
+            )
+            performance_attempt.set_count(
+                "plane_fragment_count",
+                0 if section_frame is None else len(section_frame.plane_fragments),
+            )
+            performance_attempt.set_count(
+                "ray_classification_count",
+                0 if section_frame is None else section_frame.ray_classification_count,
             )
         return _PreparedNumericFrame(
             frame=frame,
@@ -1362,37 +1418,45 @@ class QuadricOcclusion3D:
             boundary_opacities=boundary_opacities,
         )
 
-    def _prepare_numeric(self) -> _PreparedNumericFrame:
-        surfaces = self._resolve_surfaces()
-        curves = self._resolve_curves()
-        self._validate_fixed_topology(surfaces, curves)
-        active_curve_ids = tuple(item.curve_id for item in curves)
-        curve_opacities = self._resolve_curve_opacities(active_curve_ids)
-        view = self._resolve_view()
-        compositor_style = self.style.compositor_style(
-            max_projected_length=self.limits.max_projected_length
-        )
+    def _prepare_numeric(
+        self,
+        performance_attempt: _PerformanceAttempt | None = None,
+    ) -> _PreparedNumericFrame:
+        with _performance_stage(performance_attempt, "resolve_inputs"):
+            surfaces = self._resolve_surfaces()
+            curves = self._resolve_curves()
+            self._validate_fixed_topology(surfaces, curves)
+            active_curve_ids = tuple(item.curve_id for item in curves)
+            curve_opacities = self._resolve_curve_opacities(active_curve_ids)
+            view = self._resolve_view()
+            compositor_style = self.style.compositor_style(
+                max_projected_length=self.limits.max_projected_length
+            )
         if self.boundary_visibility_mode == "unified":
             return self._prepare_unified_numeric(
                 surfaces,
                 curves,
                 view,
                 curve_opacities,
+                performance_attempt,
             )
         global_frame: GlobalQuadricFrame | None = None
         if self.surface_order_mode == "automatic":
             try:
-                global_frame = compute_global_quadric_frame(
-                    curves,
-                    surfaces,
-                    view,
-                    context=self.context,
-                    paint_policy=self.paint_policy,
-                    curve_styles=(compositor_style if curves else None),
-                    max_chord_error=self.max_chord_error,
-                    max_segments=self.limits.max_surface_segments,
-                    additional_surface_constraints=self.surface_constraints,
-                )
+                with _performance_stage(
+                    performance_attempt, "surface_proxy_global_frame"
+                ):
+                    global_frame = compute_global_quadric_frame(
+                        curves,
+                        surfaces,
+                        view,
+                        context=self.context,
+                        paint_policy=self.paint_policy,
+                        curve_styles=(compositor_style if curves else None),
+                        max_chord_error=self.max_chord_error,
+                        max_segments=self.limits.max_surface_segments,
+                        additional_surface_constraints=self.surface_constraints,
+                    )
             except ProjectionSubdivisionError as exc:
                 raise QuadricManimCapacityError(str(exc)) from exc
             except ProjectionProxyError as exc:
@@ -1404,26 +1468,30 @@ class QuadricOcclusion3D:
             frame = global_frame.frame
         else:
             try:
-                proxies = tuple(
-                    build_opaque_projection_proxy(
-                        surface,
-                        view,
-                        patch_id=f"{surface.surface_id}:opaque-projection",
-                        max_chord_error=self.max_chord_error,
-                        max_segments=self.limits.max_surface_segments,
+                with _performance_stage(
+                    performance_attempt, "surface_proxy_global_frame"
+                ):
+                    proxies = tuple(
+                        build_opaque_projection_proxy(
+                            surface,
+                            view,
+                            patch_id=f"{surface.surface_id}:opaque-projection",
+                            max_chord_error=self.max_chord_error,
+                            max_segments=self.limits.max_surface_segments,
+                        )
+                        for surface in surfaces
                     )
-                    for surface in surfaces
-                )
             except ProjectionSubdivisionError as exc:
                 raise QuadricManimCapacityError(str(exc)) from exc
             except ProjectionProxyError as exc:
                 raise QuadricManimError(str(exc)) from exc
-            visibility = compute_quadric_visibility(
-                curves,
-                surfaces,
-                view,
-                context=self.context,
-            )
+            with _performance_stage(performance_attempt, "boundary_visibility"):
+                visibility = compute_quadric_visibility(
+                    curves,
+                    surfaces,
+                    view,
+                    context=self.context,
+                )
             active_intervals = None
             if self.paint_policy is QuadricPaintPolicy.PHYSICAL:
                 active_intervals = {
@@ -1435,24 +1503,28 @@ class QuadricOcclusion3D:
                     for record in visibility.records
                 }
             try:
-                crossings = compute_projected_curve_crossings(
-                    curves,
-                    view,
-                    active_intervals=active_intervals,
-                )
+                with _performance_stage(performance_attempt, "curve_crossings"):
+                    crossings = compute_projected_curve_crossings(
+                        curves,
+                        view,
+                        active_intervals=active_intervals,
+                    )
             except ProjectedCurveIntersectionError as exc:
                 raise QuadricManimError(
                     f"projected curve ordering cannot be certified: {exc}"
                 ) from exc
             try:
-                frame = compute_quadric_compositing(
-                    visibility,
-                    proxies,
-                    paint_policy=self.paint_policy,
-                    curve_styles=(compositor_style if curves else None),
-                    surface_constraints=self.surface_constraints,
-                    curve_crossings=crossings,
-                )
+                with _performance_stage(
+                    performance_attempt, "boundary_painter_graph"
+                ):
+                    frame = compute_quadric_compositing(
+                        visibility,
+                        proxies,
+                        paint_policy=self.paint_policy,
+                        curve_styles=(compositor_style if curves else None),
+                        surface_constraints=self.surface_constraints,
+                        curve_crossings=crossings,
+                    )
             except QuadricCompositingError as exc:
                 raise QuadricManimError(
                     f"explicit quadric painter graph failed: {exc}"
@@ -1464,19 +1536,23 @@ class QuadricOcclusion3D:
         painter_draw_order = frame.draw_order
         if self._section_enabled:
             surface = surfaces[0]
-            plane = self._resolve_section_plane()
-            patch = self._resolve_section_patch(surface, plane)
+            with _performance_stage(performance_attempt, "resolve_inputs"):
+                plane = self._resolve_section_plane()
+                patch = self._resolve_section_patch(surface, plane)
             try:
-                section_frame = compute_quadric_section_compositing(
-                    frame,
-                    surface,
-                    plane,
-                    patch,
-                    view,
-                    context=self.context,
-                    max_screen_error=self.section_max_screen_error,
-                    limits=self.section_compositing_limits,
-                )
+                with _performance_stage(
+                    performance_attempt, "section_compositing"
+                ):
+                    section_frame = compute_quadric_section_compositing(
+                        frame,
+                        surface,
+                        plane,
+                        patch,
+                        view,
+                        context=self.context,
+                        max_screen_error=self.section_max_screen_error,
+                        limits=self.section_compositing_limits,
+                    )
             except QuadricSectionCompositingError as exc:
                 raise QuadricManimError(
                     f"quadric section compositing failed: {exc}"
@@ -1489,7 +1565,8 @@ class QuadricOcclusion3D:
                 dtype=float,
             )
             try:
-                plane_contours = quadric_plane_fragment_contours(section_frame)
+                with _performance_stage(performance_attempt, "contour_union"):
+                    plane_contours = quadric_plane_fragment_contours(section_frame)
             except QuadricSectionCompositingError as exc:
                 raise QuadricManimError(
                     f"quadric section contour compositing failed: {exc}"
@@ -1514,12 +1591,16 @@ class QuadricOcclusion3D:
                 )
                 for role in PlaneDepthRole
             }
+            with _performance_stage(
+                performance_attempt, "surface_proxy_global_frame"
+            ):
+                cone_fill = self._prepare_cone_fill_for_surface(surface, view)
             section_layers = _PreparedSectionLayers(
                 section_frame,
                 surface_points,
                 plane_polygons,
                 plane_outline_paths,
-                self._prepare_cone_fill_for_surface(surface, view),
+                cone_fill,
             )
             if len(self._section_slots) != len(section_frame.paint_items.ordered):
                 raise QuadricManimCapacityError(
@@ -1542,15 +1623,19 @@ class QuadricOcclusion3D:
                     [(x, y, 0.0) for x, y in item.proxy.boundary_points],
                     dtype=float,
                 )
+                with _performance_stage(
+                    performance_attempt, "surface_proxy_global_frame"
+                ):
+                    cone_fill = self._prepare_cone_fill_for_surface(
+                        surface_by_id[item.surface_id], view
+                    )
                 surface_plans.append(
                     _PreparedSurface(
                         item.item_id,
                         item.surface_id,
                         slot_index,
                         points,
-                        self._prepare_cone_fill_for_surface(
-                            surface_by_id[item.surface_id], view
-                        ),
+                        cone_fill,
                     )
                 )
                 item_mobjects[item.item_id] = self._surface_slots[slot_index]
@@ -1576,14 +1661,17 @@ class QuadricOcclusion3D:
             curve = curve_map[curve_id]
             values: list[_PreparedCurveFragment] = []
             for fragment in fragments:
-                points = _adaptive_project_curve(
-                    curve,
-                    view,
-                    fragment.interval.start,
-                    fragment.interval.end,
-                    max_chord_error=self.max_chord_error,
-                    max_segments=self.limits.max_segments_per_fragment,
-                )
+                with _performance_stage(
+                    performance_attempt, "adaptive_projection"
+                ):
+                    points = _adaptive_project_curve(
+                        curve,
+                        view,
+                        fragment.interval.start,
+                        fragment.interval.end,
+                        max_chord_error=self.max_chord_error,
+                        max_segments=self.limits.max_segments_per_fragment,
+                    )
                 _cumulative, length = _polyline_lengths(points)
                 allowance = max(1.0e-12, self.limits.max_projected_length * 1.0e-9)
                 if length > self.limits.max_projected_length + allowance:
@@ -1592,16 +1680,24 @@ class QuadricOcclusion3D:
                         "exceeds max_projected_length "
                         f"{self.limits.max_projected_length:.9g}"
                     )
-                dashes = (
-                    _dash_polyline(
-                        points,
-                        dash_length=self.style.dash_length,
-                        dash_gap=self.style.dash_gap,
-                        capacity=self.limits.max_dashes_per_fragment,
+                with _performance_stage(performance_attempt, "dash_generation"):
+                    dashes = (
+                        _dash_polyline(
+                            points,
+                            dash_length=self.style.dash_length,
+                            dash_gap=self.style.dash_gap,
+                            capacity=self.limits.max_dashes_per_fragment,
+                        )
+                        if fragment.render_intent == "dashed"
+                        else ()
                     )
-                    if fragment.render_intent == "dashed"
-                    else ()
-                )
+                if performance_attempt is not None:
+                    performance_attempt.increment_count(
+                        "prepared_curve_fragment_count"
+                    )
+                    performance_attempt.increment_count(
+                        "prepared_dash_count", len(dashes)
+                    )
                 slot_index = assignment[fragment.item_id]
                 prepared = _PreparedCurveFragment(
                     fragment,
@@ -1620,6 +1716,24 @@ class QuadricOcclusion3D:
             raise QuadricManimError(
                 "prepared Manim items do not cover compositor draw_order"
             )
+        if performance_attempt is not None:
+            performance_attempt.set_count("surface_count", len(surfaces))
+            performance_attempt.set_count("curve_count", len(curves))
+            performance_attempt.set_count(
+                "curve_fragment_count", len(frame.curve_fragments)
+            )
+            performance_attempt.set_count(
+                "plane_fragment_count",
+                0
+                if section_layers is None
+                else len(section_layers.frame.plane_fragments),
+            )
+            performance_attempt.set_count(
+                "ray_classification_count",
+                0
+                if section_layers is None
+                else section_layers.frame.ray_classification_count,
+            )
         return _PreparedNumericFrame(
             frame,
             global_frame,
@@ -1633,28 +1747,75 @@ class QuadricOcclusion3D:
         )
 
     def _prepare_painter(
-        self, numeric: _PreparedNumericFrame
+        self,
+        numeric: _PreparedNumericFrame,
+        performance_attempt: _PerformanceAttempt | None = None,
     ) -> PreparedQuadricManimFrame:
         try:
-            self._band.configure(
-                containers=self._scene_containers(),
-                sources={"quadric:reservation": self._update_driver},
-            )
-            painter = self._band.prepare(
-                draw_order=numeric.painter_draw_order,
-                item_mobjects=numeric.item_mobjects,
-            )
+            with _performance_stage(
+                performance_attempt, "painter_band_preparation"
+            ):
+                self._band.configure(
+                    containers=self._scene_containers(),
+                    sources={"quadric:reservation": self._update_driver},
+                )
+                painter = self._band.prepare(
+                    draw_order=numeric.painter_draw_order,
+                    item_mobjects=numeric.item_mobjects,
+                )
         except ManagedPainterBandError as exc:
             raise QuadricManimError(str(exc)) from exc
-        return PreparedQuadricManimFrame(numeric, painter)
+        return PreparedQuadricManimFrame(
+            numeric,
+            painter,
+            performance_attempt,
+        )
+
+    def _new_performance_attempt(self) -> _PerformanceAttempt | None:
+        if not self._performance_enabled:
+            return None
+        attempt = _PerformanceAttempt(
+            "quadric_occlusion_3d",
+            self._performance_frame_index,
+        )
+        self._performance_frame_index += 1
+        return attempt
+
+    def _finish_performance_attempt(
+        self,
+        attempt: _PerformanceAttempt | None,
+        *,
+        status: str,
+        rollback_performed: bool = False,
+        error: BaseException | None = None,
+    ) -> None:
+        if attempt is None or attempt.finished:
+            return
+        self._last_performance_snapshot = attempt.finish(
+            status=status,
+            rollback_performed=rollback_performed,
+            error=error,
+        )
+
+    def _prepare_with_performance(self) -> PreparedQuadricManimFrame:
+        attempt = self._new_performance_attempt()
+        try:
+            numeric = self._prepare_numeric(attempt)
+            return self._prepare_painter(numeric, attempt)
+        except Exception as exc:
+            self._finish_performance_attempt(
+                attempt,
+                status="failed",
+                error=exc,
+            )
+            raise
 
     def prepare(self) -> PreparedQuadricManimFrame:
         """Prepare and validate one frame without changing any display slot."""
 
         if not self._attached:
             raise QuadricManimError("quadric occlusion controller is not attached")
-        numeric = self._prepare_numeric()
-        return self._prepare_painter(numeric)
+        return self._prepare_with_performance()
 
     def _apply_surface(
         self,
@@ -1857,58 +2018,79 @@ class QuadricOcclusion3D:
                 self._last_boundary_frame,
             ) = state
 
+        attempt = prepared._performance_attempt
+        if attempt is None or attempt.finished:
+            attempt = self._new_performance_attempt()
         opacity = self.root.opacity_multiplier
-        with _rollback_display_transaction(
-            self.root,
-            self._band,
-            capture_controller_state=capture_controller_state,
-            restore_controller_state=restore_controller_state,
-        ):
-            for slot in self._surface_slots:
-                _hide_vmobject(slot)
-            for slot in self._section_slots:
-                _hide_vmobject(slot)
-            for slots in self._curve_slots.values():
-                for slot in slots.fragments:
-                    slot.hide()
-            unified = prepared.numeric.boundary_frame is not None
-            for surface in prepared.numeric.surfaces:
-                self._apply_surface(
-                    surface, opacity, draw_stroke=not unified
-                )
-            if prepared.numeric.section_layers is not None:
-                self._apply_section_layers(
-                    prepared.numeric.section_layers,
-                    opacity,
-                    draw_legacy_strokes=not unified,
-                )
-            for curve_id, fragments in prepared.numeric.fragments.items():
-                for fragment in fragments:
-                    self._apply_curve_fragment(
-                        curve_id,
-                        fragment,
-                        opacity * prepared.numeric.curve_opacities[curve_id],
-                    )
-            if prepared.numeric.boundary_fragments is not None:
-                boundary_opacities = prepared.numeric.boundary_opacities or {}
-                for source_id, fragments in (
-                    prepared.numeric.boundary_fragments.items()
-                ):
-                    for fragment in fragments:
-                        self._apply_boundary_fragment(
-                            source_id,
-                            fragment,
-                            opacity * boundary_opacities.get(source_id, 1.0),
+        try:
+            with _rollback_display_transaction(
+                self.root,
+                self._band,
+                capture_controller_state=capture_controller_state,
+                restore_controller_state=restore_controller_state,
+                performance_attempt=attempt,
+            ):
+                with _performance_stage(attempt, "manim_apply"):
+                    for slot in self._surface_slots:
+                        _hide_vmobject(slot)
+                    for slot in self._section_slots:
+                        _hide_vmobject(slot)
+                    for slots in self._curve_slots.values():
+                        for slot in slots.fragments:
+                            slot.hide()
+                    unified = prepared.numeric.boundary_frame is not None
+                    for surface in prepared.numeric.surfaces:
+                        self._apply_surface(
+                            surface, opacity, draw_stroke=not unified
                         )
-            self._band.apply(prepared.painter_band)
-            self._fragment_slot_maps = {
-                curve_id: dict(values)
-                for curve_id, values in prepared.numeric.fragment_slot_maps.items()
-            }
-            self._last_frame = prepared.frame
-            self._last_global_frame = prepared.global_frame
-            self._last_section_frame = prepared.section_frame
-            self._last_boundary_frame = prepared.boundary_frame
+                    if prepared.numeric.section_layers is not None:
+                        self._apply_section_layers(
+                            prepared.numeric.section_layers,
+                            opacity,
+                            draw_legacy_strokes=not unified,
+                        )
+                    for curve_id, fragments in prepared.numeric.fragments.items():
+                        for fragment in fragments:
+                            self._apply_curve_fragment(
+                                curve_id,
+                                fragment,
+                                opacity
+                                * prepared.numeric.curve_opacities[curve_id],
+                            )
+                    if prepared.numeric.boundary_fragments is not None:
+                        boundary_opacities = (
+                            prepared.numeric.boundary_opacities or {}
+                        )
+                        for source_id, fragments in (
+                            prepared.numeric.boundary_fragments.items()
+                        ):
+                            for fragment in fragments:
+                                self._apply_boundary_fragment(
+                                    source_id,
+                                    fragment,
+                                    opacity
+                                    * boundary_opacities.get(source_id, 1.0),
+                                )
+                    self._band.apply(prepared.painter_band)
+                    self._fragment_slot_maps = {
+                        curve_id: dict(values)
+                        for curve_id, values in (
+                            prepared.numeric.fragment_slot_maps.items()
+                        )
+                    }
+                    self._last_frame = prepared.frame
+                    self._last_global_frame = prepared.global_frame
+                    self._last_section_frame = prepared.section_frame
+                    self._last_boundary_frame = prepared.boundary_frame
+        except Exception as exc:
+            self._finish_performance_attempt(
+                attempt,
+                status="failed",
+                rollback_performed=True,
+                error=exc,
+            )
+            raise
+        self._finish_performance_attempt(attempt, status="committed")
 
     @property
     def attached(self) -> bool:
@@ -1917,6 +2099,11 @@ class QuadricOcclusion3D:
     @property
     def display_mobject(self) -> Mobject:
         return self.root
+
+    def performance_snapshot(self) -> QuadricPerformanceSnapshot | None:
+        """Return the latest opt-in frame measurement, if tracing is enabled."""
+
+        return self._last_performance_snapshot
 
     @property
     def last_frame(self) -> QuadricCompositingFrame | None:
@@ -1975,7 +2162,16 @@ class QuadricOcclusion3D:
         # Numerical, geometric, and capacity failures happen before ownership
         # changes.  Painter-band validation temporarily needs the persistent
         # non-rendering driver in the Scene and is fully rolled back on error.
-        numeric = self._prepare_numeric()
+        attempt = self._new_performance_attempt()
+        try:
+            numeric = self._prepare_numeric(attempt)
+        except Exception as exc:
+            self._finish_performance_attempt(
+                attempt,
+                status="failed",
+                error=exc,
+            )
+            raise
         root_state = _capture_root(self.root)
         previous_band_state = self._band.capture_active_state()
         previous_maps = {
@@ -1996,10 +2192,10 @@ class QuadricOcclusion3D:
             self.scene.mobjects.append(self._update_driver)
             self.scene.mobjects.append(self.root)
             self._register_fixed_frame()
-            prepared = self._prepare_painter(numeric)
+            prepared = self._prepare_painter(numeric, attempt)
             self._attached = True
             self.apply(prepared)
-        except Exception:
+        except Exception as exc:
             self._attached = False
             _restore_root(root_state)
             self._band.restore_active_state(previous_band_state)
@@ -2012,6 +2208,12 @@ class QuadricOcclusion3D:
             self._remove_owned_identities()
             self._band.restore()
             self._invalidate_cairo_static_image()
+            self._finish_performance_attempt(
+                attempt,
+                status="failed",
+                rollback_performed=True,
+                error=exc,
+            )
             raise
         return self
 
