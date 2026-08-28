@@ -1014,6 +1014,62 @@ class PlanePartitionInfrastructureTests(unittest.TestCase):
             self.assertEqual(vertex.world_point[2], 0.0)
             self.assertEqual(vertex.world_point[:2], vertex.screen_point)
 
+    def test_half_plane_split_preserves_one_sided_and_coincident_boundaries(
+        self,
+    ) -> None:
+        cases = (
+            (
+                "fully-inside",
+                (2.0, -2.0),
+                (2.0, 2.0),
+                True,
+                False,
+            ),
+            (
+                "fully-outside",
+                (-2.0, -2.0),
+                (-2.0, 2.0),
+                False,
+                True,
+            ),
+            (
+                "coincident-left-edge",
+                (-1.0, -2.0),
+                (-1.0, 2.0),
+                False,
+                True,
+            ),
+        )
+        for name, start, end, expects_inside, expects_outside in cases:
+            with self.subTest(case=name):
+                registry = _partition_registry()
+                subject = _partition_polygon(
+                    registry,
+                    "subject",
+                    ((-1.0, -1.0), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0)),
+                )
+                inside, outside = _split_convex_polygon_by_half_plane(
+                    subject,
+                    registry.register(start),
+                    registry.register(end),
+                    registry,
+                    _PARTITION_EPSILON,
+                    boundary_token=name,
+                )
+                self.assertEqual(inside is not None, expects_inside)
+                self.assertEqual(outside is not None, expects_outside)
+                child = inside if inside is not None else outside
+                assert child is not None
+                self.assertEqual(
+                    tuple(item.stable_token for item in child.vertices),
+                    tuple(item.stable_token for item in subject.vertices),
+                )
+                self.assertAlmostEqual(
+                    _partition_polygon_area(child),
+                    _partition_polygon_area(subject),
+                    places=9,
+                )
+
     def test_triangle_proxy_partition_covers_all_geometric_cases(self) -> None:
         cases = (
             (
