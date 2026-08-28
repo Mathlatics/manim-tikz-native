@@ -6,6 +6,7 @@ import json
 from math import cos, pi, sin, sqrt
 from typing import Sequence
 import unittest
+from unittest.mock import patch
 
 import numpy as np
 
@@ -47,6 +48,7 @@ from polyhedron_visibility.quadrics.section_compositing import (
     _SECTION_BOUNDARY_CHORD_DIVISOR,
     _section_curve_tangent_envelope_error_bound,
     _make_plane_partition_polygon,
+    _nested_convex_ring_ray_vertex,
     _nested_convex_ring_polygons,
     _PlanePartitionPolygon,
     _partition_triangle_by_convex_proxy,
@@ -1266,13 +1268,26 @@ class PlanePartitionInfrastructureTests(unittest.TestCase):
             registry,
             _PARTITION_EPSILON,
         )
-        stable = _nested_convex_ring_polygons(
-            inner,
-            outer,
-            registry,
-            _PARTITION_EPSILON,
-            minimum_screen_triangle_altitude=1.0e-6,
+        with patch(
+            "polyhedron_visibility.quadrics.section_compositing."
+            "_nested_convex_ring_ray_vertex",
+            wraps=_nested_convex_ring_ray_vertex,
+        ) as ray_evaluation:
+            stable = _nested_convex_ring_polygons(
+                inner,
+                outer,
+                registry,
+                _PARTITION_EPSILON,
+                minimum_screen_triangle_altitude=1.0e-6,
+            )
+        evaluated_keys = tuple(
+            (
+                call.args[0].stable_token,
+                float(call.args[3]).hex(),
+            )
+            for call in ray_evaluation.call_args_list
         )
+        self.assertEqual(len(evaluated_keys), len(set(evaluated_keys)))
         repeated = _nested_convex_ring_polygons(
             inner,
             outer,

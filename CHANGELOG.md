@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+- memoize exact convex-ring ray intersections within one section-partition
+  call, so repeated thin-cell coalescing reuses the same canonical vertex
+  instead of rescanning every inner/outer polygon edge; no angle is rounded,
+  the cache is local to one call, and canonical section/boundary frames remain
+  byte-identical;
 - add `QuadricGeometryPrototype` for coordinated paint-policy variants: exact
   local surface/plane/view inputs share one bounded section partition and
   contour result, exact diagrammatic boundary/section placement spans are

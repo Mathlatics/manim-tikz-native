@@ -1250,6 +1250,52 @@ def _partition_convex_polygon_by_convex_boundary(
     return inside, tuple(outside)
 
 
+def _nested_convex_ring_ray_vertex(
+    polygon: _PlanePartitionPolygon,
+    registry: _CanonicalVertexRegistry,
+    center: np.ndarray,
+    angle: float,
+    coordinate_epsilon: float,
+    angular_epsilon: float,
+) -> _PlanePartitionVertex:
+    direction = np.asarray((cos(angle), sin(angle)), dtype=float)
+    candidates: list[tuple[float, str, np.ndarray]] = []
+    for start_vertex, end_vertex in zip(
+        polygon.vertices,
+        (*polygon.vertices[1:], polygon.vertices[0]),
+    ):
+        start = np.asarray(start_vertex.plane_coordinates, dtype=float)
+        end = np.asarray(end_vertex.plane_coordinates, dtype=float)
+        edge = end - start
+        denominator = _cross2(direction, edge)
+        if abs(denominator) <= angular_epsilon:
+            continue
+        delta = start - center
+        distance = _cross2(delta, edge) / denominator
+        edge_parameter = _cross2(delta, direction) / denominator
+        if (
+            distance >= -coordinate_epsilon
+            and -coordinate_epsilon <= edge_parameter <= 1.0 + coordinate_epsilon
+        ):
+            point = center + max(0.0, distance) * direction
+            candidates.append(
+                (
+                    max(0.0, distance),
+                    f"{start_vertex.stable_token}->{end_vertex.stable_token}",
+                    point,
+                )
+            )
+    if not candidates:
+        raise QuadricSectionCompositingError(
+            "nested convex ring ray did not meet its polygon boundary"
+        )
+    _distance, _token, point = min(
+        candidates,
+        key=lambda item: (item[0], item[1]),
+    )
+    return registry.register(point)
+
+
 def _nested_convex_ring_polygons(
     inner: _PlanePartitionPolygon,
     outer: _PlanePartitionPolygon,
@@ -1317,46 +1363,37 @@ def _nested_convex_ring_polygons(
     if len(angle_groups) < 3:
         return ()
 
+    ray_vertex_cache: dict[
+        tuple[str, str],
+        _PlanePartitionVertex,
+    ] = {}
+
     def ray_vertex(
         polygon: _PlanePartitionPolygon,
         angle: float,
     ) -> _PlanePartitionVertex:
-        direction = np.asarray((cos(angle), sin(angle)), dtype=float)
-        candidates: list[tuple[float, str, np.ndarray]] = []
-        for start_vertex, end_vertex in zip(
-            polygon.vertices,
-            (*polygon.vertices[1:], polygon.vertices[0]),
-        ):
-            start = np.asarray(start_vertex.plane_coordinates, dtype=float)
-            end = np.asarray(end_vertex.plane_coordinates, dtype=float)
-            edge = end - start
-            denominator = _cross2(direction, edge)
-            if abs(denominator) <= angular_epsilon:
-                continue
-            delta = start - center
-            distance = _cross2(delta, edge) / denominator
-            edge_parameter = _cross2(delta, direction) / denominator
-            if (
-                distance >= -coordinate_epsilon
-                and -coordinate_epsilon <= edge_parameter <= 1.0 + coordinate_epsilon
-            ):
-                point = center + max(0.0, distance) * direction
-                candidates.append(
-                    (
-                        max(0.0, distance),
-                        f"{start_vertex.stable_token}->{end_vertex.stable_token}",
-                        point,
-                    )
-                )
-        if not candidates:
+        if polygon is inner:
+            polygon_key = "inner"
+        elif polygon is outer:
+            polygon_key = "outer"
+        else:  # pragma: no cover - the closure owns both call sites
             raise QuadricSectionCompositingError(
-                "nested convex ring ray did not meet its polygon boundary"
+                "nested convex ring ray used an unknown polygon"
             )
-        _distance, _token, point = min(
-            candidates,
-            key=lambda item: (item[0], item[1]),
+        cache_key = (polygon_key, float(angle).hex())
+        cached = ray_vertex_cache.get(cache_key)
+        if cached is not None:
+            return cached
+        result = _nested_convex_ring_ray_vertex(
+            polygon,
+            registry,
+            center,
+            angle,
+            coordinate_epsilon,
+            angular_epsilon,
         )
-        return registry.register(point)
+        ray_vertex_cache[cache_key] = result
+        return result
 
     def boundary_vertices() -> tuple[
         tuple[_PlanePartitionVertex, ...],
