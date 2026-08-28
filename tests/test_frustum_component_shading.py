@@ -232,11 +232,12 @@ class FrustumComponentShadingTests(unittest.TestCase):
             controller.restore()
 
     def test_component_projection_failure_preserves_last_good_frame(self) -> None:
+        state = {"view": OBLIQUE_VIEW}
         controller = QuadricOcclusion3D(
             Scene(),
             surfaces=(_frustum("rollback-frustum"),),
             curves=(),
-            projection=OBLIQUE_VIEW,
+            projection=lambda _scene: state["view"],
             boundary_visibility_mode="unified",
             include_surface_boundaries=True,
             max_chord_error=0.01,
@@ -250,6 +251,9 @@ class FrustumComponentShadingTests(unittest.TestCase):
                 "polyhedron_visibility.quadrics.manim.build_cone_projection_layers",
                 side_effect=ProjectionProxyError("forced terminal-mask failure"),
             ):
+                # Change a real geometry input so the dirty-frame shortcut
+                # enters the transactional full-recompute path under test.
+                state["view"] = _near_side_view(0.2)
                 with self.assertRaisesRegex(
                     QuadricManimError,
                     "forced terminal-mask failure",

@@ -13,7 +13,7 @@ then mutate existing slots in one rollback-safe transaction.
 from __future__ import annotations
 
 from contextlib import contextmanager
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from functools import partial
 from math import sqrt
 from typing import Callable, Iterator, Mapping, Sequence
@@ -122,6 +122,7 @@ from .manim_runtime import (
     QuadricManimError,
     _CommittedDisplaySlot,
     _CurveSlots,
+    _DirtyFrameKind,
     _ManagedQuadricDisplayGroup,
     _PreparedBoundaryFragment,
     _PreparedConeFill,
@@ -135,6 +136,7 @@ from .manim_runtime import (
     _boundary_style_registry,
     _capture_root,
     _coerce_view,
+    _classify_dirty_frame,
     _curve_slots_family_capacity,
     _dash_polyline,
     _dash_polyline_anchored,
@@ -402,6 +404,18 @@ class _PreparedNumericFrame:
 
 
 @dataclass(frozen=True, slots=True)
+class _ResolvedQuadricFrameInputs:
+    surfaces: tuple[QuadricSurfaceSpec, ...]
+    curves: tuple[AnalyticCurve3D, ...]
+    curve_opacities: Mapping[str, float]
+    view: ParallelView
+    section_plane: SectionPlane | None
+    section_patch: PlaneDisplayPatchSpec | None
+    geometry_signature: bytes
+    draw_signature: bytes
+
+
+@dataclass(frozen=True, slots=True)
 class PreparedQuadricManimFrame:
     numeric: _PreparedNumericFrame
     painter_band: PreparedPainterBand
@@ -625,6 +639,11 @@ class QuadricOcclusion3D:
         self._last_painter_band_signature: tuple[
             tuple[str, int, float], ...
         ] = ()
+        self._last_input_geometry_signature: bytes | None = None
+        self._last_input_draw_signature: bytes | None = None
+        self._last_input_opacity: float | None = None
+        self._last_prepared_frame: PreparedQuadricManimFrame | None = None
+        self._last_prepared_performance_counts: dict[str, int] = {}
 
         initial_surfaces = self._resolve_surfaces()
         initial_curves = self._resolve_curves()
@@ -924,6 +943,58 @@ class QuadricOcclusion3D:
             )
         return {curve_id: result[curve_id] for curve_id in active}
 
+    def _resolve_frame_inputs(self) -> _ResolvedQuadricFrameInputs:
+        surfaces = self._resolve_surfaces()
+        curves = self._resolve_curves()
+        self._validate_fixed_topology(surfaces, curves)
+        active_curve_ids = tuple(item.curve_id for item in curves)
+        curve_opacities = self._resolve_curve_opacities(active_curve_ids)
+        view = self._resolve_view()
+        if self._section_enabled:
+            section_plane = self._resolve_section_plane()
+            section_patch = self._resolve_section_patch(
+                surfaces[0], section_plane
+            )
+        else:
+            section_plane = None
+            section_patch = None
+        geometry_signature = _display_digest(
+            "quadric-frame-inputs-v1",
+            surfaces,
+            curves,
+            view.matrix,
+            section_plane,
+            section_patch,
+            self.context,
+            self.surface_constraints,
+            self.surface_order_mode,
+            self.paint_policy,
+            self.style,
+            self.boundary_visibility_mode,
+            self.include_surface_boundaries,
+            self._generator_boundaries,
+            self.boundary_styles,
+            self.max_chord_error,
+            self.section_max_screen_error,
+            self.section_compositing_limits,
+            self.boundary_section_limits,
+            self.limits,
+        )
+        draw_signature = _display_digest(
+            "quadric-frame-draw-v1",
+            curve_opacities,
+        )
+        return _ResolvedQuadricFrameInputs(
+            surfaces,
+            curves,
+            curve_opacities,
+            view,
+            section_plane,
+            section_patch,
+            geometry_signature,
+            draw_signature,
+        )
+
     def _validate_fixed_topology(
         self,
         surfaces: Sequence[QuadricSurfaceSpec],
@@ -1154,6 +1225,8 @@ class QuadricOcclusion3D:
         curves: tuple[AnalyticCurve3D, ...],
         view: ParallelView,
         curve_opacities: Mapping[str, float],
+        section_plane: SectionPlane | None,
+        section_patch: PlaneDisplayPatchSpec | None,
         performance_attempt: _PerformanceAttempt | None,
     ) -> _PreparedNumericFrame:
         global_frame: GlobalQuadricFrame | None = None
@@ -1219,9 +1292,12 @@ class QuadricOcclusion3D:
         patch: PlaneDisplayPatchSpec | None = None
         if self._section_enabled:
             surface = surfaces[0]
-            with _performance_stage(performance_attempt, "resolve_inputs"):
-                plane = self._resolve_section_plane()
-                patch = self._resolve_section_patch(surface, plane)
+            plane = section_plane
+            patch = section_patch
+            if plane is None or patch is None:
+                raise QuadricManimError(
+                    "section inputs were not resolved before unified preparation"
+                )
             try:
                 with _performance_stage(
                     performance_attempt, "section_compositing"
@@ -1430,23 +1506,27 @@ class QuadricOcclusion3D:
     def _prepare_numeric(
         self,
         performance_attempt: _PerformanceAttempt | None = None,
+        resolved_inputs: _ResolvedQuadricFrameInputs | None = None,
     ) -> _PreparedNumericFrame:
-        with _performance_stage(performance_attempt, "resolve_inputs"):
-            surfaces = self._resolve_surfaces()
-            curves = self._resolve_curves()
-            self._validate_fixed_topology(surfaces, curves)
-            active_curve_ids = tuple(item.curve_id for item in curves)
-            curve_opacities = self._resolve_curve_opacities(active_curve_ids)
-            view = self._resolve_view()
-            compositor_style = self.style.compositor_style(
-                max_projected_length=self.limits.max_projected_length
-            )
+        if resolved_inputs is None:
+            with _performance_stage(performance_attempt, "resolve_inputs"):
+                resolved_inputs = self._resolve_frame_inputs()
+        surfaces = resolved_inputs.surfaces
+        curves = resolved_inputs.curves
+        active_curve_ids = tuple(item.curve_id for item in curves)
+        curve_opacities = resolved_inputs.curve_opacities
+        view = resolved_inputs.view
+        compositor_style = self.style.compositor_style(
+            max_projected_length=self.limits.max_projected_length
+        )
         if self.boundary_visibility_mode == "unified":
             return self._prepare_unified_numeric(
                 surfaces,
                 curves,
                 view,
                 curve_opacities,
+                resolved_inputs.section_plane,
+                resolved_inputs.section_patch,
                 performance_attempt,
             )
         global_frame: GlobalQuadricFrame | None = None
@@ -1545,9 +1625,12 @@ class QuadricOcclusion3D:
         painter_draw_order = frame.draw_order
         if self._section_enabled:
             surface = surfaces[0]
-            with _performance_stage(performance_attempt, "resolve_inputs"):
-                plane = self._resolve_section_plane()
-                patch = self._resolve_section_patch(surface, plane)
+            plane = resolved_inputs.section_plane
+            patch = resolved_inputs.section_patch
+            if plane is None or patch is None:
+                raise QuadricManimError(
+                    "section inputs were not resolved before preparation"
+                )
             try:
                 with _performance_stage(
                     performance_attempt, "section_compositing"
@@ -1818,6 +1901,72 @@ class QuadricOcclusion3D:
                 error=exc,
             )
             raise
+
+    def _seed_cached_performance_counts(
+        self,
+        attempt: _PerformanceAttempt | None,
+    ) -> None:
+        if attempt is None:
+            return
+        for name, value in self._last_prepared_performance_counts.items():
+            attempt.set_count(name, value)
+
+    def _validate_cached_painter_band(
+        self,
+        attempt: _PerformanceAttempt | None,
+    ) -> None:
+        try:
+            with _performance_stage(attempt, "painter_band_preparation"):
+                self._band.configure(
+                    containers=self._scene_containers(),
+                    sources={"quadric:reservation": self._update_driver},
+                )
+        except ManagedPainterBandError as exc:
+            raise QuadricManimError(str(exc)) from exc
+
+    def _reuse_prepared_draw_inputs(
+        self,
+        resolved: _ResolvedQuadricFrameInputs,
+        attempt: _PerformanceAttempt | None,
+    ) -> PreparedQuadricManimFrame:
+        cached = self._last_prepared_frame
+        if cached is None:
+            raise QuadricManimError("no committed frame is available for reuse")
+        numeric = cached.numeric
+        boundary_opacities = numeric.boundary_opacities
+        if boundary_opacities is not None:
+            boundary_opacities = {
+                source_id: resolved.curve_opacities.get(source_id, 1.0)
+                for source_id in boundary_opacities
+            }
+        reused_numeric = replace(
+            numeric,
+            curve_opacities=dict(resolved.curve_opacities),
+            boundary_opacities=boundary_opacities,
+        )
+        return PreparedQuadricManimFrame(
+            reused_numeric,
+            cached.painter_band,
+            attempt,
+        )
+
+    def _commit_input_cache(
+        self,
+        resolved: _ResolvedQuadricFrameInputs,
+        opacity: float,
+        prepared: PreparedQuadricManimFrame,
+    ) -> None:
+        self._last_input_geometry_signature = resolved.geometry_signature
+        self._last_input_draw_signature = resolved.draw_signature
+        self._last_input_opacity = opacity
+        if prepared._performance_attempt is not None:
+            self._last_prepared_performance_counts = dict(
+                prepared._performance_attempt.counts
+            )
+        self._last_prepared_frame = replace(
+            prepared,
+            _performance_attempt=None,
+        )
 
     def prepare(self) -> PreparedQuadricManimFrame:
         """Prepare and validate one frame without changing any display slot."""
@@ -2285,7 +2434,9 @@ class QuadricOcclusion3D:
         # non-rendering driver in the Scene and is fully rolled back on error.
         attempt = self._new_performance_attempt()
         try:
-            numeric = self._prepare_numeric(attempt)
+            with _performance_stage(attempt, "resolve_inputs"):
+                resolved = self._resolve_frame_inputs()
+            numeric = self._prepare_numeric(attempt, resolved)
         except Exception as exc:
             self._finish_performance_attempt(
                 attempt,
@@ -2316,6 +2467,11 @@ class QuadricOcclusion3D:
             prepared = self._prepare_painter(numeric, attempt)
             self._attached = True
             self.apply(prepared)
+            self._commit_input_cache(
+                resolved,
+                self.root.opacity_multiplier,
+                prepared,
+            )
         except Exception as exc:
             self._attached = False
             _restore_root(root_state)
@@ -2342,8 +2498,79 @@ class QuadricOcclusion3D:
         del dt
         if not self._attached:
             raise QuadricManimError("quadric occlusion controller is not attached")
-        prepared = self.prepare()
-        self.apply(prepared)
+        attempt = self._new_performance_attempt()
+        try:
+            with _performance_stage(attempt, "resolve_inputs"):
+                resolved = self._resolve_frame_inputs()
+            opacity = self.root.opacity_multiplier
+            dirty_kind = _classify_dirty_frame(
+                self._last_input_geometry_signature,
+                self._last_input_draw_signature,
+                self._last_input_opacity,
+                geometry=resolved.geometry_signature,
+                draw=resolved.draw_signature,
+                opacity=opacity,
+            )
+            if self._last_prepared_frame is None:
+                dirty_kind = _DirtyFrameKind.FULL
+            if dirty_kind is _DirtyFrameKind.FULL:
+                if attempt is not None:
+                    attempt.cache_miss("dirty_frame")
+                    attempt.cache_miss("prepared_numeric")
+                numeric = self._prepare_numeric(attempt, resolved)
+                prepared = self._prepare_painter(numeric, attempt)
+            else:
+                self._seed_cached_performance_counts(attempt)
+                self._validate_cached_painter_band(attempt)
+                if attempt is not None:
+                    attempt.cache_hit("dirty_frame")
+                    attempt.cache_hit("prepared_numeric")
+                cached = self._last_prepared_frame
+                assert cached is not None
+                if dirty_kind is _DirtyFrameKind.DRAW_ONLY:
+                    prepared = self._reuse_prepared_draw_inputs(
+                        resolved,
+                        attempt,
+                    )
+                else:
+                    prepared = replace(
+                        cached,
+                        _performance_attempt=attempt,
+                    )
+                if dirty_kind is _DirtyFrameKind.CLEAN:
+                    with _performance_stage(attempt, "dirty_frame_shortcut"):
+                        if attempt is not None:
+                            active = len(self._display_slot_state)
+                            attempt.set_count("display_active_slot_count", active)
+                            attempt.set_count("display_changed_slot_count", 0)
+                            attempt.set_count(
+                                "display_unchanged_slot_count", active
+                            )
+                            attempt.set_count("display_hidden_slot_count", 0)
+                            attempt.set_count("painter_band_changed_count", 0)
+                            attempt.set_count("mutation_target_root_count", 0)
+                            attempt.set_count(
+                                "transaction_snapshot_mobject_count", 0
+                            )
+                            attempt.set_count("modified_mobject_count", 0)
+                    self._finish_performance_attempt(
+                        attempt,
+                        status="committed",
+                    )
+                    return self
+            self.apply(prepared)
+            self._commit_input_cache(
+                resolved,
+                opacity,
+                prepared,
+            )
+        except Exception as exc:
+            self._finish_performance_attempt(
+                attempt,
+                status="failed",
+                error=exc,
+            )
+            raise
         return self
 
     def _scene_containers(self) -> tuple[list[object], ...]:
@@ -2382,6 +2609,11 @@ class QuadricOcclusion3D:
         self._last_boundary_frame = None
         self._display_slot_state = {}
         self._last_painter_band_signature = ()
+        self._last_input_geometry_signature = None
+        self._last_input_draw_signature = None
+        self._last_input_opacity = None
+        self._last_prepared_frame = None
+        self._last_prepared_performance_counts = {}
         self._band.restore()
         self.root.reset_opacity()
         self._invalidate_cairo_static_image()

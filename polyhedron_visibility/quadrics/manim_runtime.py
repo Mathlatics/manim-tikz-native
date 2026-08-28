@@ -317,6 +317,31 @@ class _PreparedDisplayDelta:
     mutation_roots: tuple[Mobject, ...]
 
 
+class _DirtyFrameKind(str, Enum):
+    FULL = "full"
+    DRAW_ONLY = "draw_only"
+    OPACITY_ONLY = "opacity_only"
+    CLEAN = "clean"
+
+
+def _classify_dirty_frame(
+    previous_geometry: bytes | None,
+    previous_draw: bytes | None,
+    previous_opacity: float | None,
+    *,
+    geometry: bytes,
+    draw: bytes,
+    opacity: float,
+) -> _DirtyFrameKind:
+    if previous_geometry is None or previous_geometry != geometry:
+        return _DirtyFrameKind.FULL
+    if previous_draw is None or previous_draw != draw:
+        return _DirtyFrameKind.DRAW_ONLY
+    if previous_opacity is None or previous_opacity != opacity:
+        return _DirtyFrameKind.OPACITY_ONLY
+    return _DirtyFrameKind.CLEAN
+
+
 def _copy_value(value: object) -> object:
     return value.copy() if isinstance(value, np.ndarray) else value
 

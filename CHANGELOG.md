@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+- short-circuit unchanged quadric frames before renderer-neutral geometry:
+  resolve each dynamic input once, compare exact geometry/draw/opacity
+  signatures, reuse the last certified numeric frame for opacity-only changes,
+  and skip the display transaction entirely for a clean frame; cached paths
+  still revalidate the reserved painter band, while geometry changes and
+  failed updates retain the existing full recomputation and rollback rules;
 - commit quadric Cairo frames incrementally: compare prepared fixed-slot
   display digests, leave identical active slots untouched, hide only slots
   which became inactive, skip unchanged painter bands, and snapshot only the

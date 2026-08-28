@@ -82,6 +82,7 @@ from .manim import (
 from .manim_runtime import (
     _CommittedDisplaySlot,
     _CurveSlots,
+    _DirtyFrameKind,
     _ManagedQuadricDisplayGroup,
     _PreparedBoundaryFragment,
     _PreparedConeFill,
@@ -92,6 +93,7 @@ from .manim_runtime import (
     _apply_surface_sheet_pair,
     _boundary_style_registry,
     _capture_root,
+    _classify_dirty_frame,
     _coerce_view,
     _curve_slots_family_capacity,
     _display_digest,
@@ -168,6 +170,18 @@ class _PreparedCompositeNumeric:
     fragment_slot_maps: Mapping[str, Mapping[str, int]]
     item_mobjects: Mapping[str, Mobject]
     draw_order: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class _ResolvedCompositeFrameInputs:
+    plane: SectionPlane
+    curves: tuple[AnalyticCurve3D, ...]
+    lineage: tuple[CompositeSectionBranchLineage, ...]
+    owners: Mapping[str, ConeSpec]
+    view: ParallelView
+    patch: PlaneDisplayPatchSpec
+    geometry_signature: bytes
+    draw_signature: bytes
 
 
 @dataclass(frozen=True, slots=True)
@@ -517,6 +531,13 @@ class CompositeQuadricSection3D:
         self._last_painter_band_signature: tuple[
             tuple[str, int, float], ...
         ] = ()
+        self._last_input_geometry_signature: bytes | None = None
+        self._last_input_draw_signature: bytes | None = None
+        self._last_input_opacity: float | None = None
+        self._last_prepared_frame: PreparedCompositeQuadricSectionFrame | None = (
+            None
+        )
+        self._last_prepared_performance_counts: dict[str, int] = {}
 
     def _resolve_plane(self, *, expected_id: str | None = None) -> SectionPlane:
         value = (
@@ -590,12 +611,7 @@ class CompositeQuadricSection3D:
 
     def _resolve_frame_inputs(
         self,
-    ) -> tuple[
-        SectionPlane,
-        tuple[AnalyticCurve3D, ...],
-        tuple[CompositeSectionBranchLineage, ...],
-        dict[str, ConeSpec],
-    ]:
+    ) -> _ResolvedCompositeFrameInputs:
         if self._pending_plane is not None:
             plane = self._pending_plane
             curves = self._pending_curves or ()
@@ -605,10 +621,46 @@ class CompositeQuadricSection3D:
             self._pending_curves = None
             self._pending_lineage = None
             self._pending_owner = None
-            return plane, curves, lineage, owner
-        plane = self._resolve_plane(expected_id=self._plane_id)
-        curves, lineage, owner = self._section_curves(plane)
-        return plane, curves, lineage, owner
+        else:
+            plane = self._resolve_plane(expected_id=self._plane_id)
+            curves, lineage, owner = self._section_curves(plane)
+        self._validate_curve_topology(curves)
+        view = self._resolve_view()
+        patch = self._fit_patch(plane)
+        geometry_signature = _display_digest(
+            "composite-quadric-frame-inputs-v1",
+            self.surface,
+            plane,
+            curves,
+            lineage,
+            {curve_id: surface.surface_id for curve_id, surface in owner.items()},
+            view.matrix,
+            patch,
+            self.context,
+            self.coefficient_tolerance,
+            self.draw_section_boundary,
+            self.plane_patch_margin,
+            self.paint_policy,
+            self.style,
+            self.boundary_styles,
+            self.limits,
+            self.max_chord_error,
+            self.section_max_screen_error,
+            self.section_compositing_limits,
+            self.boundary_section_limits,
+            self.include_surface_boundaries,
+            self._generator_boundaries,
+        )
+        return _ResolvedCompositeFrameInputs(
+            plane,
+            curves,
+            lineage,
+            dict(owner),
+            view,
+            patch,
+            geometry_signature,
+            _display_digest("composite-quadric-frame-draw-v1"),
+        )
 
     def _validate_curve_topology(
         self,
@@ -891,12 +943,17 @@ class CompositeQuadricSection3D:
     def _prepare_numeric(
         self,
         performance_attempt: _PerformanceAttempt | None = None,
+        resolved_inputs: _ResolvedCompositeFrameInputs | None = None,
     ) -> _PreparedCompositeNumeric:
-        with _performance_stage(performance_attempt, "resolve_inputs"):
-            plane, curves, lineage, owners = self._resolve_frame_inputs()
-            self._validate_curve_topology(curves)
-            view = self._resolve_view()
-            patch = self._fit_patch(plane)
+        if resolved_inputs is None:
+            with _performance_stage(performance_attempt, "resolve_inputs"):
+                resolved_inputs = self._resolve_frame_inputs()
+        plane = resolved_inputs.plane
+        curves = resolved_inputs.curves
+        lineage = resolved_inputs.lineage
+        owners = resolved_inputs.owners
+        view = resolved_inputs.view
+        patch = resolved_inputs.patch
         child_frames = self._local_frames(
             plane,
             patch,
@@ -1141,7 +1198,9 @@ class CompositeQuadricSection3D:
     def _prepare_with_performance(self) -> PreparedCompositeQuadricSectionFrame:
         attempt = self._new_performance_attempt()
         try:
-            numeric = self._prepare_numeric(attempt)
+            with _performance_stage(attempt, "resolve_inputs"):
+                resolved = self._resolve_frame_inputs()
+            numeric = self._prepare_numeric(attempt, resolved)
             return self._prepare_painter(numeric, attempt)
         except Exception as exc:
             self._finish_performance_attempt(
@@ -1150,6 +1209,48 @@ class CompositeQuadricSection3D:
                 error=exc,
             )
             raise
+
+    def _seed_cached_performance_counts(
+        self,
+        attempt: _PerformanceAttempt | None,
+    ) -> None:
+        if attempt is None:
+            return
+        for name, value in self._last_prepared_performance_counts.items():
+            attempt.set_count(name, value)
+
+    def _validate_cached_painter_band(
+        self,
+        attempt: _PerformanceAttempt | None,
+    ) -> None:
+        try:
+            with _performance_stage(attempt, "painter_band_preparation"):
+                self._band.configure(
+                    containers=self._scene_containers(),
+                    sources={
+                        "composite-section:reservation": self._update_driver
+                    },
+                )
+        except ManagedPainterBandError as exc:
+            raise CompositeQuadricSectionAuthoringError(str(exc)) from exc
+
+    def _commit_input_cache(
+        self,
+        resolved: _ResolvedCompositeFrameInputs,
+        opacity: float,
+        prepared: PreparedCompositeQuadricSectionFrame,
+    ) -> None:
+        self._last_input_geometry_signature = resolved.geometry_signature
+        self._last_input_draw_signature = resolved.draw_signature
+        self._last_input_opacity = opacity
+        if prepared._performance_attempt is not None:
+            self._last_prepared_performance_counts = dict(
+                prepared._performance_attempt.counts
+            )
+        self._last_prepared_frame = replace(
+            prepared,
+            _performance_attempt=None,
+        )
 
     def prepare(self) -> PreparedCompositeQuadricSectionFrame:
         if not self._attached:
@@ -1446,7 +1547,9 @@ class CompositeQuadricSection3D:
             )
         attempt = self._new_performance_attempt()
         try:
-            numeric = self._prepare_numeric(attempt)
+            with _performance_stage(attempt, "resolve_inputs"):
+                resolved = self._resolve_frame_inputs()
+            numeric = self._prepare_numeric(attempt, resolved)
         except Exception as exc:
             self._finish_performance_attempt(
                 attempt,
@@ -1464,6 +1567,11 @@ class CompositeQuadricSection3D:
             prepared = self._prepare_painter(numeric, attempt)
             self._attached = True
             self.apply(prepared)
+            self._commit_input_cache(
+                resolved,
+                self.root.opacity_multiplier,
+                prepared,
+            )
         except Exception as exc:
             self._attached = False
             _restore_root(root_state)
@@ -1487,7 +1595,69 @@ class CompositeQuadricSection3D:
             raise CompositeQuadricSectionAuthoringError(
                 "composite section controller is not attached"
             )
-        self.apply(self.prepare())
+        attempt = self._new_performance_attempt()
+        try:
+            with _performance_stage(attempt, "resolve_inputs"):
+                resolved = self._resolve_frame_inputs()
+            opacity = self.root.opacity_multiplier
+            dirty_kind = _classify_dirty_frame(
+                self._last_input_geometry_signature,
+                self._last_input_draw_signature,
+                self._last_input_opacity,
+                geometry=resolved.geometry_signature,
+                draw=resolved.draw_signature,
+                opacity=opacity,
+            )
+            if self._last_prepared_frame is None:
+                dirty_kind = _DirtyFrameKind.FULL
+            if dirty_kind is _DirtyFrameKind.FULL:
+                if attempt is not None:
+                    attempt.cache_miss("dirty_frame")
+                    attempt.cache_miss("prepared_numeric")
+                numeric = self._prepare_numeric(attempt, resolved)
+                prepared = self._prepare_painter(numeric, attempt)
+            else:
+                self._seed_cached_performance_counts(attempt)
+                self._validate_cached_painter_band(attempt)
+                if attempt is not None:
+                    attempt.cache_hit("dirty_frame")
+                    attempt.cache_hit("prepared_numeric")
+                cached = self._last_prepared_frame
+                assert cached is not None
+                prepared = replace(
+                    cached,
+                    _performance_attempt=attempt,
+                )
+                if dirty_kind is _DirtyFrameKind.CLEAN:
+                    with _performance_stage(attempt, "dirty_frame_shortcut"):
+                        if attempt is not None:
+                            active = len(self._display_slot_state)
+                            attempt.set_count("display_active_slot_count", active)
+                            attempt.set_count("display_changed_slot_count", 0)
+                            attempt.set_count(
+                                "display_unchanged_slot_count", active
+                            )
+                            attempt.set_count("display_hidden_slot_count", 0)
+                            attempt.set_count("painter_band_changed_count", 0)
+                            attempt.set_count("mutation_target_root_count", 0)
+                            attempt.set_count(
+                                "transaction_snapshot_mobject_count", 0
+                            )
+                            attempt.set_count("modified_mobject_count", 0)
+                    self._finish_performance_attempt(
+                        attempt,
+                        status="committed",
+                    )
+                    return self
+            self.apply(prepared)
+            self._commit_input_cache(resolved, opacity, prepared)
+        except Exception as exc:
+            self._finish_performance_attempt(
+                attempt,
+                status="failed",
+                error=exc,
+            )
+            raise
         return self
 
     def _register_fixed_frame(self) -> None:
@@ -1523,6 +1693,11 @@ class CompositeQuadricSection3D:
         self._last_lineage = ()
         self._display_slot_state = {}
         self._last_painter_band_signature = ()
+        self._last_input_geometry_signature = None
+        self._last_input_draw_signature = None
+        self._last_input_opacity = None
+        self._last_prepared_frame = None
+        self._last_prepared_performance_counts = {}
         self._band.restore()
         self.root.reset_opacity()
         self._invalidate_cairo_static_image()
