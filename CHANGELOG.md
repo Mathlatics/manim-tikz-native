@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+- project each painted analytic source once per prepared frame, force every
+  semantic-fragment endpoint into that certified source polyline, and derive
+  solid/dashed fragment paths by parameter slicing instead of repeating the
+  adaptive curve solver for every fragment; dash phase and fixed slot identity
+  remain source-anchored and unchanged;
 - cache pure surface/view products across moving-section frames with a bounded,
   exact-signature cache shared by the single and open-double Cairo bindings:
   reuse surface projection/global frames, cone component-fill geometry, and

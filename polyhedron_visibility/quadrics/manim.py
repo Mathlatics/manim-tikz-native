@@ -131,6 +131,7 @@ from .manim_runtime import (
     _SurfaceViewCache,
     _SurfacePaintSlot,
     _adaptive_project_curve,
+    _adaptive_project_curve_samples,
     _apply_boundary_fragment as _apply_runtime_boundary_fragment,
     _apply_opaque_surface_slot,
     _apply_surface_sheet_pair,
@@ -157,6 +158,7 @@ from .manim_runtime import (
     _scene_containers,
     _set_closed_subpaths,
     _set_open_subpaths,
+    _slice_projected_curve_samples,
     _apply_display_delta,
     _display_digest,
     _painter_band_signature,
@@ -1899,17 +1901,36 @@ class QuadricOcclusion3D:
             next_maps[curve_id] = assignment
             curve = curve_map[curve_id]
             values: list[_PreparedCurveFragment] = []
+            if not fragments:
+                prepared_by_curve[curve_id] = ()
+                continue
+            required_parameters = tuple(
+                value
+                for fragment in fragments
+                for value in (fragment.interval.start, fragment.interval.end)
+            )
+            with _performance_stage(performance_attempt, "adaptive_projection"):
+                parameters, source_points = _adaptive_project_curve_samples(
+                    curve,
+                    view,
+                    required_parameters=required_parameters,
+                    max_chord_error=self.max_chord_error,
+                    max_segments=self.limits.max_segments_per_fragment,
+                )
+            if performance_attempt is not None:
+                performance_attempt.increment_count(
+                    "projected_curve_source_count"
+                )
             for fragment in fragments:
                 with _performance_stage(
-                    performance_attempt, "adaptive_projection"
+                    performance_attempt, "projection_slicing"
                 ):
-                    points = _adaptive_project_curve(
-                        curve,
-                        view,
+                    points = _slice_projected_curve_samples(
+                        parameters,
+                        source_points,
                         fragment.interval.start,
                         fragment.interval.end,
-                        max_chord_error=self.max_chord_error,
-                        max_segments=self.limits.max_segments_per_fragment,
+                        curve_id=curve.curve_id,
                     )
                 _cumulative, length = _polyline_lengths(points)
                 allowance = max(1.0e-12, self.limits.max_projected_length * 1.0e-9)
@@ -1933,6 +1954,9 @@ class QuadricOcclusion3D:
                 if performance_attempt is not None:
                     performance_attempt.increment_count(
                         "prepared_curve_fragment_count"
+                    )
+                    performance_attempt.increment_count(
+                        "projected_fragment_slice_count"
                     )
                     performance_attempt.increment_count(
                         "prepared_dash_count", len(dashes)

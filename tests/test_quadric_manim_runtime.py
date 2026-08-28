@@ -7,9 +7,11 @@ import unittest
 import numpy as np
 from manim import VGroup, VMobject
 
+from polyhedron_visibility.parallel_solver import ParallelView
 import polyhedron_visibility.quadrics.composite_authoring as composite_binding
 import polyhedron_visibility.quadrics.manim as single_binding
 import polyhedron_visibility.quadrics.manim_runtime as runtime
+from polyhedron_visibility.quadrics.curves import CircleArcCurve
 
 
 class _FakePainterBand:
@@ -81,6 +83,75 @@ class SharedQuadricManimRuntimeTests(unittest.TestCase):
         cache.clear()
         self.assertEqual(cache.lookup("base", b"b"), (False, None))
         self.assertEqual(cache.lookup("component", b"a"), (False, None))
+
+    def test_source_projection_contains_exact_fragment_endpoints_and_slices(self) -> None:
+        curve = CircleArcCurve(
+            "once-per-source",
+            (0.0, 0.0, 0.0),
+            1.0,
+            (0.0, 0.0, 1.0),
+            radial_axis=(1.0, 0.0, 0.0),
+        )
+        view = ParallelView.from_matrix(np.identity(3))
+        start = 0.37
+        end = 1.42
+
+        parameters, points = runtime._adaptive_project_curve_samples(
+            curve,
+            view,
+            required_parameters=(start, end),
+            max_chord_error=1.0e-3,
+            max_segments=4096,
+        )
+        sliced = runtime._slice_projected_curve_samples(
+            parameters,
+            points,
+            start,
+            end,
+            curve_id=curve.curve_id,
+        )
+
+        self.assertIn(start, parameters)
+        self.assertIn(end, parameters)
+        np.testing.assert_allclose(
+            sliced[0],
+            (*curve.point(start)[:2], 0.0),
+            atol=1.0e-15,
+            rtol=0.0,
+        )
+        np.testing.assert_allclose(
+            sliced[-1],
+            (*curve.point(end)[:2], 0.0),
+            atol=1.0e-15,
+            rtol=0.0,
+        )
+        self.assertGreater(len(parameters), 2)
+
+        one_ulp_past_end = float(np.nextafter(curve.domain.end, np.inf))
+        rounded = runtime._slice_projected_curve_samples(
+            parameters,
+            points,
+            curve.domain.start,
+            one_ulp_past_end,
+            curve_id=curve.curve_id,
+        )
+        np.testing.assert_allclose(
+            rounded[-1],
+            (*curve.point(curve.domain.end)[:2], 0.0),
+            atol=0.0,
+            rtol=0.0,
+        )
+        with self.assertRaisesRegex(
+            runtime.QuadricManimError,
+            "outside its projected source domain",
+        ):
+            runtime._slice_projected_curve_samples(
+                parameters,
+                points,
+                curve.domain.start,
+                curve.domain.end + 1.0e-8,
+                curve_id=curve.curve_id,
+            )
 
     def test_dash_capacity_does_not_allocate_one_mobject_per_dash(self) -> None:
         slots = runtime._CurveSlots(fragment_capacity=32, dash_capacity=100)
