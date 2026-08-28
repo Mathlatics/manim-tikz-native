@@ -669,6 +669,13 @@ polyline. Performance traces distinguish `projected_boundary_source_count`
 from `projected_fragment_slice_count` and time the lightweight slices under
 `projection_slicing`.
 
+Finite closed-section arrangement also memoizes exact ray/polygon
+intersections while coalescing narrow cells between nested convex boundaries.
+The key contains the inner/outer boundary identity and the unrounded IEEE-754
+angle, lives only for that one partition call, and returns the same canonical
+vertex from the existing registry. This removes repeated edge scans without
+changing subdivision, tolerances, fragment capacity, or any certified frame.
+
 Several controllers which differ only in paint policy may share one
 `QuadricGeometryPrototype`. The first exact surface/plane/view signature
 computes the section partition and merged contours; later variants reuse that
