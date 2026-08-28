@@ -56,6 +56,42 @@ class SharedQuadricManimRuntimeTests(unittest.TestCase):
             runtime._apply_opaque_surface_slot,
         )
 
+    def test_dash_capacity_does_not_allocate_one_mobject_per_dash(self) -> None:
+        slots = runtime._CurveSlots(fragment_capacity=32, dash_capacity=100)
+        family = slots.root.get_family()
+
+        self.assertEqual(len(family), 97)
+        self.assertEqual(
+            len(family),
+            runtime._curve_slots_family_capacity(32),
+        )
+        for fragment in slots.fragments:
+            self.assertEqual(fragment.dash_capacity, 100)
+            self.assertEqual(
+                tuple(fragment.root.submobjects),
+                (fragment.solid, fragment.dashed),
+            )
+
+    def test_compact_dash_vmobject_preserves_disconnected_open_subpaths(
+        self,
+    ) -> None:
+        slot = runtime._CurveFragmentSlot(dash_capacity=8)
+        paths = (
+            np.asarray(((0.0, 0.0, 0.0), (0.4, 0.0, 0.0))),
+            np.asarray(((0.8, 0.0, 0.0), (1.2, 0.2, 0.0))),
+            np.asarray(((1.6, 0.2, 0.0), (2.0, 0.2, 0.0))),
+        )
+
+        runtime._set_open_subpaths(slot.dashed, paths)
+        actual = tuple(slot.dashed.get_subpaths())
+
+        self.assertEqual(len(actual), len(paths))
+        for observed, expected in zip(actual, paths):
+            np.testing.assert_allclose(observed[0], expected[0], atol=0.0, rtol=0.0)
+            np.testing.assert_allclose(
+                observed[-1], expected[-1], atol=0.0, rtol=0.0
+            )
+
     def test_composite_binding_imports_no_private_manim_runtime_objects(self) -> None:
         tree = ast.parse(inspect.getsource(composite_binding))
         private_imports = tuple(

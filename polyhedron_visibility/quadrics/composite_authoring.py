@@ -89,6 +89,7 @@ from .manim_runtime import (
     _boundary_style_registry,
     _capture_root,
     _coerce_view,
+    _curve_slots_family_capacity,
     _hide_vmobject,
     _invalidate_cairo_static_image,
     _prepare_boundary_fragments,
@@ -419,11 +420,7 @@ class CompositeQuadricSection3D:
             + 8
             + 1
             + len(self._boundary_source_ids)
-            * (
-                1
-                + limits.max_fragments_per_curve
-                * (limits.max_dashes_per_fragment + 3)
-            )
+            * _curve_slots_family_capacity(limits.max_fragments_per_curve)
             + 4
         )
         if estimated_mobjects > limits.max_total_mobjects:

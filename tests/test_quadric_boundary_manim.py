@@ -560,10 +560,7 @@ class UnifiedBoundaryManimTests(unittest.TestCase):
         self.assertTrue(
             all(
                 float(fragment.solid.get_stroke_opacity()) == 0.0
-                and all(
-                    float(dash.get_stroke_opacity()) == 0.0
-                    for dash in fragment.dashes
-                )
+                and float(fragment.dashed.get_stroke_opacity()) == 0.0
                 for fragment in chord_slots
             )
         )
