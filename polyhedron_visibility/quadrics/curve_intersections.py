@@ -1984,13 +1984,40 @@ def compute_projected_curve_crossings(
     parameter_epsilon = resolved.epsilon(GeometryQuantity.PARAMETER)
     screen_matrix = view.matrix[:2]
     depth_row = view.matrix[2]
+    boundary_epsilon = resolved.epsilon(GeometryQuantity.BOUNDARY)
+    world_joint_screen_epsilon = boundary_epsilon * max(
+        1.0,
+        float(np.linalg.norm(screen_matrix, ord=2)),
+    )
     result: list[ProjectedCurveCrossing] = []
 
     for first_index, first_curve in enumerate(items):
         for second_curve in items[first_index + 1 :]:
             pair_entries: list[
-                tuple[float, float, np.ndarray, float, float, bool, float]
+                tuple[
+                    float,
+                    float,
+                    np.ndarray,
+                    float,
+                    float,
+                    bool,
+                    float,
+                    bool,
+                    float,
+                ]
             ] = []
+
+            def authored_open_endpoint(
+                curve: AnalyticCurve3D,
+                parameter: float,
+            ) -> bool:
+                if bool(getattr(curve, "closed", False)):
+                    return False
+                return (
+                    abs(parameter - curve.domain.start) <= parameter_epsilon
+                    or abs(parameter - curve.domain.end) <= parameter_epsilon
+                )
+
             for first_interval in domains[first_curve.curve_id]:
                 first_active = _curve_interval(first_curve, first_interval)
                 first_model = _projected_model(first_active, view)
@@ -2091,12 +2118,35 @@ def compute_projected_curve_crossings(
                                     float(depth_row @ second_world),
                                     tangential,
                                     local_depth_epsilon,
+                                    float(
+                                        np.linalg.norm(first_world - second_world)
+                                    )
+                                    <= boundary_epsilon
+                                    and (
+                                        authored_open_endpoint(
+                                            first_curve, first_parameter
+                                        )
+                                        or authored_open_endpoint(
+                                            second_curve, second_parameter
+                                        )
+                                    ),
+                                    screen_epsilon,
                                 )
                             )
 
             pair_entries.sort(key=lambda item: (item[0], item[1]))
             deduped: list[
-                tuple[float, float, np.ndarray, float, float, bool, float]
+                tuple[
+                    float,
+                    float,
+                    np.ndarray,
+                    float,
+                    float,
+                    bool,
+                    float,
+                    bool,
+                    float,
+                ]
             ] = []
 
             def equivalent_parameter(
@@ -2122,8 +2172,22 @@ def compute_projected_curve_crossings(
 
             for entry in pair_entries:
                 if any(
-                    equivalent_parameter(first_curve, entry[0], previous[0])
-                    and equivalent_parameter(second_curve, entry[1], previous[1])
+                    (
+                        equivalent_parameter(first_curve, entry[0], previous[0])
+                        and equivalent_parameter(
+                            second_curve, entry[1], previous[1]
+                        )
+                    )
+                    or (
+                        entry[7]
+                        and previous[7]
+                        and float(np.linalg.norm(entry[2] - previous[2]))
+                        <= max(
+                            entry[8],
+                            previous[8],
+                            world_joint_screen_epsilon,
+                        )
+                    )
                     for previous in deduped
                 ):
                     continue
@@ -2137,6 +2201,8 @@ def compute_projected_curve_crossings(
                     second_depth,
                     tangential,
                     depth_epsilon_base,
+                    world_coincident,
+                    _screen_epsilon,
                 ) = entry
                 difference = first_depth - second_depth
                 # A large common world/depth translation must not turn a
@@ -2149,7 +2215,7 @@ def compute_projected_curve_crossings(
                     abs(float(np.spacing(second_depth))),
                     abs(float(np.spacing(max(abs(first_depth), abs(second_depth))))),
                 )
-                if abs(difference) <= depth_epsilon_base:
+                if world_coincident or abs(difference) <= depth_epsilon_base:
                     far_curve_id = near_curve_id = None
                 elif abs(difference) <= machine_epsilon:
                     raise ProjectedCurveIntersectionError(

@@ -1,8 +1,8 @@
 {
   "schema": "manim-quadric-section-release-manifest/v1",
-  "release_id": "quadric-section-v1-parameter-sweep-2026-08-27",
+  "release_id": "quadric-section-v1-frustum-components-2026-08-28",
   "contract_id": "quadric-section-v1",
-  "implementation_base_commit": "c22fca8d77ba986415f2d9d1e34e857960f3bba6",
+  "implementation_base_commit": "e0ae23ce1507ed72585fb51a8b62e7aec286ec20",
   "components": {
     "quadric_geometry": {
       "contract_revision": "tikz-native-contract:quadric_geometry/v1",
@@ -10,26 +10,26 @@
     },
     "quadric_visibility": {
       "contract_revision": "tikz-native-contract:quadric_visibility/v2",
-      "render_revision": "source-sha256:821943faf4ae7e93beca0a71005e1857cde3661030f3c19a7d97c92c4a622f68"
+      "render_revision": "source-sha256:16b29243419885e847f020cea155f2dae49cb2d887f4d0ee3820e346f9b25e73"
     },
     "quadric_manim": {
       "contract_revision": "tikz-native-contract:quadric_manim/v1",
-      "render_revision": "source-sha256:32f94c3835d9ead9bdbc0ad5bdc44decefb6d08ee01b1acfde511de04bf8f7a7"
+      "render_revision": "source-sha256:ca998ddddf292108567a79e4b908a3e03e394556557b5ec56a50956b4fdfab0a"
     }
   },
   "build_artifacts": {
-    "source_date_epoch": 1787822395,
+    "source_date_epoch": 1787869854,
     "builder_python": "3.12.13",
-    "build_frontend": "build 1.5.0",
+    "build_frontend": "build 1.6.0",
     "twine_check": "twine 7.0.0 passed",
     "wheel": {
       "filename": "manim_tikz_native-0.1.0-py3-none-any.whl",
-      "sha256": "fb6bb34bd032b26e4bec4e79fee7b803711080a59fc48bd94d58b54dfe9722bd"
+      "sha256": "6b526c702a629e8649f838ef06f5edf89c6faf913e1fd347c3f7a79805a5e9bf"
     },
     "sdist": {
       "filename": "manim_tikz_native-0.1.0.tar.gz",
-      "sha256": "38b8814b697b3ae017a76051892bebc09e6f436760b663d6955c44a3fe61e3a8",
-      "normalization": "sorted regular files and links; USTAR; uid/gid 0; root owner/group; SOURCE_DATE_EPOCH mtime; gzip -n"
+      "sha256": "355496eb55da19a5422f11f8195bdc15fbb5161cef7b56df4fedfba1f6a98e9b",
+      "normalization": "sorted regular files and links; USTAR; uid/gid 0; root owner/group; SOURCE_DATE_EPOCH mtime; gzip -n -9 equivalent"
     }
   },
   "cairo_baseline": {
@@ -73,10 +73,20 @@
       "outcome": "pass",
       "test": "tests.test_cone_models_cairo.ConeModelCairoTests.test_finite_frustum_section_and_unified_occlusion_render"
     },
-    "frustum_two_cap_shading_failure": {
+    "frustum_two_cap_component_masks": {
       "layer": "renderer_neutral",
-      "outcome": "explicit_failure",
-      "test": "tests.test_cone_models.ConeProjectionAndSectionTests.test_component_shading_rejects_two_terminal_frustum_masks"
+      "outcome": "pass",
+      "test": "tests.test_cone_models.ConeProjectionAndSectionTests.test_component_shading_partitions_both_frustum_terminals"
+    },
+    "frustum_two_cap_component_binding": {
+      "layer": "manim",
+      "outcome": "pass",
+      "test": "tests.test_frustum_component_shading.FrustumComponentShadingTests.test_two_cap_chords_and_rims_share_every_supported_painter_policy"
+    },
+    "frustum_two_cap_component_cairo": {
+      "layer": "cairo",
+      "outcome": "pass",
+      "test": "tests.test_frustum_component_shading_cairo.FrustumComponentShadingCairoTests.test_two_caps_two_chords_and_lateral_sheets_render_together"
     },
     "open_double_geometry": {
       "layer": "renderer_neutral",
@@ -267,6 +277,16 @@
       "evidence_ids": [
         "near_side_rank_switch_binding",
         "near_side_visibility_factorization"
+      ]
+    },
+    {
+      "id": "frustum_component_shading_two_caps",
+      "kind": "renderer_neutral_and_cairo",
+      "baseline": "tests/baselines/frustum-component-shading-cairo.json",
+      "evidence_ids": [
+        "frustum_two_cap_component_masks",
+        "frustum_two_cap_component_binding",
+        "frustum_two_cap_component_cairo"
       ]
     },
     {

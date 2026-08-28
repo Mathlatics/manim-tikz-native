@@ -33,7 +33,6 @@ from polyhedron_visibility.quadrics.global_occlusion import (
     compute_global_quadric_frame,
 )
 from polyhedron_visibility.quadrics.projection import (
-    ProjectionProxyError,
     build_cone_projection_layers,
     build_opaque_projection_proxy,
 )
@@ -161,12 +160,56 @@ class ConeProjectionAndSectionTests(unittest.TestCase):
         self.assertEqual(opened.front.cap_paths, ())
         self.assertEqual(len(opened.back.lateral_paths), 1)
 
-    def test_component_shading_rejects_two_terminal_frustum_masks(self) -> None:
-        with self.assertRaisesRegex(ProjectionProxyError, "apex-to-one-rim"):
-            build_cone_projection_layers(
-                _cone(ConeModel.CLOSED_SINGLE, (1.0, 2.0)),
-                IDENTITY_VIEW,
-            )
+    def test_component_shading_partitions_both_frustum_terminals(self) -> None:
+        for model, terminal_kind in (
+            (ConeModel.CLOSED_SINGLE, "cap"),
+            (ConeModel.OPEN_SINGLE, "trim"),
+        ):
+            with self.subTest(model=model.value):
+                layers = build_cone_projection_layers(
+                    _cone(model, (1.0, 2.0)),
+                    IDENTITY_VIEW,
+                    max_chord_error=0.01,
+                    max_segments=512,
+                )
+                self.assertIsNone(layers.terminal_front_facing)
+                self.assertEqual(
+                    dict(layers.terminal_front_facing_by_id),
+                    {
+                        f"cone:{terminal_kind}:min": False,
+                        f"cone:{terminal_kind}:max": True,
+                    },
+                )
+                self.assertEqual(len(layers.back.lateral_paths), 2)
+                self.assertEqual(len(layers.front.lateral_paths), 2)
+                if model is ConeModel.CLOSED_SINGLE:
+                    self.assertEqual(len(layers.back.cap_paths), 1)
+                    self.assertEqual(len(layers.front.cap_paths), 1)
+                    self.assertEqual(len(layers.opaque_lateral_paths), 2)
+                    self.assertEqual(len(layers.opaque_cap_paths), 1)
+                else:
+                    self.assertEqual(layers.back.cap_paths, ())
+                    self.assertEqual(layers.front.cap_paths, ())
+                    self.assertEqual(len(layers.opaque_lateral_paths), 1)
+                    self.assertEqual(layers.opaque_cap_paths, ())
+
+    def test_edge_on_frustum_terminals_do_not_invent_fill_area(self) -> None:
+        for model in (ConeModel.CLOSED_SINGLE, ConeModel.OPEN_SINGLE):
+            with self.subTest(model=model.value):
+                layers = build_cone_projection_layers(
+                    _cone(model, (1.0, 2.0)),
+                    SIDE_VIEW,
+                    max_chord_error=0.01,
+                    max_segments=512,
+                )
+                self.assertEqual(
+                    set(dict(layers.terminal_front_facing_by_id).values()),
+                    {None},
+                )
+                self.assertEqual(len(layers.back.lateral_paths), 1)
+                self.assertEqual(len(layers.front.lateral_paths), 1)
+                self.assertEqual(layers.back.cap_paths, ())
+                self.assertEqual(layers.front.cap_paths, ())
 
     def test_open_shell_section_roles_do_not_use_a_missing_cap(self) -> None:
         plane = SectionPlane(

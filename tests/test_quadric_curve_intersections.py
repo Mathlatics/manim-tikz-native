@@ -9,6 +9,7 @@ import numpy as np
 from polyhedron_visibility.parallel_solver import ParallelView
 from polyhedron_visibility.geometry import GeometryContext
 from polyhedron_visibility.quadrics.conics import ConicKind, ConicParameterization
+from polyhedron_visibility.quadrics.contract import ConeModel, ConeSpec
 from polyhedron_visibility.quadrics.curve_intersections import (
     ProjectedCurveIntersectionError,
     canonical_projected_curve_crossings_json,
@@ -19,6 +20,9 @@ from polyhedron_visibility.quadrics.curves import (
     EllipseArcCurve,
     ParametricConicBranch,
     SegmentCurve,
+)
+from polyhedron_visibility.quadrics.surface_boundaries import (
+    build_surface_boundary_sources,
 )
 from polyhedron_visibility.topology import ParameterInterval
 
@@ -940,6 +944,45 @@ class ProjectedConicCrossingTests(unittest.TestCase):
         crossings = compute_projected_curve_crossings((first, second), GENERAL_VIEW)
         self.assertEqual(len(crossings), 2)
         self.assertTrue(all(not item.tangential for item in crossings))
+
+    def test_near_side_frustum_rim_joint_is_one_coincident_depth_crossing(
+        self,
+    ) -> None:
+        angle = -0.01
+        view = ParallelView.from_matrix(
+            (
+                (1.0, 0.0, 0.0),
+                (0.0, -sin(angle), cos(angle)),
+                (0.0, -cos(angle), -sin(angle)),
+            )
+        )
+        frustum = ConeSpec(
+            "joint-frustum",
+            (0.0, 0.0, 0.0),
+            (0.0, 0.0, 1.0),
+            pi / 4.0,
+            (0.75, 2.0),
+            radial_axis=(1.0, 0.0, 0.0),
+            model=ConeModel.CLOSED_SINGLE,
+        )
+        sources = build_surface_boundary_sources((frustum,), view)
+        cap_rim = next(
+            item for item in sources if item.source_id.endswith("cap_max:rim")
+        )
+        silhouette = next(
+            item
+            for item in sources
+            if item.source_id.endswith("silhouette:generator:0")
+        )
+        crossings = compute_projected_curve_crossings(
+            (cap_rim.curve, silhouette.curve),
+            view,
+        )
+
+        self.assertEqual(len(crossings), 1)
+        self.assertTrue(crossings[0].coincident_depth)
+        self.assertIsNone(crossings[0].far_curve_id)
+        self.assertIsNone(crossings[0].near_curve_id)
 
     def test_parabola_tangent_is_scale_stable_in_parameter_chart(self) -> None:
         base_embedding = np.asarray(

@@ -542,7 +542,8 @@ constraint path; that mode does not recompute or recertify supplied relations.
 - automatic plane-display-patch fitting;
 - global ordering for a bounded set of strictly separated convex quadrics;
 - component-aware cone projection layers that distinguish lateral paint from
-  a real cap and leave an open mouth as a one-sheet region;
+  one or two real caps, keep both frustum terminal disks separate, and leave
+  an open mouth as a one-sheet region;
 - fixed-capacity Manim component slots and independent lateral/cap color
   gradients without updater-time Mobject creation.
 
@@ -567,11 +568,6 @@ installs the wheel in an isolated environment.
   components, so it must be shown without that local plane compositor or its
   nappes must be handled separately; no combined double-shell section order is
   guessed.
-- Component-aware lateral/cap shading currently accepts apex-to-one-rim cone
-  components. A frustum with two non-degenerate terminals still uses the
-  historical uniform surface style; enabling component colors for that
-  unimplemented mask case fails explicitly instead of guessing a polygon
-  union.
 - `QuadricOcclusion3D` itself has fixed topology while attached.  Use
   `QuadricSectionTransition3D` for scheduled ellipse/parabola/hyperbola family
   changes.  Unscheduled or ambiguous topology changes still fail explicitly.

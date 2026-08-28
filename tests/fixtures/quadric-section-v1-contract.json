@@ -70,11 +70,13 @@
     },
     {
       "id": "frustum_two_cap_component_shading",
-      "status": "unsupported_explicit_failure",
-      "renderer_neutral": false,
-      "cairo_binding": false,
+      "status": "supported",
+      "renderer_neutral": true,
+      "cairo_binding": true,
       "evidence_ids": [
-        "frustum_two_cap_shading_failure"
+        "frustum_two_cap_component_masks",
+        "frustum_two_cap_component_binding",
+        "frustum_two_cap_component_cairo"
       ]
     },
     {

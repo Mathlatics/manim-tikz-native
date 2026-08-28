@@ -25,6 +25,9 @@ manim -pql examples/quadrics/section_plane_cone_boundary_demo.py \
 manim -pql examples/quadrics/cone_model_comparison_demo.py \
   ConeModelComparisonDemo ConeModelPlaneComparisonDemo
 
+manim -ql --fps 8 examples/quadrics/frustum_component_shading_demo.py \
+  FrustumComponentShadingComparison
+
 manim -pql examples/quadrics/extended_acceptance_demo.py \
   ClosedOpenComparisonAcceptance SectionTopologyAcceptance \
   CurvePolicyComparisonAcceptance SideViewTrimRimAcceptance \
@@ -72,6 +75,10 @@ manim -ql --fps 8 \
   closed solid activates a stable yellow cap chord. The open shell retains one
   open lateral arc. Cyan plane-hidden generator/trim-rim dashes remain beneath
   the plane in the depth-aware painter order.
+- `FrustumComponentShadingComparison` keeps one vertical section intersecting
+  both terminal disks while comparing uniform fill with independent lateral
+  and two-cap component shading. Both terminal rims and both real cap chords
+  remain in the same unified boundary painter graph.
 - The five `*Acceptance` scenes are the video sources for the nightly/release
   evidence bundle. Their shared builders also produce the 960x540 semantic
   keyframes, so the videos and JSON painter evidence consume the same public
