@@ -14,8 +14,7 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from dataclasses import dataclass
-from math import isfinite, sqrt
-from types import MappingProxyType
+from math import sqrt
 from typing import Callable, Iterator, Mapping, Sequence
 
 import numpy as np
@@ -49,7 +48,6 @@ from .compositing import (
     compute_quadric_compositing,
 )
 from .boundary_compositing import (
-    BoundaryRenderIntent,
     BoundarySectionAnchors,
     BoundarySemanticKind,
     BoundarySourceKind,
@@ -111,6 +109,41 @@ from .surface_boundaries import (
     section_curve_boundary_source,
     surface_boundary_source_ids,
 )
+from .manim_runtime import (
+    QuadricBoundaryStyle,
+    QuadricManimCapacityError,
+    QuadricManimError,
+    _CurveSlots,
+    _ManagedQuadricDisplayGroup,
+    _PreparedBoundaryFragment,
+    _PreparedConeFill,
+    _PreparedDash,
+    _SurfacePaintSlot,
+    _adaptive_project_curve,
+    _apply_boundary_fragment as _apply_runtime_boundary_fragment,
+    _apply_opaque_surface_slot,
+    _apply_surface_sheet_pair,
+    _boundary_style_registry,
+    _capture_root,
+    _coerce_view,
+    _dash_polyline,
+    _dash_polyline_anchored,
+    _hide_vmobject,
+    _invalidate_cairo_static_image,
+    _non_negative,
+    _polyline_lengths,
+    _positive,
+    _prepare_boundary_fragments,
+    _prepared_cone_fill,
+    _register_fixed_frame,
+    _remove_fixed_frame,
+    _remove_owned_identities,
+    _restore_root,
+    _rollback_display_transaction,
+    _scene_containers,
+    _set_closed_subpaths,
+    _set_open_subpaths,
+)
 
 QuadricSurfaceSpec = SphereSpec | CylinderSpec | ConeSpec
 AnalyticCurve3D = SegmentCurve | EllipseArcCurve | ParametricConicBranch
@@ -138,85 +171,6 @@ DEFAULT_QUADRIC_VIEW = ParallelView.from_matrix(
         (1.0 / sqrt(3.0), 1.0 / sqrt(3.0), 1.0 / sqrt(3.0)),
     )
 )
-
-
-class QuadricManimError(RuntimeError):
-    """A quadric frame cannot be committed safely to Manim."""
-
-
-class QuadricManimCapacityError(QuadricManimError):
-    """A prepared frame exceeds an explicitly preallocated capacity."""
-
-
-def _positive(value: object, label: str) -> float:
-    if isinstance(value, bool):
-        raise ValueError(f"{label} must be finite and positive")
-    try:
-        result = float(value)
-    except (TypeError, ValueError, OverflowError) as exc:
-        raise ValueError(f"{label} must be finite and positive") from exc
-    if not isfinite(result) or result <= 0.0:
-        raise ValueError(f"{label} must be finite and positive")
-    return result
-
-
-def _non_negative(value: object, label: str) -> float:
-    if isinstance(value, bool):
-        raise ValueError(f"{label} must be finite and non-negative")
-    try:
-        result = float(value)
-    except (TypeError, ValueError, OverflowError) as exc:
-        raise ValueError(f"{label} must be finite and non-negative") from exc
-    if not isfinite(result) or result < 0.0:
-        raise ValueError(f"{label} must be finite and non-negative")
-    return result
-
-
-@dataclass(frozen=True, slots=True)
-class QuadricBoundaryStyle:
-    """One immutable visible/hidden stroke pair in the boundary registry."""
-
-    visible_color: object = WHITE
-    visible_width: float = 3.0
-    visible_opacity: float = 1.0
-    hidden_color: object = WHITE
-    hidden_width: float = 2.4
-    hidden_opacity: float = 0.78
-    dash_length: float = 0.08
-    dash_gap: float = 0.06
-    background_color: object = WHITE
-    background_width: float = 0.0
-    background_opacity: float = 0.0
-    cap_style: object | None = None
-    joint_type: object | None = None
-    hidden_cap_style: object | None = None
-    hidden_joint_type: object | None = None
-
-    def __post_init__(self) -> None:
-        for name in (
-            "visible_width",
-            "visible_opacity",
-            "hidden_width",
-            "hidden_opacity",
-            "background_width",
-            "background_opacity",
-        ):
-            object.__setattr__(self, name, _non_negative(getattr(self, name), name))
-        object.__setattr__(
-            self, "dash_length", _positive(self.dash_length, "dash_length")
-        )
-        object.__setattr__(self, "dash_gap", _non_negative(self.dash_gap, "dash_gap"))
-        for name in (
-            "visible_opacity",
-            "hidden_opacity",
-            "background_opacity",
-        ):
-            if getattr(self, name) > 1.0:
-                raise ValueError(f"{name} must not exceed 1")
-
-    @property
-    def dash_period(self) -> float:
-        return self.dash_length + self.dash_gap
 
 
 @dataclass(frozen=True, slots=True)
@@ -389,136 +343,12 @@ class QuadricManimLimits:
 QUADRIC_MANIM_LIMITS = QuadricManimLimits()
 
 
-def _boundary_style_from_curve_style(
-    style: QuadricManimStyle,
-) -> QuadricBoundaryStyle:
-    return QuadricBoundaryStyle(
-        visible_color=style.visible_curve_color,
-        visible_width=style.visible_curve_width,
-        visible_opacity=style.visible_curve_opacity,
-        hidden_color=style.hidden_curve_color,
-        hidden_width=style.hidden_curve_width,
-        hidden_opacity=style.hidden_curve_opacity,
-        dash_length=style.dash_length,
-        dash_gap=style.dash_gap,
-        background_color=style.background_color,
-        background_width=style.background_width,
-        background_opacity=style.background_opacity,
-        cap_style=style.cap_style,
-        joint_type=style.joint_type,
-        hidden_cap_style=style.hidden_cap_style,
-        hidden_joint_type=style.hidden_joint_type,
-    )
-
-
-def _boundary_style_from_base_stroke(
-    style: QuadricManimStyle,
-    *,
-    color: object,
-    width: float,
-    opacity: float,
-) -> QuadricBoundaryStyle:
-    hidden_width_ratio = (
-        style.hidden_curve_width / style.visible_curve_width
-        if style.visible_curve_width > 0.0
-        else 0.82
-    )
-    return QuadricBoundaryStyle(
-        visible_color=color,
-        visible_width=width,
-        visible_opacity=opacity,
-        hidden_color=color,
-        hidden_width=width * hidden_width_ratio,
-        hidden_opacity=opacity * style.hidden_curve_opacity,
-        dash_length=style.dash_length,
-        dash_gap=style.dash_gap,
-        background_color=style.background_color,
-        background_width=style.background_width,
-        background_opacity=style.background_opacity,
-        cap_style=style.cap_style,
-        joint_type=style.joint_type,
-        hidden_cap_style=style.hidden_cap_style,
-        hidden_joint_type=style.hidden_joint_type,
-    )
-
-
-def _boundary_style_registry(
-    base_style: QuadricManimStyle,
-    custom_styles: Mapping[str, QuadricBoundaryStyle] | None,
-    limits: QuadricManimLimits,
-) -> Mapping[str, QuadricBoundaryStyle]:
-    curve_style = _boundary_style_from_curve_style(base_style)
-    surface_style = _boundary_style_from_base_stroke(
-        base_style,
-        color=base_style.surface_stroke_color,
-        width=base_style.surface_stroke_width,
-        opacity=base_style.surface_stroke_opacity,
-    )
-    section_style = _boundary_style_from_base_stroke(
-        base_style,
-        color=base_style.section_plane_stroke_color,
-        width=base_style.section_plane_stroke_width,
-        opacity=base_style.section_plane_stroke_opacity,
-    )
-    result: dict[str, QuadricBoundaryStyle] = {
-        "style:curve": curve_style,
-        "style:section-outline": section_style,
-        "style:surface-boundary": surface_style,
-        "style:surface-silhouette": surface_style,
-        "style:teaching-boundary": curve_style,
-    }
-    if custom_styles is not None:
-        if not isinstance(custom_styles, Mapping):
-            raise TypeError("boundary_styles must be a mapping")
-        for raw_style_id, value in custom_styles.items():
-            if not isinstance(raw_style_id, str) or not raw_style_id.strip():
-                raise QuadricManimError(
-                    "boundary_styles keys must be non-empty style identities"
-                )
-            if not isinstance(value, QuadricBoundaryStyle):
-                raise TypeError(
-                    "boundary_styles values must be QuadricBoundaryStyle objects"
-                )
-            result[raw_style_id.strip()] = value
-    if len(result) > limits.max_boundary_styles:
-        raise QuadricManimCapacityError(
-            f"boundary style count {len(result)} exceeds fixed limit "
-            f"{limits.max_boundary_styles}"
-        )
-    return MappingProxyType(result)
-
-
-@dataclass(frozen=True, slots=True)
-class _PreparedDash:
-    points: np.ndarray
-
-
 @dataclass(frozen=True, slots=True)
 class _PreparedCurveFragment:
     fragment: QuadricCurvePaintFragment
     slot_index: int
     points: np.ndarray
     dashes: tuple[_PreparedDash, ...]
-
-
-@dataclass(frozen=True, slots=True)
-class _PreparedBoundaryFragment:
-    fragment: QuadricBoundaryPaintFragment
-    source: QuadricBoundarySource
-    style: QuadricBoundaryStyle
-    slot_index: int
-    points: np.ndarray
-    dashes: tuple[_PreparedDash, ...]
-
-
-@dataclass(frozen=True, slots=True)
-class _PreparedConeFill:
-    opaque_lateral_paths: tuple[np.ndarray, ...]
-    opaque_cap_paths: tuple[np.ndarray, ...]
-    back_lateral_paths: tuple[np.ndarray, ...]
-    back_cap_paths: tuple[np.ndarray, ...]
-    front_lateral_paths: tuple[np.ndarray, ...]
-    front_cap_paths: tuple[np.ndarray, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -584,621 +414,6 @@ class PreparedQuadricManimFrame:
         """Return the unified semantic-boundary painter frame, when enabled."""
 
         return self.numeric.boundary_frame
-
-
-@dataclass(slots=True)
-class _MobjectState:
-    mobject: object
-    points: np.ndarray | None
-    z_index: float | None
-    attributes: dict[str, object]
-
-
-def _copy_value(value: object) -> object:
-    return value.copy() if isinstance(value, np.ndarray) else value
-
-
-def _capture_root(root: Mobject) -> tuple[_MobjectState, ...]:
-    result: list[_MobjectState] = []
-    seen: set[int] = set()
-    for member in root.get_family():
-        if id(member) in seen:
-            continue
-        seen.add(id(member))
-        points = None
-        if hasattr(member, "points"):
-            points = np.asarray(member.points, dtype=float).copy()
-        attributes: dict[str, object] = {}
-        for name in (
-            "fill_rgbas",
-            "stroke_rgbas",
-            "background_stroke_rgbas",
-            "fill_opacity",
-            "stroke_opacity",
-            "background_stroke_opacity",
-            "sheen_direction",
-            "sheen_factor",
-        ):
-            if hasattr(member, name):
-                attributes[name] = _copy_value(getattr(member, name))
-        raw_z = getattr(member, "z_index", None)
-        z_index = None
-        if raw_z is not None:
-            value = float(raw_z)
-            if np.isfinite(value):
-                z_index = value
-        result.append(_MobjectState(member, points, z_index, attributes))
-    return tuple(result)
-
-
-def _restore_root(states: Sequence[_MobjectState]) -> None:
-    for state in states:
-        if state.points is not None and hasattr(state.mobject, "points"):
-            state.mobject.points = state.points.copy()
-        for name, value in state.attributes.items():
-            setattr(state.mobject, name, _copy_value(value))
-        if state.z_index is not None:
-            state.mobject.z_index = state.z_index
-
-
-class _ManagedQuadricDisplayGroup(VGroup):
-    """Fade proxy whose invisible sentinel owns the lifecycle multiplier."""
-
-    def __init__(self, *mobjects: Mobject, opacity_sentinel: Line) -> None:
-        self._opacity_sentinel = opacity_sentinel
-        super().__init__(*mobjects, opacity_sentinel)
-
-    @property
-    def opacity_multiplier(self) -> float:
-        rgba = np.asarray(
-            getattr(self._opacity_sentinel, "stroke_rgbas", ()), dtype=float
-        )
-        if rgba.ndim < 2 or rgba.shape[-1] < 4 or not rgba.size:
-            return 1.0
-        value = float(rgba[0, 3])
-        return value if np.isfinite(value) and value >= 0.0 else 0.0
-
-    def set_opacity(
-        self, opacity: float, family: bool = True
-    ) -> "_ManagedQuadricDisplayGroup":
-        del family
-        value = _non_negative(opacity, "display opacity multiplier")
-        self._opacity_sentinel.set_stroke(opacity=value)
-        return self
-
-    def reset_opacity(self) -> None:
-        self._opacity_sentinel.set_stroke(opacity=1.0)
-
-
-def _hide_vmobject(value: VMobject) -> None:
-    value.set_fill(opacity=0.0)
-    value.set_stroke(opacity=0.0)
-    value.set_stroke(opacity=0.0, background=True)
-
-
-def _set_closed_subpaths(
-    value: VMobject,
-    polygons: Sequence[np.ndarray],
-) -> None:
-    """Replace one fixed VMobject with any number of closed polygon subpaths."""
-
-    value.clear_points()
-    for raw in polygons:
-        points = np.asarray(raw, dtype=float)
-        if points.ndim != 2 or points.shape[1:] != (3,) or len(points) < 3:
-            raise QuadricManimError(
-                "section display polygons must contain finite three-dimensional points"
-            )
-        if not np.all(np.isfinite(points)):
-            raise QuadricManimError(
-                "section display polygons must contain finite three-dimensional points"
-            )
-        value.start_new_path(points[0])
-        value.add_points_as_corners((*points[1:], points[0]))
-
-
-def _set_open_subpaths(
-    value: VMobject,
-    paths: Sequence[np.ndarray],
-) -> None:
-    """Replace one fixed VMobject with independently open polyline subpaths."""
-
-    value.clear_points()
-    for raw in paths:
-        points = np.asarray(raw, dtype=float)
-        if points.ndim != 2 or points.shape[1:] != (3,) or len(points) < 2:
-            raise QuadricManimError(
-                "section outline paths must contain finite 3D polylines"
-            )
-        if not np.all(np.isfinite(points)):
-            raise QuadricManimError(
-                "section outline paths must contain finite 3D polylines"
-            )
-        value.start_new_path(points[0])
-        value.add_points_as_corners(points[1:])
-
-
-def _projection_paths_3d(
-    paths: Sequence[Sequence[Sequence[float]]],
-) -> tuple[np.ndarray, ...]:
-    return tuple(
-        np.asarray([(x, y, 0.0) for x, y in path], dtype=float)
-        for path in paths
-    )
-
-
-def _prepared_cone_fill(layers: ConeProjectionLayers) -> _PreparedConeFill:
-    if not isinstance(layers, ConeProjectionLayers):
-        raise TypeError("layers must be ConeProjectionLayers")
-    return _PreparedConeFill(
-        _projection_paths_3d(layers.opaque_lateral_paths),
-        _projection_paths_3d(layers.opaque_cap_paths),
-        _projection_paths_3d(layers.back.lateral_paths),
-        _projection_paths_3d(layers.back.cap_paths),
-        _projection_paths_3d(layers.front.lateral_paths),
-        _projection_paths_3d(layers.front.cap_paths),
-    )
-
-
-def _style_component_fill(
-    value: VMobject,
-    paths: Sequence[np.ndarray],
-    *,
-    colors: tuple[object, ...],
-    sheen_direction: Sequence[float],
-    opacity: float,
-) -> None:
-    if not paths:
-        _hide_vmobject(value)
-        value.clear_points()
-        return
-    _set_closed_subpaths(value, paths)
-    color: object = colors[0] if len(colors) == 1 else colors
-    value.set_sheen_direction(np.asarray(sheen_direction, dtype=float))
-    value.set_fill(color=color, opacity=opacity)
-    value.set_stroke(opacity=0.0)
-
-
-class _SurfacePaintSlot:
-    """One fixed painter item with optional cone component children."""
-
-    def __init__(self) -> None:
-        self.base = VMobject()
-        self.back_lateral = VMobject()
-        self.back_cap = VMobject()
-        self.front_lateral = VMobject()
-        self.front_cap = VMobject()
-        self.root = VGroup(
-            self.back_lateral,
-            self.back_cap,
-            self.front_lateral,
-            self.front_cap,
-            self.base,
-        )
-        self.hide()
-
-    def hide(self) -> None:
-        _hide_vmobject(self.base)
-        for component in self.components:
-            _hide_vmobject(component)
-
-    @property
-    def components(self) -> tuple[VMobject, ...]:
-        return (
-            self.back_lateral,
-            self.back_cap,
-            self.front_lateral,
-            self.front_cap,
-        )
-
-    def identities(self) -> tuple[int, ...]:
-        return tuple(id(item) for item in self.root.get_family())
-
-
-class _CurveFragmentSlot:
-    def __init__(self, dash_capacity: int) -> None:
-        self.solid = VMobject()
-        self.dashes = tuple(VMobject() for _ in range(dash_capacity))
-        self.dash_group = VGroup(*self.dashes)
-        self.root = VGroup(self.solid, self.dash_group)
-        self.hide()
-
-    def hide(self) -> None:
-        _hide_vmobject(self.solid)
-        for dash in self.dashes:
-            _hide_vmobject(dash)
-
-    def identities(self) -> tuple[int, ...]:
-        return tuple(id(item) for item in self.root.get_family())
-
-
-class _CurveSlots:
-    def __init__(self, fragment_capacity: int, dash_capacity: int) -> None:
-        self.fragments = tuple(
-            _CurveFragmentSlot(dash_capacity) for _ in range(fragment_capacity)
-        )
-        self.root = VGroup(*(slot.root for slot in self.fragments))
-
-    def identities(self) -> tuple[int, ...]:
-        return tuple(id(item) for item in self.root.get_family())
-
-
-def _coerce_view(value: object) -> ParallelView:
-    if isinstance(value, ParallelView):
-        return value
-    try:
-        return ParallelView.from_matrix(value)  # type: ignore[arg-type]
-    except (SolverError, TypeError, ValueError) as exc:
-        raise QuadricManimError(f"invalid parallel projection: {exc}") from exc
-
-
-def _point_segment_distance(
-    point: np.ndarray, start: np.ndarray, end: np.ndarray
-) -> float:
-    delta = end - start
-    squared = float(np.dot(delta, delta))
-    if squared == 0.0:
-        return float(np.linalg.norm(point - start))
-    ratio = float(np.dot(point - start, delta) / squared)
-    ratio = min(1.0, max(0.0, ratio))
-    return float(np.linalg.norm(point - (start + ratio * delta)))
-
-
-def _adaptive_project_curve(
-    curve: AnalyticCurve3D,
-    view: ParallelView,
-    start: float,
-    end: float,
-    *,
-    max_chord_error: float,
-    max_segments: int,
-) -> np.ndarray:
-    """Approximate one exact analytic interval without renderer allocation."""
-
-    screen = view.matrix[:2]
-    cache: dict[float, np.ndarray] = {}
-    domain = curve.domain
-    parameter_scale = max(
-        1.0,
-        abs(float(domain.start)),
-        abs(float(domain.end)),
-    )
-    parameter_roundoff = max(
-        16.0 * np.finfo(float).eps * parameter_scale,
-        4.0 * abs(float(np.spacing(domain.start))),
-        4.0 * abs(float(np.spacing(domain.end))),
-    )
-
-    def canonical_parameter(parameter: float) -> float:
-        value = float(parameter)
-        if (
-            value < domain.start - parameter_roundoff
-            or value > domain.end + parameter_roundoff
-        ):
-            raise QuadricManimError(
-                f"curve {curve.curve_id!r} display interval lies outside its "
-                "authored parameter domain"
-            )
-        return min(domain.end, max(domain.start, value))
-
-    def project(parameter: float) -> np.ndarray:
-        key = canonical_parameter(parameter)
-        cached = cache.get(key)
-        if cached is not None:
-            return cached
-        value = np.asarray(curve.point(key), dtype=float)
-        projected = np.asarray(screen @ value, dtype=float)
-        if projected.shape != (2,) or not np.all(np.isfinite(projected)):
-            raise QuadricManimError(
-                f"curve {curve.curve_id!r} produced a non-finite projection"
-            )
-        cache[key] = projected
-        return projected
-
-    interval_start = canonical_parameter(start)
-    interval_end = canonical_parameter(end)
-    if interval_end <= interval_start:
-        raise QuadricManimError(
-            f"curve {curve.curve_id!r} display interval must have positive length"
-        )
-    intervals: list[tuple[float, float]] = [(interval_start, interval_end)]
-    probe_fractions = (0.25, 0.5, 0.75)
-    while True:
-        split: list[int] = []
-        for index, (left, right) in enumerate(intervals):
-            first = project(left)
-            last = project(right)
-            observed = max(
-                _point_segment_distance(
-                    project(left + fraction * (right - left)), first, last
-                )
-                for fraction in probe_fractions
-            )
-            if observed > max_chord_error:
-                split.append(index)
-        if not split:
-            break
-        if len(intervals) + len(split) > max_segments:
-            raise QuadricManimCapacityError(
-                f"curve {curve.curve_id!r} needs more than {max_segments} "
-                "display segments for max_chord_error"
-            )
-        marked = set(split)
-        refined: list[tuple[float, float]] = []
-        for index, (left, right) in enumerate(intervals):
-            if index not in marked:
-                refined.append((left, right))
-                continue
-            middle = left + 0.5 * (right - left)
-            if middle == left or middle == right:
-                raise QuadricManimCapacityError(
-                    f"curve {curve.curve_id!r} cannot refine at floating-point scale"
-                )
-            refined.extend(((left, middle), (middle, right)))
-        intervals = refined
-
-    parameters = [intervals[0][0]]
-    parameters.extend(right for _left, right in intervals)
-    points = [project(parameter) for parameter in parameters]
-    precision_floor = 4.0 * max(
-        (
-            abs(float(np.spacing(value)))
-            for point in points
-            for value in point
-        ),
-        default=0.0,
-    )
-    if precision_floor >= max_chord_error:
-        raise QuadricManimError(
-            f"curve {curve.curve_id!r} cannot certify max_chord_error at the "
-            "available floating-point screen resolution; requested "
-            f"{max_chord_error:.17g}, resolution floor {precision_floor:.17g}"
-        )
-    anchor = points[0]
-
-    def duplicate_tolerance(left: np.ndarray, right: np.ndarray) -> float:
-        local_scale = max(
-            float(np.linalg.norm(left - anchor)),
-            float(np.linalg.norm(right - anchor)),
-            max_chord_error,
-            np.finfo(float).tiny,
-        )
-        local_roundoff = 32.0 * np.finfo(float).eps * local_scale
-        ulp_roundoff = 2.0 * max(
-            *(abs(float(np.spacing(value))) for value in left),
-            *(abs(float(np.spacing(value))) for value in right),
-        )
-        return min(
-            max(local_roundoff, ulp_roundoff),
-            0.125 * max_chord_error,
-        )
-
-    result: list[np.ndarray] = [points[0]]
-    source_to_result = [0]
-    for point in points[1:]:
-        if float(np.linalg.norm(point - result[-1])) > duplicate_tolerance(
-            result[-1], point
-        ):
-            result.append(point)
-        source_to_result.append(len(result) - 1)
-    if len(result) < 2:
-        raise QuadricManimError(
-            f"curve {curve.curve_id!r} interval collapses in the selected projection"
-        )
-
-    measured_error = 0.0
-    certification_fractions = (0.0, *probe_fractions, 1.0)
-    for index, (left, right) in enumerate(intervals):
-        chord_start = result[source_to_result[index]]
-        chord_end = result[source_to_result[index + 1]]
-        for fraction in certification_fractions:
-            parameter = left + fraction * (right - left)
-            measured_error = max(
-                measured_error,
-                _point_segment_distance(
-                    project(parameter),
-                    chord_start,
-                    chord_end,
-                ),
-            )
-    certified_error = measured_error + precision_floor
-    if certified_error > max_chord_error * (
-        1.0 + 64.0 * np.finfo(float).eps
-    ):
-        raise QuadricManimError(
-            f"curve {curve.curve_id!r} cannot certify max_chord_error after "
-            "floating-point-stable deduplication; requested "
-            f"{max_chord_error:.17g}, observed {certified_error:.17g}"
-        )
-    return np.asarray([(point[0], point[1], 0.0) for point in result], dtype=float)
-
-
-def _polyline_lengths(points: np.ndarray) -> tuple[np.ndarray, float]:
-    segment_lengths = np.linalg.norm(np.diff(points, axis=0), axis=1)
-    cumulative = np.concatenate((np.asarray((0.0,)), np.cumsum(segment_lengths)))
-    return cumulative, float(cumulative[-1])
-
-
-def _point_at_distance(
-    points: np.ndarray, cumulative: np.ndarray, distance: float
-) -> np.ndarray:
-    if distance <= 0.0:
-        return points[0].copy()
-    if distance >= float(cumulative[-1]):
-        return points[-1].copy()
-    index = int(np.searchsorted(cumulative, distance, side="right") - 1)
-    index = min(index, len(points) - 2)
-    span = float(cumulative[index + 1] - cumulative[index])
-    if span <= 0.0:
-        return points[index].copy()
-    ratio = (distance - float(cumulative[index])) / span
-    return points[index] + ratio * (points[index + 1] - points[index])
-
-
-def _slice_polyline(
-    points: np.ndarray,
-    cumulative: np.ndarray,
-    start: float,
-    end: float,
-) -> np.ndarray:
-    values = [_point_at_distance(points, cumulative, start)]
-    for index in range(1, len(points) - 1):
-        distance = float(cumulative[index])
-        if start < distance < end:
-            values.append(points[index].copy())
-    values.append(_point_at_distance(points, cumulative, end))
-    return np.asarray(values, dtype=float)
-
-
-def _dash_polyline(
-    points: np.ndarray,
-    *,
-    dash_length: float,
-    dash_gap: float,
-    capacity: int,
-) -> tuple[_PreparedDash, ...]:
-    cumulative, length = _polyline_lengths(points)
-    if length <= 0.0:
-        return ()
-    period = dash_length + dash_gap
-    result: list[_PreparedDash] = []
-    period_index = 0
-    while period_index * period < length - 1.0e-12:
-        start = period_index * period
-        end = min(length, start + dash_length)
-        period_index += 1
-        if end - start <= 1.0e-12:
-            continue
-        result.append(_PreparedDash(_slice_polyline(points, cumulative, start, end)))
-        if len(result) > capacity:
-            raise QuadricManimCapacityError(
-                f"dash count exceeds fixed slot capacity {capacity}"
-            )
-    return tuple(result)
-
-
-def _adaptive_project_curve_samples(
-    curve: AnalyticCurve3D,
-    view: ParallelView,
-    *,
-    max_chord_error: float,
-    max_segments: int,
-) -> tuple[np.ndarray, np.ndarray]:
-    """Return full-source parameters and points for stable dash phase."""
-
-    projection = view.matrix[:2]
-    cache: dict[float, np.ndarray] = {}
-
-    def project(parameter: float) -> np.ndarray:
-        key = float(parameter)
-        if key not in cache:
-            value = projection @ np.asarray(curve.point(key), dtype=float)
-            cache[key] = np.asarray((value[0], value[1], 0.0), dtype=float)
-        return cache[key]
-
-    intervals = [(curve.domain.start, curve.domain.end)]
-    probes = (0.25, 0.5, 0.75)
-    while True:
-        split = []
-        for index, (left, right) in enumerate(intervals):
-            first = project(left)
-            last = project(right)
-            observed = max(
-                _point_segment_distance(
-                    project(left + fraction * (right - left)),
-                    first,
-                    last,
-                )
-                for fraction in probes
-            )
-            if observed > max_chord_error:
-                split.append(index)
-        if not split:
-            break
-        if len(intervals) + len(split) > max_segments:
-            raise QuadricManimCapacityError(
-                f"boundary source {curve.curve_id!r} needs more than "
-                f"{max_segments} display segments"
-            )
-        marked = set(split)
-        refined = []
-        for index, (left, right) in enumerate(intervals):
-            if index not in marked:
-                refined.append((left, right))
-                continue
-            middle = left + 0.5 * (right - left)
-            if middle == left or middle == right:
-                raise QuadricManimCapacityError(
-                    f"boundary source {curve.curve_id!r} cannot refine at "
-                    "floating-point resolution"
-                )
-            refined.extend(((left, middle), (middle, right)))
-        intervals = refined
-    parameters = np.asarray(
-        [intervals[0][0], *(right for _left, right in intervals)],
-        dtype=float,
-    )
-    points = np.asarray([project(float(value)) for value in parameters], dtype=float)
-    return parameters, points
-
-
-def _source_distance_at_parameter(
-    parameters: np.ndarray,
-    points: np.ndarray,
-    parameter: float,
-) -> float:
-    cumulative, _length = _polyline_lengths(points)
-    value = float(parameter)
-    if value <= float(parameters[0]):
-        return 0.0
-    if value >= float(parameters[-1]):
-        return float(cumulative[-1])
-    index = int(np.searchsorted(parameters, value, side="right") - 1)
-    index = min(index, len(parameters) - 2)
-    span = float(parameters[index + 1] - parameters[index])
-    ratio = 0.0 if span <= 0.0 else (value - float(parameters[index])) / span
-    segment = float(np.linalg.norm(points[index + 1] - points[index]))
-    return float(cumulative[index]) + ratio * segment
-
-
-def _dash_polyline_anchored(
-    points: np.ndarray,
-    *,
-    source_distance_start: float,
-    dash_length: float,
-    dash_gap: float,
-    capacity: int,
-) -> tuple[_PreparedDash, ...]:
-    cumulative, length = _polyline_lengths(points)
-    if length <= 0.0:
-        return ()
-    period = dash_length + dash_gap
-    global_start = float(source_distance_start)
-    global_end = global_start + length
-    first_period = max(
-        0,
-        int(np.floor((global_start - dash_length) / period)) + 1,
-    )
-    result: list[_PreparedDash] = []
-    period_index = first_period
-    while period_index * period < global_end - 1.0e-12:
-        dash_start = period_index * period
-        dash_end = dash_start + dash_length
-        period_index += 1
-        clipped_start = max(global_start, dash_start) - global_start
-        clipped_end = min(global_end, dash_end) - global_start
-        if clipped_end - clipped_start <= 1.0e-12:
-            continue
-        result.append(
-            _PreparedDash(
-                _slice_polyline(points, cumulative, clipped_start, clipped_end)
-            )
-        )
-        if len(result) > capacity:
-            raise QuadricManimCapacityError(
-                f"dash count exceeds fixed slot capacity {capacity}"
-            )
-    return tuple(result)
 
 
 def _surface_items(
@@ -2112,91 +1327,22 @@ class QuadricOcclusion3D:
                 f"semantic boundary painter graph failed: {exc}"
             ) from exc
 
-        source_map = {item.source_id: item for item in sources}
-        by_source: dict[str, list[QuadricBoundaryPaintFragment]] = {
-            item.source_id: [] for item in sources
-        }
-        for fragment in boundary_frame.fragments:
-            if fragment.painted:
-                by_source[fragment.source_id].append(fragment)
-        next_maps: dict[str, Mapping[str, int]] = {
-            source_id: {} for source_id in self._slot_source_ids
-        }
-        prepared_by_source: dict[
-            str, tuple[_PreparedBoundaryFragment, ...]
-        ] = {}
+        boundary_batch = _prepare_boundary_fragments(
+            sources=sources,
+            frame=boundary_frame,
+            view=view,
+            style_for_source=self._boundary_style_for_source,
+            previous_slot_maps=self._fragment_slot_maps,
+            curve_slots=self._curve_slots,
+            slot_source_ids=self._slot_source_ids,
+            max_chord_error=self.max_chord_error,
+            limits=self.limits,
+        )
+        item_mobjects.update(boundary_batch.item_mobjects)
         boundary_opacities = {
             item.source_id: curve_opacities.get(item.source_id, 1.0)
             for item in sources
         }
-        for source_id in sorted(by_source):
-            source = source_map[source_id]
-            boundary_style = self._boundary_style_for_source(source)
-            fragments = tuple(
-                sorted(by_source[source_id], key=lambda item: item.item_id)
-            )
-            assignment = self._assign_fragment_slots(
-                source_id,
-                tuple(item.item_id for item in fragments),
-            )
-            next_maps[source_id] = assignment
-            parameters, source_points = _adaptive_project_curve_samples(
-                source.curve,
-                view,
-                max_chord_error=self.max_chord_error,
-                max_segments=self.limits.max_segments_per_fragment,
-            )
-            values = []
-            for fragment in fragments:
-                points = _adaptive_project_curve(
-                    source.curve,
-                    view,
-                    fragment.interval.start,
-                    fragment.interval.end,
-                    max_chord_error=self.max_chord_error,
-                    max_segments=self.limits.max_segments_per_fragment,
-                )
-                _cumulative, length = _polyline_lengths(points)
-                allowance = max(
-                    1.0e-12,
-                    self.limits.max_projected_length * 1.0e-9,
-                )
-                if length > self.limits.max_projected_length + allowance:
-                    raise QuadricManimCapacityError(
-                        f"boundary source {source_id!r} fragment length "
-                        f"{length:.9g} exceeds max_projected_length"
-                    )
-                dashes = (
-                    _dash_polyline_anchored(
-                        points,
-                        source_distance_start=_source_distance_at_parameter(
-                            parameters,
-                            source_points,
-                            fragment.interval.start,
-                        ),
-                        dash_length=boundary_style.dash_length,
-                        dash_gap=boundary_style.dash_gap,
-                        capacity=self.limits.max_dashes_per_fragment,
-                    )
-                    if fragment.render_intent is BoundaryRenderIntent.DASHED
-                    else ()
-                )
-                slot_index = assignment[fragment.item_id]
-                values.append(
-                    _PreparedBoundaryFragment(
-                        fragment,
-                        source,
-                        boundary_style,
-                        slot_index,
-                        points,
-                        dashes,
-                    )
-                )
-                item_mobjects[fragment.item_id] = self._curve_slots[
-                    source_id
-                ].fragments[slot_index].root
-            prepared_by_source[source_id] = tuple(values)
-
         if set(item_mobjects) != set(boundary_frame.draw_order):
             raise QuadricManimError(
                 "unified Manim items do not cover boundary draw_order"
@@ -2207,12 +1353,12 @@ class QuadricOcclusion3D:
             surfaces=tuple(surface_plans),
             fragments={},
             curve_opacities=curve_opacities,
-            fragment_slot_maps=next_maps,
+            fragment_slot_maps=boundary_batch.fragment_slot_maps,
             item_mobjects=item_mobjects,
             painter_draw_order=boundary_frame.draw_order,
             section_layers=section_layers,
             boundary_frame=boundary_frame,
-            boundary_fragments=prepared_by_source,
+            boundary_fragments=boundary_batch.fragments,
             boundary_opacities=boundary_opacities,
         )
 
@@ -2518,71 +1664,14 @@ class QuadricOcclusion3D:
         draw_stroke: bool = True,
     ) -> None:
         slot = self._surface_paint_slots[prepared.slot_index]
-        representative_opacity = self.style.surface_fill_opacity * opacity
-        slot.root.set_fill(
-            color=self.style.surface_fill_color,
-            opacity=representative_opacity,
-            family=False,
+        _apply_opaque_surface_slot(
+            slot,
+            prepared.points,
+            prepared.cone_fill,
+            self.style,
+            opacity,
+            draw_stroke=draw_stroke,
         )
-        slot.base.set_points_as_corners(prepared.points)
-        slot.base.set_stroke(
-            color=self.style.surface_stroke_color,
-            width=self.style.surface_stroke_width,
-            opacity=(
-                self.style.surface_stroke_opacity * opacity
-                if draw_stroke
-                else 0.0
-            ),
-        )
-        if prepared.cone_fill is None:
-            slot.base.set_fill(
-                color=self.style.surface_fill_color,
-                opacity=representative_opacity,
-            )
-            for component in slot.components:
-                _hide_vmobject(component)
-            return
-        slot.base.set_fill(opacity=0.0)
-        lateral_colors = self.style.cone_lateral_fill_colors or (
-            self.style.surface_fill_color,
-        )
-        cap_colors = self.style.cone_cap_fill_colors or lateral_colors
-        sheet_opacity = 1.0 - sqrt(
-            max(0.0, 1.0 - min(1.0, representative_opacity))
-        )
-        for component, paths, colors, direction in (
-            (
-                slot.back_lateral,
-                prepared.cone_fill.back_lateral_paths,
-                lateral_colors,
-                self.style.cone_lateral_sheen_direction,
-            ),
-            (
-                slot.back_cap,
-                prepared.cone_fill.back_cap_paths,
-                cap_colors,
-                self.style.cone_cap_sheen_direction,
-            ),
-            (
-                slot.front_lateral,
-                prepared.cone_fill.front_lateral_paths,
-                lateral_colors,
-                self.style.cone_lateral_sheen_direction,
-            ),
-            (
-                slot.front_cap,
-                prepared.cone_fill.front_cap_paths,
-                cap_colors,
-                self.style.cone_cap_sheen_direction,
-            ),
-        ):
-            _style_component_fill(
-                component,
-                paths,
-                colors=colors,
-                sheen_direction=direction,
-                opacity=sheet_opacity,
-            )
 
     def _apply_section_layers(
         self,
@@ -2604,84 +1693,16 @@ class QuadricOcclusion3D:
         if slots[frame.paint_items.surface_front] is not surface_front.root:
             raise QuadricManimCapacityError("section front-sheet slot changed identity")
 
-        surface_back.base.set_points_as_corners(prepared.surface_points)
-        surface_front.base.set_points_as_corners(prepared.surface_points)
-        combined_surface_opacity = min(
-            1.0,
-            self.style.surface_fill_opacity * opacity,
+        _apply_surface_sheet_pair(
+            surface_back,
+            surface_front,
+            prepared.surface_points,
+            prepared.cone_fill,
+            self.style,
+            opacity,
+            configure_front_stroke=True,
+            draw_front_stroke=draw_legacy_strokes,
         )
-        sheet_opacity = 1.0 - sqrt(max(0.0, 1.0 - combined_surface_opacity))
-        surface_back.root.set_fill(
-            color=self.style.surface_fill_color,
-            opacity=sheet_opacity,
-            family=False,
-        )
-        surface_front.root.set_fill(
-            color=self.style.surface_fill_color,
-            opacity=sheet_opacity,
-            family=False,
-        )
-        surface_back.base.set_stroke(opacity=0.0)
-        surface_front.base.set_stroke(
-            color=self.style.surface_stroke_color,
-            width=self.style.surface_stroke_width,
-            opacity=(
-                self.style.surface_stroke_opacity * opacity
-                if draw_legacy_strokes
-                else 0.0
-            ),
-        )
-        if prepared.cone_fill is None:
-            surface_back.base.set_fill(
-                color=self.style.surface_fill_color,
-                opacity=sheet_opacity,
-            )
-            surface_front.base.set_fill(
-                color=self.style.surface_fill_color,
-                opacity=sheet_opacity,
-            )
-            for component_slot in (surface_back, surface_front):
-                for component in component_slot.components:
-                    _hide_vmobject(component)
-        else:
-            surface_back.base.set_fill(opacity=0.0)
-            surface_front.base.set_fill(opacity=0.0)
-            lateral_colors = self.style.cone_lateral_fill_colors or (
-                self.style.surface_fill_color,
-            )
-            cap_colors = self.style.cone_cap_fill_colors or lateral_colors
-            for component_slot, lateral, cap, lateral_paths, cap_paths in (
-                (
-                    surface_back,
-                    surface_back.back_lateral,
-                    surface_back.back_cap,
-                    prepared.cone_fill.back_lateral_paths,
-                    prepared.cone_fill.back_cap_paths,
-                ),
-                (
-                    surface_front,
-                    surface_front.front_lateral,
-                    surface_front.front_cap,
-                    prepared.cone_fill.front_lateral_paths,
-                    prepared.cone_fill.front_cap_paths,
-                ),
-            ):
-                for component in component_slot.components:
-                    _hide_vmobject(component)
-                _style_component_fill(
-                    lateral,
-                    lateral_paths,
-                    colors=lateral_colors,
-                    sheen_direction=self.style.cone_lateral_sheen_direction,
-                    opacity=sheet_opacity,
-                )
-                _style_component_fill(
-                    cap,
-                    cap_paths,
-                    colors=cap_colors,
-                    sheen_direction=self.style.cone_cap_sheen_direction,
-                    opacity=sheet_opacity,
-                )
 
         fill_item_by_role = {
             PlaneDepthRole.BEHIND_SURFACE: frame.paint_items.plane_behind,
@@ -2717,79 +1738,18 @@ class QuadricOcclusion3D:
                 ),
             )
 
-    def _boundary_stroke_style(
-        self,
-        prepared: _PreparedBoundaryFragment,
-        opacity: float,
-    ) -> tuple[object, float, float]:
-        hidden = prepared.fragment.render_intent is BoundaryRenderIntent.DASHED
-        style = prepared.style
-        return (
-            style.hidden_color if hidden else style.visible_color,
-            style.hidden_width if hidden else style.visible_width,
-            (style.hidden_opacity if hidden else style.visible_opacity) * opacity,
-        )
-
     def _apply_boundary_fragment(
         self,
         source_id: str,
         prepared: _PreparedBoundaryFragment,
         opacity: float,
     ) -> None:
-        slot = self._curve_slots[source_id].fragments[prepared.slot_index]
-        color, width, stroke_opacity = self._boundary_stroke_style(
-            prepared, opacity
+        _apply_runtime_boundary_fragment(
+            self._curve_slots,
+            source_id,
+            prepared,
+            opacity,
         )
-        style = prepared.style
-        if prepared.fragment.render_intent is BoundaryRenderIntent.SOLID:
-            slot.solid.set_points_as_corners(prepared.points)
-            slot.solid.set_fill(opacity=0.0)
-            slot.solid.set_stroke(
-                color=color, width=width, opacity=stroke_opacity
-            )
-            slot.solid.set_stroke(
-                color=style.background_color,
-                width=style.background_width,
-                opacity=style.background_opacity * opacity,
-                background=True,
-            )
-            if style.cap_style is not None:
-                slot.solid.set_cap_style(style.cap_style)
-            if style.joint_type is not None:
-                slot.solid.joint_type = style.joint_type
-            for dash in slot.dashes:
-                _hide_vmobject(dash)
-            return
-        _hide_vmobject(slot.solid)
-        for index, dash in enumerate(slot.dashes):
-            if index >= len(prepared.dashes):
-                _hide_vmobject(dash)
-                continue
-            dash.set_points_as_corners(prepared.dashes[index].points)
-            dash.set_fill(opacity=0.0)
-            dash.set_stroke(
-                color=color, width=width, opacity=stroke_opacity
-            )
-            dash.set_stroke(
-                color=style.background_color,
-                width=style.background_width,
-                opacity=style.background_opacity * opacity,
-                background=True,
-            )
-            cap = (
-                style.cap_style
-                if style.hidden_cap_style is None
-                else style.hidden_cap_style
-            )
-            joint = (
-                style.joint_type
-                if style.hidden_joint_type is None
-                else style.hidden_joint_type
-            )
-            if cap is not None:
-                dash.set_cap_style(cap)
-            if joint is not None:
-                dash.joint_type = joint
 
     def _apply_curve_fragment(
         self,
@@ -2861,18 +1821,49 @@ class QuadricOcclusion3D:
             raise QuadricManimError("quadric occlusion controller is not attached")
         if not isinstance(prepared, PreparedQuadricManimFrame):
             raise TypeError("prepared must be a PreparedQuadricManimFrame")
-        root_state = _capture_root(self.root)
-        band_state = self._band.capture_active_state()
-        previous_maps = {
-            curve_id: dict(values)
-            for curve_id, values in self._fragment_slot_maps.items()
-        }
-        previous_frame = self._last_frame
-        previous_global_frame = self._last_global_frame
-        previous_section_frame = self._last_section_frame
-        previous_boundary_frame = self._last_boundary_frame
+
+        def capture_controller_state() -> tuple[
+            dict[str, dict[str, int]],
+            QuadricCompositingFrame | None,
+            GlobalQuadricFrame | None,
+            QuadricSectionCompositingFrame | None,
+            QuadricBoundaryCompositingFrame | None,
+        ]:
+            return (
+                {
+                    curve_id: dict(values)
+                    for curve_id, values in self._fragment_slot_maps.items()
+                },
+                self._last_frame,
+                self._last_global_frame,
+                self._last_section_frame,
+                self._last_boundary_frame,
+            )
+
+        def restore_controller_state(
+            state: tuple[
+                dict[str, dict[str, int]],
+                QuadricCompositingFrame | None,
+                GlobalQuadricFrame | None,
+                QuadricSectionCompositingFrame | None,
+                QuadricBoundaryCompositingFrame | None,
+            ],
+        ) -> None:
+            (
+                self._fragment_slot_maps,
+                self._last_frame,
+                self._last_global_frame,
+                self._last_section_frame,
+                self._last_boundary_frame,
+            ) = state
+
         opacity = self.root.opacity_multiplier
-        try:
+        with _rollback_display_transaction(
+            self.root,
+            self._band,
+            capture_controller_state=capture_controller_state,
+            restore_controller_state=restore_controller_state,
+        ):
             for slot in self._surface_slots:
                 _hide_vmobject(slot)
             for slot in self._section_slots:
@@ -2918,15 +1909,6 @@ class QuadricOcclusion3D:
             self._last_global_frame = prepared.global_frame
             self._last_section_frame = prepared.section_frame
             self._last_boundary_frame = prepared.boundary_frame
-        except Exception:
-            _restore_root(root_state)
-            self._band.restore_active_state(band_state)
-            self._fragment_slot_maps = previous_maps
-            self._last_frame = previous_frame
-            self._last_global_frame = previous_global_frame
-            self._last_section_frame = previous_section_frame
-            self._last_boundary_frame = previous_boundary_frame
-            raise
 
     @property
     def attached(self) -> bool:
@@ -3042,39 +2024,20 @@ class QuadricOcclusion3D:
         return self
 
     def _scene_containers(self) -> tuple[list[object], ...]:
-        result: list[list[object]] = []
-        for name in (
-            "mobjects",
-            "foreground_mobjects",
-            "moving_mobjects",
-            "static_mobjects",
-        ):
-            value = getattr(self.scene, name, None)
-            if isinstance(value, list) and all(value is not item for item in result):
-                result.append(value)
-        return tuple(result)
+        return _scene_containers(self.scene)
 
     def _register_fixed_frame(self) -> None:
-        camera = getattr(self.scene, "camera", None)
-        if isinstance(camera, ThreeDCamera):
-            self._fixed_frame_camera = camera
-            camera.add_fixed_in_frame_mobjects(self.root)
+        self._fixed_frame_camera = _register_fixed_frame(self.scene, self.root)
 
     def _remove_fixed_frame(self) -> None:
-        if self._fixed_frame_camera is not None:
-            self._fixed_frame_camera.remove_fixed_in_frame_mobjects(self.root)
-            self._fixed_frame_camera = None
+        _remove_fixed_frame(self._fixed_frame_camera, self.root)
+        self._fixed_frame_camera = None
 
     def _remove_owned_identities(self) -> None:
-        owned = {id(item) for item in self.root.get_family()}
-        owned.update(id(item) for item in self._update_driver.get_family())
-        for container in self._scene_containers():
-            container[:] = [item for item in container if id(item) not in owned]
+        _remove_owned_identities(self.scene, self.root, self._update_driver)
 
     def _invalidate_cairo_static_image(self) -> None:
-        renderer = getattr(self.scene, "renderer", None)
-        if renderer is not None and hasattr(renderer, "static_image"):
-            renderer.static_image = None
+        _invalidate_cairo_static_image(self.scene)
 
     def restore(self) -> "QuadricOcclusion3D":
         self._attached = False
