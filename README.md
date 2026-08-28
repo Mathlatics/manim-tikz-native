@@ -88,16 +88,16 @@ to SVG. Unsupported syntax is reported explicitly.
 
 The frozen [finite-cone section v1 contract](docs/quadric-section-v1-contract.md)
 is the authority for release claims. In short, v1 supports closed finite single
-cones, open finite single shells, frustum sections with ordinary shading,
-rank-one trim rims in exact side views, parallel projection, and one finite
-convex quadric with one non-edge-on cutting plane. The fixed-capacity Manim
-production binding is Cairo-only.
+cones, open finite single shells, frustum sections with component-aware lateral
+and two-cap shading, rank-one trim rims in exact side views, parallel
+projection, and one finite convex quadric with one non-edge-on cutting plane.
+The fixed-capacity Manim production binding is Cairo-only.
 
 V1 explicitly rejects perspective projection and an OpenGL production binding,
-unified cutting-plane compositing for an open double shell, local compositing
-of multiple intersecting quadrics, or independent component-aware shading for
-both terminal caps of a frustum. The documented explicit-failure paths are
-part of the contract; unsupported combinations are not approximated silently.
+unified cutting-plane compositing for an open double shell, or local
+compositing of multiple intersecting quadrics. The documented explicit-failure
+paths are part of the contract; unsupported combinations are not approximated
+silently.
 The stable support promise lives in
 [`tests/fixtures/quadric-section-v1-contract.json`](tests/fixtures/quadric-section-v1-contract.json).
 The exact implementation commit, component digests, build checksums, and

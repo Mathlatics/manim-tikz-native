@@ -1,0 +1,16 @@
+{
+  "schema": "manim-frustum-component-shading-cairo-baseline/v1",
+  "profile": {
+    "pixel_width": 320,
+    "pixel_height": 180,
+    "frame_rate": 8
+  },
+  "invariants": {
+    "changed_pixel_count_min": 3000,
+    "component_difference_count_min": 2500,
+    "yellow_section_pixel_count_min": 50,
+    "terminal_cap_count": 2,
+    "surface_cap_rim_source_count": 2,
+    "section_cap_chord_source_count": 2
+  }
+}

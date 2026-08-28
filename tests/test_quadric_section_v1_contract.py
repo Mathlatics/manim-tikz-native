@@ -108,9 +108,7 @@ class QuadricSectionV1ContractTests(unittest.TestCase):
             "closed_finite_single_cone": "supported",
             "open_finite_single_cone_shell": "supported",
             "finite_cone_frustum_section_and_occlusion": "supported",
-            "frustum_two_cap_component_shading": (
-                "unsupported_explicit_failure"
-            ),
+            "frustum_two_cap_component_shading": "supported",
             "open_double_display_and_general_occlusion": (
                 "supported_with_constraints"
             ),

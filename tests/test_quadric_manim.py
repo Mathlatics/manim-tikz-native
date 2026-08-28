@@ -240,6 +240,32 @@ class QuadricManimBindingTests(unittest.TestCase):
                 max_segments=4096,
             )
 
+    def test_curve_display_clamps_only_floating_point_domain_roundoff(self) -> None:
+        curve = SegmentCurve("domain-roundoff", (0.0, 0.0, 0.0), (1.0, 0.0, 0.0))
+        one_ulp_past_end = float(np.nextafter(1.0, np.inf))
+        points = _adaptive_project_curve(
+            curve,
+            IDENTITY_VIEW,
+            0.0,
+            one_ulp_past_end,
+            max_chord_error=0.01,
+            max_segments=16,
+        )
+        np.testing.assert_allclose(points[-1], (1.0, 0.0, 0.0))
+
+        with self.assertRaisesRegex(
+            QuadricManimError,
+            "outside its authored parameter domain",
+        ):
+            _adaptive_project_curve(
+                curve,
+                IDENTITY_VIEW,
+                0.0,
+                1.0 + 1.0e-8,
+                max_chord_error=0.01,
+                max_segments=16,
+            )
+
     def test_diagrammatic_and_physical_follow_complete_draw_order(self) -> None:
         for policy in ("diagrammatic", "physical"):
             with self.subTest(policy=policy):

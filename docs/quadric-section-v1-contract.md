@@ -25,8 +25,8 @@ case.
 | --- | --- | --- |
 | Closed finite single cone | Supported | Lateral surface, one real cap, cap rim, finite section boundary, unified plane and boundary compositing |
 | Open finite single-cone shell | Supported | Lateral surface and real trim rim; no cap disk, cap chord, or volume membership is invented |
-| Finite cone frustum: section, clipping, ordinary occlusion | Supported | Uniform lateral/cap styling and automatic boundary visibility are supported |
-| Frustum: independent component-aware shading for both terminal caps | Unsupported; explicit failure | The current component mask builder accepts only an apex-to-one-rim cone |
+| Finite cone frustum: section, clipping, ordinary occlusion | Supported | Uniform styling, automatic boundary visibility, and up to two real cap chords are supported |
+| Frustum: component-aware lateral and two-terminal-cap shading | Supported | Both terminal disks remain separate depth components; exact edge-on zero-area cap fills are omitted without inventing area |
 | Finite open double shell: display and general occlusion | Supported with constraints | It expands once into two stable open single-nappe components |
 | Finite open double shell: unified cutting-plane compositing | Unsupported; explicit failure | The local compositor accepts exactly one finite convex surface, while the double shell expands to two |
 | One finite convex quadric and one cutting plane | Supported | This is the complete local section-compositor scope |
@@ -106,7 +106,9 @@ and evidence test names for these cases:
    rims project to finite rank-one segments;
 4. a near-side-view rank switch that crosses the two-dimensional/rank-one
    threshold without replacing Manim objects or freezing a frame;
-5. a scheduled ellipse/parabola/hyperbola handoff that reaches a real end cap
+5. a closed frustum with separate lateral/two-cap masks, two real terminal rims,
+   and two simultaneously active cap chords;
+6. a scheduled ellipse/parabola/hyperbola handoff that reaches a real end cap
    and keeps the current-plane cap chord in its stable semantic slot.
 
 The Cairo acceptance baseline is
@@ -147,8 +149,6 @@ V1 never guesses an image outside the matrix:
   Scene;
 - perspective/projective input fails as an invalid parallel projection before
   the controller adds display slots to the Scene;
-- a two-terminal frustum request for component-aware cone masks fails with
-  `ProjectionProxyError`; callers may use the supported uniform surface style;
 - uncertifiable error or capacity bounds remain hard failures.
 
 ## Change control
@@ -158,6 +158,6 @@ their release manifest, Provider render/cache revisions, build checksums, and
 inspected Cairo evidence are updated independently. Expanding a row from
 unsupported to supported requires new
 canonical geometry, renderer-neutral tests, and—if exposed through Manim—a
-real Cairo regression. Perspective rendering, OpenGL production binding,
-multi-surface local section arrangements, and independent two-terminal
-frustum component shading are follow-up projects, not implicit v1 work.
+real Cairo regression. Perspective rendering, OpenGL production binding, and
+multi-surface local section arrangements are follow-up projects, not implicit
+v1 work.

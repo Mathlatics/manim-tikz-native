@@ -24,7 +24,13 @@ from typing import Sequence
 import numpy as np
 
 from ..parallel_solver import ParallelView, SolverError
-from .contract import ConeSpec, CylinderSpec, SphereSpec
+from .contract import (
+    CircularTrimRimSpec,
+    ConeSpec,
+    CylinderSpec,
+    PlanarCapSpec,
+    SphereSpec,
+)
 
 
 OPAQUE_PROJECTION_PROXY_SCHEMA = "manim-quadric-opaque-projection-proxy/v1"
@@ -291,6 +297,7 @@ class ConeProjectionLayers:
     opaque_lateral_paths: tuple[ProjectionPath, ...]
     opaque_cap_paths: tuple[ProjectionPath, ...]
     terminal_front_facing: bool | None
+    terminal_front_facing_by_id: tuple[tuple[str, bool | None], ...] = ()
     schema: str = CONE_PROJECTION_LAYERS_SCHEMA
 
     def __post_init__(self) -> None:
@@ -319,9 +326,42 @@ class ConeProjectionLayers:
             )
         if self.terminal_front_facing not in {None, True, False}:
             raise TypeError("terminal_front_facing must be bool or None")
+        terminal_facing: list[tuple[str, bool | None]] = []
+        seen_terminal_ids: set[str] = set()
+        for raw in self.terminal_front_facing_by_id:
+            if not isinstance(raw, tuple) or len(raw) != 2:
+                raise TypeError(
+                    "terminal_front_facing_by_id values must be (id, facing) pairs"
+                )
+            terminal_id = _identity(raw[0], "terminal identity")
+            facing = raw[1]
+            if facing is not None and not isinstance(facing, bool):
+                raise TypeError("terminal facing values must be bool or None")
+            if terminal_id in seen_terminal_ids:
+                raise ProjectionProxyError(
+                    "terminal_front_facing_by_id identities must be unique"
+                )
+            seen_terminal_ids.add(terminal_id)
+            terminal_facing.append((terminal_id, facing))
+        terminal_facing.sort(key=lambda item: item[0])
+        if len(terminal_facing) == 1:
+            mapped_facing = terminal_facing[0][1]
+            if self.terminal_front_facing != mapped_facing:
+                raise ProjectionProxyError(
+                    "legacy terminal_front_facing disagrees with its identity map"
+                )
+        elif len(terminal_facing) > 1 and self.terminal_front_facing is not None:
+            raise ProjectionProxyError(
+                "legacy terminal_front_facing is only defined for one terminal"
+            )
         object.__setattr__(self, "surface_id", surface_id)
         object.__setattr__(self, "opaque_lateral_paths", opaque_lateral)
         object.__setattr__(self, "opaque_cap_paths", opaque_caps)
+        object.__setattr__(
+            self,
+            "terminal_front_facing_by_id",
+            tuple(terminal_facing),
+        )
 
 
 def canonical_opaque_projection_proxy_json(proxy: OpaqueProjectionProxy) -> str:
@@ -855,6 +895,108 @@ def _signed_path_area(path: Sequence[Sequence[float]]) -> float:
     )
 
 
+ConeTerminalSpec = PlanarCapSpec | CircularTrimRimSpec
+
+
+@dataclass(frozen=True, slots=True)
+class _ProjectedConeTerminal:
+    terminal_id: str
+    rim: ProjectionPath | None
+    front_facing: bool | None
+
+
+def _cone_terminal_id(terminal: ConeTerminalSpec) -> str:
+    return terminal.cap_id if isinstance(terminal, PlanarCapSpec) else terminal.rim_id
+
+
+def _ellipse_segment_count(
+    screen_radius: float,
+    *,
+    tolerance: float,
+    segment_limit: int,
+) -> int:
+    ratio = min(1.0, max(0.0, tolerance / screen_radius))
+    maximum_step = 2.0 * acos(max(-1.0, min(1.0, 1.0 - ratio)))
+    if maximum_step <= 0.0:
+        observed = screen_radius * (1.0 - cos(0.5 * tau / segment_limit))
+        if observed > tolerance:
+            raise ProjectionSubdivisionError(
+                max_chord_error=tolerance,
+                observed_chord_error=observed,
+                max_segments=segment_limit,
+                current_segments=segment_limit,
+            )
+        return segment_limit
+    count = max(_INITIAL_SEGMENTS, int(ceil(tau / maximum_step)))
+    if count > segment_limit:
+        observed = screen_radius * (1.0 - cos(0.5 * tau / segment_limit))
+        raise ProjectionSubdivisionError(
+            max_chord_error=tolerance,
+            observed_chord_error=observed,
+            max_segments=segment_limit,
+            current_segments=segment_limit,
+        )
+    return count
+
+
+def _project_cone_terminal(
+    terminal: ConeTerminalSpec,
+    view: ParallelView,
+    *,
+    tolerance: float,
+    segment_limit: int,
+) -> _ProjectedConeTerminal:
+    frame = terminal.frame
+    screen = np.asarray(view.matrix[:2], dtype=float)
+    center = screen @ np.asarray(terminal.center, dtype=float)
+    first = terminal.radius * screen @ np.asarray(frame.x_axis, dtype=float)
+    second = terminal.radius * screen @ np.asarray(frame.y_axis, dtype=float)
+    basis = np.column_stack((first, second))
+    singular_values = np.linalg.svd(basis, compute_uv=False)
+    screen_radius = float(singular_values[0])
+    terminal_id = _cone_terminal_id(terminal)
+    if screen_radius <= tolerance:
+        return _ProjectedConeTerminal(terminal_id, None, None)
+
+    count = _ellipse_segment_count(
+        screen_radius,
+        tolerance=tolerance,
+        segment_limit=segment_limit,
+    )
+    rim_points = tuple(
+        tuple(
+            float(item)
+            for item in (
+                center
+                + cos(index * tau / count) * first
+                + sin(index * tau / count) * second
+            )
+        )
+        for index in range(count)
+    )
+    area = _signed_path_area(rim_points)
+    area_floor = max(
+        tolerance * tolerance,
+        512.0
+        * np.finfo(float).eps
+        * max(1.0, screen_radius * screen_radius),
+    )
+    if abs(area) <= area_floor:
+        # An edge-on terminal has a real finite boundary segment, but no area
+        # to subtract from a fill mask. Semantic boundary compositing owns the
+        # segment; component shading must not invent a thin polygon.
+        return _ProjectedConeTerminal(terminal_id, None, None)
+
+    rim = rim_points if area > 0.0 else tuple(reversed(rim_points))
+    facing = float(
+        np.dot(
+            np.asarray(terminal.normal, dtype=float),
+            np.asarray(view.view_direction, dtype=float),
+        )
+    )
+    return _ProjectedConeTerminal(terminal_id, rim, facing > 0.0)
+
+
 def build_cone_projection_layers(
     surface: ConeSpec,
     view: ParallelViewInput,
@@ -862,7 +1004,7 @@ def build_cone_projection_layers(
     max_chord_error: float = 1.0e-3,
     max_segments: int = 4096,
 ) -> ConeProjectionLayers:
-    """Build stable lateral/cap masks for one finite single-nappe cone.
+    """Build stable lateral/cap masks for one finite single-nappe cone/frustum.
 
     An apex-to-rim cone has exactly one non-degenerate terminal circle.  Its
     projected disk replaces one sheet of a closed cone and removes that sheet
@@ -870,9 +1012,12 @@ def build_cone_projection_layers(
     lighter one-hit region visible through an open mouth without creating any
     renderer objects.
 
-    Frusta have two non-degenerate terminals and need polygon-union masks.  No
-    approximation is guessed for that unimplemented case; callers receive an
-    explicit error and may fall back to the ordinary uniform surface style.
+    A frustum has two terminals with opposite outward normals. Under a
+    parallel view, one belongs to the far sheet and the other to the near
+    sheet, so each depth sheet needs at most one finite disk subtraction. A
+    closed frustum fills those same disks as real caps; an open frustum leaves
+    them as openings. Edge-on terminals remain owned by semantic boundary
+    strokes and contribute no zero-area fill polygon.
     """
 
     if not isinstance(surface, ConeSpec):
@@ -894,109 +1039,68 @@ def build_cone_projection_layers(
     terminals = (
         tuple(surface.trim_rims) if surface.is_open_shell else tuple(surface.end_caps)
     )
-    if len(terminals) != 1:
+    if len(terminals) not in {1, 2}:
         raise ProjectionProxyError(
-            "component-aware cone shading currently requires an apex-to-one-rim "
-            "finite cone; frusta with two non-degenerate terminals are not "
-            "silently approximated"
+            "component-aware cone shading requires one or two non-degenerate "
+            "terminals on a finite single-nappe cone"
         )
-    terminal = terminals[0]
-    frame = terminal.frame
-    screen = np.asarray(parallel_view.matrix[:2], dtype=float)
-    center = screen @ np.asarray(terminal.center, dtype=float)
-    first = terminal.radius * screen @ np.asarray(frame.x_axis, dtype=float)
-    second = terminal.radius * screen @ np.asarray(frame.y_axis, dtype=float)
-    screen_radius = float(
-        np.linalg.svd(np.column_stack((first, second)), compute_uv=False)[0]
-    )
     outer = tuple(proxy.vertices)
-    if screen_radius <= tolerance:
-        full = ConeProjectionSheet((outer,))
-        return ConeProjectionLayers(
-            surface.surface_id,
-            proxy,
-            full,
-            full,
-            (outer,),
-            (),
-            None,
+    projected = tuple(
+        _project_cone_terminal(
+            terminal,
+            parallel_view,
+            tolerance=tolerance,
+            segment_limit=segment_limit,
         )
-    ratio = min(1.0, max(0.0, tolerance / screen_radius))
-    maximum_step = 2.0 * acos(max(-1.0, min(1.0, 1.0 - ratio)))
-    if maximum_step <= 0.0:
-        observed = screen_radius * (1.0 - cos(0.5 * tau / segment_limit))
-        if observed > tolerance:
-            raise ProjectionSubdivisionError(
-                max_chord_error=tolerance,
-                observed_chord_error=observed,
-                max_segments=segment_limit,
-                current_segments=segment_limit,
-            )
-        count = segment_limit
-    else:
-        count = max(_INITIAL_SEGMENTS, int(ceil(tau / maximum_step)))
-    if count > segment_limit:
-        observed = screen_radius * (1.0 - cos(0.5 * tau / segment_limit))
-        raise ProjectionSubdivisionError(
-            max_chord_error=tolerance,
-            observed_chord_error=observed,
-            max_segments=segment_limit,
-            current_segments=segment_limit,
-        )
-    rim_points = tuple(
-        tuple(
-            float(item)
-            for item in (
-                center
-                + cos(index * tau / count) * first
-                + sin(index * tau / count) * second
-            )
-        )
-        for index in range(count)
+        for terminal in terminals
     )
-    area = _signed_path_area(rim_points)
-    area_floor = tolerance * tolerance
-    if abs(area) <= area_floor:
-        full = ConeProjectionSheet((outer,))
-        return ConeProjectionLayers(
-            surface.surface_id,
-            proxy,
-            full,
-            full,
-            (outer,),
-            (),
-            None,
+    active = tuple(item for item in projected if item.rim is not None)
+    if len(active) == 2 and active[0].front_facing == active[1].front_facing:
+        raise ProjectionProxyError(
+            "frustum terminals do not separate into opposite projection sheets"
         )
-    rim = rim_points if area > 0.0 else tuple(reversed(rim_points))
-    hole = tuple(reversed(rim))
-    full = ConeProjectionSheet((outer,))
-    terminal_sheet = ConeProjectionSheet(
-        (outer, hole),
-        () if surface.is_open_shell else (rim,),
+
+    back_lateral: list[ProjectionPath] = [outer]
+    front_lateral: list[ProjectionPath] = [outer]
+    back_caps: list[ProjectionPath] = []
+    front_caps: list[ProjectionPath] = []
+    for terminal in active:
+        assert terminal.rim is not None
+        hole = tuple(reversed(terminal.rim))
+        if terminal.front_facing:
+            front_lateral.append(hole)
+            if not surface.is_open_shell:
+                front_caps.append(terminal.rim)
+        else:
+            back_lateral.append(hole)
+            if not surface.is_open_shell:
+                back_caps.append(terminal.rim)
+
+    back = ConeProjectionSheet(tuple(back_lateral), tuple(back_caps))
+    front = ConeProjectionSheet(tuple(front_lateral), tuple(front_caps))
+    opaque_lateral: tuple[ProjectionPath, ...] = (
+        (outer,)
+        if surface.is_open_shell
+        else (outer, *(tuple(reversed(rim)) for rim in front_caps))
     )
-    facing = float(
-        np.dot(
-            np.asarray(terminal.normal, dtype=float),
-            np.asarray(parallel_view.view_direction, dtype=float),
+    opaque_caps = () if surface.is_open_shell else tuple(front_caps)
+    terminal_facing = tuple(
+        sorted(
+            ((item.terminal_id, item.front_facing) for item in projected),
+            key=lambda item: item[0],
         )
     )
-    front_facing = facing > 0.0
-    back = full if front_facing else terminal_sheet
-    front = terminal_sheet if front_facing else full
-    opaque_lateral = (
-        full.lateral_paths
-        if surface.is_open_shell or not front_facing
-        else terminal_sheet.lateral_paths
-    )
-    opaque_caps = terminal_sheet.cap_paths if front_facing else ()
     return ConeProjectionLayers(
-        surface.surface_id,
-        proxy,
-        back,
-        front,
-        opaque_lateral,
-        opaque_caps,
-        front_facing,
+        surface_id=surface.surface_id,
+        proxy=proxy,
+        back=back,
+        front=front,
+        opaque_lateral_paths=opaque_lateral,
+        opaque_cap_paths=opaque_caps,
+        terminal_front_facing=(
+            projected[0].front_facing if len(projected) == 1 else None
+        ),
+        terminal_front_facing_by_id=terminal_facing,
     )
 
 

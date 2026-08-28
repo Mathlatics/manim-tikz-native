@@ -546,10 +546,13 @@ an open mouth therefore receives one translucent lateral sheet instead of a
 fake base disk. `cone_lateral_sheen_direction` and
 `cone_cap_sheen_direction` are independent because a side highlight and a
 planar-base highlight need not point the same way. All component slots are
-preallocated and included in transactional rollback. Component-aware masks
-currently require an apex-to-one-rim cone. Leave the component color options
-unset for a two-terminal frustum; opting in there raises an explicit error
-rather than approximating an unimplemented polygon union.
+preallocated and included in transactional rollback. A two-terminal frustum
+keeps the lateral sheet and both real cap disks as separate depth components;
+the two cap components use the authored cap palette and may exchange far/near
+depth slots as the view crosses a side view. An exact edge-on cap has no
+certifiable display area, so its fill path is empty while its real terminal-rim
+boundary remains available. The implementation never invents a positive-area
+cap to hide that degeneracy.
 
 `QuadricSectionTransition3D` is the topology-changing companion to
 `QuadricOcclusion3D`.  It consumes a `ScheduledSectionAnimation` and a

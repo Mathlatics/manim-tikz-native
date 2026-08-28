@@ -857,9 +857,32 @@ def _adaptive_project_curve(
 
     screen = view.matrix[:2]
     cache: dict[float, np.ndarray] = {}
+    domain = curve.domain
+    parameter_scale = max(
+        1.0,
+        abs(float(domain.start)),
+        abs(float(domain.end)),
+    )
+    parameter_roundoff = max(
+        16.0 * np.finfo(float).eps * parameter_scale,
+        4.0 * abs(float(np.spacing(domain.start))),
+        4.0 * abs(float(np.spacing(domain.end))),
+    )
+
+    def canonical_parameter(parameter: float) -> float:
+        value = float(parameter)
+        if (
+            value < domain.start - parameter_roundoff
+            or value > domain.end + parameter_roundoff
+        ):
+            raise QuadricManimError(
+                f"curve {curve.curve_id!r} display interval lies outside its "
+                "authored parameter domain"
+            )
+        return min(domain.end, max(domain.start, value))
 
     def project(parameter: float) -> np.ndarray:
-        key = float(parameter)
+        key = canonical_parameter(parameter)
         cached = cache.get(key)
         if cached is not None:
             return cached
@@ -872,7 +895,13 @@ def _adaptive_project_curve(
         cache[key] = projected
         return projected
 
-    intervals: list[tuple[float, float]] = [(float(start), float(end))]
+    interval_start = canonical_parameter(start)
+    interval_end = canonical_parameter(end)
+    if interval_end <= interval_start:
+        raise QuadricManimError(
+            f"curve {curve.curve_id!r} display interval must have positive length"
+        )
+    intervals: list[tuple[float, float]] = [(interval_start, interval_end)]
     probe_fractions = (0.25, 0.5, 0.75)
     while True:
         split: list[int] = []
