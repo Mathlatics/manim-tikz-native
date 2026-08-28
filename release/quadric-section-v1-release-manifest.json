@@ -17,7 +17,7 @@
     },
     "quadric_manim": {
       "contract_revision": "tikz-native-contract:quadric_manim/v1",
-      "render_revision": "source-sha256:00f75649338c048a23e591e62113b4a96e863aadbd2199084791467c057f005a"
+      "render_revision": "source-sha256:76cf56609bac5133352ff72f0fbaff325b851e183af7d294748fe974930ee74b"
     }
   },
   "build_artifacts": {

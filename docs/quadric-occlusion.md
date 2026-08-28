@@ -659,6 +659,16 @@ publish `surface_view_base`, `surface_component_fill`, and
 latest exact entry and is cleared by `restore()`, so an animated camera or
 surface cannot create an unbounded history.
 
+Boundary display preparation performs one adaptive projection for each source
+which has painted fragments. All current fragment endpoints are mandatory
+samples in that certified source polyline, so slicing preserves exact projected
+endpoints while inheriting the source error bound. Solid and dashed fragments
+then reuse parameter slices of that one polyline; they do not run another
+adaptive projection. Source-distance dash anchoring still uses the complete
+polyline. Performance traces distinguish `projected_boundary_source_count`
+from `projected_fragment_slice_count` and time the lightweight slices under
+`projection_slicing`.
+
 The extended Cairo acceptance generator enables this trace automatically. Its
 keyframe JSON and fragment/ray CSV contain the controller measurements. Video
 subprocesses additionally publish a per-rendered-frame trace with the Cairo

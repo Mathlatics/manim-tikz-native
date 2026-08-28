@@ -1264,22 +1264,69 @@ def _adaptive_project_curve_samples(
     curve: AnalyticCurve3D,
     view: ParallelView,
     *,
+    required_parameters: Sequence[float] = (),
     max_chord_error: float,
     max_segments: int,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Return full-source parameters and points for stable dash phase."""
+    """Return one certified source polyline containing required parameters."""
 
     projection = view.matrix[:2]
     cache: dict[float, np.ndarray] = {}
+    domain = curve.domain
+    parameter_scale = max(
+        1.0,
+        abs(float(domain.start)),
+        abs(float(domain.end)),
+    )
+    parameter_roundoff = max(
+        16.0 * np.finfo(float).eps * parameter_scale,
+        4.0 * abs(float(np.spacing(domain.start))),
+        4.0 * abs(float(np.spacing(domain.end))),
+    )
+
+    def canonical_parameter(parameter: float) -> float:
+        value = float(parameter)
+        if (
+            value < domain.start - parameter_roundoff
+            or value > domain.end + parameter_roundoff
+        ):
+            raise QuadricManimError(
+                f"curve {curve.curve_id!r} display interval lies outside its "
+                "authored parameter domain"
+            )
+        return min(domain.end, max(domain.start, value))
 
     def project(parameter: float) -> np.ndarray:
-        key = float(parameter)
+        key = canonical_parameter(parameter)
         if key not in cache:
-            value = projection @ np.asarray(curve.point(key), dtype=float)
+            value = np.asarray(
+                projection @ np.asarray(curve.point(key), dtype=float),
+                dtype=float,
+            )
+            if value.shape != (2,) or not np.all(np.isfinite(value)):
+                raise QuadricManimError(
+                    f"curve {curve.curve_id!r} produced a non-finite projection"
+                )
             cache[key] = np.asarray((value[0], value[1], 0.0), dtype=float)
         return cache[key]
 
-    intervals = [(curve.domain.start, curve.domain.end)]
+    breakpoints = sorted(
+        {
+            canonical_parameter(domain.start),
+            canonical_parameter(domain.end),
+            *(canonical_parameter(value) for value in required_parameters),
+        }
+    )
+    intervals = list(zip(breakpoints[:-1], breakpoints[1:], strict=True))
+    if not intervals:
+        raise QuadricManimError(
+            f"curve {curve.curve_id!r} display interval must have positive length"
+        )
+    if len(intervals) > max_segments:
+        raise QuadricManimCapacityError(
+            f"boundary source {curve.curve_id!r} needs more than "
+            f"{max_segments} display segments"
+        )
     probes = (0.25, 0.5, 0.75)
     while True:
         split = []
@@ -1322,15 +1369,119 @@ def _adaptive_project_curve_samples(
         dtype=float,
     )
     points = np.asarray([project(float(value)) for value in parameters], dtype=float)
+    precision_floor = 4.0 * max(
+        (
+            abs(float(np.spacing(value)))
+            for point in points
+            for value in point[:2]
+        ),
+        default=0.0,
+    )
+    if precision_floor >= max_chord_error:
+        raise QuadricManimError(
+            f"curve {curve.curve_id!r} cannot certify max_chord_error at the "
+            "available floating-point screen resolution; requested "
+            f"{max_chord_error:.17g}, resolution floor {precision_floor:.17g}"
+        )
+    measured_error = 0.0
+    for index, (left, right) in enumerate(intervals):
+        for fraction in (0.0, *probes, 1.0):
+            measured_error = max(
+                measured_error,
+                _point_segment_distance(
+                    project(left + fraction * (right - left)),
+                    points[index],
+                    points[index + 1],
+                ),
+            )
+    certified_error = measured_error + precision_floor
+    if certified_error > max_chord_error * (
+        1.0 + 64.0 * np.finfo(float).eps
+    ):
+        raise QuadricManimError(
+            f"curve {curve.curve_id!r} cannot certify max_chord_error; "
+            f"requested {max_chord_error:.17g}, observed "
+            f"{certified_error:.17g}"
+        )
     return parameters, points
+
+
+def _slice_projected_curve_samples(
+    parameters: np.ndarray,
+    points: np.ndarray,
+    start: float,
+    end: float,
+    *,
+    curve_id: str,
+) -> np.ndarray:
+    """Slice a certified source polyline without re-evaluating its curve."""
+
+    requested_start = float(start)
+    requested_end = float(end)
+    if requested_end <= requested_start:
+        raise QuadricManimError(
+            f"curve {curve_id!r} display interval must have positive length"
+        )
+    domain_start = float(parameters[0])
+    domain_end = float(parameters[-1])
+    parameter_scale = max(1.0, abs(domain_start), abs(domain_end))
+    parameter_roundoff = max(
+        16.0 * np.finfo(float).eps * parameter_scale,
+        4.0 * abs(float(np.spacing(domain_start))),
+        4.0 * abs(float(np.spacing(domain_end))),
+    )
+    if (
+        requested_start < domain_start - parameter_roundoff
+        or requested_end > domain_end + parameter_roundoff
+    ):
+        raise QuadricManimError(
+            f"curve {curve_id!r} display interval lies outside its "
+            "projected source domain"
+        )
+    interval_start = min(domain_end, max(domain_start, requested_start))
+    interval_end = min(domain_end, max(domain_start, requested_end))
+    if interval_end <= interval_start:
+        raise QuadricManimError(
+            f"curve {curve_id!r} display interval must have positive length"
+        )
+
+    def point_at(parameter: float) -> np.ndarray:
+        index = int(np.searchsorted(parameters, parameter, side="left"))
+        if index < len(parameters) and float(parameters[index]) == parameter:
+            return points[index].copy()
+        index = min(max(index, 1), len(parameters) - 1)
+        left = float(parameters[index - 1])
+        right = float(parameters[index])
+        ratio = 0.0 if right <= left else (parameter - left) / (right - left)
+        return points[index - 1] + ratio * (points[index] - points[index - 1])
+
+    values = [point_at(interval_start)]
+    values.extend(
+        points[index].copy()
+        for index, parameter in enumerate(parameters)
+        if interval_start < float(parameter) < interval_end
+    )
+    values.append(point_at(interval_end))
+    result = [values[0]]
+    for point in values[1:]:
+        if not np.array_equal(point, result[-1]):
+            result.append(point)
+    if len(result) < 2:
+        raise QuadricManimError(
+            f"curve {curve_id!r} interval collapses in the selected projection"
+        )
+    return np.asarray(result, dtype=float)
 
 
 def _source_distance_at_parameter(
     parameters: np.ndarray,
     points: np.ndarray,
     parameter: float,
+    *,
+    cumulative: np.ndarray | None = None,
 ) -> float:
-    cumulative, _length = _polyline_lengths(points)
+    if cumulative is None:
+        cumulative, _length = _polyline_lengths(points)
     value = float(parameter)
     if value <= float(parameters[0]):
         return 0.0
@@ -1450,23 +1601,36 @@ def _prepare_boundary_fragments(
             capacity=limits.max_fragments_per_curve,
         )
         next_maps[source_id] = assignment
+        if not fragments:
+            prepared_by_source[source_id] = ()
+            continue
+        required_parameters = tuple(
+            value
+            for fragment in fragments
+            for value in (fragment.interval.start, fragment.interval.end)
+        )
         with _performance_stage(performance_attempt, "adaptive_projection"):
             parameters, source_points = _adaptive_project_curve_samples(
                 source.curve,
                 view,
+                required_parameters=required_parameters,
                 max_chord_error=max_chord_error,
                 max_segments=limits.max_segments_per_fragment,
             )
+        source_cumulative, _source_length = _polyline_lengths(source_points)
+        if performance_attempt is not None:
+            performance_attempt.increment_count(
+                "projected_boundary_source_count"
+            )
         values: list[_PreparedBoundaryFragment] = []
         for fragment in fragments:
-            with _performance_stage(performance_attempt, "adaptive_projection"):
-                points = _adaptive_project_curve(
-                    source.curve,
-                    view,
+            with _performance_stage(performance_attempt, "projection_slicing"):
+                points = _slice_projected_curve_samples(
+                    parameters,
+                    source_points,
                     fragment.interval.start,
                     fragment.interval.end,
-                    max_chord_error=max_chord_error,
-                    max_segments=limits.max_segments_per_fragment,
+                    curve_id=source.curve.curve_id,
                 )
             _cumulative, length = _polyline_lengths(points)
             allowance = max(
@@ -1486,6 +1650,7 @@ def _prepare_boundary_fragments(
                             parameters,
                             source_points,
                             fragment.interval.start,
+                            cumulative=source_cumulative,
                         ),
                         dash_length=style.dash_length,
                         dash_gap=style.dash_gap,
@@ -1497,6 +1662,9 @@ def _prepare_boundary_fragments(
             if performance_attempt is not None:
                 performance_attempt.increment_count(
                     "prepared_boundary_fragment_count"
+                )
+                performance_attempt.increment_count(
+                    "projected_fragment_slice_count"
                 )
                 performance_attempt.increment_count(
                     "prepared_dash_count", len(dashes)

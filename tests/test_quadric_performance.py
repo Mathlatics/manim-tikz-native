@@ -9,6 +9,7 @@ from unittest.mock import patch
 
 from manim import Line, Scene, tempconfig
 
+import polyhedron_visibility.quadrics.manim_runtime as manim_runtime
 from polyhedron_visibility.parallel_solver import ParallelView
 from polyhedron_visibility.quadrics.composite_authoring import (
     CompositeQuadricSection3D,
@@ -116,6 +117,33 @@ def _single_controller(scene: Scene) -> QuadricOcclusion3D:
 
 
 class QuadricPerformanceTraceTests(unittest.TestCase):
+    def test_unified_boundary_projects_each_painted_source_only_once(self) -> None:
+        with tempconfig({"renderer": "cairo"}):
+            controller = _single_controller(Scene())
+            with (
+                patch.object(
+                    manim_runtime,
+                    "_adaptive_project_curve_samples",
+                    wraps=manim_runtime._adaptive_project_curve_samples,
+                ) as source_projection,
+                patch.object(
+                    manim_runtime,
+                    "_adaptive_project_curve",
+                    side_effect=AssertionError("fragment was reprojected"),
+                ),
+            ):
+                controller.attach()
+            frame = controller.last_boundary_frame
+            assert frame is not None
+            painted_source_ids = {
+                fragment.source_id for fragment in frame.painted_fragments
+            }
+            self.assertEqual(
+                source_projection.call_count,
+                len(painted_source_ids),
+            )
+            controller.restore()
+
     def test_tracing_is_disabled_by_default(self) -> None:
         with patch.dict(os.environ, {QUADRIC_PERFORMANCE_TRACE_ENV: ""}):
             with tempconfig({"renderer": "cairo"}):
