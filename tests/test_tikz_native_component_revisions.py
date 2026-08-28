@@ -134,13 +134,13 @@ SOURCE_PROJECT_BUILD_REVISION = (
     "source-sha256:00579e342012a96443c098c7004be672d265d32fe6f82d66b0c6b11ba64305b7"
 )
 QUADRIC_GEOMETRY_REVISION = (
-    "source-sha256:eac9106efeafd1696fb32fdafcddcef59cd6d8a924d994d905687083aab2afd4"
+    "source-sha256:3874f85d3dd7b45717555b713eac5707b13201eff4b98e71d3905cf6c0c76b64"
 )
 QUADRIC_VISIBILITY_REVISION = (
-    "source-sha256:16b29243419885e847f020cea155f2dae49cb2d887f4d0ee3820e346f9b25e73"
+    "source-sha256:f1a17b02d1a170268ee33b3bbaa0eae1432b89b52429cce2fbc549f22269156c"
 )
 QUADRIC_MANIM_REVISION = (
-    "source-sha256:ca998ddddf292108567a79e4b908a3e03e394556557b5ec56a50956b4fdfab0a"
+    "source-sha256:4b0e778ba5c4fb989be95451793863bd66f236d419e7ea30b458f9dc1395eb74"
 )
 CONVEX_SECTION_3D_REVISION = (
     "source-sha256:5cfd664e136caf4f68876ac76f81674d99c15b3b275c3859a84c174d738729b5"
@@ -253,6 +253,11 @@ class TikzNativeComponentRevisionTests(unittest.TestCase):
         self.assertTrue(
             asset["capabilities"][
                 "quadric_section_topology_transition_manim_v1"
+            ]
+        )
+        self.assertTrue(
+            asset["capabilities"][
+                "quadric_open_double_section_compositing_v1"
             ]
         )
         self.assertTrue(

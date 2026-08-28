@@ -1,0 +1,1064 @@
+"""Renderer-neutral coordination of one finite open double-cone section.
+
+The ordinary section compositor deliberately owns one convex surface.  An
+``OPEN_DOUBLE`` teaching shell is already represented by two stable
+``OPEN_SINGLE`` siblings, so this module combines two independently certified
+local frames instead of teaching that local solver about multiple surfaces.
+
+The two projected interiors must be disjoint apart from their authored shared
+apex.  Under that contract, local non-outside plane cells can be retained
+verbatim and the common outside region is the first local outside partition
+minus the second convex projection proxy.  The result paints the cutting plane
+once, keeps both pairs of surface sheets, and supplies one deterministic
+far-to-near painter graph.  Positive-area nappe overlap fails explicitly.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+import json
+from math import isfinite
+from typing import Mapping, Sequence
+
+import numpy as np
+
+from ..compositor import (
+    CompositorCycleError,
+    PainterConstraint,
+    stable_topological_sort,
+)
+from ..topology import ParameterInterval, assert_exact_partition
+from .compositing import QuadricPaintRelation
+from .contract import ConeModel, ConeSpec, PlaneDisplayPatchSpec, SectionPlane
+from .section_compositing import (
+    PlaneDepthRole,
+    QUADRIC_SECTION_COMPOSITING_LIMITS,
+    QuadricPlaneFragment,
+    QuadricPlaneOutlineFragment,
+    QuadricSectionCompositingError,
+    QuadricSectionCompositingFrame,
+)
+
+
+COMPOSITE_QUADRIC_SECTION_COMPOSITING_SCHEMA = (
+    "manim-composite-quadric-section-compositing/v1"
+)
+
+
+class CompositeQuadricSectionCompositingError(ValueError):
+    """Two local open-double section frames cannot be merged safely."""
+
+
+def _identity(value: object, label: str) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise CompositeQuadricSectionCompositingError(
+            f"{label} must be a non-empty string"
+        )
+    return value.strip()
+
+
+@dataclass(frozen=True, slots=True)
+class CompositeSectionBranchLineage:
+    """Link one physical nappe curve to its mathematical conic branch."""
+
+    physical_curve_id: str
+    mathematical_branch_id: str
+    child_surface_id: str
+    nappe_role: str
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "physical_curve_id",
+            _identity(self.physical_curve_id, "physical_curve_id"),
+        )
+        object.__setattr__(
+            self,
+            "mathematical_branch_id",
+            _identity(self.mathematical_branch_id, "mathematical_branch_id"),
+        )
+        object.__setattr__(
+            self,
+            "child_surface_id",
+            _identity(self.child_surface_id, "child_surface_id"),
+        )
+        if self.nappe_role not in {"negative", "positive"}:
+            raise CompositeQuadricSectionCompositingError(
+                "nappe_role must be 'negative' or 'positive'"
+            )
+
+    def to_dict(self) -> dict[str, str]:
+        return {
+            "physicalCurveId": self.physical_curve_id,
+            "mathematicalBranchId": self.mathematical_branch_id,
+            "childSurfaceId": self.child_surface_id,
+            "nappeRole": self.nappe_role,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class CompositeSharedApexEvidence:
+    """Certificate for the only contact allowed between the two siblings."""
+
+    world_point: tuple[float, float, float]
+    screen_point: tuple[float, float]
+    projected_overlap_area: float
+    boundary_tolerance: float
+
+    def __post_init__(self) -> None:
+        world = np.asarray(self.world_point, dtype=float)
+        screen = np.asarray(self.screen_point, dtype=float)
+        if world.shape != (3,) or not np.all(np.isfinite(world)):
+            raise CompositeQuadricSectionCompositingError(
+                "shared apex world_point must be finite three-dimensional"
+            )
+        if screen.shape != (2,) or not np.all(np.isfinite(screen)):
+            raise CompositeQuadricSectionCompositingError(
+                "shared apex screen_point must be finite two-dimensional"
+            )
+        if (
+            not isfinite(self.projected_overlap_area)
+            or self.projected_overlap_area < 0.0
+            or not isfinite(self.boundary_tolerance)
+            or self.boundary_tolerance <= 0.0
+        ):
+            raise CompositeQuadricSectionCompositingError(
+                "shared-apex evidence tolerances must be finite and valid"
+            )
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "worldPoint": list(self.world_point),
+            "screenPoint": list(self.screen_point),
+            "projectedOverlapArea": self.projected_overlap_area,
+            "boundaryTolerance": self.boundary_tolerance,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class CompositeSurfaceSheetItems:
+    child_surface_id: str
+    nappe_role: str
+    surface_back: str
+    surface_front: str
+
+    def __post_init__(self) -> None:
+        for name in ("child_surface_id", "surface_back", "surface_front"):
+            object.__setattr__(self, name, _identity(getattr(self, name), name))
+        if self.nappe_role not in {"negative", "positive"}:
+            raise CompositeQuadricSectionCompositingError(
+                "surface-sheet nappe_role must be 'negative' or 'positive'"
+            )
+        if self.surface_back == self.surface_front:
+            raise CompositeQuadricSectionCompositingError(
+                "surface back/front sheet identities must differ"
+            )
+
+    def to_dict(self) -> dict[str, str]:
+        return {
+            "childSurfaceId": self.child_surface_id,
+            "nappeRole": self.nappe_role,
+            "surfaceBack": self.surface_back,
+            "surfaceFront": self.surface_front,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class CompositeQuadricSectionPaintItems:
+    plane_behind: str
+    plane_outside: str
+    plane_between: str
+    plane_front: str
+    plane_outline_behind: str
+    plane_outline_outside: str
+    plane_outline_between: str
+    plane_outline_front: str
+    surface_sheets: tuple[CompositeSurfaceSheetItems, ...]
+
+    def __post_init__(self) -> None:
+        for name in (
+            "plane_behind",
+            "plane_outside",
+            "plane_between",
+            "plane_front",
+            "plane_outline_behind",
+            "plane_outline_outside",
+            "plane_outline_between",
+            "plane_outline_front",
+        ):
+            object.__setattr__(self, name, _identity(getattr(self, name), name))
+        if len(self.surface_sheets) != 2 or not all(
+            isinstance(item, CompositeSurfaceSheetItems)
+            for item in self.surface_sheets
+        ):
+            raise CompositeQuadricSectionCompositingError(
+                "composite paint items require exactly two surface-sheet pairs"
+            )
+        keys = tuple(
+            (item.nappe_role, item.child_surface_id) for item in self.surface_sheets
+        )
+        if keys != tuple(sorted(keys)) or {item.nappe_role for item in self.surface_sheets} != {
+            "negative",
+            "positive",
+        }:
+            raise CompositeQuadricSectionCompositingError(
+                "surface-sheet pairs must be canonical negative/positive siblings"
+            )
+        if len(set(self.ordered)) != len(self.ordered):
+            raise CompositeQuadricSectionCompositingError(
+                "composite painter identities must be unique"
+            )
+
+    @property
+    def fill_by_role(self) -> dict[PlaneDepthRole, str]:
+        return {
+            PlaneDepthRole.BEHIND_SURFACE: self.plane_behind,
+            PlaneDepthRole.OUTSIDE_PROJECTION: self.plane_outside,
+            PlaneDepthRole.BETWEEN_SURFACE_SHEETS: self.plane_between,
+            PlaneDepthRole.IN_FRONT_OF_SURFACE: self.plane_front,
+        }
+
+    @property
+    def outline_by_role(self) -> dict[PlaneDepthRole, str]:
+        return {
+            PlaneDepthRole.BEHIND_SURFACE: self.plane_outline_behind,
+            PlaneDepthRole.OUTSIDE_PROJECTION: self.plane_outline_outside,
+            PlaneDepthRole.BETWEEN_SURFACE_SHEETS: self.plane_outline_between,
+            PlaneDepthRole.IN_FRONT_OF_SURFACE: self.plane_outline_front,
+        }
+
+    @property
+    def ordered(self) -> tuple[str, ...]:
+        backs = tuple(item.surface_back for item in self.surface_sheets)
+        fronts = tuple(item.surface_front for item in self.surface_sheets)
+        return (
+            self.plane_behind,
+            self.plane_outline_behind,
+            *backs,
+            self.plane_outside,
+            self.plane_outline_outside,
+            self.plane_between,
+            self.plane_outline_between,
+            *fronts,
+            self.plane_front,
+            self.plane_outline_front,
+        )
+
+    def sheet_for_surface(self, surface_id: str) -> CompositeSurfaceSheetItems:
+        matches = tuple(
+            item for item in self.surface_sheets if item.child_surface_id == surface_id
+        )
+        if len(matches) != 1:
+            raise CompositeQuadricSectionCompositingError(
+                f"no unique surface-sheet pair for {surface_id!r}"
+            )
+        return matches[0]
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "planeBehind": self.plane_behind,
+            "planeOutside": self.plane_outside,
+            "planeBetween": self.plane_between,
+            "planeFront": self.plane_front,
+            "planeOutlineBehind": self.plane_outline_behind,
+            "planeOutlineOutside": self.plane_outline_outside,
+            "planeOutlineBetween": self.plane_outline_between,
+            "planeOutlineFront": self.plane_outline_front,
+            "surfaceSheets": [item.to_dict() for item in self.surface_sheets],
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class CompositeQuadricSectionCompositingFrame:
+    parent_surface_id: str
+    section_id: str
+    plane: SectionPlane
+    patch: PlaneDisplayPatchSpec
+    child_frames: tuple[QuadricSectionCompositingFrame, ...]
+    plane_fragments: tuple[QuadricPlaneFragment, ...]
+    plane_outline_fragments: tuple[QuadricPlaneOutlineFragment, ...]
+    paint_items: CompositeQuadricSectionPaintItems
+    branch_lineage: tuple[CompositeSectionBranchLineage, ...]
+    shared_apex: CompositeSharedApexEvidence
+    order_relations: tuple[QuadricPaintRelation, ...]
+    draw_order: tuple[str, ...]
+    max_screen_error: float
+    schema: str = COMPOSITE_QUADRIC_SECTION_COMPOSITING_SCHEMA
+
+    def __post_init__(self) -> None:
+        if self.schema != COMPOSITE_QUADRIC_SECTION_COMPOSITING_SCHEMA:
+            raise CompositeQuadricSectionCompositingError(
+                "invalid composite quadric-section schema"
+            )
+        object.__setattr__(
+            self,
+            "parent_surface_id",
+            _identity(self.parent_surface_id, "parent_surface_id"),
+        )
+        object.__setattr__(self, "section_id", _identity(self.section_id, "section_id"))
+        if not isinstance(self.plane, SectionPlane):
+            raise TypeError("plane must be a SectionPlane")
+        if not isinstance(self.patch, PlaneDisplayPatchSpec):
+            raise TypeError("patch must be a PlaneDisplayPatchSpec")
+        if self.patch.plane_id != self.plane.plane_id:
+            raise CompositeQuadricSectionCompositingError(
+                "composite patch plane_id does not match the cutting plane"
+            )
+        if len(self.child_frames) != 2 or not all(
+            isinstance(item, QuadricSectionCompositingFrame)
+            for item in self.child_frames
+        ):
+            raise CompositeQuadricSectionCompositingError(
+                "composite section frame requires exactly two local child frames"
+            )
+        child_ids = tuple(item.surface_id for item in self.child_frames)
+        if child_ids != tuple(sorted(child_ids)) or len(set(child_ids)) != 2:
+            raise CompositeQuadricSectionCompositingError(
+                "local child frames must have unique sorted surface identities"
+            )
+        if any(item.plane != self.plane or item.patch != self.patch for item in self.child_frames):
+            raise CompositeQuadricSectionCompositingError(
+                "local child frames must share the exact plane and display patch"
+            )
+        fragment_ids = tuple(item.fragment_id for item in self.plane_fragments)
+        if fragment_ids != tuple(sorted(fragment_ids)) or len(set(fragment_ids)) != len(
+            fragment_ids
+        ):
+            raise CompositeQuadricSectionCompositingError(
+                "composite plane fragments must have unique sorted identities"
+            )
+        outline_ids = tuple(item.fragment_id for item in self.plane_outline_fragments)
+        if outline_ids != tuple(sorted(outline_ids)) or len(set(outline_ids)) != len(
+            outline_ids
+        ):
+            raise CompositeQuadricSectionCompositingError(
+                "composite plane-outline fragments must have unique sorted identities"
+            )
+        for edge_index in range(4):
+            edge = tuple(
+                item
+                for item in self.plane_outline_fragments
+                if item.edge_index == edge_index
+            )
+            try:
+                assert_exact_partition(
+                    ParameterInterval(0.0, 1.0),
+                    (item.interval for item in edge),
+                )
+            except ValueError as exc:
+                raise CompositeQuadricSectionCompositingError(
+                    "composite outline fragments must cover every patch edge"
+                ) from exc
+        lineage_keys = tuple(item.physical_curve_id for item in self.branch_lineage)
+        if lineage_keys != tuple(sorted(lineage_keys)) or len(set(lineage_keys)) != len(
+            lineage_keys
+        ):
+            raise CompositeQuadricSectionCompositingError(
+                "branch lineage must use unique sorted physical curve identities"
+            )
+        active = {
+            *self.paint_items.ordered,
+            *(
+                fragment.item_id
+                for child in self.child_frames
+                for fragment in child.base_frame.curve_fragments
+                if fragment.painted
+            ),
+        }
+        if len(self.draw_order) != len(active) or set(self.draw_order) != active:
+            raise CompositeQuadricSectionCompositingError(
+                "composite draw_order must cover every active painter item exactly once"
+            )
+        relation_keys = tuple(
+            (item.far_item_id, item.near_item_id, item.reason)
+            for item in self.order_relations
+        )
+        if relation_keys != tuple(sorted(relation_keys)):
+            raise CompositeQuadricSectionCompositingError(
+                "composite painter relations must be sorted"
+            )
+        if not isfinite(self.max_screen_error) or self.max_screen_error <= 0.0:
+            raise CompositeQuadricSectionCompositingError(
+                "max_screen_error must be finite and positive"
+            )
+
+    @property
+    def fragments_by_role(self) -> dict[PlaneDepthRole, tuple[QuadricPlaneFragment, ...]]:
+        return {
+            role: tuple(item for item in self.plane_fragments if item.role is role)
+            for role in PlaneDepthRole
+        }
+
+    @property
+    def outline_fragments_by_role(
+        self,
+    ) -> dict[PlaneDepthRole, tuple[QuadricPlaneOutlineFragment, ...]]:
+        return {
+            role: tuple(
+                item for item in self.plane_outline_fragments if item.role is role
+            )
+            for role in PlaneDepthRole
+        }
+
+    def child_frame(self, surface_id: str) -> QuadricSectionCompositingFrame:
+        matches = tuple(item for item in self.child_frames if item.surface_id == surface_id)
+        if len(matches) != 1:
+            raise CompositeQuadricSectionCompositingError(
+                f"no unique child frame for {surface_id!r}"
+            )
+        return matches[0]
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "schema": self.schema,
+            "parentSurfaceId": self.parent_surface_id,
+            "sectionId": self.section_id,
+            "plane": {
+                "planeId": self.plane.plane_id,
+                "point": list(self.plane.point),
+                "normal": list(self.plane.normal),
+                "uAxis": list(self.plane.u_axis or ()),
+            },
+            "patch": {
+                "patchId": self.patch.patch_id,
+                "planeId": self.patch.plane_id,
+                "halfWidth": self.patch.half_width,
+                "halfHeight": self.patch.half_height,
+                "centerCoordinates": list(self.patch.center_coordinates),
+            },
+            "childFrames": [item.to_dict() for item in self.child_frames],
+            "planeFragments": [item.to_dict() for item in self.plane_fragments],
+            "planeOutlineFragments": [
+                item.to_dict() for item in self.plane_outline_fragments
+            ],
+            "paintItems": self.paint_items.to_dict(),
+            "branchLineage": [item.to_dict() for item in self.branch_lineage],
+            "sharedApex": self.shared_apex.to_dict(),
+            "orderRelations": [item.to_dict() for item in self.order_relations],
+            "drawOrder": list(self.draw_order),
+            "maxScreenError": self.max_screen_error,
+        }
+
+
+def _cross2(first: np.ndarray, second: np.ndarray) -> float:
+    return float(first[0] * second[1] - first[1] * second[0])
+
+
+def _signed_area(points: Sequence[np.ndarray]) -> float:
+    return 0.5 * sum(
+        _cross2(start, end)
+        for start, end in zip(points, (*points[1:], points[0]))
+    )
+
+
+def _canonical_polygon(
+    points: Sequence[Sequence[float]],
+    epsilon: float,
+) -> tuple[np.ndarray, ...]:
+    values: list[np.ndarray] = []
+    for raw in points:
+        point = np.asarray(raw, dtype=float)
+        if point.shape != (2,) or not np.all(np.isfinite(point)):
+            raise CompositeQuadricSectionCompositingError(
+                "projected partition vertices must be finite 2D points"
+            )
+        if not values or float(np.linalg.norm(point - values[-1])) > epsilon:
+            values.append(point)
+    if len(values) > 1 and float(np.linalg.norm(values[0] - values[-1])) <= epsilon:
+        values.pop()
+    changed = True
+    while changed and len(values) >= 3:
+        changed = False
+        cleaned: list[np.ndarray] = []
+        count = len(values)
+        for index, point in enumerate(values):
+            previous = values[(index - 1) % count]
+            following = values[(index + 1) % count]
+            baseline = following - previous
+            scale = max(float(np.linalg.norm(baseline)), epsilon)
+            if abs(_cross2(point - previous, baseline)) <= epsilon * scale:
+                changed = True
+                continue
+            cleaned.append(point)
+        values = cleaned
+    if len(values) < 3:
+        return ()
+    area = _signed_area(values)
+    if abs(area) <= epsilon * epsilon:
+        return ()
+    if area < 0.0:
+        values.reverse()
+    start = min(
+        range(len(values)),
+        key=lambda index: (
+            round(float(values[index][0]) / epsilon),
+            round(float(values[index][1]) / epsilon),
+            float(values[index][0]),
+            float(values[index][1]),
+        ),
+    )
+    return tuple((*values[start:], *values[:start]))
+
+
+def _clip_half_plane(
+    polygon: Sequence[np.ndarray],
+    edge_start: np.ndarray,
+    edge_end: np.ndarray,
+    *,
+    keep_inside: bool,
+    epsilon: float,
+) -> tuple[np.ndarray, ...]:
+    if not polygon:
+        return ()
+    edge = edge_end - edge_start
+
+    def signed(point: np.ndarray) -> float:
+        value = _cross2(edge, point - edge_start)
+        return value if keep_inside else -value
+
+    result: list[np.ndarray] = []
+    previous = np.asarray(polygon[-1], dtype=float)
+    previous_value = signed(previous)
+    previous_inside = previous_value >= -epsilon
+    for raw_current in polygon:
+        current = np.asarray(raw_current, dtype=float)
+        current_value = signed(current)
+        current_inside = current_value >= -epsilon
+        if current_inside != previous_inside:
+            denominator = previous_value - current_value
+            if abs(denominator) > np.finfo(float).tiny:
+                parameter = previous_value / denominator
+                result.append(previous + parameter * (current - previous))
+        if current_inside:
+            result.append(current)
+        previous = current
+        previous_value = current_value
+        previous_inside = current_inside
+    return _canonical_polygon(result, epsilon)
+
+
+def _convex_intersection(
+    first: Sequence[np.ndarray],
+    second: Sequence[np.ndarray],
+    epsilon: float,
+) -> tuple[np.ndarray, ...]:
+    result = _canonical_polygon(first, epsilon)
+    clipper = _canonical_polygon(second, epsilon)
+    for start, end in zip(clipper, (*clipper[1:], clipper[0])):
+        result = _clip_half_plane(
+            result,
+            start,
+            end,
+            keep_inside=True,
+            epsilon=epsilon,
+        )
+        if not result:
+            break
+    return result
+
+
+def _subtract_convex(
+    subject: Sequence[np.ndarray],
+    clipper: Sequence[np.ndarray],
+    epsilon: float,
+) -> tuple[tuple[np.ndarray, ...], ...]:
+    candidates = (_canonical_polygon(subject, epsilon),)
+    outside: list[tuple[np.ndarray, ...]] = []
+    boundary = _canonical_polygon(clipper, epsilon)
+    for start, end in zip(boundary, (*boundary[1:], boundary[0])):
+        next_candidates: list[tuple[np.ndarray, ...]] = []
+        for candidate in candidates:
+            exterior = _clip_half_plane(
+                candidate,
+                start,
+                end,
+                keep_inside=False,
+                epsilon=epsilon,
+            )
+            interior = _clip_half_plane(
+                candidate,
+                start,
+                end,
+                keep_inside=True,
+                epsilon=epsilon,
+            )
+            if exterior:
+                outside.append(exterior)
+            if interior:
+                next_candidates.append(interior)
+        candidates = tuple(next_candidates)
+        if not candidates:
+            break
+    return tuple(outside)
+
+
+def _role_at_outline_parameter(
+    frame: QuadricSectionCompositingFrame,
+    edge_index: int,
+    parameter: float,
+) -> PlaneDepthRole:
+    matches = tuple(
+        item.role
+        for item in frame.plane_outline_fragments
+        if item.edge_index == edge_index
+        and item.interval.contains(parameter, tolerance=0.0)
+    )
+    if len(set(matches)) != 1:
+        raise CompositeQuadricSectionCompositingError(
+            "a local outline partition has no unique role at an interval midpoint"
+        )
+    return matches[0]
+
+
+def _combined_role(
+    first: PlaneDepthRole,
+    second: PlaneDepthRole,
+    *,
+    label: str,
+) -> PlaneDepthRole:
+    active = tuple(
+        role
+        for role in (first, second)
+        if role is not PlaneDepthRole.OUTSIDE_PROJECTION
+    )
+    if len(active) > 1:
+        raise CompositeQuadricSectionCompositingError(
+            f"open-double nappe projections overlap at {label}; "
+            "interleaved multi-sheet ordering is outside this coordinator"
+        )
+    return active[0] if active else PlaneDepthRole.OUTSIDE_PROJECTION
+
+
+def _combined_outline_fragments(
+    frames: tuple[QuadricSectionCompositingFrame, ...],
+    projection: np.ndarray,
+    epsilon: float,
+) -> tuple[QuadricPlaneOutlineFragment, ...]:
+    plane = frames[0].plane
+    patch = frames[0].patch
+    corners = tuple(np.asarray(item, dtype=float) for item in patch.corners(plane))
+    result: list[QuadricPlaneOutlineFragment] = []
+    for edge_index, (world_start, world_end) in enumerate(
+        zip(corners, (*corners[1:], corners[0]))
+    ):
+        values = [0.0, 1.0]
+        for frame in frames:
+            values.extend(
+                value
+                for item in frame.plane_outline_fragments
+                if item.edge_index == edge_index
+                for value in (item.interval.start, item.interval.end)
+            )
+        canonical: list[float] = []
+        for value in sorted(values):
+            value = min(1.0, max(0.0, float(value)))
+            if not canonical or value - canonical[-1] > epsilon:
+                canonical.append(value)
+        runs: list[tuple[float, float, PlaneDepthRole]] = []
+        for start, end in zip(canonical, canonical[1:]):
+            if end - start <= epsilon:
+                continue
+            midpoint = 0.5 * (start + end)
+            role = _combined_role(
+                _role_at_outline_parameter(frames[0], edge_index, midpoint),
+                _role_at_outline_parameter(frames[1], edge_index, midpoint),
+                label=f"plane edge {edge_index}",
+            )
+            if runs and runs[-1][2] is role and start - runs[-1][1] <= epsilon:
+                runs[-1] = (runs[-1][0], end, role)
+            else:
+                runs.append((start, end, role))
+        for run_index, (start, end, role) in enumerate(runs):
+            first = world_start + start * (world_end - world_start)
+            second = world_start + end * (world_end - world_start)
+            screen_first = projection[:2] @ first
+            screen_second = projection[:2] @ second
+            result.append(
+                QuadricPlaneOutlineFragment(
+                    fragment_id=(
+                        f"composite-plane:{plane.plane_id}:edge:{edge_index}:"
+                        f"span:{run_index:04d}:{role.value}"
+                    ),
+                    role=role,
+                    edge_index=edge_index,
+                    interval=ParameterInterval(start, end),
+                    world_start=tuple(float(item) for item in first),
+                    world_end=tuple(float(item) for item in second),
+                    screen_start=tuple(float(item) for item in screen_first),
+                    screen_end=tuple(float(item) for item in screen_second),
+                )
+            )
+    return tuple(sorted(result, key=lambda item: item.fragment_id))
+
+
+def _dedupe_relations(
+    values: Sequence[QuadricPaintRelation],
+) -> tuple[QuadricPaintRelation, ...]:
+    by_key = {
+        (item.far_item_id, item.near_item_id, item.reason): item for item in values
+    }
+    return tuple(by_key[key] for key in sorted(by_key))
+
+
+def compute_composite_quadric_section_compositing(
+    parent_surface: ConeSpec,
+    section_id: str,
+    child_frames: Sequence[QuadricSectionCompositingFrame],
+    branch_lineage: Sequence[CompositeSectionBranchLineage] = (),
+    *,
+    max_plane_fragments: int = (
+        QUADRIC_SECTION_COMPOSITING_LIMITS.max_plane_fragments
+    ),
+) -> CompositeQuadricSectionCompositingFrame:
+    """Merge two certified local section frames for one ``OPEN_DOUBLE`` shell."""
+
+    if not isinstance(parent_surface, ConeSpec):
+        raise TypeError("parent_surface must be a ConeSpec")
+    if parent_surface.model is not ConeModel.OPEN_DOUBLE:
+        raise CompositeQuadricSectionCompositingError(
+            "composite section coordination requires ConeModel.OPEN_DOUBLE"
+        )
+    if (
+        isinstance(max_plane_fragments, bool)
+        or not isinstance(max_plane_fragments, int)
+        or max_plane_fragments <= 0
+    ):
+        raise CompositeQuadricSectionCompositingError(
+            "max_plane_fragments must be a positive integer"
+        )
+    identity = _identity(section_id, "section_id")
+    frames = tuple(sorted(child_frames, key=lambda item: item.surface_id))
+    if len(frames) != 2 or not all(
+        isinstance(item, QuadricSectionCompositingFrame) for item in frames
+    ):
+        raise CompositeQuadricSectionCompositingError(
+            "exactly two local section frames are required"
+        )
+    expected_children = parent_surface.render_components
+    expected_ids = tuple(item.surface_id for item in expected_children)
+    if tuple(item.surface_id for item in frames) != expected_ids:
+        raise CompositeQuadricSectionCompositingError(
+            "local section frames are not the canonical siblings of the parent"
+        )
+    plane = frames[0].plane
+    patch = frames[0].patch
+    if any(item.plane != plane or item.patch != patch for item in frames):
+        raise CompositeQuadricSectionCompositingError(
+            "both local frames must use one identical plane and display patch"
+        )
+    projection = np.asarray(
+        frames[0].base_frame.visibility.projection_matrix,
+        dtype=float,
+    )
+    if any(
+        not np.array_equal(
+            projection,
+            np.asarray(item.base_frame.visibility.projection_matrix, dtype=float),
+        )
+        for item in frames[1:]
+    ):
+        raise CompositeQuadricSectionCompositingError(
+            "both local frames must use one identical parallel projection"
+        )
+    scale = max(
+        patch.half_width,
+        patch.half_height,
+        *(abs(value) for value in patch.center_coordinates),
+        1.0,
+    )
+    epsilon = max(np.finfo(float).eps * 8192.0 * scale, 1.0e-12 * scale)
+    area_tolerance = max(
+        epsilon * epsilon,
+        1.0e-12 * patch.half_width * patch.half_height,
+    )
+
+    proxies = tuple(
+        _canonical_polygon(item.surface_proxy.boundary_points, epsilon)
+        for item in frames
+    )
+    if any(len(item) < 3 for item in proxies):
+        raise CompositeQuadricSectionCompositingError(
+            "each local surface proxy must retain positive display area"
+        )
+    overlap = _convex_intersection(proxies[0], proxies[1], epsilon)
+    overlap_area = abs(_signed_area(overlap)) if overlap else 0.0
+    if overlap_area > area_tolerance:
+        raise CompositeQuadricSectionCompositingError(
+            "open-double nappe projections have positive-area overlap; "
+            "interleaved multi-sheet ordering is outside this coordinator"
+        )
+    apex = np.asarray(parent_surface.apex, dtype=float)
+    screen_apex = projection[:2] @ apex
+    apex_tolerance = max(epsilon * 64.0, 1.0e-9 * scale)
+    for frame, proxy in zip(frames, proxies):
+        if min(float(np.linalg.norm(point - screen_apex)) for point in proxy) > apex_tolerance:
+            raise CompositeQuadricSectionCompositingError(
+                f"local proxy {frame.surface_id!r} does not own the shared apex"
+            )
+    shared_apex = CompositeSharedApexEvidence(
+        tuple(float(item) for item in apex),
+        tuple(float(item) for item in screen_apex),
+        overlap_area,
+        apex_tolerance,
+    )
+
+    polygon_records: list[
+        tuple[PlaneDepthRole, str, int, tuple[np.ndarray, ...]]
+    ] = []
+    first, second = frames
+    for fragment in first.plane_fragments:
+        polygon = _canonical_polygon(fragment.screen_vertices, epsilon)
+        if not polygon:
+            continue
+        if fragment.role is PlaneDepthRole.OUTSIDE_PROJECTION:
+            pieces = _subtract_convex(polygon, proxies[1], epsilon)
+            polygon_records.extend(
+                (fragment.role, f"{fragment.fragment_id}:minus-second:{index:04d}", fragment.subdivision_depth, piece)
+                for index, piece in enumerate(pieces)
+            )
+        else:
+            intersection = _convex_intersection(
+                polygon,
+                proxies[1],
+                epsilon,
+            )
+            if (
+                intersection
+                and abs(_signed_area(intersection)) > area_tolerance
+            ):
+                raise CompositeQuadricSectionCompositingError(
+                    "positive-area nappe role overlap survived proxy certification"
+                )
+            polygon_records.append(
+                (fragment.role, fragment.fragment_id, fragment.subdivision_depth, polygon)
+            )
+    polygon_records.extend(
+        (
+            fragment.role,
+            fragment.fragment_id,
+            fragment.subdivision_depth,
+            _canonical_polygon(fragment.screen_vertices, epsilon),
+        )
+        for fragment in second.plane_fragments
+        if fragment.role is not PlaneDepthRole.OUTSIDE_PROJECTION
+    )
+    polygon_records = [item for item in polygon_records if item[3]]
+    polygon_records.sort(
+        key=lambda item: (
+            item[0].value,
+            item[1],
+            tuple(
+                (round(float(point[0]) / epsilon), round(float(point[1]) / epsilon))
+                for point in item[3]
+            ),
+        )
+    )
+
+    plane_u, plane_v, _normal = plane.basis
+    plane_axes = np.column_stack((plane_u, plane_v))
+    screen_origin = projection[:2] @ np.asarray(plane.point, dtype=float)
+    screen_basis = projection[:2] @ plane_axes
+    determinant = float(np.linalg.det(screen_basis))
+    basis_scale = max(float(np.linalg.norm(screen_basis, ord=2)), np.finfo(float).tiny)
+    if abs(determinant) <= 1.0e-12 * basis_scale * basis_scale:
+        raise CompositeQuadricSectionCompositingError(
+            "cutting plane projects edge-on and has no sortable display area"
+        )
+    inverse = np.linalg.inv(screen_basis)
+
+    fragments: list[QuadricPlaneFragment] = []
+    triangle_index = 0
+    for role, token, depth, polygon in polygon_records:
+        del token
+        for index in range(1, len(polygon) - 1):
+            screen_triangle = (polygon[0], polygon[index], polygon[index + 1])
+            if abs(_signed_area(screen_triangle)) <= area_tolerance:
+                continue
+            world_triangle = tuple(
+                np.asarray(plane.point, dtype=float)
+                + plane_axes @ (inverse @ (point - screen_origin))
+                for point in screen_triangle
+            )
+            fragments.append(
+                QuadricPlaneFragment(
+                    fragment_id=(
+                        f"composite-plane:{plane.plane_id}:cell:"
+                        f"{triangle_index:06d}:{role.value}"
+                    ),
+                    role=role,
+                    world_vertices=tuple(
+                        tuple(float(value) for value in point)
+                        for point in world_triangle
+                    ),  # type: ignore[arg-type]
+                    screen_vertices=tuple(
+                        tuple(float(value) for value in point)
+                        for point in screen_triangle
+                    ),  # type: ignore[arg-type]
+                    subdivision_depth=depth,
+                )
+            )
+            triangle_index += 1
+    fragments.sort(key=lambda item: item.fragment_id)
+    if not fragments:
+        raise CompositeQuadricSectionCompositingError(
+            "composite plane partition has no positive-area fragments"
+        )
+    if len(fragments) > max_plane_fragments:
+        raise CompositeQuadricSectionCompositingError(
+            f"composite plane fragment count {len(fragments)} exceeds "
+            f"capacity {max_plane_fragments}"
+        )
+
+    # The coordinator is allowed to replace two local outside partitions with
+    # one shared partition, but it may neither lose nor double-paint any
+    # positive-area part of the authored plane patch.  Certify that invariant
+    # before the frame can reach a renderer.
+    projected_patch = _canonical_polygon(
+        tuple(
+            projection[:2] @ np.asarray(point, dtype=float)
+            for point in patch.corners(plane)
+        ),
+        epsilon,
+    )
+    expected_patch_area = abs(_signed_area(projected_patch))
+    fragment_area = sum(
+        abs(
+            _signed_area(
+                tuple(
+                    np.asarray(point, dtype=float)
+                    for point in fragment.screen_vertices
+                )
+            )
+        )
+        for fragment in fragments
+    )
+    partition_tolerance = max(
+        area_tolerance * max(16, 4 * len(fragments)),
+        expected_patch_area * 5.0e-9,
+    )
+    if (
+        expected_patch_area <= area_tolerance
+        or abs(fragment_area - expected_patch_area) > partition_tolerance
+    ):
+        raise CompositeQuadricSectionCompositingError(
+            "composite plane partition does not conserve the projected patch area"
+        )
+
+    outline = _combined_outline_fragments(frames, projection, epsilon)
+    local_items = frames[0].paint_items
+    surface_sheets = tuple(
+        CompositeSurfaceSheetItems(
+            child.surface_id,
+            child.surface_id.rsplit(":", 1)[-1],
+            frame.paint_items.surface_back,
+            frame.paint_items.surface_front,
+        )
+        for child, frame in zip(expected_children, frames)
+    )
+    paint_items = CompositeQuadricSectionPaintItems(
+        plane_behind=local_items.plane_behind,
+        plane_outside=local_items.plane_outside,
+        plane_between=local_items.plane_between,
+        plane_front=local_items.plane_front,
+        plane_outline_behind=local_items.plane_outline_behind,
+        plane_outline_outside=local_items.plane_outline_outside,
+        plane_outline_between=local_items.plane_outline_between,
+        plane_outline_front=local_items.plane_outline,
+        surface_sheets=surface_sheets,
+    )
+    relations = _dedupe_relations(
+        tuple(
+            relation
+            for frame in frames
+            for relation in frame.order_relations
+        )
+    )
+    active = {
+        *paint_items.ordered,
+        *(
+            fragment.item_id
+            for frame in frames
+            for fragment in frame.base_frame.curve_fragments
+            if fragment.painted
+        ),
+    }
+    try:
+        draw_order = stable_topological_sort(
+            sorted(active),
+            (
+                PainterConstraint(item.far_item_id, item.near_item_id)
+                for item in relations
+            ),
+            key=lambda item_id: item_id,
+        )
+    except CompositorCycleError as exc:
+        raise CompositeQuadricSectionCompositingError(
+            "composite open-double painter graph contains a cycle: "
+            + ", ".join(sorted(str(item) for item in exc.unresolved))
+        ) from exc
+    raw_lineages = tuple(branch_lineage)
+    if not all(
+        isinstance(item, CompositeSectionBranchLineage) for item in raw_lineages
+    ):
+        raise TypeError("branch_lineage must contain CompositeSectionBranchLineage values")
+    lineages = tuple(
+        sorted(raw_lineages, key=lambda item: item.physical_curve_id)
+    )
+    expected_role_by_child = {
+        child.surface_id: child.surface_id.rsplit(":", 1)[-1]
+        for child in expected_children
+    }
+    for lineage in lineages:
+        expected_role = expected_role_by_child.get(lineage.child_surface_id)
+        if expected_role is None or lineage.nappe_role != expected_role:
+            raise CompositeQuadricSectionCompositingError(
+                "branch lineage must reference one canonical child nappe"
+            )
+        if not lineage.physical_curve_id.startswith(
+            f"{identity}:nappe:{lineage.nappe_role}:"
+        ):
+            raise CompositeQuadricSectionCompositingError(
+                "physical branch lineage does not belong to the composite section"
+            )
+    return CompositeQuadricSectionCompositingFrame(
+        parent_surface_id=parent_surface.surface_id,
+        section_id=identity,
+        plane=plane,
+        patch=patch,
+        child_frames=frames,
+        plane_fragments=tuple(fragments),
+        plane_outline_fragments=outline,
+        paint_items=paint_items,
+        branch_lineage=lineages,
+        shared_apex=shared_apex,
+        order_relations=relations,
+        draw_order=draw_order,
+        max_screen_error=max(item.max_screen_error for item in frames),
+    )
+
+
+def canonical_composite_quadric_section_compositing_json(
+    frame: CompositeQuadricSectionCompositingFrame,
+) -> str:
+    if not isinstance(frame, CompositeQuadricSectionCompositingFrame):
+        raise TypeError("frame must be a CompositeQuadricSectionCompositingFrame")
+    return json.dumps(
+        frame.to_dict(),
+        ensure_ascii=False,
+        allow_nan=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+
+
+__all__ = [
+    "COMPOSITE_QUADRIC_SECTION_COMPOSITING_SCHEMA",
+    "CompositeQuadricSectionCompositingError",
+    "CompositeQuadricSectionCompositingFrame",
+    "CompositeQuadricSectionPaintItems",
+    "CompositeSectionBranchLineage",
+    "CompositeSharedApexEvidence",
+    "CompositeSurfaceSheetItems",
+    "canonical_composite_quadric_section_compositing_json",
+    "compute_composite_quadric_section_compositing",
+]

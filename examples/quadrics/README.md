@@ -28,6 +28,9 @@ manim -pql examples/quadrics/cone_model_comparison_demo.py \
 manim -ql --fps 8 examples/quadrics/frustum_component_shading_demo.py \
   FrustumComponentShadingComparison
 
+manim -ql --fps 8 examples/quadrics/composite_open_double_section_demo.py \
+  CompositeOpenDoubleSectionDemo
+
 manim -pql examples/quadrics/extended_acceptance_demo.py \
   ClosedOpenComparisonAcceptance SectionTopologyAcceptance \
   CurvePolicyComparisonAcceptance SideViewTrimRimAcceptance \
@@ -79,6 +82,10 @@ manim -ql --fps 8 \
   both terminal disks while comparing uniform fill with independent lateral
   and two-cap component shading. Both terminal rims and both real cap chords
   remain in the same unified boundary painter graph.
+- `CompositeOpenDoubleSectionDemo` moves one plane through the two canonical
+  nappes of an open double shell. The yellow physical branches share
+  mathematical lineage, the common plane is painted once, and both child slot
+  banks keep their identities throughout the motion.
 - The five `*Acceptance` scenes are the video sources for the nightly/release
   evidence bundle. Their shared builders also produce the 960x540 semantic
   keyframes, so the videos and JSON painter evidence consume the same public

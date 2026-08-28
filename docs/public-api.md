@@ -493,9 +493,22 @@ hyperbola change, pass `scheduled=track_scheduled_plane_section(...)` and
 `progress=...`; the facade delegates to the existing
 `QuadricSectionTransition3D`. `draw_section_boundary=False` is the explicit
 opt-out that retains plane/surface partitioning without adding true section
-ink. `OPEN_DOUBLE` unified section compositing and direct `ANALYTIC_DOUBLE`
-rendering fail at facade construction rather than after Manim slot allocation.
-Neither mode creates a second renderer or a second rollback path.
+ink. This ordinary facade still rejects `OPEN_DOUBLE` and direct
+`ANALYTIC_DOUBLE` rendering at construction rather than after Manim slot
+allocation. Use the dedicated composite facade for the former. Neither mode
+creates a second renderer or a second rollback path.
+
+`CompositeQuadricSection3D(surface=..., section_id=..., plane=...)` accepts one
+finite `OPEN_DOUBLE`. It expands the shell into its canonical negative and
+positive nappes, calls the existing local section solver for each, paints the
+shared plane once, and merges both local painter frames. Two child slot banks
+remain fixed, while `branch_lineage` links nappe-owned physical curve IDs to
+the common mathematical conic branches. A plane callback may move within a
+fixed curve-identity topology. A scheduled composite ellipse/parabola/
+hyperbola handoff is not yet available. The current coordinator also requires
+the projected nappe interiors to be disjoint except at the shared apex; a view
+with positive-area overlap fails transactionally instead of guessing an
+interleaved order.
 
 A plane callback may move a section only while its lateral conic topology and
 curve identities stay fixed. Cap chords may activate or disappear because all
@@ -579,8 +592,10 @@ interiors do not overlap; a view requiring interleaved multi-sheet order fails
 explicitly. Intersecting entities and a real cyclic surface order fail because
 quadric-to-quadric surface-cell splitting is outside the current contract.
 That restriction does not apply to the supported one-quadric/one-cutting-plane
-compositor described above. It supports `OPEN_SINGLE`; a whole `OPEN_DOUBLE`
-expands to two surfaces and is therefore outside that one-surface compositor.
+compositor described above. It supports `OPEN_SINGLE` directly. A whole
+`OPEN_DOUBLE` remains outside that one-surface compositor, but its two
+canonical nappes may be coordinated by `CompositeQuadricSection3D` under the
+shared-apex/disjoint-projection constraint.
 Full details and a minimal example are in
 [quadric-occlusion.md](quadric-occlusion.md).
 

@@ -1,34 +1,34 @@
 {
   "schema": "manim-quadric-section-release-manifest/v1",
-  "release_id": "quadric-section-v1-frustum-components-2026-08-28",
+  "release_id": "quadric-section-v1-open-double-composite-2026-08-28",
   "contract_id": "quadric-section-v1",
-  "implementation_base_commit": "e0ae23ce1507ed72585fb51a8b62e7aec286ec20",
+  "implementation_base_commit": "c66abd7aaa09050d80093cc7500463047542da8a",
   "components": {
     "quadric_geometry": {
       "contract_revision": "tikz-native-contract:quadric_geometry/v1",
-      "render_revision": "source-sha256:eac9106efeafd1696fb32fdafcddcef59cd6d8a924d994d905687083aab2afd4"
+      "render_revision": "source-sha256:3874f85d3dd7b45717555b713eac5707b13201eff4b98e71d3905cf6c0c76b64"
     },
     "quadric_visibility": {
       "contract_revision": "tikz-native-contract:quadric_visibility/v2",
-      "render_revision": "source-sha256:16b29243419885e847f020cea155f2dae49cb2d887f4d0ee3820e346f9b25e73"
+      "render_revision": "source-sha256:f1a17b02d1a170268ee33b3bbaa0eae1432b89b52429cce2fbc549f22269156c"
     },
     "quadric_manim": {
       "contract_revision": "tikz-native-contract:quadric_manim/v1",
-      "render_revision": "source-sha256:ca998ddddf292108567a79e4b908a3e03e394556557b5ec56a50956b4fdfab0a"
+      "render_revision": "source-sha256:4b0e778ba5c4fb989be95451793863bd66f236d419e7ea30b458f9dc1395eb74"
     }
   },
   "build_artifacts": {
-    "source_date_epoch": 1787869854,
+    "source_date_epoch": 1787880969,
     "builder_python": "3.12.13",
     "build_frontend": "build 1.6.0",
     "twine_check": "twine 7.0.0 passed",
     "wheel": {
       "filename": "manim_tikz_native-0.1.0-py3-none-any.whl",
-      "sha256": "6b526c702a629e8649f838ef06f5edf89c6faf913e1fd347c3f7a79805a5e9bf"
+      "sha256": "ba6a810b15be3b4509d3589c6e3855c092e6dcbe06d40bd1050434e12e7dd076"
     },
     "sdist": {
       "filename": "manim_tikz_native-0.1.0.tar.gz",
-      "sha256": "355496eb55da19a5422f11f8195bdc15fbb5161cef7b56df4fedfba1f6a98e9b",
+      "sha256": "fba185a824c815607ce2c83739b6eb92511c6253e01c50eddebddaa52ec10008",
       "normalization": "sorted regular files and links; USTAR; uid/gid 0; root owner/group; SOURCE_DATE_EPOCH mtime; gzip -n -9 equivalent"
     }
   },
@@ -98,7 +98,27 @@
       "outcome": "pass",
       "test": "tests.test_cone_models.ConeBoundaryAndBindingTests.test_double_shell_binding_expands_once_and_updates_without_allocation"
     },
-    "open_double_section_failure": {
+    "open_double_composite_partition": {
+      "layer": "renderer_neutral",
+      "outcome": "pass",
+      "test": "tests.test_composite_quadric_section.CompositeRendererNeutralTests.test_two_local_frames_merge_into_one_area_conserving_plane_partition"
+    },
+    "open_double_composite_binding": {
+      "layer": "manim",
+      "outcome": "pass",
+      "test": "tests.test_composite_quadric_section.CompositeManimBindingTests.test_attach_update_and_restore_keep_two_fixed_slot_groups"
+    },
+    "open_double_composite_cairo": {
+      "layer": "cairo",
+      "outcome": "pass",
+      "test": "tests.test_composite_quadric_section_cairo.CompositeQuadricSectionCairoTests.test_two_nappes_share_one_plane_alpha_and_retain_both_section_branches"
+    },
+    "open_double_composite_overlap_failure": {
+      "layer": "renderer_neutral",
+      "outcome": "explicit_failure",
+      "test": "tests.test_composite_quadric_section.CompositeRendererNeutralTests.test_positive_area_axial_projection_overlap_fails_explicitly"
+    },
+    "open_double_single_facade_failure": {
       "layer": "manim",
       "outcome": "explicit_failure",
       "test": "tests.test_quadric_section_authoring.QuadricSectionAuthoringTests.test_facade_rejects_double_cone_section_models_before_scene_mutation"
@@ -225,6 +245,39 @@
         "open_shell_offset_geometry",
         "parallel_view_cairo",
         "open_shell_offset_cairo"
+      ]
+    },
+    {
+      "id": "open_double_unified_section_plane",
+      "kind": "renderer_neutral_manim_and_cairo",
+      "geometry": {
+        "surface": {
+          "model": "open_double",
+          "apex": [0.0, 0.0, 0.0],
+          "axis": [0.0, 0.0, 1.0],
+          "half_angle_radians": 0.7853981633974483,
+          "axial_range": [-2.15, 2.15],
+          "radial_axis": [1.0, 0.0, 0.0]
+        },
+        "plane": {
+          "point": [0.0, 0.48, 0.0],
+          "normal": [0.0, 1.0, 0.16],
+          "u_axis": [1.0, 0.0, 0.0]
+        },
+        "projection": "exact_side"
+      },
+      "expected": {
+        "child_slot_banks": 2,
+        "shared_plane_paints": 1,
+        "projected_overlap_area": 0.0
+      },
+      "baseline": "tests/baselines/quadric-section-v1-cairo.json#open_double_unified_section_plane",
+      "evidence_ids": [
+        "open_double_composite_partition",
+        "open_double_composite_binding",
+        "open_double_composite_cairo",
+        "open_double_composite_overlap_failure",
+        "open_double_single_facade_failure"
       ]
     },
     {

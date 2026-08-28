@@ -92,9 +92,9 @@ _PUBLIC_0_1_COMPONENT_REVISIONS: Final[dict[str, str]] = {
     COMPONENT_TIKZ_OPEN_FACE_STATIC_ASSET_3D: "source-sha256:f74e221297d3444a17b9165ae9759ae41ca4cf7bda013333e28ab3b9d157a54e",
     COMPONENT_GENERATED_OPEN_FACE_VISIBILITY_3D: "source-sha256:d3b8917a867f754c586bef39acc1ac387726dbb7ce192f8b61a0053505b63503",
     COMPONENT_SOURCE_PROJECT_BUILD: "source-sha256:00579e342012a96443c098c7004be672d265d32fe6f82d66b0c6b11ba64305b7",
-    COMPONENT_QUADRIC_GEOMETRY: "source-sha256:eac9106efeafd1696fb32fdafcddcef59cd6d8a924d994d905687083aab2afd4",
-    COMPONENT_QUADRIC_VISIBILITY: "source-sha256:16b29243419885e847f020cea155f2dae49cb2d887f4d0ee3820e346f9b25e73",
-    COMPONENT_QUADRIC_MANIM: "source-sha256:ca998ddddf292108567a79e4b908a3e03e394556557b5ec56a50956b4fdfab0a",
+    COMPONENT_QUADRIC_GEOMETRY: "source-sha256:3874f85d3dd7b45717555b713eac5707b13201eff4b98e71d3905cf6c0c76b64",
+    COMPONENT_QUADRIC_VISIBILITY: "source-sha256:f1a17b02d1a170268ee33b3bbaa0eae1432b89b52429cce2fbc549f22269156c",
+    COMPONENT_QUADRIC_MANIM: "source-sha256:4b0e778ba5c4fb989be95451793863bd66f236d419e7ea30b458f9dc1395eb74",
 }
 
 
@@ -404,6 +404,7 @@ _COMPONENT_DEFINITIONS: Final[dict[str, dict[str, tuple[str, ...]]]] = {
         "files": (
             "@tool/polyhedron_visibility/quadrics/boundary_compositing.py",
             "@tool/polyhedron_visibility/quadrics/boundary_section.py",
+            "@tool/polyhedron_visibility/quadrics/composite_section.py",
             "@tool/polyhedron_visibility/quadrics/compositing.py",
             "@tool/polyhedron_visibility/quadrics/critical.py",
             "@tool/polyhedron_visibility/quadrics/curve_intersections.py",
@@ -423,6 +424,7 @@ _COMPONENT_DEFINITIONS: Final[dict[str, dict[str, tuple[str, ...]]]] = {
         ),
         "files": (
             "@tool/polyhedron_visibility/quadrics/authoring.py",
+            "@tool/polyhedron_visibility/quadrics/composite_authoring.py",
             "@tool/polyhedron_visibility/quadrics/manim.py",
             "@tool/polyhedron_visibility/quadrics/transition_manim.py",
         ),
@@ -531,13 +533,13 @@ _DECLARED_IMPLEMENTATION_DIGESTS: Final[dict[str, str]] = {
         "00579e342012a96443c098c7004be672d265d32fe6f82d66b0c6b11ba64305b7"
     ),
     COMPONENT_QUADRIC_GEOMETRY: (
-        "eac9106efeafd1696fb32fdafcddcef59cd6d8a924d994d905687083aab2afd4"
+        "3874f85d3dd7b45717555b713eac5707b13201eff4b98e71d3905cf6c0c76b64"
     ),
     COMPONENT_QUADRIC_VISIBILITY: (
-        "16b29243419885e847f020cea155f2dae49cb2d887f4d0ee3820e346f9b25e73"
+        "f1a17b02d1a170268ee33b3bbaa0eae1432b89b52429cce2fbc549f22269156c"
     ),
     COMPONENT_QUADRIC_MANIM: (
-        "ca998ddddf292108567a79e4b908a3e03e394556557b5ec56a50956b4fdfab0a"
+        "4b0e778ba5c4fb989be95451793863bd66f236d419e7ea30b458f9dc1395eb74"
     ),
 }
 

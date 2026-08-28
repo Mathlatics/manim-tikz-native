@@ -18,12 +18,14 @@
     "renderer_neutral": {
       "projection": "parallel",
       "surface_limit_for_local_section_compositor": 1,
+      "open_double_composite_child_limit": 2,
       "cutting_plane_limit": 1,
       "cutting_plane_requires_display_area": true
     },
     "manim_binding": {
       "renderer": "cairo",
       "recommended_authoring_facade": "QuadricSection3D",
+      "open_double_authoring_facade": "CompositeQuadricSection3D",
       "fixed_mobject_identity": true,
       "fixed_capacity": true,
       "transactional_rollback": true
@@ -91,11 +93,15 @@
     },
     {
       "id": "open_double_unified_section_plane_compositing",
-      "status": "unsupported_explicit_failure",
-      "renderer_neutral": false,
-      "cairo_binding": false,
+      "status": "supported_with_constraints",
+      "renderer_neutral": true,
+      "cairo_binding": true,
       "evidence_ids": [
-        "open_double_section_failure"
+        "open_double_composite_partition",
+        "open_double_composite_binding",
+        "open_double_composite_cairo",
+        "open_double_composite_overlap_failure",
+        "open_double_single_facade_failure"
       ]
     },
     {

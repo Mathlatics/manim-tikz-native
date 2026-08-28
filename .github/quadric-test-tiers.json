@@ -9,6 +9,7 @@
   },
   "tiers": {
     "cairo-smoke": [
+      "test_composite_quadric_section_cairo.CompositeQuadricSectionCairoTests.test_two_nappes_share_one_plane_alpha_and_retain_both_section_branches",
       "test_open_face_visibility_manim.OpenFaceOcclusion3DManimTests.test_real_cairo_minimal_fold_renders_and_restores",
       "test_polyhedron_visibility_manim_binding.AutoOcclusion3DManimTests.test_real_cairo_render_accepts_rotate_tracker_and_wait",
       "test_quadric_section_authoring.QuadricSectionAuthoringTests.test_real_cairo_animation_uses_the_facade_update_path",
