@@ -669,6 +669,24 @@ polyline. Performance traces distinguish `projected_boundary_source_count`
 from `projected_fragment_slice_count` and time the lightweight slices under
 `projection_slicing`.
 
+Several controllers which differ only in paint policy may share one
+`QuadricGeometryPrototype`. The first exact surface/plane/view signature
+computes the section partition and merged contours; later variants reuse that
+renderer-neutral geometry and rebuild only their own physical, diagrammatic,
+or depth-aware boundary painter graph. The exact boundary/section placement
+spans are also reused when their complete sources, visibility spans, projected
+crossings, section geometry, context, and limits match; physical-only crossing
+filters therefore remain a separate certified cache miss while diagrammatic
+and depth-aware variants can share the same placement result.
+`display_offset=(x, y)` translates only the prepared Cairo paths, so
+side-by-side columns do not alter view depth or the cached geometry. Every
+variant still owns its own fixed Mobject slots, painter band, identity map, and
+transaction. Inputs are never rounded: a real surface, plane, view, tolerance,
+or limit change is a cache miss. Shared caches are bounded to the latest exact
+product per named stage and are cleared explicitly with `prototype.clear()`
+rather than by restoring one variant. Trace evidence publishes
+`shared_section_geometry` and `shared_boundary_section_spans` hits and misses.
+
 The extended Cairo acceptance generator enables this trace automatically. Its
 keyframe JSON and fragment/ray CSV contain the controller measurements. Video
 subprocesses additionally publish a per-rendered-frame trace with the Cairo

@@ -7,6 +7,8 @@ from tempfile import TemporaryDirectory
 import unittest
 from unittest.mock import patch
 
+import numpy as np
+
 from scripts import generate_quadric_extended_acceptance as generator
 
 
@@ -43,6 +45,15 @@ class _FakeProcessPoolExecutor:
 
 
 class ExtendedAcceptanceGeneratorTests(unittest.TestCase):
+    def test_display_probe_coordinates_include_controller_offset(self) -> None:
+        controller = type(
+            "Controller",
+            (),
+            {"display_offset": (2.5, -1.25)},
+        )()
+        point = generator._display_screen_point(controller, (0.75, 0.5))
+        np.testing.assert_allclose(point, (3.25, -0.75), rtol=0.0, atol=0.0)
+
     def test_full_acceptance_captures_shared_apex_supplement(self) -> None:
         source = Path(generator.__file__).read_text(encoding="utf-8")
         self.assertIn("_capture_open_double_shared_apex", source)

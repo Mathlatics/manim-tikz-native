@@ -31,6 +31,7 @@ from polyhedron_visibility.quadrics.contract import (
 from polyhedron_visibility.quadrics.manim import (
     DEFAULT_QUADRIC_VIEW,
     QuadricBoundaryStyle,
+    QuadricGeometryPrototype,
     QuadricManimLimits,
     QuadricManimStyle,
     QuadricOcclusion3D,
@@ -187,11 +188,20 @@ def _plane_interaction_controller(
     tracker: ValueTracker,
     policy: QuadricPaintPolicy,
     painter_band: tuple[float, float],
+    geometry_prototype: QuadricGeometryPrototype | None = None,
 ) -> tuple[QuadricOcclusion3D, Callable[[], ParallelView]]:
     normal = np.asarray((0.82, 0.0, 1.0), dtype=float)
     normal /= np.linalg.norm(normal)
     vertical_shift = -0.55 * np.asarray(VIEW.matrix[1], dtype=float)
-    shift = horizontal * np.asarray(VIEW.matrix[0], dtype=float) + vertical_shift
+    horizontal_shift = horizontal * np.asarray(VIEW.matrix[0], dtype=float)
+    shift = vertical_shift if geometry_prototype is not None else (
+        horizontal_shift + vertical_shift
+    )
+    display_offset = (
+        tuple(float(item) for item in TOPOLOGY_VIEW.matrix[:2] @ horizontal_shift)
+        if geometry_prototype is not None
+        else (0.0, 0.0)
+    )
     cone = ConeSpec(
         f"{prefix}:cone",
         tuple(shift + np.asarray((0.0, 0.0, -2.4))),
@@ -247,8 +257,10 @@ def _plane_interaction_controller(
         include_surface_boundaries=True,
         allocated_curve_ids=allocated_curve_ids,
         painter_z_band=painter_band,
+        geometry_prototype=geometry_prototype,
+        display_offset=display_offset,
     ).attach()
-    return controller, lambda: VIEW
+    return controller, lambda: TOPOLOGY_VIEW
 
 
 def _build_closed_open(
@@ -298,6 +310,7 @@ def _build_policies(
     scene: Scene, progress: float, with_labels: bool
 ) -> AcceptanceState:
     tracker = ValueTracker(-0.48 + 0.96 * float(progress))
+    prototype = QuadricGeometryPrototype()
     controllers = []
     projections = []
     labels: list[Text] = []
@@ -314,12 +327,13 @@ def _build_policies(
     for index, (name, label, policy, horizontal) in enumerate(rows):
         controller, projection = _plane_interaction_controller(
             scene,
-            prefix=f"acceptance:policies:{name}",
+            prefix="acceptance:policies:shared",
             model=ConeModel.CLOSED_SINGLE,
             horizontal=horizontal,
             tracker=tracker,
             policy=policy,
             painter_band=(20.0 + 18.0 * index, 30.0 + 18.0 * index),
+            geometry_prototype=prototype,
         )
         controllers.append((name, controller))
         projections.append(projection)

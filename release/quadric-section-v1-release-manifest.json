@@ -9,15 +9,15 @@
   "components": {
     "quadric_geometry": {
       "contract_revision": "tikz-native-contract:quadric_geometry/v1",
-      "render_revision": "source-sha256:3874f85d3dd7b45717555b713eac5707b13201eff4b98e71d3905cf6c0c76b64"
+      "render_revision": "source-sha256:388fbdc24c20765e4e915cfdafebe6c7f11e8d346e8c0c904a532109fc74c248"
     },
     "quadric_visibility": {
       "contract_revision": "tikz-native-contract:quadric_visibility/v2",
-      "render_revision": "source-sha256:08d76d9326089bdf865aac97ee83bcde239fc1a4c3ba45d783a80b54ca17ab0e"
+      "render_revision": "source-sha256:afdab1f549cabe7b5f8561587b36866f2b67ff25c34a34bc07b20482e6e4da91"
     },
     "quadric_manim": {
       "contract_revision": "tikz-native-contract:quadric_manim/v1",
-      "render_revision": "source-sha256:76cf56609bac5133352ff72f0fbaff325b851e183af7d294748fe974930ee74b"
+      "render_revision": "source-sha256:ed79f163fdd4a6a40f9a1eb2b5c50bdb3c6398979ac0e6815359cc67666d948a"
     }
   },
   "build_artifacts": {

@@ -23,7 +23,7 @@ renderer object is created here.
 from __future__ import annotations
 
 from collections import Counter, deque
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import Enum
 from hashlib import sha256
 import json
@@ -2709,6 +2709,133 @@ def _dedupe_relations(
     )
 
 
+def _section_painter_parts(
+    base_frame: QuadricCompositingFrame,
+    surface_id: str,
+    plane_id: str,
+) -> tuple[
+    QuadricSectionPaintItems,
+    tuple[QuadricPaintRelation, ...],
+    tuple[str, ...],
+]:
+    items = _paint_items(surface_id, plane_id)
+    relations = _relation_chain(items.depth_chain)
+    active_curve_ids = {
+        item.item_id for item in base_frame.curve_fragments if item.painted
+    }
+    relations.extend(
+        relation
+        for relation in base_frame.order_relations
+        if relation.far_item_id in active_curve_ids
+        and relation.near_item_id in active_curve_ids
+    )
+    if (
+        base_frame.paint_policy
+        is QuadricPaintPolicy.DEPTH_AWARE_DIAGRAMMATIC
+    ):
+        hidden_curve_ids = tuple(
+            sorted(
+                item.item_id
+                for item in base_frame.curve_fragments
+                if item.painted
+                and item.kind is QuadricPaintKind.HIDDEN_CURVE
+            )
+        )
+        visible_curve_ids = tuple(
+            sorted(
+                item.item_id
+                for item in base_frame.curve_fragments
+                if item.painted
+                and item.kind is QuadricPaintKind.VISIBLE_CURVE
+            )
+        )
+        relations.extend(
+            QuadricPaintRelation(
+                items.plane_outline_between,
+                curve_id,
+                "depth_aware_hidden_after_between",
+            )
+            for curve_id in hidden_curve_ids
+        )
+        relations.extend(
+            QuadricPaintRelation(
+                curve_id,
+                items.surface_front,
+                "depth_aware_hidden_before_front_sheet",
+            )
+            for curve_id in hidden_curve_ids
+        )
+        relations.extend(
+            QuadricPaintRelation(
+                items.plane_outline,
+                curve_id,
+                "section_visible_curve_overlay",
+            )
+            for curve_id in visible_curve_ids
+        )
+    else:
+        relations.extend(
+            QuadricPaintRelation(
+                items.plane_outline,
+                curve_id,
+                "section_curve_overlay",
+            )
+            for curve_id in sorted(active_curve_ids)
+        )
+    normalized = _dedupe_relations(relations)
+    active_ids = (*items.ordered, *sorted(active_curve_ids))
+    try:
+        draw_order = stable_topological_sort(
+            active_ids,
+            (
+                PainterConstraint(item.far_item_id, item.near_item_id)
+                for item in normalized
+            ),
+            key=lambda item_id: item_id,
+        )
+    except CompositorCycleError as exc:
+        raise QuadricSectionCompositingError(
+            "quadric section painter graph contains a cycle: "
+            + ", ".join(sorted(str(item) for item in exc.unresolved))
+        ) from exc
+    return items, normalized, draw_order
+
+
+def repaint_quadric_section_compositing(
+    geometry_frame: QuadricSectionCompositingFrame,
+    base_frame: QuadricCompositingFrame,
+) -> QuadricSectionCompositingFrame:
+    """Reuse certified section geometry with another curve paint policy."""
+
+    if not isinstance(geometry_frame, QuadricSectionCompositingFrame):
+        raise TypeError("geometry_frame must be a QuadricSectionCompositingFrame")
+    if not isinstance(base_frame, QuadricCompositingFrame):
+        raise TypeError("base_frame must be a QuadricCompositingFrame")
+    if tuple(item.surface_id for item in base_frame.surface_items) != (
+        geometry_frame.surface_id,
+    ):
+        raise QuadricSectionCompositingError(
+            "repainted section requires one matching base-frame surface"
+        )
+    if base_frame.surface_items[0].proxy != geometry_frame.surface_proxy:
+        raise QuadricSectionCompositingError(
+            "repainted section base frame changed the certified surface proxy"
+        )
+
+    items, normalized, draw_order = _section_painter_parts(
+        base_frame,
+        geometry_frame.surface_id,
+        geometry_frame.plane.plane_id,
+    )
+    return replace(
+        geometry_frame,
+        base_frame=base_frame,
+        paint_items=items,
+        order_relations=normalized,
+        draw_order=draw_order,
+    )
+
+
 def compute_quadric_section_compositing(
     base_frame: QuadricCompositingFrame,
     surface: QuadricSurfaceSpec,
@@ -4527,86 +4654,11 @@ def compute_quadric_section_compositing(
         context=resolved,
         limits=limits,
     )
-    items = _paint_items(surface.surface_id, plane.plane_id)
-    relations = _relation_chain(items.depth_chain)
-    active_curve_ids = {
-        item.item_id for item in base_frame.curve_fragments if item.painted
-    }
-    relations.extend(
-        relation
-        for relation in base_frame.order_relations
-        if relation.far_item_id in active_curve_ids
-        and relation.near_item_id in active_curve_ids
+    items, normalized, draw_order = _section_painter_parts(
+        base_frame,
+        surface.surface_id,
+        plane.plane_id,
     )
-    if (
-        base_frame.paint_policy
-        is QuadricPaintPolicy.DEPTH_AWARE_DIAGRAMMATIC
-    ):
-        hidden_curve_ids = tuple(
-            sorted(
-                item.item_id
-                for item in base_frame.curve_fragments
-                if item.painted
-                and item.kind is QuadricPaintKind.HIDDEN_CURVE
-            )
-        )
-        visible_curve_ids = tuple(
-            sorted(
-                item.item_id
-                for item in base_frame.curve_fragments
-                if item.painted
-                and item.kind is QuadricPaintKind.VISIBLE_CURVE
-            )
-        )
-        relations.extend(
-            QuadricPaintRelation(
-                items.plane_outline_between,
-                curve_id,
-                "depth_aware_hidden_after_between",
-            )
-            for curve_id in hidden_curve_ids
-        )
-        relations.extend(
-            QuadricPaintRelation(
-                curve_id,
-                items.surface_front,
-                "depth_aware_hidden_before_front_sheet",
-            )
-            for curve_id in hidden_curve_ids
-        )
-        relations.extend(
-            QuadricPaintRelation(
-                items.plane_outline,
-                curve_id,
-                "section_visible_curve_overlay",
-            )
-            for curve_id in visible_curve_ids
-        )
-    else:
-        relations.extend(
-            QuadricPaintRelation(
-                items.plane_outline,
-                curve_id,
-                "section_curve_overlay",
-            )
-            for curve_id in sorted(active_curve_ids)
-        )
-    normalized = _dedupe_relations(relations)
-    active_ids = (*items.ordered, *sorted(active_curve_ids))
-    try:
-        draw_order = stable_topological_sort(
-            active_ids,
-            (
-                PainterConstraint(item.far_item_id, item.near_item_id)
-                for item in normalized
-            ),
-            key=lambda item_id: item_id,
-        )
-    except CompositorCycleError as exc:
-        raise QuadricSectionCompositingError(
-            "quadric section painter graph contains a cycle: "
-            + ", ".join(sorted(str(item) for item in exc.unresolved))
-        ) from exc
     return QuadricSectionCompositingFrame(
         base_frame=base_frame,
         surface_id=surface.surface_id,
@@ -4651,4 +4703,5 @@ __all__ = [
     "compute_quadric_section_compositing",
     "merge_quadric_plane_fragment_contours",
     "quadric_plane_fragment_contours",
+    "repaint_quadric_section_compositing",
 ]

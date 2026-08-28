@@ -34,6 +34,7 @@ from polyhedron_visibility.quadrics.contract import (
 from polyhedron_visibility.quadrics.manim import (
     DEFAULT_QUADRIC_VIEW,
     QuadricBoundaryStyle,
+    QuadricGeometryPrototype,
     QuadricManimLimits,
     QuadricManimStyle,
     QuadricOcclusion3D,
@@ -457,11 +458,20 @@ def _plane_interaction_authoring(
     policy: QuadricPaintPolicy,
     view: ParallelView,
     painter_band: tuple[float, float],
+    geometry_prototype: QuadricGeometryPrototype | None = None,
 ) -> QuadricSection3D:
     normal = np.asarray((0.82, 0.0, 1.0), dtype=float)
     normal /= np.linalg.norm(normal)
     vertical_shift = -0.55 * np.asarray(view.matrix[1], dtype=float)
-    shift = horizontal * np.asarray(view.matrix[0], dtype=float) + vertical_shift
+    horizontal_shift = horizontal * np.asarray(view.matrix[0], dtype=float)
+    shift = vertical_shift if geometry_prototype is not None else (
+        horizontal_shift + vertical_shift
+    )
+    display_offset = (
+        tuple(float(item) for item in view.matrix[:2] @ horizontal_shift)
+        if geometry_prototype is not None
+        else (0.0, 0.0)
+    )
     cone = ConeSpec(
         f"{prefix}:cone",
         tuple(shift + np.asarray((0.0, 0.0, -2.4))),
@@ -494,6 +504,8 @@ def _plane_interaction_authoring(
         max_chord_error=0.008,
         painter_z_band=painter_band,
         include_surface_boundaries=True,
+        geometry_prototype=geometry_prototype,
+        display_offset=display_offset,
     ).attach()
 
 
@@ -586,6 +598,7 @@ def _build_policies(
     scene: Scene, progress: float, with_labels: bool
 ) -> ClassroomState:
     tracker = ValueTracker(SECTION_START)
+    prototype = QuadricGeometryPrototype()
     rows = (
         ("physical", "PHYSICAL", QuadricPaintPolicy.PHYSICAL, -4.45),
         ("diagrammatic", "TEACHING DASH", QuadricPaintPolicy.DIAGRAMMATIC, 0.0),
@@ -601,13 +614,14 @@ def _build_policies(
     for index, (name, label, policy, horizontal) in enumerate(rows):
         authoring = _plane_interaction_authoring(
             scene,
-            prefix=f"classroom:policies:{name}",
+            prefix="classroom:policies:shared",
             model=ConeModel.CLOSED_SINGLE,
             horizontal=horizontal,
             tracker=tracker,
             policy=policy,
             view=TRIPLE_VIEW,
             painter_band=(20.0 + index * 18.0, 30.0 + index * 18.0),
+            geometry_prototype=prototype,
         )
         authorings.append(authoring)
         controllers.append((name, authoring.controller))

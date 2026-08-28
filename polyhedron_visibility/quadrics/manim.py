@@ -101,6 +101,7 @@ from .section_compositing import (
     QuadricSectionCompositingLimits,
     compute_quadric_section_compositing,
     quadric_plane_fragment_contours,
+    repaint_quadric_section_compositing,
 )
 from .visibility import compute_quadric_visibility
 from .boundary_section import (
@@ -362,6 +363,32 @@ class QuadricManimLimits:
 QUADRIC_MANIM_LIMITS = QuadricManimLimits()
 
 
+class QuadricGeometryPrototype:
+    """Bounded renderer-neutral cache shared by coordinated paint variants."""
+
+    __slots__ = ("_cache",)
+
+    def __init__(self) -> None:
+        self._cache = _SurfaceViewCache()
+
+    def clear(self) -> None:
+        """Discard every cached exact-signature geometry product."""
+
+        self._cache.clear()
+
+
+def _display_offset(value: Sequence[float]) -> tuple[float, float]:
+    try:
+        result = np.asarray(value, dtype=float)
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise QuadricManimError(
+            "display_offset must contain two finite values"
+        ) from exc
+    if result.shape != (2,) or not np.all(np.isfinite(result)):
+        raise QuadricManimError("display_offset must contain two finite values")
+    return float(result[0]), float(result[1])
+
+
 @dataclass(frozen=True, slots=True)
 class _PreparedCurveFragment:
     fragment: QuadricCurvePaintFragment
@@ -533,11 +560,19 @@ class QuadricOcclusion3D:
         include_surface_boundaries: bool = True,
         generator_boundaries: BoundaryGeneratorInput = (),
         allocated_boundary_ids: Sequence[str] | None = None,
+        geometry_prototype: QuadricGeometryPrototype | None = None,
+        display_offset: Sequence[float] = (0.0, 0.0),
     ) -> None:
         if not isinstance(style, QuadricManimStyle):
             raise TypeError("style must be a QuadricManimStyle")
         if not isinstance(limits, QuadricManimLimits):
             raise TypeError("limits must be a QuadricManimLimits")
+        if geometry_prototype is not None and not isinstance(
+            geometry_prototype, QuadricGeometryPrototype
+        ):
+            raise TypeError(
+                "geometry_prototype must be a QuadricGeometryPrototype"
+            )
         if context is not None and not isinstance(
             context, (GeometryContext, ResolvedGeometryContext)
         ):
@@ -583,6 +618,8 @@ class QuadricOcclusion3D:
                 "QuadricBoundarySectionLimits"
             )
         self.scene = scene
+        self.geometry_prototype = geometry_prototype
+        self.display_offset = display_offset
         self._surface_input = surfaces
         self._curve_input = curves
         self._projection_input = (
@@ -648,7 +685,12 @@ class QuadricOcclusion3D:
         self._last_input_opacity: float | None = None
         self._last_prepared_frame: PreparedQuadricManimFrame | None = None
         self._last_prepared_performance_counts: dict[str, int] = {}
-        self._surface_view_cache = _SurfaceViewCache()
+        self._owns_surface_view_cache = geometry_prototype is None
+        self._surface_view_cache = (
+            _SurfaceViewCache()
+            if geometry_prototype is None
+            else geometry_prototype._cache
+        )
 
         initial_surfaces = self._resolve_surfaces()
         initial_curves = self._resolve_curves()
@@ -1024,6 +1066,7 @@ class QuadricOcclusion3D:
             self.section_compositing_limits,
             self.boundary_section_limits,
             self.limits,
+            self.display_offset,
         )
         draw_signature = _display_digest(
             "quadric-frame-draw-v1",
@@ -1040,6 +1083,16 @@ class QuadricOcclusion3D:
             geometry_signature,
             draw_signature,
         )
+
+    @property
+    def display_offset(self) -> tuple[float, float]:
+        """Return the validated display-only screen translation."""
+
+        return self._display_offset
+
+    @display_offset.setter
+    def display_offset(self, value: Sequence[float]) -> None:
+        self._display_offset = _display_offset(value)
 
     def _validate_fixed_topology(
         self,
@@ -1299,8 +1352,9 @@ class QuadricOcclusion3D:
             self._generator_boundaries,
             self.paint_policy,
         )
+        cache_name = f"static_boundaries:{self.paint_policy.value}"
         hit, cached = self._surface_view_cache.lookup(
-            "static_boundaries",
+            cache_name,
             signature,
         )
         if hit:
@@ -1321,7 +1375,7 @@ class QuadricOcclusion3D:
             crossings = self._boundary_crossings(sources, spans, view)
         prepared = (sources, dict(spans), crossings)
         self._surface_view_cache.store(
-            "static_boundaries",
+            cache_name,
             signature,
             prepared,
         )
@@ -1422,6 +1476,7 @@ class QuadricOcclusion3D:
         item_mobjects: dict[str, Mobject] = {}
         section_layers: _PreparedSectionLayers | None = None
         section_frame: QuadricSectionCompositingFrame | None = None
+        section_geometry_signature: bytes | None = None
         plane: SectionPlane | None = None
         patch: PlaneDisplayPatchSpec | None = None
         if self._section_enabled:
@@ -1433,21 +1488,55 @@ class QuadricOcclusion3D:
                     "section inputs were not resolved before unified preparation"
                 )
             try:
+                section_geometry_signature = _display_digest(
+                    "quadric-section-geometry-prototype-v1",
+                    surface_view_signature,
+                    plane,
+                    patch,
+                    self.context,
+                    self.section_max_screen_error,
+                    self.section_compositing_limits,
+                )
                 with _performance_stage(
                     performance_attempt, "section_compositing"
                 ):
-                    section_frame = compute_quadric_section_compositing(
-                        frame,
-                        surface,
-                        plane,
-                        patch,
-                        view,
-                        context=self.context,
-                        max_screen_error=self.section_max_screen_error,
-                        limits=self.section_compositing_limits,
+                    hit, cached = self._surface_view_cache.lookup(
+                        "section_geometry",
+                        section_geometry_signature,
                     )
+                    if hit:
+                        if performance_attempt is not None:
+                            performance_attempt.cache_hit(
+                                "shared_section_geometry"
+                            )
+                        geometry_frame, contours = cached  # type: ignore[misc]
+                        section_frame = repaint_quadric_section_compositing(
+                            geometry_frame,
+                            frame,
+                        )
+                    else:
+                        if performance_attempt is not None:
+                            performance_attempt.cache_miss(
+                                "shared_section_geometry"
+                            )
+                        section_frame = compute_quadric_section_compositing(
+                            frame,
+                            surface,
+                            plane,
+                            patch,
+                            view,
+                            context=self.context,
+                            max_screen_error=self.section_max_screen_error,
+                            limits=self.section_compositing_limits,
+                        )
                 with _performance_stage(performance_attempt, "contour_union"):
-                    contours = quadric_plane_fragment_contours(section_frame)
+                    if not hit:
+                        contours = quadric_plane_fragment_contours(section_frame)
+                        self._surface_view_cache.store(
+                            "section_geometry",
+                            section_geometry_signature,
+                            (section_frame, contours),
+                        )
             except QuadricSectionCompositingError as exc:
                 raise QuadricManimError(
                     f"unified section preparation failed: {exc}"
@@ -1563,20 +1652,52 @@ class QuadricOcclusion3D:
                 cached_crossings=static_crossings,
             )
         with _performance_stage(performance_attempt, "boundary_section_spans"):
-            section_spans = (
-                {}
-                if section_frame is None
-                else compute_boundary_section_spans(
+            if section_frame is None:
+                section_spans = {}
+            else:
+                if section_geometry_signature is None:
+                    raise QuadricManimError(
+                        "section geometry signature was not prepared"
+                    )
+                section_span_signature = _display_digest(
+                    "quadric-boundary-section-spans-prototype-v1",
+                    section_geometry_signature,
                     sources,
-                    section_frame,
-                    view,
+                    spans,
                     crossings,
-                    surface=surfaces[0],
-                    visibility_spans_by_source=spans,
-                    context=self.context,
-                    limits=self.boundary_section_limits,
+                    self.context,
+                    self.boundary_section_limits,
                 )
-            )
+                hit, cached = self._surface_view_cache.lookup(
+                    "boundary_section_spans",
+                    section_span_signature,
+                )
+                if hit:
+                    if performance_attempt is not None:
+                        performance_attempt.cache_hit(
+                            "shared_boundary_section_spans"
+                        )
+                    section_spans = cached  # type: ignore[assignment]
+                else:
+                    if performance_attempt is not None:
+                        performance_attempt.cache_miss(
+                            "shared_boundary_section_spans"
+                        )
+                    section_spans = compute_boundary_section_spans(
+                        sources,
+                        section_frame,
+                        view,
+                        crossings,
+                        surface=surfaces[0],
+                        visibility_spans_by_source=spans,
+                        context=self.context,
+                        limits=self.boundary_section_limits,
+                    )
+                    self._surface_view_cache.store(
+                        "boundary_section_spans",
+                        section_span_signature,
+                        section_spans,
+                    )
         try:
             with _performance_stage(
                 performance_attempt, "boundary_painter_graph"
@@ -1656,6 +1777,104 @@ class QuadricOcclusion3D:
             boundary_opacities=boundary_opacities,
         )
 
+    def _translate_prepared_numeric(
+        self,
+        numeric: _PreparedNumericFrame,
+    ) -> _PreparedNumericFrame:
+        """Apply a display-only screen translation to prepared numeric paths."""
+
+        if self.display_offset == (0.0, 0.0):
+            return numeric
+        delta = np.asarray((*self.display_offset, 0.0), dtype=float)
+
+        def points(value: np.ndarray) -> np.ndarray:
+            return np.asarray(value, dtype=float) + delta
+
+        def dashes(
+            values: tuple[_PreparedDash, ...],
+        ) -> tuple[_PreparedDash, ...]:
+            return tuple(replace(item, points=points(item.points)) for item in values)
+
+        def cone_fill(value: _PreparedConeFill | None) -> _PreparedConeFill | None:
+            if value is None:
+                return None
+            return replace(
+                value,
+                opaque_lateral_paths=tuple(
+                    points(item) for item in value.opaque_lateral_paths
+                ),
+                opaque_cap_paths=tuple(
+                    points(item) for item in value.opaque_cap_paths
+                ),
+                back_lateral_paths=tuple(
+                    points(item) for item in value.back_lateral_paths
+                ),
+                back_cap_paths=tuple(points(item) for item in value.back_cap_paths),
+                front_lateral_paths=tuple(
+                    points(item) for item in value.front_lateral_paths
+                ),
+                front_cap_paths=tuple(
+                    points(item) for item in value.front_cap_paths
+                ),
+            )
+
+        surfaces = tuple(
+            replace(
+                item,
+                points=points(item.points),
+                cone_fill=cone_fill(item.cone_fill),
+            )
+            for item in numeric.surfaces
+        )
+        fragments = {
+            source_id: tuple(
+                replace(
+                    item,
+                    points=points(item.points),
+                    dashes=dashes(item.dashes),
+                )
+                for item in values
+            )
+            for source_id, values in numeric.fragments.items()
+        }
+        boundary_fragments = (
+            None
+            if numeric.boundary_fragments is None
+            else {
+                source_id: tuple(
+                    replace(
+                        item,
+                        points=points(item.points),
+                        dashes=dashes(item.dashes),
+                    )
+                    for item in values
+                )
+                for source_id, values in numeric.boundary_fragments.items()
+            }
+        )
+        section_layers = numeric.section_layers
+        if section_layers is not None:
+            section_layers = replace(
+                section_layers,
+                surface_points=points(section_layers.surface_points),
+                plane_polygons={
+                    role: tuple(points(item) for item in values)
+                    for role, values in section_layers.plane_polygons.items()
+                },
+                plane_outline_paths={
+                    role: tuple(points(item) for item in values)
+                    for role, values in section_layers.plane_outline_paths.items()
+                },
+                cone_fill=cone_fill(section_layers.cone_fill),
+            )
+        return replace(
+            numeric,
+            surfaces=surfaces,
+            fragments=fragments,
+            section_layers=section_layers,
+            boundary_fragments=boundary_fragments,
+        )
+
     def _prepare_numeric(
         self,
         performance_attempt: _PerformanceAttempt | None = None,
@@ -1673,7 +1892,7 @@ class QuadricOcclusion3D:
             max_projected_length=self.limits.max_projected_length
         )
         if self.boundary_visibility_mode == "unified":
-            return self._prepare_unified_numeric(
+            numeric = self._prepare_unified_numeric(
                 surfaces,
                 curves,
                 view,
@@ -1683,6 +1902,7 @@ class QuadricOcclusion3D:
                 resolved_inputs.surface_view_signature,
                 performance_attempt,
             )
+            return self._translate_prepared_numeric(numeric)
         component_fills = self._prepare_surface_component_fills(
             surfaces,
             view,
@@ -1997,7 +2217,7 @@ class QuadricOcclusion3D:
                 if section_layers is None
                 else section_layers.frame.ray_classification_count,
             )
-        return _PreparedNumericFrame(
+        numeric = _PreparedNumericFrame(
             frame,
             global_frame,
             tuple(surface_plans),
@@ -2008,6 +2228,7 @@ class QuadricOcclusion3D:
             tuple(painter_draw_order),
             section_layers,
         )
+        return self._translate_prepared_numeric(numeric)
 
     def _prepare_painter(
         self,
@@ -2785,7 +3006,8 @@ class QuadricOcclusion3D:
         self._last_input_opacity = None
         self._last_prepared_frame = None
         self._last_prepared_performance_counts = {}
-        self._surface_view_cache.clear()
+        if self._owns_surface_view_cache:
+            self._surface_view_cache.clear()
         self._band.restore()
         self.root.reset_opacity()
         self._invalidate_cairo_static_image()
@@ -2824,6 +3046,7 @@ __all__ = [
     "PreparedQuadricManimFrame",
     "QUADRIC_MANIM_LIMITS",
     "QuadricBoundaryStyle",
+    "QuadricGeometryPrototype",
     "QuadricManimCapacityError",
     "QuadricManimError",
     "QuadricManimLimits",

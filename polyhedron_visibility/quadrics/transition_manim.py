@@ -30,6 +30,7 @@ from .manim import (
     QUADRIC_MANIM_LIMITS,
     ProjectionInput,
     QuadricBoundaryStyle,
+    QuadricGeometryPrototype,
     QuadricManimCapacityError,
     QuadricManimError,
     QuadricManimLimits,
@@ -217,6 +218,8 @@ class QuadricSectionTransition3D:
         include_surface_boundaries: bool = True,
         generator_boundaries: Sequence[GeneratorBoundarySpec] = (),
         allocated_boundary_ids: Sequence[str] | None = None,
+        geometry_prototype: QuadricGeometryPrototype | None = None,
+        display_offset: Sequence[float] = (0.0, 0.0),
     ) -> None:
         if not isinstance(scheduled, ScheduledSectionAnimation):
             raise TypeError("scheduled must be a ScheduledSectionAnimation")
@@ -283,6 +286,8 @@ class QuadricSectionTransition3D:
             include_surface_boundaries=include_surface_boundaries,
             generator_boundaries=generator_boundaries,
             allocated_boundary_ids=allocated_boundary_ids,
+            geometry_prototype=geometry_prototype,
+            display_offset=display_offset,
         )
 
     def _active_plane(self) -> SectionPlane:
