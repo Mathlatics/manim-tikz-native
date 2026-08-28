@@ -21,6 +21,19 @@
     "all_videos_seconds": 2400.0,
     "workflow_timeout_minutes": 90
   },
+  "supplemental_evidence": {
+    "open_double_shared_apex": {
+      "full_frame": "keyframes/open_double_shared_apex/p0000.png",
+      "zoom": "contact-sheets/open-double-shared-apex-zoom.png",
+      "painter_trace": "evidence/open-double-shared-apex-painter-trace.json",
+      "pixel_evidence": "evidence/open-double-shared-apex.json",
+      "apex_zoom_half_width_pixels": 180,
+      "apex_zoom_half_height_pixels": 120,
+      "apex_background_distance_min": 20.0,
+      "yellow_pixels_per_nappe_min": 80,
+      "cyan_pixels_min": 180
+    }
+  },
   "scenarios": [
     {
       "id": "closed_open_comparison",

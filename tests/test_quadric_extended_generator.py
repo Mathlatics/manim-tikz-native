@@ -43,6 +43,12 @@ class _FakeProcessPoolExecutor:
 
 
 class ExtendedAcceptanceGeneratorTests(unittest.TestCase):
+    def test_full_acceptance_captures_shared_apex_supplement(self) -> None:
+        source = Path(generator.__file__).read_text(encoding="utf-8")
+        self.assertIn("_capture_open_double_shared_apex", source)
+        self.assertIn("open-double-shared-apex-painter-trace", source)
+        self.assertIn('"supplemental_evidence": supplemental_evidence', source)
+
     def test_parallel_sweeps_use_bounded_spawn_workers_and_preserve_order(
         self,
     ) -> None:
