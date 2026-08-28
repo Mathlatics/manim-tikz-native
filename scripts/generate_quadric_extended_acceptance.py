@@ -25,7 +25,7 @@ import platform
 import shutil
 import subprocess
 import sys
-from time import perf_counter
+from time import perf_counter, perf_counter_ns
 from typing import Iterable, Mapping, Sequence
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -60,6 +60,12 @@ from polyhedron_visibility.quadrics.contract import (
     SectionPlane,
 )
 from polyhedron_visibility.quadrics.section_compositing import PlaneDepthRole
+from polyhedron_visibility.quadrics.performance import (
+    QUADRIC_CAIRO_FRAME_TRACE_ENV,
+    QUADRIC_CAIRO_FRAME_TRACE_SCHEMA,
+    QUADRIC_PERFORMANCE_TRACE_ENV,
+    QUADRIC_PERFORMANCE_TRACE_SCHEMA,
+)
 
 BASELINE_PATH = (
     ROOT / "tests" / "baselines" / "quadric-extended-acceptance-v1.json"
@@ -380,6 +386,8 @@ def _controller_evidence(label: str, controller) -> dict[str, object]:
         for item in boundary.sources
         if item.source_kind is BoundarySourceKind.SURFACE_TRIM_RIM
     )
+    performance = controller.performance_snapshot()
+    performance_counts = {} if performance is None else performance.counts
     return {
         "controller_id": label,
         "paint_policy": controller.paint_policy.value,
@@ -410,6 +418,24 @@ def _controller_evidence(label: str, controller) -> dict[str, object]:
             0 if boundary is None else len(boundary.painted_fragments)
         ),
         "trim_rim_source_count": len(trim_sources),
+        "mobject_total_count": int(
+            performance_counts.get("mobject_family_count", 0)
+        ),
+        "active_mobject_count": int(
+            performance_counts.get("active_mobject_count", 0)
+        ),
+        "modified_mobject_count": int(
+            performance_counts.get("modified_mobject_count", 0)
+        ),
+        "cache_hit_count": (
+            0 if performance is None else sum(performance.cache_hits.values())
+        ),
+        "cache_miss_count": (
+            0 if performance is None else sum(performance.cache_misses.values())
+        ),
+        "performance": (
+            None if performance is None else performance.to_dict()
+        ),
     }
 
 
@@ -458,9 +484,13 @@ def _capture_keyframe(
             progress=progress,
             with_labels=True,
         )
-        state.set_progress(progress)
+        # Every builder returns a state already committed at ``progress``.
+        # Keeping that exact attach/update snapshot avoids replacing useful
+        # mutation evidence with a redundant same-value update.
         scene.camera.reset()
+        cairo_started_ns = perf_counter_ns()
         scene.camera.capture_mobjects(scene.mobjects)
+        cairo_render_ns = max(0, perf_counter_ns() - cairo_started_ns)
         pixels = scene.camera.pixel_array[:, :, :3].astype(np.uint8).copy()
         Image.fromarray(pixels, mode="RGB").save(image_path)
         controllers = []
@@ -519,6 +549,11 @@ def _capture_keyframe(
                             "boundary_fragment_count",
                             "painted_boundary_fragment_count",
                             "trim_rim_source_count",
+                            "mobject_total_count",
+                            "active_mobject_count",
+                            "modified_mobject_count",
+                            "cache_hit_count",
+                            "cache_miss_count",
                         )
                     },
                 }
@@ -542,6 +577,10 @@ def _capture_keyframe(
         "image": str(image_path.relative_to(output)),
         "image_sha256": _sha256(image_path),
         "elapsed_seconds": round(elapsed, 6),
+        "cairo_render": {
+            "nanoseconds": cairo_render_ns,
+            "seconds": cairo_render_ns / 1_000_000_000.0,
+        },
         "controllers": controllers,
         "key_pixels": probes,
     }
@@ -609,7 +648,9 @@ def _capture_open_double_shared_apex(
         ).attach()
         try:
             scene.camera.reset()
+            cairo_started_ns = perf_counter_ns()
             scene.camera.capture_mobjects(scene.mobjects)
+            cairo_render_ns = max(0, perf_counter_ns() - cairo_started_ns)
             pixels = scene.camera.pixel_array[:, :, :3].astype(np.uint8).copy()
             Image.fromarray(pixels, mode="RGB").save(image_path)
 
@@ -736,6 +777,10 @@ def _capture_open_double_shared_apex(
                 for item in boundary.sources
                 if item.source_kind is BoundarySourceKind.SURFACE_TRIM_RIM
             )
+            performance_snapshot = controller.performance_snapshot()
+            performance_counts = (
+                {} if performance_snapshot is None else performance_snapshot.counts
+            )
             row = {
                 "scenario": "open_double_shared_apex",
                 "keyframe": "p0000",
@@ -761,6 +806,25 @@ def _capture_open_double_shared_apex(
                 "boundary_fragment_count": len(boundary.fragments),
                 "painted_boundary_fragment_count": len(boundary.painted_fragments),
                 "trim_rim_source_count": len(trim_sources),
+                "mobject_total_count": int(
+                    performance_counts.get("mobject_family_count", 0)
+                ),
+                "active_mobject_count": int(
+                    performance_counts.get("active_mobject_count", 0)
+                ),
+                "modified_mobject_count": int(
+                    performance_counts.get("modified_mobject_count", 0)
+                ),
+                "cache_hit_count": (
+                    0
+                    if performance_snapshot is None
+                    else sum(performance_snapshot.cache_hits.values())
+                ),
+                "cache_miss_count": (
+                    0
+                    if performance_snapshot is None
+                    else sum(performance_snapshot.cache_misses.values())
+                ),
             }
             evidence = {
                 "schema": "manim-open-double-shared-apex-evidence/v1",
@@ -780,6 +844,15 @@ def _capture_open_double_shared_apex(
                 "branch_lineage": [item.to_dict() for item in frame.branch_lineage],
                 "draw_order": list(boundary.draw_order),
                 "counts": row,
+                "performance": (
+                    None
+                    if performance_snapshot is None
+                    else performance_snapshot.to_dict()
+                ),
+                "cairo_render": {
+                    "nanoseconds": cairo_render_ns,
+                    "seconds": cairo_render_ns / 1_000_000_000.0,
+                },
                 "key_pixels": probes,
                 "elapsed_seconds": round(perf_counter() - started, 6),
             }
@@ -887,6 +960,11 @@ def _motion_sweep(
                                 "boundary_fragment_count",
                                 "painted_boundary_fragment_count",
                                 "trim_rim_source_count",
+                                "mobject_total_count",
+                                "active_mobject_count",
+                                "modified_mobject_count",
+                                "cache_hit_count",
+                                "cache_miss_count",
                             )
                         },
                     }
@@ -970,11 +1048,20 @@ def _render_video(
     started = perf_counter()
     log_path = output / "logs" / f"{scenario_id}.log"
     log_path.parent.mkdir(parents=True, exist_ok=True)
+    frame_trace_path = (
+        output / "evidence" / "video-frame-performance" / f"{scenario_id}.json"
+    )
+    frame_trace_path.parent.mkdir(parents=True, exist_ok=True)
+    frame_trace_path.unlink(missing_ok=True)
+    child_environment = os.environ.copy()
+    child_environment[QUADRIC_PERFORMANCE_TRACE_ENV] = "1"
+    child_environment[QUADRIC_CAIRO_FRAME_TRACE_ENV] = str(frame_trace_path)
     timeout_seconds = float(budgets["single_video_seconds"])
     try:
         result = subprocess.run(
             command,
             cwd=ROOT,
+            env=child_environment,
             text=True,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
@@ -1003,6 +1090,25 @@ def _render_video(
         )
     destination = video_dir / f"{output_stem}.mp4"
     shutil.copy2(matches[0], destination)
+    if not frame_trace_path.is_file():
+        raise RuntimeError(
+            f"Manim did not publish per-frame performance for {scenario_id}"
+        )
+    frame_trace = _read_json(frame_trace_path)
+    if frame_trace.get("schema") != QUADRIC_CAIRO_FRAME_TRACE_SCHEMA:
+        raise RuntimeError(
+            f"invalid Cairo performance trace schema for {scenario_id}"
+        )
+    frames = frame_trace.get("frames")
+    if not isinstance(frames, list):
+        raise RuntimeError(
+            f"invalid Cairo performance frames for {scenario_id}"
+        )
+    frame_count = int(frame_trace.get("frameCount", 0))
+    if frame_count <= 0 or frame_count != len(frames):
+        raise RuntimeError(
+            f"invalid Cairo performance frame count for {scenario_id}"
+        )
     return {
         "scenario_id": scenario_id,
         "scene": scene_name,
@@ -1011,6 +1117,12 @@ def _render_video(
         "size_bytes": destination.stat().st_size,
         "elapsed_seconds": round(elapsed, 6),
         "log": str(log_path.relative_to(output)),
+        "frame_performance": str(frame_trace_path.relative_to(output)),
+        "frame_performance_sha256": _sha256(frame_trace_path),
+        "frame_count": frame_count,
+        "cairo_render_seconds": (
+            int(frame_trace["cairoRenderNanoseconds"]) / 1_000_000_000.0
+        ),
     }
 
 
@@ -1032,6 +1144,11 @@ def _write_counts_csv(path: Path, rows: Iterable[Mapping[str, object]]) -> None:
         "boundary_fragment_count",
         "painted_boundary_fragment_count",
         "trim_rim_source_count",
+        "mobject_total_count",
+        "active_mobject_count",
+        "modified_mobject_count",
+        "cache_hit_count",
+        "cache_miss_count",
     )
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8", newline="") as target:
@@ -1191,6 +1308,7 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = _parse_args(argv)
+    os.environ[QUADRIC_PERFORMANCE_TRACE_ENV] = "1"
     output = args.output.resolve()
     if output == ROOT or output in ROOT.parents:
         raise ValueError("acceptance output cannot be the repository or its parent")
@@ -1323,6 +1441,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         _write_counts_csv(counts_path, counts)
         evidence = {
             "schema": "manim-quadric-extended-acceptance/v1",
+            "performance_trace_schema": QUADRIC_PERFORMANCE_TRACE_SCHEMA,
             "contract_id": baseline["contract_id"],
             "git_commit": _git_commit(),
             "generated_at": datetime.now(timezone.utc).isoformat(),

@@ -94,7 +94,7 @@ _PUBLIC_0_1_COMPONENT_REVISIONS: Final[dict[str, str]] = {
     COMPONENT_SOURCE_PROJECT_BUILD: "source-sha256:00579e342012a96443c098c7004be672d265d32fe6f82d66b0c6b11ba64305b7",
     COMPONENT_QUADRIC_GEOMETRY: "source-sha256:3874f85d3dd7b45717555b713eac5707b13201eff4b98e71d3905cf6c0c76b64",
     COMPONENT_QUADRIC_VISIBILITY: "source-sha256:08d76d9326089bdf865aac97ee83bcde239fc1a4c3ba45d783a80b54ca17ab0e",
-    COMPONENT_QUADRIC_MANIM: "source-sha256:d44f3b6d62ae3f0c5bd6cf5f0a613654cffb6d51f9d92822b9c97a9de5279595",
+    COMPONENT_QUADRIC_MANIM: "source-sha256:80bdf5eabfa93a7a2ef554a5d1e99aa6bca3cd99f4529ff3d898c7e72c883284",
 }
 
 
@@ -427,6 +427,7 @@ _COMPONENT_DEFINITIONS: Final[dict[str, dict[str, tuple[str, ...]]]] = {
             "@tool/polyhedron_visibility/quadrics/composite_authoring.py",
             "@tool/polyhedron_visibility/quadrics/manim.py",
             "@tool/polyhedron_visibility/quadrics/manim_runtime.py",
+            "@tool/polyhedron_visibility/quadrics/performance.py",
             "@tool/polyhedron_visibility/quadrics/transition_manim.py",
         ),
     },
@@ -540,7 +541,7 @@ _DECLARED_IMPLEMENTATION_DIGESTS: Final[dict[str, str]] = {
         "08d76d9326089bdf865aac97ee83bcde239fc1a4c3ba45d783a80b54ca17ab0e"
     ),
     COMPONENT_QUADRIC_MANIM: (
-        "d44f3b6d62ae3f0c5bd6cf5f0a613654cffb6d51f9d92822b9c97a9de5279595"
+        "80bdf5eabfa93a7a2ef554a5d1e99aa6bca3cd99f4529ff3d898c7e72c883284"
     ),
 }
 

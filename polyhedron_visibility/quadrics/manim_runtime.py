@@ -27,6 +27,7 @@ from .boundary_compositing import (
     QuadricBoundarySource,
 )
 from .curves import EllipseArcCurve, ParametricConicBranch, SegmentCurve
+from .performance import _PerformanceAttempt, _performance_stage
 from .projection import ConeProjectionLayers
 
 
@@ -334,6 +335,62 @@ def _restore_root(states: Sequence[_MobjectState]) -> None:
             setattr(state.mobject, name, _copy_value(value))
         if state.z_index is not None:
             state.mobject.z_index = state.z_index
+
+
+def _state_value_equal(first: object, second: object) -> bool:
+    if isinstance(first, np.ndarray) or isinstance(second, np.ndarray):
+        try:
+            return bool(np.array_equal(np.asarray(first), np.asarray(second)))
+        except (TypeError, ValueError):
+            return False
+    try:
+        return bool(first == second)
+    except (TypeError, ValueError):
+        return False
+
+
+def _changed_state_count(states: Sequence[_MobjectState]) -> int:
+    changed = 0
+    for state in states:
+        member = state.mobject
+        if state.points is not None and hasattr(member, "points"):
+            if not np.array_equal(state.points, np.asarray(member.points)):
+                changed += 1
+                continue
+        if any(
+            not _state_value_equal(value, getattr(member, name, None))
+            for name, value in state.attributes.items()
+        ):
+            changed += 1
+            continue
+        raw_z = getattr(member, "z_index", None)
+        current_z = None
+        if raw_z is not None:
+            value = float(raw_z)
+            if np.isfinite(value):
+                current_z = value
+        if current_z != state.z_index:
+            changed += 1
+    return changed
+
+
+def _active_renderable_mobject_count(root: Mobject) -> int:
+    result = 0
+    seen: set[int] = set()
+    for member in root.get_family():
+        if id(member) in seen:
+            continue
+        seen.add(id(member))
+        points = np.asarray(getattr(member, "points", ()), dtype=float)
+        if points.ndim != 2 or not points.size:
+            continue
+        for name in ("fill_rgbas", "stroke_rgbas", "background_stroke_rgbas"):
+            rgba = np.asarray(getattr(member, name, ()), dtype=float)
+            if rgba.ndim >= 2 and rgba.shape[-1] >= 4 and rgba.size:
+                if bool(np.any(rgba[..., 3] > 0.0)):
+                    result += 1
+                    break
+    return result
 
 
 class _ManagedQuadricDisplayGroup(VGroup):
@@ -1093,6 +1150,7 @@ def _prepare_boundary_fragments(
     slot_source_ids: Sequence[str],
     max_chord_error: float,
     limits: _LimitsContract,
+    performance_attempt: _PerformanceAttempt | None = None,
 ) -> _PreparedBoundaryBatch:
     """Prepare every painted semantic boundary without allocating Mobjects."""
 
@@ -1123,22 +1181,24 @@ def _prepare_boundary_fragments(
             capacity=limits.max_fragments_per_curve,
         )
         next_maps[source_id] = assignment
-        parameters, source_points = _adaptive_project_curve_samples(
-            source.curve,
-            view,
-            max_chord_error=max_chord_error,
-            max_segments=limits.max_segments_per_fragment,
-        )
-        values: list[_PreparedBoundaryFragment] = []
-        for fragment in fragments:
-            points = _adaptive_project_curve(
+        with _performance_stage(performance_attempt, "adaptive_projection"):
+            parameters, source_points = _adaptive_project_curve_samples(
                 source.curve,
                 view,
-                fragment.interval.start,
-                fragment.interval.end,
                 max_chord_error=max_chord_error,
                 max_segments=limits.max_segments_per_fragment,
             )
+        values: list[_PreparedBoundaryFragment] = []
+        for fragment in fragments:
+            with _performance_stage(performance_attempt, "adaptive_projection"):
+                points = _adaptive_project_curve(
+                    source.curve,
+                    view,
+                    fragment.interval.start,
+                    fragment.interval.end,
+                    max_chord_error=max_chord_error,
+                    max_segments=limits.max_segments_per_fragment,
+                )
             _cumulative, length = _polyline_lengths(points)
             allowance = max(
                 1.0e-12,
@@ -1149,21 +1209,29 @@ def _prepare_boundary_fragments(
                     f"boundary source {source_id!r} fragment length "
                     f"{length:.9g} exceeds max_projected_length"
                 )
-            dashes = (
-                _dash_polyline_anchored(
-                    points,
-                    source_distance_start=_source_distance_at_parameter(
-                        parameters,
-                        source_points,
-                        fragment.interval.start,
-                    ),
-                    dash_length=style.dash_length,
-                    dash_gap=style.dash_gap,
-                    capacity=limits.max_dashes_per_fragment,
+            with _performance_stage(performance_attempt, "dash_generation"):
+                dashes = (
+                    _dash_polyline_anchored(
+                        points,
+                        source_distance_start=_source_distance_at_parameter(
+                            parameters,
+                            source_points,
+                            fragment.interval.start,
+                        ),
+                        dash_length=style.dash_length,
+                        dash_gap=style.dash_gap,
+                        capacity=limits.max_dashes_per_fragment,
+                    )
+                    if fragment.render_intent is BoundaryRenderIntent.DASHED
+                    else ()
                 )
-                if fragment.render_intent is BoundaryRenderIntent.DASHED
-                else ()
-            )
+            if performance_attempt is not None:
+                performance_attempt.increment_count(
+                    "prepared_boundary_fragment_count"
+                )
+                performance_attempt.increment_count(
+                    "prepared_dash_count", len(dashes)
+                )
             slot_index = assignment[fragment.item_id]
             values.append(
                 _PreparedBoundaryFragment(
@@ -1259,19 +1327,40 @@ def _rollback_display_transaction(
     *,
     capture_controller_state: Callable[[], _ControllerState],
     restore_controller_state: Callable[[_ControllerState], None],
+    performance_attempt: _PerformanceAttempt | None = None,
 ) -> Iterator[None]:
     """Rollback root, painter band, and controller bookkeeping together."""
 
-    root_state = _capture_root(root)
+    with _performance_stage(performance_attempt, "transaction_snapshot"):
+        root_state = _capture_root(root)
+    if performance_attempt is not None:
+        performance_attempt.set_count("mobject_family_count", len(root_state))
+        performance_attempt.set_count(
+            "transaction_snapshot_mobject_count", len(root_state)
+        )
     band_state = band.capture_active_state()
     controller_state = capture_controller_state()
     try:
         yield
     except Exception:
-        _restore_root(root_state)
-        band.restore_active_state(band_state)
-        restore_controller_state(controller_state)
+        if performance_attempt is not None:
+            performance_attempt.set_count(
+                "modified_mobject_count", _changed_state_count(root_state)
+            )
+        with _performance_stage(performance_attempt, "transaction_rollback"):
+            _restore_root(root_state)
+            band.restore_active_state(band_state)
+            restore_controller_state(controller_state)
         raise
+    else:
+        if performance_attempt is not None:
+            performance_attempt.set_count(
+                "modified_mobject_count", _changed_state_count(root_state)
+            )
+            performance_attempt.set_count(
+                "active_mobject_count",
+                _active_renderable_mobject_count(root),
+            )
 
 
 def _scene_containers(scene: object) -> tuple[list[object], ...]:
