@@ -460,11 +460,11 @@ def _set_open_subpaths(
         points = np.asarray(raw, dtype=float)
         if points.ndim != 2 or points.shape[1:] != (3,) or len(points) < 2:
             raise QuadricManimError(
-                "section outline paths must contain finite 3D polylines"
+                "open display paths must contain finite 3D polylines"
             )
         if not np.all(np.isfinite(points)):
             raise QuadricManimError(
-                "section outline paths must contain finite 3D polylines"
+                "open display paths must contain finite 3D polylines"
             )
         value.start_new_path(points[0])
         value.add_points_as_corners(points[1:])
@@ -711,16 +711,15 @@ def _apply_surface_sheet_pair(
 
 class _CurveFragmentSlot:
     def __init__(self, dash_capacity: int) -> None:
+        self.dash_capacity = int(dash_capacity)
         self.solid = VMobject()
-        self.dashes = tuple(VMobject() for _ in range(dash_capacity))
-        self.dash_group = VGroup(*self.dashes)
-        self.root = VGroup(self.solid, self.dash_group)
+        self.dashed = VMobject()
+        self.root = VGroup(self.solid, self.dashed)
         self.hide()
 
     def hide(self) -> None:
         _hide_vmobject(self.solid)
-        for dash in self.dashes:
-            _hide_vmobject(dash)
+        _hide_vmobject(self.dashed)
 
     def identities(self) -> tuple[int, ...]:
         return tuple(id(item) for item in self.root.get_family())
@@ -735,6 +734,12 @@ class _CurveSlots:
 
     def identities(self) -> tuple[int, ...]:
         return tuple(id(item) for item in self.root.get_family())
+
+
+def _curve_slots_family_capacity(fragment_capacity: int) -> int:
+    """Return the fixed family size for one compact boundary-source slot."""
+
+    return 1 + 3 * int(fragment_capacity)
 
 
 def _coerce_view(value: object) -> ParallelView:
@@ -1284,37 +1289,35 @@ def _apply_boundary_fragment(
             slot.solid.set_cap_style(style.cap_style)
         if style.joint_type is not None:
             slot.solid.joint_type = style.joint_type
-        for dash in slot.dashes:
-            _hide_vmobject(dash)
+        _hide_vmobject(slot.dashed)
         return
     _hide_vmobject(slot.solid)
-    for index, dash in enumerate(slot.dashes):
-        if index >= len(prepared.dashes):
-            _hide_vmobject(dash)
-            continue
-        dash.set_points_as_corners(prepared.dashes[index].points)
-        dash.set_fill(opacity=0.0)
-        dash.set_stroke(color=color, width=width, opacity=stroke_opacity)
-        dash.set_stroke(
-            color=style.background_color,
-            width=style.background_width,
-            opacity=style.background_opacity * opacity,
-            background=True,
-        )
-        cap = (
-            style.cap_style
-            if style.hidden_cap_style is None
-            else style.hidden_cap_style
-        )
-        joint = (
-            style.joint_type
-            if style.hidden_joint_type is None
-            else style.hidden_joint_type
-        )
-        if cap is not None:
-            dash.set_cap_style(cap)
-        if joint is not None:
-            dash.joint_type = joint
+    _set_open_subpaths(
+        slot.dashed,
+        tuple(item.points for item in prepared.dashes),
+    )
+    slot.dashed.set_fill(opacity=0.0)
+    slot.dashed.set_stroke(color=color, width=width, opacity=stroke_opacity)
+    slot.dashed.set_stroke(
+        color=style.background_color,
+        width=style.background_width,
+        opacity=style.background_opacity * opacity,
+        background=True,
+    )
+    cap = (
+        style.cap_style
+        if style.hidden_cap_style is None
+        else style.hidden_cap_style
+    )
+    joint = (
+        style.joint_type
+        if style.hidden_joint_type is None
+        else style.hidden_joint_type
+    )
+    if cap is not None:
+        slot.dashed.set_cap_style(cap)
+    if joint is not None:
+        slot.dashed.joint_type = joint
 
 
 _ControllerState = TypeVar("_ControllerState")

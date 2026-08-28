@@ -132,6 +132,7 @@ from .manim_runtime import (
     _boundary_style_registry,
     _capture_root,
     _coerce_view,
+    _curve_slots_family_capacity,
     _dash_polyline,
     _dash_polyline_anchored,
     _hide_vmobject,
@@ -712,10 +713,7 @@ class QuadricOcclusion3D:
             + (20 if self._section_enabled else 0)
             + 1
             + len(self._slot_source_ids)
-            * (
-                1
-                + limits.max_fragments_per_curve * (limits.max_dashes_per_fragment + 3)
-            )
+            * _curve_slots_family_capacity(limits.max_fragments_per_curve)
             + 4
         )
         if estimated_mobjects > limits.max_total_mobjects:
@@ -1708,7 +1706,7 @@ class QuadricOcclusion3D:
                 values.append(prepared)
                 slot = self._curve_slots[curve_id].fragments[slot_index]
                 item_mobjects[fragment.item_id] = (
-                    slot.solid if fragment.render_intent == "solid" else slot.dash_group
+                    slot.solid if fragment.render_intent == "solid" else slot.dashed
                 )
             prepared_by_curve[curve_id] = tuple(values)
 
@@ -1938,42 +1936,40 @@ class QuadricOcclusion3D:
                 slot.solid.set_cap_style(self.style.cap_style)
             if self.style.joint_type is not None:
                 slot.solid.joint_type = self.style.joint_type
-            for dash in slot.dashes:
-                _hide_vmobject(dash)
+            _hide_vmobject(slot.dashed)
             return
 
         _hide_vmobject(slot.solid)
-        for index, dash in enumerate(slot.dashes):
-            if index >= len(prepared.dashes):
-                _hide_vmobject(dash)
-                continue
-            dash.set_points_as_corners(prepared.dashes[index].points)
-            dash.set_fill(opacity=0.0)
-            dash.set_stroke(
-                color=self.style.hidden_curve_color,
-                width=self.style.hidden_curve_width,
-                opacity=self.style.hidden_curve_opacity * opacity,
-            )
-            dash.set_stroke(
-                color=self.style.background_color,
-                width=self.style.background_width,
-                opacity=self.style.background_opacity * opacity,
-                background=True,
-            )
-            cap = (
-                self.style.cap_style
-                if self.style.hidden_cap_style is None
-                else self.style.hidden_cap_style
-            )
-            joint = (
-                self.style.joint_type
-                if self.style.hidden_joint_type is None
-                else self.style.hidden_joint_type
-            )
-            if cap is not None:
-                dash.set_cap_style(cap)
-            if joint is not None:
-                dash.joint_type = joint
+        _set_open_subpaths(
+            slot.dashed,
+            tuple(item.points for item in prepared.dashes),
+        )
+        slot.dashed.set_fill(opacity=0.0)
+        slot.dashed.set_stroke(
+            color=self.style.hidden_curve_color,
+            width=self.style.hidden_curve_width,
+            opacity=self.style.hidden_curve_opacity * opacity,
+        )
+        slot.dashed.set_stroke(
+            color=self.style.background_color,
+            width=self.style.background_width,
+            opacity=self.style.background_opacity * opacity,
+            background=True,
+        )
+        cap = (
+            self.style.cap_style
+            if self.style.hidden_cap_style is None
+            else self.style.hidden_cap_style
+        )
+        joint = (
+            self.style.joint_type
+            if self.style.hidden_joint_type is None
+            else self.style.hidden_joint_type
+        )
+        if cap is not None:
+            slot.dashed.set_cap_style(cap)
+        if joint is not None:
+            slot.dashed.joint_type = joint
 
     def apply(self, prepared: PreparedQuadricManimFrame) -> None:
         """Commit one already validated frame, rolling back on any exception."""

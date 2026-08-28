@@ -763,9 +763,7 @@ class QuadricManimBindingTests(unittest.TestCase):
         for slots in controller._curve_slots.values():
             for slot in slots.fragments:
                 active_strokes.append(float(slot.solid.get_stroke_opacity()))
-                active_strokes.extend(
-                    float(dash.get_stroke_opacity()) for dash in slot.dashes
-                )
+                active_strokes.append(float(slot.dashed.get_stroke_opacity()))
         self.assertTrue(any(0.0 < value <= 0.2500001 for value in active_strokes))
 
         controller.detach()
@@ -830,12 +828,10 @@ class QuadricManimCairoRenderTests(unittest.TestCase):
                 )
                 slot_index = controller._fragment_slot_maps["between"][hidden.item_id]
                 slot = controller._curve_slots["between"].fragments[slot_index]
-                dashes = tuple(dash for dash in slot.dashes if len(dash.points))
+                dashes = tuple(slot.dashed.get_subpaths())
                 self.assertTrue(dashes)
                 dash = dashes[len(dashes) // 2]
-                point = 0.5 * (
-                    np.asarray(dash.get_start()) + np.asarray(dash.get_end())
-                )
+                point = 0.5 * (np.asarray(dash[0]) + np.asarray(dash[-1]))
 
                 scene.camera.reset()
                 scene.camera.capture_mobjects(scene.mobjects)

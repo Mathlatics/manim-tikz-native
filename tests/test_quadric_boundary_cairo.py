@@ -105,6 +105,18 @@ def _capture_pixels(scene: Scene) -> np.ndarray:
     return scene.camera.pixel_array[:, :, :3].astype(float).copy()
 
 
+def _active_dash_paths(slot) -> tuple[np.ndarray, ...]:
+    return tuple(
+        np.asarray(path, dtype=float)
+        for path in slot.dashed.get_subpaths()
+        if len(path)
+    )
+
+
+def _dash_path_midpoint(path: np.ndarray) -> np.ndarray:
+    return 0.5 * (np.asarray(path[0]) + np.asarray(path[-1]))
+
+
 def _screen_to_pixel(point: Sequence[float]) -> tuple[int, int]:
     x, y = float(point[0]), float(point[1])
     column = int(
@@ -263,15 +275,13 @@ def _first_hidden_plane_dash(controller: QuadricOcclusion3D):
         fragment.item_id
     ]
     slot = controller._curve_slots[fragment.source_id].fragments[slot_index]
-    dashes = [dash for dash in slot.dashes if len(dash.points)]
+    dashes = _active_dash_paths(slot)
     if not dashes:
         raise AssertionError(
             "hidden plane-outline fragment has no active dash"
         )
     dash = dashes[len(dashes) // 2]
-    point = 0.5 * (
-        np.asarray(dash.get_start()) + np.asarray(dash.get_end())
-    )
+    point = _dash_path_midpoint(dash)
     return fragment, point
 
 
@@ -299,13 +309,11 @@ def _first_plane_occluded_silhouette_dash(
         fragment.item_id
     ]
     slot = controller._curve_slots[fragment.source_id].fragments[slot_index]
-    dashes = [dash for dash in slot.dashes if len(dash.points)]
+    dashes = _active_dash_paths(slot)
     if not dashes:
         raise AssertionError("plane-occluded silhouette has no active dash")
     dash = dashes[len(dashes) // 2]
-    point = 0.5 * (
-        np.asarray(dash.get_start()) + np.asarray(dash.get_end())
-    )
+    point = _dash_path_midpoint(dash)
     return fragment, point
 
 
@@ -505,12 +513,10 @@ class UnifiedBoundaryCairoTests(unittest.TestCase):
                             solid_point = solid_slot.solid.points[
                                 len(solid_slot.solid.points) // 2
                             ]
-                            active_dashes = [
-                                item for item in dash_slot.dashes if len(item.points)
-                            ]
+                            active_dashes = _active_dash_paths(dash_slot)
                             self.assertTrue(active_dashes)
                             dash = active_dashes[len(active_dashes) // 2]
-                            dash_point = dash.points[len(dash.points) // 2]
+                            dash_point = _dash_path_midpoint(dash)
                             for point in (solid_point, dash_point):
                                 _row, _column, rgb = _nearest_ink_pixel(
                                     pixels,
@@ -658,12 +664,10 @@ class UnifiedBoundaryCairoTests(unittest.TestCase):
                         solid.item_id
                     ]
                 ]
-                active_dashes = [
-                    item for item in hidden_slot.dashes if len(item.points)
-                ]
+                active_dashes = _active_dash_paths(hidden_slot)
                 self.assertTrue(active_dashes)
                 dash = active_dashes[len(active_dashes) // 2]
-                dash_point = dash.points[len(dash.points) // 2]
+                dash_point = _dash_path_midpoint(dash)
                 solid_point = solid_slot.solid.points[
                     len(solid_slot.solid.points) // 2
                 ]
@@ -937,11 +941,8 @@ class UnifiedBoundaryCairoTests(unittest.TestCase):
                     slot = controller._curve_slots[item.source_id].fragments[
                         slot_index
                     ]
-                    dash = next(dash for dash in slot.dashes if len(dash.points))
-                    return 0.5 * (
-                        np.asarray(dash.get_start())
-                        + np.asarray(dash.get_end())
-                    )
+                    dash = _active_dash_paths(slot)[0]
+                    return _dash_path_midpoint(dash)
 
                 point = dash_midpoint(diagram, diagram_fragment)
                 depth_point = dash_midpoint(depth, fragment)

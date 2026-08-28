@@ -258,8 +258,13 @@ Opaque convex quadrics initially use analytic projected-silhouette fill
 proxies rather than a visible mesh, avoiding triangle seams.  Display
 approximation never feeds back into geometric visibility.
 
-The runtime preallocates the maximum curve, fragment, polyline-segment, and
-dash slots.
+The runtime preallocates the maximum curve and fragment slots. Each fragment
+owns one solid `VMobject` and one dashed `VMobject`; every active dash is an
+independent open subpath inside the latter. `max_dashes_per_fragment` remains a
+hard numerical capacity checked before display mutation, but it no longer
+allocates one hidden Mobject per possible dash. One boundary source therefore
+owns `1 + 3 * max_fragments_per_curve` family members, independent of the dash
+capacity.
 An updater prepares and validates a complete frame, snapshots the current
 display state, applies it transactionally, and restores the previous frame if
 anything fails.  It never creates a Mobject inside an updater.
@@ -723,7 +728,7 @@ consume additional fixed Manim fragment slots. Use
 `boundary_section_limits=QuadricBoundarySectionLimits(...)` to set explicit
 role-contour and per-source split capacities.
 
-Unified boundary painter fragments use fixed preallocated solid/dash families.
+Unified boundary painter fragments use fixed preallocated solid/dashed pairs.
 Dash phase is anchored to the complete semantic source, so a moving visibility
 boundary clips only the first or last dash instead of making the pattern crawl.
 No updater creates a `VMobject`, `VGroup`, or `DashedVMobject`; object identity,

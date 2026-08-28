@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+- compact every fixed-capacity quadric dashed fragment into one multi-subpath
+  `VMobject` instead of one Mobject per possible dash, while retaining the
+  numerical dash limit, source-anchored phase, cap/join/background styling,
+  stable fragment identity, Cairo pixels, and transactional rollback;
 - add `CompositeQuadricSection3D` for one finite open double shell: coordinate
   its two canonical single-nappe section frames, certify shared-apex-only
   projected contact, conserve and paint one common plane partition, merge the
