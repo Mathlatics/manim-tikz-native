@@ -11,11 +11,14 @@ fixed Manim identity hashes at every rendered progress sample.
 from __future__ import annotations
 
 import argparse
+from concurrent.futures import ProcessPoolExecutor
 import csv
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import hashlib
 import json
+from math import pi
+from multiprocessing import get_context
 import os
 from pathlib import Path
 import platform
@@ -36,14 +39,25 @@ from PIL import Image, ImageDraw
 
 from examples.quadrics.extended_acceptance_demo import (
     BACKGROUND_COLOR,
+    BOUNDARY_STYLES,
     STYLE,
     AcceptanceState,
+    acceptance_limits,
     acceptance_scenario_ids,
     build_acceptance_state,
 )
+from polyhedron_visibility.parallel_solver import ParallelView
 from polyhedron_visibility.quadrics.boundary_compositing import (
     BoundaryRenderIntent,
     BoundarySourceKind,
+)
+from polyhedron_visibility.quadrics.composite_authoring import (
+    CompositeQuadricSection3D,
+)
+from polyhedron_visibility.quadrics.contract import (
+    ConeModel,
+    ConeSpec,
+    SectionPlane,
 )
 from polyhedron_visibility.quadrics.section_compositing import PlaneDepthRole
 
@@ -51,6 +65,14 @@ BASELINE_PATH = (
     ROOT / "tests" / "baselines" / "quadric-extended-acceptance-v1.json"
 )
 SCENE_PATH = ROOT / "examples" / "quadrics" / "extended_acceptance_demo.py"
+MAX_MOTION_SWEEP_WORKERS = 2
+OPEN_DOUBLE_VIEW = ParallelView.from_matrix(
+    (
+        (1.0, 0.0, 0.0),
+        (0.0, 0.0, -1.0),
+        (0.0, 1.0, 0.0),
+    )
+)
 
 
 def _read_json(path: Path) -> dict[str, object]:
@@ -398,6 +420,14 @@ class CaptureResult:
     rows: tuple[dict[str, object], ...]
 
 
+@dataclass(frozen=True, slots=True)
+class _MotionSweepTask:
+    scenario_id: str
+    sample_count: int
+    output: str
+    critical_progresses: tuple[float, ...]
+
+
 def _capture_keyframe(
     scenario_id: str,
     progress: float,
@@ -518,6 +548,259 @@ def _capture_keyframe(
     return CaptureResult(image_path, evidence, tuple(rows))
 
 
+def _capture_open_double_shared_apex(
+    *,
+    output: Path,
+    profile: Mapping[str, object],
+    pixel_policy: Mapping[str, object],
+    specification: Mapping[str, object],
+) -> CaptureResult:
+    """Capture one full-resolution certificate for the composite apex contact."""
+
+    started = perf_counter()
+    image_path = output / str(specification["full_frame"])
+    zoom_path = output / str(specification["zoom"])
+    trace_path = output / str(specification["painter_trace"])
+    evidence_path = output / str(specification["pixel_evidence"])
+    for path in (image_path, zoom_path, trace_path, evidence_path):
+        path.parent.mkdir(parents=True, exist_ok=True)
+
+    controller = None
+    with tempconfig(
+        {
+            "renderer": "cairo",
+            "pixel_width": int(profile["pixel_width"]),
+            "pixel_height": int(profile["pixel_height"]),
+            "frame_rate": int(profile["frame_rate"]),
+            "disable_caching": True,
+            "media_dir": str(output / "_static-media" / "open-double-apex"),
+        }
+    ):
+        scene = Scene()
+        scene.camera.background_color = BACKGROUND_COLOR
+        cone = ConeSpec(
+            "acceptance:open-double-apex:cone",
+            (0.0, 0.0, 0.0),
+            (0.0, 0.0, 1.0),
+            pi / 4.0,
+            (-2.15, 2.15),
+            radial_axis=(1.0, 0.0, 0.0),
+            model=ConeModel.OPEN_DOUBLE,
+        )
+        plane = SectionPlane(
+            "acceptance:open-double-apex:plane",
+            (0.0, 0.48, 0.0),
+            (0.0, 1.0, 0.16),
+            u_axis=(1.0, 0.0, 0.0),
+        )
+        controller = CompositeQuadricSection3D(
+            scene,
+            surface=cone,
+            section_id="acceptance:open-double-apex:section",
+            plane=plane,
+            projection=OPEN_DOUBLE_VIEW,
+            paint_policy="depth_aware_diagrammatic",
+            style=STYLE,
+            boundary_styles=BOUNDARY_STYLES,
+            limits=acceptance_limits(),
+            max_chord_error=0.008,
+            section_max_screen_error=0.08,
+            plane_patch_margin=0.17,
+        ).attach()
+        try:
+            scene.camera.reset()
+            scene.camera.capture_mobjects(scene.mobjects)
+            pixels = scene.camera.pixel_array[:, :, :3].astype(np.uint8).copy()
+            Image.fromarray(pixels, mode="RGB").save(image_path)
+
+            frame = controller.last_composite_frame
+            boundary = controller.last_boundary_frame
+            if frame is None or boundary is None:
+                raise RuntimeError("open-double controller did not commit its frames")
+            apex_row, apex_column = _screen_to_pixel(frame.shared_apex.screen_point)
+            half_width = int(specification["apex_zoom_half_width_pixels"])
+            half_height = int(specification["apex_zoom_half_height_pixels"])
+            left = max(0, apex_column - half_width)
+            right = min(int(config.pixel_width), apex_column + half_width)
+            top = max(0, apex_row - half_height)
+            bottom = min(int(config.pixel_height), apex_row + half_height)
+            with Image.open(image_path) as full_frame:
+                zoom = full_frame.convert("RGB").crop((left, top, right, bottom))
+                zoom = zoom.resize(
+                    (2 * (right - left), 2 * (bottom - top)),
+                    Image.Resampling.LANCZOS,
+                )
+                zoom.save(zoom_path)
+
+            background = _hex_rgb(BACKGROUND_COLOR)
+            plane_color = _hex_rgb(STYLE.section_plane_fill_color)
+            expected_plane = _source_over(
+                background,
+                plane_color,
+                STYLE.section_plane_fill_opacity,
+            )
+            plane_row, plane_column = _screen_to_pixel((2.25, 0.0))
+            actual_plane = pixels[plane_row, plane_column].astype(float)
+            plane_error = float(np.linalg.norm(actual_plane - expected_plane))
+            apex_rgb = pixels[apex_row, apex_column].astype(float)
+            apex_background_distance = float(np.linalg.norm(apex_rgb - background))
+
+            visible_curve = _hex_rgb(STYLE.visible_curve_color)
+            boundary_ink = _hex_rgb(BOUNDARY_STYLES[
+                "style:surface-boundary"
+            ].visible_color)
+            rgb = pixels.astype(float)
+            yellow_mask = np.linalg.norm(rgb - visible_curve, axis=2) <= 80.0
+            cyan_mask = np.linalg.norm(rgb - boundary_ink, axis=2) <= 80.0
+            midpoint = len(pixels) // 2
+            yellow_upper = int(np.count_nonzero(yellow_mask[:midpoint]))
+            yellow_lower = int(np.count_nonzero(yellow_mask[midpoint:]))
+            cyan_count = int(np.count_nonzero(cyan_mask))
+            plane_tolerance = min(
+                24.0,
+                float(pixel_policy["fill_rgb_euclidean_tolerance"]),
+            )
+            probes = [
+                {
+                    "probe_id": "plane:single-alpha-outside-nappes",
+                    "pixel": {"row": plane_row, "column": plane_column},
+                    "expected_rgb": [
+                        round(float(value), 6) for value in expected_plane
+                    ],
+                    "actual_rgb": [int(value) for value in actual_plane],
+                    "rgb_euclidean_error": round(plane_error, 6),
+                    "tolerance": plane_tolerance,
+                    "passed": plane_error <= plane_tolerance,
+                },
+                {
+                    "probe_id": "shared-apex:non-background",
+                    "pixel": {"row": apex_row, "column": apex_column},
+                    "background_rgb": [int(value) for value in background],
+                    "actual_rgb": [int(value) for value in apex_rgb],
+                    "background_distance": round(apex_background_distance, 6),
+                    "minimum_distance": float(
+                        specification["apex_background_distance_min"]
+                    ),
+                    "passed": apex_background_distance
+                    >= float(specification["apex_background_distance_min"]),
+                },
+                {
+                    "probe_id": "section-branch:negative-nappe-yellow-pixels",
+                    "pixel_count": yellow_upper,
+                    "minimum_count": int(
+                        specification["yellow_pixels_per_nappe_min"]
+                    ),
+                    "passed": yellow_upper
+                    >= int(specification["yellow_pixels_per_nappe_min"]),
+                },
+                {
+                    "probe_id": "section-branch:positive-nappe-yellow-pixels",
+                    "pixel_count": yellow_lower,
+                    "minimum_count": int(
+                        specification["yellow_pixels_per_nappe_min"]
+                    ),
+                    "passed": yellow_lower
+                    >= int(specification["yellow_pixels_per_nappe_min"]),
+                },
+                {
+                    "probe_id": "surface-boundary:cyan-pixels",
+                    "pixel_count": cyan_count,
+                    "minimum_count": int(specification["cyan_pixels_min"]),
+                    "passed": cyan_count >= int(specification["cyan_pixels_min"]),
+                },
+            ]
+
+            trace = {
+                "schema": "manim-open-double-shared-apex-painter-trace/v1",
+                "composite_frame": frame.to_dict(),
+                "boundary_frame": boundary.to_dict(),
+                "active_painter_z_indices": controller.active_painter_z_indices,
+                "slot_identity_digest": _semantic_digest(
+                    [int(value) for value in controller.slot_identities()]
+                ),
+            }
+            _atomic_json(trace_path, trace)
+
+            source_map = {item.source_id: item for item in boundary.sources}
+            semantic_fragments = tuple(
+                item
+                for item in boundary.fragments
+                if source_map[item.source_id].source_kind
+                in {
+                    BoundarySourceKind.ANALYTIC_CURVE,
+                    BoundarySourceKind.SECTION_CAP_CHORD,
+                }
+            )
+            trim_sources = tuple(
+                item
+                for item in boundary.sources
+                if item.source_kind is BoundarySourceKind.SURFACE_TRIM_RIM
+            )
+            row = {
+                "scenario": "open_double_shared_apex",
+                "keyframe": "p0000",
+                "progress": 0.0,
+                "controller_id": "composite-open-double",
+                "surface_count": len(frame.child_frames),
+                "curve_fragment_count": len(semantic_fragments),
+                "painted_curve_fragment_count": sum(
+                    item.painted for item in semantic_fragments
+                ),
+                "active_cap_chord_fragment_count": sum(
+                    item.painted
+                    and source_map[item.source_id].source_kind
+                    is BoundarySourceKind.SECTION_CAP_CHORD
+                    for item in semantic_fragments
+                ),
+                "plane_fragment_count": len(frame.plane_fragments),
+                "plane_outline_fragment_count": len(frame.plane_outline_fragments),
+                "ray_classification_count": sum(
+                    item.ray_classification_count for item in frame.child_frames
+                ),
+                "boundary_source_count": len(boundary.sources),
+                "boundary_fragment_count": len(boundary.fragments),
+                "painted_boundary_fragment_count": len(boundary.painted_fragments),
+                "trim_rim_source_count": len(trim_sources),
+            }
+            evidence = {
+                "schema": "manim-open-double-shared-apex-evidence/v1",
+                "scenario_id": "open_double_shared_apex",
+                "full_frame": str(image_path.relative_to(output)),
+                "full_frame_sha256": _sha256(image_path),
+                "zoom": str(zoom_path.relative_to(output)),
+                "zoom_sha256": _sha256(zoom_path),
+                "zoom_source_box": {
+                    "left": left,
+                    "top": top,
+                    "right": right,
+                    "bottom": bottom,
+                },
+                "painter_trace": str(trace_path.relative_to(output)),
+                "shared_apex": frame.shared_apex.to_dict(),
+                "branch_lineage": [item.to_dict() for item in frame.branch_lineage],
+                "draw_order": list(boundary.draw_order),
+                "counts": row,
+                "key_pixels": probes,
+                "elapsed_seconds": round(perf_counter() - started, 6),
+            }
+            failed = tuple(item for item in probes if not item["passed"])
+            _atomic_json(
+                evidence_path,
+                {
+                    **evidence,
+                    "status": "failed" if failed else "passed",
+                },
+            )
+            if failed:
+                labels = ", ".join(str(item["probe_id"]) for item in failed)
+                raise RuntimeError(
+                    "open-double shared-apex RGB evidence failed: " + labels
+                )
+            return CaptureResult(image_path, evidence, (row,))
+        finally:
+            controller.restore()
+
+
 def _motion_sweep(
     scenario_id: str,
     sample_count: int,
@@ -533,7 +816,7 @@ def _motion_sweep(
             "pixel_height": 180,
             "frame_rate": 8,
             "disable_caching": True,
-            "media_dir": str(output / "_sweep-media"),
+            "media_dir": str(output / "_sweep-media" / scenario_id),
         }
     ):
         scene = Scene()
@@ -757,6 +1040,89 @@ def _write_counts_csv(path: Path, rows: Iterable[Mapping[str, object]]) -> None:
         writer.writerows(rows)
 
 
+def _execute_motion_sweep(
+    task: _MotionSweepTask,
+) -> tuple[dict[str, object], tuple[dict[str, object], ...]]:
+    """Run one isolated sweep and persist evidence even if another task fails."""
+
+    output = Path(task.output)
+    evidence_directory = output / "evidence" / "motion-sweeps"
+    evidence_path = evidence_directory / f"{task.scenario_id}.json"
+    counts_path = evidence_directory / f"{task.scenario_id}.csv"
+    started = perf_counter()
+    try:
+        sweep, rows = _motion_sweep(
+            task.scenario_id,
+            task.sample_count,
+            output=output,
+            critical_progresses=task.critical_progresses,
+        )
+        _write_counts_csv(counts_path, rows)
+        _atomic_json(
+            evidence_path,
+            {
+                "schema": "manim-quadric-motion-sweep-evidence/v1",
+                "status": "passed",
+                "scenario_id": task.scenario_id,
+                "elapsed_seconds": round(perf_counter() - started, 6),
+                "counts_csv": str(counts_path.relative_to(output)),
+                "sweep": sweep,
+            },
+        )
+        return sweep, rows
+    except Exception as exc:
+        _atomic_json(
+            evidence_path,
+            {
+                "schema": "manim-quadric-motion-sweep-evidence/v1",
+                "status": "failed",
+                "scenario_id": task.scenario_id,
+                "elapsed_seconds": round(perf_counter() - started, 6),
+                "error": f"{type(exc).__name__}: {exc}",
+            },
+        )
+        raise
+
+
+def _run_motion_sweeps(
+    scenarios: Sequence[Mapping[str, object]],
+    *,
+    output: Path,
+    workers: int,
+) -> tuple[tuple[dict[str, object], tuple[dict[str, object], ...]], ...]:
+    """Run independent scenarios in a bounded spawn-based process pool."""
+
+    if isinstance(workers, bool) or workers <= 0:
+        raise ValueError("motion sweep worker count must be positive")
+    if workers > MAX_MOTION_SWEEP_WORKERS:
+        raise ValueError(
+            "motion sweep worker count must not exceed "
+            f"{MAX_MOTION_SWEEP_WORKERS}"
+        )
+    tasks = tuple(
+        _MotionSweepTask(
+            scenario_id=str(scenario["id"]),
+            sample_count=int(scenario["motion_samples"]),
+            output=str(output),
+            critical_progresses=tuple(
+                float(value)
+                for value in scenario.get("critical_progresses", ())
+            ),
+        )
+        for scenario in scenarios
+    )
+    if not tasks:
+        return ()
+    worker_count = min(workers, len(tasks))
+    if worker_count == 1:
+        return tuple(_execute_motion_sweep(task) for task in tasks)
+    with ProcessPoolExecutor(
+        max_workers=worker_count,
+        mp_context=get_context("spawn"),
+    ) as executor:
+        return tuple(executor.map(_execute_motion_sweep, tasks))
+
+
 def _git_commit() -> str | None:
     result = subprocess.run(
         ["git", "rev-parse", "HEAD"],
@@ -810,6 +1176,12 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         help="Skip the per-frame fixed-identity progress scan.",
     )
     parser.add_argument(
+        "--motion-sweep-workers",
+        type=int,
+        default=1,
+        help="Bounded worker-process count for independent scenario sweeps.",
+    )
+    parser.add_argument(
         "--keyframe-limit",
         type=int,
         help="Development-only limit applied independently to each scenario.",
@@ -840,6 +1212,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     _atomic_json(output / "run-status.json", status)
     try:
         keyframes = []
+        supplemental_evidence = []
         counts = []
         contact_sheets = []
         keyframe_started = perf_counter()
@@ -884,6 +1257,33 @@ def main(argv: Sequence[str] | None = None) -> int:
                     "sha256": _sha256(sheet_path),
                 }
             )
+        if args.scenario is None:
+            supplemental_specification = baseline["supplemental_evidence"][
+                "open_double_shared_apex"
+            ]
+            supplemental = _capture_open_double_shared_apex(
+                output=output,
+                profile=profile,
+                pixel_policy=pixel_policy,
+                specification=supplemental_specification,
+            )
+            if supplemental.evidence["elapsed_seconds"] > float(
+                budgets["single_keyframe_seconds"]
+            ):
+                raise RuntimeError(
+                    "open-double shared-apex keyframe exceeded the performance budget"
+                )
+            supplemental_evidence.append(supplemental.evidence)
+            counts.extend(supplemental.rows)
+            contact_sheets.append(
+                {
+                    "scenario_id": "open_double_shared_apex",
+                    "path": str(supplemental_specification["zoom"]),
+                    "sha256": _sha256(
+                        output / str(supplemental_specification["zoom"])
+                    ),
+                }
+            )
         keyframe_elapsed = perf_counter() - keyframe_started
         if keyframe_elapsed > float(budgets["all_keyframes_seconds"]):
             raise RuntimeError("keyframe capture exceeded the performance budget")
@@ -891,16 +1291,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         sweeps = []
         sweep_started = perf_counter()
         if not args.skip_motion_sweeps:
-            for scenario in scenarios:
-                sweep, rows = _motion_sweep(
-                    str(scenario["id"]),
-                    int(scenario["motion_samples"]),
-                    output=output,
-                    critical_progresses=tuple(
-                        float(value)
-                        for value in scenario.get("critical_progresses", ())
-                    ),
-                )
+            sweep_results = _run_motion_sweeps(
+                scenarios,
+                output=output,
+                workers=args.motion_sweep_workers,
+            )
+            for sweep, rows in sweep_results:
                 sweeps.append(sweep)
                 counts.extend(rows)
         sweep_elapsed = perf_counter() - sweep_started
@@ -943,10 +1339,16 @@ def main(argv: Sequence[str] | None = None) -> int:
                 "budgets": budgets,
                 "keyframes_seconds": round(keyframe_elapsed, 6),
                 "motion_sweeps_seconds": round(sweep_elapsed, 6),
+                "motion_sweep_workers": (
+                    0
+                    if args.skip_motion_sweeps
+                    else min(args.motion_sweep_workers, len(scenarios))
+                ),
                 "videos_seconds": round(video_elapsed, 6),
                 "total_seconds": round(perf_counter() - started, 6),
             },
             "keyframes": keyframes,
+            "supplemental_evidence": supplemental_evidence,
             "motion_sweeps": sweeps,
             "contact_sheets": contact_sheets,
             "videos": videos,
@@ -967,7 +1369,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 {
                     "status": "passed",
                     "output": str(output),
-                    "keyframes": len(keyframes),
+                    "keyframes": len(keyframes) + len(supplemental_evidence),
                     "motion_sweeps": len(sweeps),
                     "videos": len(videos),
                 },

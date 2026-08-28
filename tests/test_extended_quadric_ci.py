@@ -137,6 +137,25 @@ class ExtendedQuadricCIContractTests(unittest.TestCase):
             )
             self.assertGreaterEqual(scenario["motion_samples"], 33)
             self.assertTrue(str(scenario["contact_sheet"]).endswith(".png"))
+        apex = self.baseline["supplemental_evidence"][
+            "open_double_shared_apex"
+        ]
+        self.assertEqual(
+            apex["full_frame"],
+            "keyframes/open_double_shared_apex/p0000.png",
+        )
+        self.assertEqual(
+            apex["zoom"],
+            "contact-sheets/open-double-shared-apex-zoom.png",
+        )
+        self.assertEqual(
+            apex["painter_trace"],
+            "evidence/open-double-shared-apex-painter-trace.json",
+        )
+        self.assertEqual(
+            apex["pixel_evidence"],
+            "evidence/open-double-shared-apex.json",
+        )
         self.assertFalse(self.baseline["pixel_policy"]["whole_image_hash"])
 
     def test_generator_and_scene_modules_are_importable_from_their_files(self) -> None:
@@ -173,6 +192,7 @@ class ExtendedQuadricCIContractTests(unittest.TestCase):
         self.assertIn("schedule:", extended)
         self.assertIn("release:", extended)
         self.assertIn("scripts/run_ci_test_tier.py extended-cairo", extended)
+        self.assertIn("--motion-sweep-workers 2", extended)
         self.assertIn("--render-videos", extended)
         self.assertIn(
             "path: ${{ runner.temp }}/quadric-section-acceptance", extended
