@@ -645,6 +645,20 @@ clean frame rechecks that no unrelated Scene drawable has entered the reserved
 painter band. Restore clears the cache; a failed attempt never replaces its
 last-good contents.
 
+Full geometry frames also use a fixed-size `SurfaceViewCache`. Its keys contain
+the immutable surface data, full parallel-view matrix, geometry context,
+ordering inputs, and relevant subdivision limits; Python object identity and
+rounded animation values are never used. For a fixed surface and camera, a
+moving section plane can therefore reuse the certified surface/global frame,
+cone component-fill paths, and intrinsic surface-boundary sources together
+with their self-visibility spans and mutual crossings. The current plane,
+section curves, plane partition, boundary/plane placement, and every crossing
+involving a plane-dependent source are still recomputed. Trace snapshots
+publish `surface_view_base`, `surface_component_fill`, and
+`static_surface_boundaries` cache evidence. Each named cache holds only its
+latest exact entry and is cleared by `restore()`, so an animated camera or
+surface cannot create an unbounded history.
+
 The extended Cairo acceptance generator enables this trace automatically. Its
 keyframe JSON and fragment/ray CSV contain the controller measurements. Video
 subprocesses additionally publish a per-rendered-frame trace with the Cairo

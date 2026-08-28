@@ -64,6 +64,24 @@ class SharedQuadricManimRuntimeTests(unittest.TestCase):
             runtime._apply_opaque_surface_slot,
         )
 
+    def test_surface_view_cache_is_exact_fixed_size_and_clearable(self) -> None:
+        cache = runtime._SurfaceViewCache()
+        first = object()
+        second = object()
+
+        self.assertEqual(cache.lookup("base", b"a"), (False, None))
+        cache.store("base", b"a", first)
+        self.assertEqual(cache.lookup("base", b"a"), (True, first))
+        self.assertEqual(cache.lookup("base", b"b"), (False, None))
+        cache.store("base", b"b", second)
+        self.assertEqual(cache.lookup("base", b"a"), (False, None))
+        self.assertEqual(cache.lookup("base", b"b"), (True, second))
+        cache.store("component", b"a", first)
+        self.assertEqual(len(cache._entries), 2)
+        cache.clear()
+        self.assertEqual(cache.lookup("base", b"b"), (False, None))
+        self.assertEqual(cache.lookup("component", b"a"), (False, None))
+
     def test_dash_capacity_does_not_allocate_one_mobject_per_dash(self) -> None:
         slots = runtime._CurveSlots(fragment_capacity=32, dash_capacity=100)
         family = slots.root.get_family()
