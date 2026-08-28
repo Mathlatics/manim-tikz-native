@@ -106,6 +106,11 @@ class TikzNativeProviderTests(unittest.TestCase):
             ]
         )
         self.assertTrue(
+            info["capabilities"][
+                "quadric_open_double_section_compositing_v1"
+            ]
+        )
+        self.assertTrue(
             info["capabilities"]["quadric_global_compositing_v1"]
         )
         self.assertFalse(info["capabilities"]["dynamic_camera_in_fixed_view"])

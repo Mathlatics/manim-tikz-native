@@ -690,6 +690,7 @@ def compute_quadric_boundary_compositing(
     surface_item_by_id: Mapping[str, str],
     crossings: Sequence[ProjectedCurveCrossing] = (),
     section_anchors: BoundarySectionAnchors | None = None,
+    section_anchors_by_surface: Mapping[str, BoundarySectionAnchors] | None = None,
     section_spans_by_source: Mapping[str, Sequence[object]] | None = None,
     parameter_tolerance: float = 1.0e-12,
 ) -> QuadricBoundaryCompositingFrame:
@@ -710,6 +711,66 @@ def compute_quadric_boundary_compositing(
         raise QuadricBoundaryCompositingError(
             "boundary source identities must be unique"
         )
+    if section_anchors is not None and section_anchors_by_surface is not None:
+        raise QuadricBoundaryCompositingError(
+            "section_anchors and section_anchors_by_surface are mutually exclusive"
+        )
+    anchors_by_surface: dict[str, BoundarySectionAnchors] = {}
+    if section_anchors_by_surface is not None:
+        if not isinstance(section_anchors_by_surface, Mapping):
+            raise TypeError("section_anchors_by_surface must be a mapping")
+        for raw_surface_id, anchors in section_anchors_by_surface.items():
+            surface_id = _identity(
+                raw_surface_id, "section_anchors_by_surface key"
+            )
+            if not isinstance(anchors, BoundarySectionAnchors):
+                raise TypeError(
+                    "section_anchors_by_surface values must be "
+                    "BoundarySectionAnchors"
+                )
+            anchors_by_surface[surface_id] = anchors
+        if len(anchors_by_surface) != len(section_anchors_by_surface):
+            raise QuadricBoundaryCompositingError(
+                "section_anchors_by_surface keys must be unique"
+            )
+        plane_signatures = {
+            (
+                item.plane_behind,
+                item.outline_behind,
+                item.plane_outside,
+                item.outline_outside,
+                item.plane_between,
+                item.outline_between,
+                item.plane_front,
+                item.outline_front,
+            )
+            for item in anchors_by_surface.values()
+        }
+        if len(plane_signatures) > 1:
+            raise QuadricBoundaryCompositingError(
+                "composite section anchors must share one plane painter identity set"
+            )
+    default_section_anchors = section_anchors
+    if default_section_anchors is None and anchors_by_surface:
+        default_section_anchors = anchors_by_surface[sorted(anchors_by_surface)[0]]
+
+    def anchors_for_source(
+        source: QuadricBoundarySource,
+    ) -> BoundarySectionAnchors | None:
+        if not anchors_by_surface:
+            return default_section_anchors
+        if source.source_kind is BoundarySourceKind.PLANE_PATCH_EDGE:
+            return default_section_anchors
+        owner = source.owner_surface_id
+        if owner is None:
+            return default_section_anchors
+        try:
+            return anchors_by_surface[owner]
+        except KeyError as exc:
+            raise QuadricBoundaryCompositingError(
+                f"boundary source {source.source_id!r} has no section anchors "
+                f"for owner surface {owner!r}"
+            ) from exc
     if set(spans_by_source) != set(source_ids):
         raise QuadricBoundaryCompositingError(
             "spans_by_source must cover every boundary source exactly"
@@ -777,7 +838,8 @@ def compute_quadric_boundary_compositing(
                 )
                 plane_occluder_item_ids: tuple[str, ...] = ()
                 if plane_occluded:
-                    if section_anchors is None:
+                    source_anchors = anchors_for_source(source)
+                    if source_anchors is None:
                         raise QuadricBoundaryCompositingError(
                             "plane-occluded boundary fragments require "
                             "section anchors"
@@ -789,7 +851,7 @@ def compute_quadric_boundary_compositing(
                                 for role in placement.plane_depth_roles
                                 if (
                                     item_id := _plane_item_for_role(
-                                        role, section_anchors
+                                        role, source_anchors
                                     )
                                 )
                                 is not None
@@ -880,7 +942,18 @@ def compute_quadric_boundary_compositing(
             + ", ".join(unknown_plane_occluder_items)
         )
     relaxed_parent_pairs: set[tuple[str, str]] = set()
-    if section_anchors is not None:
+    all_section_anchors = tuple(
+        dict.fromkeys(
+            (
+                *((section_anchors,) if section_anchors is not None else ()),
+                *(
+                    anchors_by_surface[key]
+                    for key in sorted(anchors_by_surface)
+                ),
+            )
+        )
+    )
+    if all_section_anchors:
         # The outside patch region is screen-disjoint from both projection
         # sheets and the inside depth roles.  The legacy compositor gives the
         # ten anchors a convenient total chain, but retaining those two
@@ -890,8 +963,12 @@ def compute_quadric_boundary_compositing(
         # direct boundary evidence supplies every relation that can paint the
         # same pixels.
         relaxed_parent_pairs = {
-            (section_anchors.surface_back, section_anchors.plane_outside),
-            (section_anchors.outline_outside, section_anchors.plane_between),
+            pair
+            for anchors in all_section_anchors
+            for pair in (
+                (anchors.surface_back, anchors.plane_outside),
+                (anchors.outline_outside, anchors.plane_between),
+            )
         }
     relations = [
         item
@@ -901,7 +978,7 @@ def compute_quadric_boundary_compositing(
         and (item.far_item_id, item.near_item_id) not in relaxed_parent_pairs
     ]
     surface_predecessors: dict[str, frozenset[str]] = {}
-    if section_anchors is None:
+    if not all_section_anchors:
         surface_item_ids = tuple(sorted(surface_item_by_id.values()))
         surface_item_set = set(surface_item_ids)
         try:
@@ -927,12 +1004,13 @@ def compute_quadric_boundary_compositing(
             for item in source_items
             if item.source_id == fragment.source_id
         )
+        fragment_anchors = anchors_for_source(source)
         is_plane_edge = source.source_kind is BoundarySourceKind.PLANE_PATCH_EDGE
         if (
             is_plane_edge
             and fragment.effective_visibility_kind is VisibilityKind.VISIBLE
         ):
-            if section_anchors is None:
+            if fragment_anchors is None:
                 raise QuadricBoundaryCompositingError(
                     "plane-edge fragments require section anchors"
                 )
@@ -941,16 +1019,16 @@ def compute_quadric_boundary_compositing(
                 _add_bracket(
                     relations,
                     fragment.item_id,
-                    section_anchors.plane_outside,
-                    section_anchors.outline_outside,
+                    fragment_anchors.plane_outside,
+                    fragment_anchors.outline_outside,
                     "plane_outline_outside",
                 )
             elif role == "in_front_of_surface":
                 _add_bracket(
                     relations,
                     fragment.item_id,
-                    section_anchors.plane_front,
-                    section_anchors.outline_front,
+                    fragment_anchors.plane_front,
+                    fragment_anchors.outline_front,
                     "plane_outline_front",
                 )
             else:
@@ -960,11 +1038,11 @@ def compute_quadric_boundary_compositing(
             continue
 
         if fragment.effective_visibility_kind is VisibilityKind.VISIBLE:
-            if section_anchors is not None:
+            if fragment_anchors is not None:
                 if source.owner_surface_id is not None:
                     relations.append(
                         QuadricPaintRelation(
-                            section_anchors.surface_front,
+                            fragment_anchors.surface_front,
                             fragment.item_id,
                             "visible_owner_surface_boundary",
                         )
@@ -977,7 +1055,7 @@ def compute_quadric_boundary_compositing(
                     # certified depth order where it crosses the patch edge.
                     relations.append(
                         QuadricPaintRelation(
-                            section_anchors.surface_front,
+                            fragment_anchors.surface_front,
                             fragment.item_id,
                             "visible_boundary_outside_section_patch",
                         )
@@ -994,7 +1072,7 @@ def compute_quadric_boundary_compositing(
                     # boundary behind the opaque front sheet.
                     relations.append(
                         QuadricPaintRelation(
-                            section_anchors.surface_front,
+                            fragment_anchors.surface_front,
                             fragment.item_id,
                             "visible_boundary_in_front_of_surface",
                         )
@@ -1007,7 +1085,7 @@ def compute_quadric_boundary_compositing(
                     # visible overlay here would create the reverse path.
                     relations.append(
                         QuadricPaintRelation(
-                            section_anchors.outline_front,
+                            fragment_anchors.outline_front,
                             fragment.item_id,
                             "visible_boundary_overlay",
                         )
@@ -1021,17 +1099,17 @@ def compute_quadric_boundary_compositing(
                     )
                     for item_id in sorted(surface_item_by_id.values())
                 )
-            if section_anchors is not None:
+            if fragment_anchors is not None:
                 _add_section_plane_relation(
-                    relations, fragment, section_anchors
+                    relations, fragment, fragment_anchors
                 )
             continue
 
         if policy is QuadricPaintPolicy.DIAGRAMMATIC:
-            if section_anchors is not None:
+            if fragment_anchors is not None:
                 relations.append(
                     QuadricPaintRelation(
-                        section_anchors.outline_front,
+                        fragment_anchors.outline_front,
                         fragment.item_id,
                         "diagrammatic_hidden_boundary_overlay",
                     )
@@ -1053,7 +1131,7 @@ def compute_quadric_boundary_compositing(
             )
 
         if is_plane_edge:
-            if section_anchors is None:
+            if fragment_anchors is None:
                 raise QuadricBoundaryCompositingError(
                     "plane-edge fragments require section anchors"
                 )
@@ -1061,23 +1139,23 @@ def compute_quadric_boundary_compositing(
                 _add_bracket(
                     relations,
                     fragment.item_id,
-                    section_anchors.plane_behind,
-                    section_anchors.outline_behind,
+                    fragment_anchors.plane_behind,
+                    fragment_anchors.outline_behind,
                     "plane_outline_behind",
                 )
             elif fragment.depth_role == "between_surface_sheets":
                 _add_bracket(
                     relations,
                     fragment.item_id,
-                    section_anchors.plane_between,
-                    section_anchors.outline_between,
+                    fragment_anchors.plane_between,
+                    fragment_anchors.outline_between,
                     "plane_outline_between",
                 )
             else:
                 raise QuadricBoundaryCompositingError(
                     "hidden plane outline fragment has a visible depth role"
                 )
-        elif section_anchors is not None:
+        elif fragment_anchors is not None:
             if (
                 fragment.surface_visibility_kind is VisibilityKind.VISIBLE
                 and fragment.plane_occluded
@@ -1088,7 +1166,7 @@ def compute_quadric_boundary_compositing(
                 # certified plane-role fills attenuate the dash.
                 relations.append(
                     QuadricPaintRelation(
-                        section_anchors.surface_front,
+                        fragment_anchors.surface_front,
                         fragment.item_id,
                         "depth_aware_plane_occluded_boundary_after_surface_front",
                     )
@@ -1097,25 +1175,25 @@ def compute_quadric_boundary_compositing(
                 _add_bracket(
                     relations,
                     fragment.item_id,
-                    section_anchors.surface_back,
-                    section_anchors.surface_front,
+                    fragment_anchors.surface_back,
+                    fragment_anchors.surface_front,
                     "depth_aware_hidden_owner_boundary",
                 )
             else:
                 far_anchor = (
-                    section_anchors.surface_back
+                    fragment_anchors.surface_back
                     if fragment.plane_relation == "boundary_behind_plane"
-                    else section_anchors.outline_between
+                    else fragment_anchors.outline_between
                 )
                 _add_bracket(
                     relations,
                     fragment.item_id,
                     far_anchor,
-                    section_anchors.surface_front,
+                    fragment_anchors.surface_front,
                     "depth_aware_hidden_boundary",
                 )
             _add_section_plane_relation(
-                relations, fragment, section_anchors
+                relations, fragment, fragment_anchors
             )
         else:
             occluder_items: set[str] = set()

@@ -37,9 +37,11 @@ materials, and physically accurate transparency are outside this contract.
 
 The local cutting-plane compositor has a narrower v1 release boundary: one
 finite convex surface, one cutting plane whose screen projection has
-two-dimensional area, and parallel projection. Open double shells expand into
-two stable single-nappe surfaces, so their general display and occlusion are
-supported while their unified local cutting-plane composition is not. Multiple
+two-dimensional area, and parallel projection. A separate
+`CompositeQuadricSection3D` coordinator may apply that same local solver to the
+two canonical nappes of one `OPEN_DOUBLE`, then merge their disjoint projected
+interiors around the certified shared apex and paint the common plane once.
+This does not create a general multi-surface plane arrangement. Multiple
 strictly disjoint quadrics may still use the global occlusion graph; multiple
 intersecting quadrics do not gain a shared local plane arrangement. The Manim
 production binding explicitly accepts Cairo and rejects OpenGL.
@@ -563,11 +565,13 @@ installs the wheel in an isolated environment.
   multi-sheet ordering fails explicitly. Other touching/intersecting entities
   and true surface painter cycles are still rejected; quadratic surface-cell
   splitting is not implemented yet.
-- One cutting-plane compositor accepts exactly one finite convex surface.
-  `OPEN_SINGLE` is supported. An `OPEN_DOUBLE` first expands into two
-  components, so it must be shown without that local plane compositor or its
-  nappes must be handled separately; no combined double-shell section order is
-  guessed.
+- One local cutting-plane compositor accepts exactly one finite convex surface.
+  `OPEN_SINGLE` is supported directly. `CompositeQuadricSection3D` is a narrow
+  coordinator for the two canonical components of one `OPEN_DOUBLE`: it keeps
+  two local surface-sheet pairs but one common plane partition and painter
+  order. If the two projected interiors overlap with positive area, or if a
+  callback changes the curve identity/topology family, it fails and retains
+  the last committed frame. It does not guess an interleaved surface order.
 - `QuadricOcclusion3D` itself has fixed topology while attached.  Use
   `QuadricSectionTransition3D` for scheduled ellipse/parabola/hyperbola family
   changes.  Unscheduled or ambiguous topology changes still fail explicitly.

@@ -113,7 +113,7 @@ class QuadricSectionV1ContractTests(unittest.TestCase):
                 "supported_with_constraints"
             ),
             "open_double_unified_section_plane_compositing": (
-                "unsupported_explicit_failure"
+                "supported_with_constraints"
             ),
             "one_surface_one_cutting_plane": "supported",
             "multiple_intersecting_surfaces_one_cutting_plane": (

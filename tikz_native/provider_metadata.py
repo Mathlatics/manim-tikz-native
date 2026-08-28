@@ -99,6 +99,7 @@ def provider_info(
             "quadric_boundary_compositing_v2": True,
             "quadric_section_animation_trace_v1": True,
             "quadric_section_topology_transition_manim_v1": True,
+            "quadric_open_double_section_compositing_v1": True,
             "quadric_global_compositing_v1": True,
             "provider_component_revisions_v1": True,
             "provider_component_contract_revisions_v1": True,

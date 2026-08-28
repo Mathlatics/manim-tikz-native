@@ -518,25 +518,40 @@ class QuadricSectionCompositingFrame:
         }
 
 
-def quadric_plane_fragment_contours(
-    frame: QuadricSectionCompositingFrame,
+def merge_quadric_plane_fragment_contours(
+    plane: SectionPlane,
+    patch: PlaneDisplayPatchSpec,
+    projection_matrix: Sequence[Sequence[float]],
+    fragments: Sequence[QuadricPlaneFragment],
 ) -> dict[PlaneDepthRole, tuple[tuple[tuple[float, float], ...], ...]]:
-    """Merge plane fragments into deterministic renderer-friendly loops.
+    """Merge one certified plane partition into renderer-friendly loops.
 
     Fragment vertices are canonicalized in plane coordinates before directed
     edges are cancelled.  Residual edges are noded at arbitrary collinear
     vertices, so clipped points and T-junctions no longer need to belong to the
     old dyadic refinement lattice.  Winding is preserved for holes.
+
+    This geometry-only helper is shared by the ordinary one-surface section
+    frame and the open-double coordinator.  It does not infer roles or repair
+    incomplete partitions; callers must supply already certified triangles.
     """
 
-    if not isinstance(frame, QuadricSectionCompositingFrame):
-        raise TypeError("frame must be a QuadricSectionCompositingFrame")
-    plane_u, plane_v, _normal = frame.plane.basis
-    plane_origin = np.asarray(frame.plane.point, dtype=float)
-    projection_matrix = np.asarray(
-        frame.base_frame.visibility.projection_matrix,
-        dtype=float,
-    )
+    if not isinstance(plane, SectionPlane):
+        raise TypeError("plane must be a SectionPlane")
+    if not isinstance(patch, PlaneDisplayPatchSpec):
+        raise TypeError("patch must be a PlaneDisplayPatchSpec")
+    fragment_items = tuple(fragments)
+    if not all(isinstance(item, QuadricPlaneFragment) for item in fragment_items):
+        raise TypeError("fragments must contain QuadricPlaneFragment values")
+    plane_u, plane_v, _normal = plane.basis
+    plane_origin = np.asarray(plane.point, dtype=float)
+    projection_matrix = np.asarray(projection_matrix, dtype=float)
+    if projection_matrix.shape != (3, 3) or not np.all(
+        np.isfinite(projection_matrix)
+    ):
+        raise QuadricSectionCompositingError(
+            "projection_matrix must be a finite 3x3 matrix"
+        )
     screen_origin = projection_matrix[:2] @ plane_origin
     screen_basis = np.column_stack(
         (
@@ -545,8 +560,8 @@ def quadric_plane_fragment_contours(
         )
     )
     coordinate_scale = max(
-        abs(frame.patch.center_coordinates[0]) + frame.patch.half_width,
-        abs(frame.patch.center_coordinates[1]) + frame.patch.half_height,
+        abs(patch.center_coordinates[0]) + patch.half_width,
+        abs(patch.center_coordinates[1]) + patch.half_height,
         np.finfo(float).tiny,
     )
     coordinate_epsilon = max(
@@ -564,7 +579,7 @@ def quadric_plane_fragment_contours(
     polygons_by_role: dict[PlaneDepthRole, list[_PlanePartitionPolygon]] = {
         role: [] for role in PlaneDepthRole
     }
-    for fragment in frame.plane_fragments:
+    for fragment in fragment_items:
         vertices = []
         for point in fragment.world_vertices:
             delta = np.asarray(point, dtype=float) - plane_origin
@@ -600,6 +615,21 @@ def quadric_plane_fragment_contours(
             tuple(vertex.screen_point for vertex in loop) for loop in loops
         )
     return result
+
+
+def quadric_plane_fragment_contours(
+    frame: QuadricSectionCompositingFrame,
+) -> dict[PlaneDepthRole, tuple[tuple[tuple[float, float], ...], ...]]:
+    """Merge one ordinary section frame's plane fragments into loops."""
+
+    if not isinstance(frame, QuadricSectionCompositingFrame):
+        raise TypeError("frame must be a QuadricSectionCompositingFrame")
+    return merge_quadric_plane_fragment_contours(
+        frame.plane,
+        frame.patch,
+        frame.base_frame.visibility.projection_matrix,
+        frame.plane_fragments,
+    )
 
 
 def _positive(value: object, label: str) -> float:
@@ -4619,5 +4649,6 @@ __all__ = [
     "QuadricSectionPaintItems",
     "canonical_quadric_section_compositing_json",
     "compute_quadric_section_compositing",
+    "merge_quadric_plane_fragment_contours",
     "quadric_plane_fragment_contours",
 ]

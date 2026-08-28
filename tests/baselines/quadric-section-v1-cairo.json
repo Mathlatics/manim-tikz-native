@@ -15,6 +15,11 @@
       "pixel_height": 180,
       "frame_rate": 8
     },
+    "composite_standard": {
+      "pixel_width": 480,
+      "pixel_height": 270,
+      "frame_rate": 6
+    },
     "complete_release_frame": {
       "pixel_width": 960,
       "pixel_height": 540,
@@ -52,6 +57,22 @@
         "yellow_pixel_count_min": 60,
         "plane_fragment_count_min": 1,
         "cap_chord_count_min": 1
+      }
+    },
+    "open_double_unified_section_plane": {
+      "test": "tests.test_composite_quadric_section_cairo.CompositeQuadricSectionCairoTests.test_two_nappes_share_one_plane_alpha_and_retain_both_section_branches",
+      "profile": "composite_standard",
+      "screen_probe_points": [
+        [2.25, 0.0],
+        [0.0, 0.0]
+      ],
+      "invariants": {
+        "yellow_pixels_per_half_min": 35,
+        "cyan_pixel_count_min": 90,
+        "single_plane_alpha_rgb_tolerance": 7.0,
+        "double_plane_alpha_rgb_distance_min": 16.0,
+        "shared_apex_background_distance_min": 20.0,
+        "projected_overlap_area": 0.0
       }
     },
     "open_shell_oblique_offset_0_48": {

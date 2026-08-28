@@ -28,7 +28,7 @@ case.
 | Finite cone frustum: section, clipping, ordinary occlusion | Supported | Uniform styling, automatic boundary visibility, and up to two real cap chords are supported |
 | Frustum: component-aware lateral and two-terminal-cap shading | Supported | Both terminal disks remain separate depth components; exact edge-on zero-area cap fills are omitted without inventing area |
 | Finite open double shell: display and general occlusion | Supported with constraints | It expands once into two stable open single-nappe components |
-| Finite open double shell: unified cutting-plane compositing | Unsupported; explicit failure | The local compositor accepts exactly one finite convex surface, while the double shell expands to two |
+| Finite open double shell: unified cutting-plane compositing | Supported with constraints | `CompositeQuadricSection3D` coordinates the two canonical nappes when their projected interiors meet only at the shared apex; positive-area projection overlap and topology-family changes fail explicitly |
 | One finite convex quadric and one cutting plane | Supported | This is the complete local section-compositor scope |
 | Multiple intersecting quadrics and one cutting plane | Unsupported; explicit failure | No local multi-surface plane arrangement is guessed |
 | Parallel projection | Supported | Orthographic and general affine-free parallel views use `ParallelView` |
@@ -41,6 +41,14 @@ case.
 “Multiple intersecting quadrics + one cutting plane” is a local section-plane
 limitation. It does not remove the separate ability to place multiple strictly
 disjoint quadrics in one global occlusion graph.
+
+The open-double row is a narrow coordination exception, not a general
+multi-surface arrangement. Each nappe is still solved by the ordinary
+one-surface compositor. The coordinator certifies their projected interiors,
+retains both local rear/front sheet pairs, replaces the two local outside
+partitions with one area-conserving common plane partition, and publishes one
+draw order. It refuses views that require the two curved surfaces to be
+interleaved over a positive screen area.
 
 An individual cone trim rim may project rank one, meaning it becomes a finite
 line segment in an exact side view. That case is supported. The compositor
@@ -66,6 +74,13 @@ delegates to the same renderer-neutral kernel and fixed-capacity Manim binding.
 Scheduled ellipse/parabola/hyperbola handoff uses two stable lateral banks;
 real cap chords keep separate semantic slots and always come from the current
 plane, not from a neighboring critical plane.
+
+For one authored `OPEN_DOUBLE`, the corresponding entry point is
+`CompositeQuadricSection3D`. It preserves two child slot banks, paints the
+shared plane once, and records the lineage from each nappe-owned physical curve
+ID to its mathematical conic branch. Its current callback mode requires a
+fixed curve-identity topology; a scheduled composite topology transition is
+not part of this contract.
 
 The Manim binding consumes those results. It owns preallocated Mobjects,
 styles, Cairo paint order, in-place updates, and transactional rollback. It
@@ -108,7 +123,9 @@ and evidence test names for these cases:
    threshold without replacing Manim objects or freezing a frame;
 5. a closed frustum with separate lateral/two-cap masks, two real terminal rims,
    and two simultaneously active cap chords;
-6. a scheduled ellipse/parabola/hyperbola handoff that reaches a real end cap
+6. an open double shell whose two local section frames share one plane, one
+   apex certificate, two fixed slot banks, and one Cairo painter order;
+7. a scheduled ellipse/parabola/hyperbola handoff that reaches a real end cap
    and keeps the current-plane cap chord in its stable semantic slot.
 
 The Cairo acceptance baseline is
@@ -141,8 +158,11 @@ builds, and a fixed small animation sample.
 
 V1 never guesses an image outside the matrix:
 
-- a local section controller with zero or more than one expanded surface fails
-  with `QuadricManimError`;
+- the ordinary local section controller with zero or more than one expanded
+  surface fails with `QuadricManimError`; an `OPEN_DOUBLE` must use the
+  dedicated composite coordinator;
+- the composite coordinator rejects non-canonical children, positive-area
+  nappe projection overlap, and unscheduled curve-identity topology changes;
 - a completely edge-on cutting plane fails during frame preparation; an
   attached animation retains its prior committed state;
 - OpenGL attachment fails before the controller adds display slots to the

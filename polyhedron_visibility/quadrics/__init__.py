@@ -456,6 +456,54 @@ _EXPORTS: Final[dict[str, tuple[str, str]]] = {
     "QuadricOcclusion3D": (".manim", "QuadricOcclusion3D"),
     "PlaneInput": (".authoring", "PlaneInput"),
     "QuadricSection3D": (".authoring", "QuadricSection3D"),
+    "CompositeQuadricSection3D": (
+        ".composite_authoring",
+        "CompositeQuadricSection3D",
+    ),
+    "CompositeQuadricSectionAuthoringError": (
+        ".composite_authoring",
+        "CompositeQuadricSectionAuthoringError",
+    ),
+    "PreparedCompositeQuadricSectionFrame": (
+        ".composite_authoring",
+        "PreparedCompositeQuadricSectionFrame",
+    ),
+    "COMPOSITE_QUADRIC_SECTION_COMPOSITING_SCHEMA": (
+        ".composite_section",
+        "COMPOSITE_QUADRIC_SECTION_COMPOSITING_SCHEMA",
+    ),
+    "CompositeQuadricSectionCompositingError": (
+        ".composite_section",
+        "CompositeQuadricSectionCompositingError",
+    ),
+    "CompositeQuadricSectionCompositingFrame": (
+        ".composite_section",
+        "CompositeQuadricSectionCompositingFrame",
+    ),
+    "CompositeQuadricSectionPaintItems": (
+        ".composite_section",
+        "CompositeQuadricSectionPaintItems",
+    ),
+    "CompositeSectionBranchLineage": (
+        ".composite_section",
+        "CompositeSectionBranchLineage",
+    ),
+    "CompositeSharedApexEvidence": (
+        ".composite_section",
+        "CompositeSharedApexEvidence",
+    ),
+    "CompositeSurfaceSheetItems": (
+        ".composite_section",
+        "CompositeSurfaceSheetItems",
+    ),
+    "canonical_composite_quadric_section_compositing_json": (
+        ".composite_section",
+        "canonical_composite_quadric_section_compositing_json",
+    ),
+    "compute_composite_quadric_section_compositing": (
+        ".composite_section",
+        "compute_composite_quadric_section_compositing",
+    ),
     "QuadricSectionAuthoringError": (
         ".authoring",
         "QuadricSectionAuthoringError",
