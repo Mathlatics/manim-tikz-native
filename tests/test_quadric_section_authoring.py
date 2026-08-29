@@ -36,6 +36,9 @@ from polyhedron_visibility.quadrics.plane_motion import (
     AxisAnglePlaneMotion,
     track_scheduled_plane_section,
 )
+from polyhedron_visibility.quadrics.profiles import (
+    QUADRIC_PREVIEW_PROFILE,
+)
 from polyhedron_visibility.quadrics.section_compositing import (
     canonical_quadric_section_compositing_json,
 )
@@ -145,6 +148,67 @@ class QuadricSectionAuthoringTests(unittest.TestCase):
 
     def tearDown(self) -> None:
         self.config.__exit__(None, None, None)
+
+    def test_named_render_profile_expands_inside_the_high_level_facade(self) -> None:
+        style = QuadricManimStyle(
+            cone_lateral_fill_colors=("#123456", "#789ABC"),
+            cone_cap_fill_colors=("#ABCDEF",),
+        )
+        facade = QuadricSection3D(
+            Scene(),
+            surface=_cone("profile-cone"),
+            section_id="profile-section",
+            plane=_plane(1.2, "profile-plane"),
+            projection=VIEW,
+            paint_policy=QuadricPaintPolicy.DEPTH_AWARE_DIAGRAMMATIC,
+            render_profile=" PREVIEW ",
+            style=style,
+        )
+
+        self.assertIs(facade.render_profile, QUADRIC_PREVIEW_PROFILE)
+        self.assertIs(facade.controller.limits, QUADRIC_PREVIEW_PROFILE.limits)
+        self.assertEqual(
+            facade.controller.max_chord_error,
+            QUADRIC_PREVIEW_PROFILE.max_chord_error,
+        )
+        self.assertEqual(
+            facade.controller.section_max_screen_error,
+            QUADRIC_PREVIEW_PROFILE.section_max_screen_error,
+        )
+        self.assertIsNone(facade.controller.style.cone_lateral_fill_colors)
+        self.assertIsNone(facade.controller.style.cone_cap_fill_colors)
+
+    def test_explicit_controller_values_override_profile_defaults(self) -> None:
+        limits = _limits(max_fragments_per_curve=7)
+        facade = QuadricSection3D(
+            Scene(),
+            surface=_cone("profile-override-cone"),
+            section_id="profile-override-section",
+            plane=_plane(1.2, "profile-override-plane"),
+            projection=VIEW,
+            render_profile="preview",
+            limits=limits,
+            max_chord_error=0.012,
+            section_max_screen_error=0.091,
+            include_surface_boundaries=False,
+        )
+
+        self.assertIs(facade.controller.limits, limits)
+        self.assertEqual(facade.controller.max_chord_error, 0.012)
+        self.assertEqual(facade.controller.section_max_screen_error, 0.091)
+        self.assertFalse(facade.controller.include_surface_boundaries)
+
+    def test_unknown_render_profile_fails_before_scene_mutation(self) -> None:
+        scene = Scene()
+        with self.assertRaisesRegex(ValueError, "unknown quadric render profile"):
+            QuadricSection3D(
+                scene,
+                surface=_cone("unknown-profile-cone"),
+                section_id="unknown-profile-section",
+                plane=_plane(1.2, "unknown-profile-plane"),
+                render_profile="draft",
+            )
+        self.assertEqual(scene.mobjects, [])
 
     def test_facade_matches_manual_canonical_static_frame(self) -> None:
         cone = _cone("equivalent-cone")

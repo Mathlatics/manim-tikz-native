@@ -39,6 +39,11 @@ from .manim import (
     QuadricOcclusion3D,
 )
 from .plane_motion import ScheduledSectionAnimation
+from .profiles import (
+    QuadricRenderProfile,
+    QuadricRenderProfileInput,
+    resolve_quadric_render_profile,
+)
 from .section_compositing import (
     QUADRIC_SECTION_COMPOSITING_LIMITS,
     QuadricSectionCompositingLimits,
@@ -101,6 +106,10 @@ class QuadricSection3D:
     is delegated to :class:`QuadricSectionTransition3D`.  The two modes are
     intentionally mutually exclusive so there is only one authority for the
     current plane and section identity.
+
+    ``render_profile="preview"`` or ``"final"`` expands the matching style,
+    approximation, and capacity defaults. Explicit controller values keep
+    precedence. The profile does not mutate Manim's already-created renderer.
     """
 
     def __init__(
@@ -118,10 +127,11 @@ class QuadricSection3D:
             SectionTransitionMode.CROSSFADE
         ),
         paint_policy: QuadricPaintPolicy | str = QuadricPaintPolicy.DIAGRAMMATIC,
-        style: QuadricManimStyle = QuadricManimStyle(),
+        render_profile: QuadricRenderProfileInput = None,
+        style: QuadricManimStyle | None = None,
         boundary_styles: Mapping[str, QuadricBoundaryStyle] | None = None,
-        limits: QuadricManimLimits = QUADRIC_MANIM_LIMITS,
-        max_chord_error: float = 1.0e-3,
+        limits: QuadricManimLimits | None = None,
+        max_chord_error: float | None = None,
         painter_z_band: tuple[float, float] = (20.0, 30.0),
         surface_constraints: Sequence[SurfaceConstraintInput] = (),
         context: GeometryContext | ResolvedGeometryContext | None = None,
@@ -130,19 +140,54 @@ class QuadricSection3D:
         show_plane: bool = True,
         plane_patch_margin: float = 0.08,
         use_plane_patch_envelope: bool = False,
-        section_max_screen_error: float = 0.08,
+        section_max_screen_error: float | None = None,
         section_compositing_limits: QuadricSectionCompositingLimits = (
             QUADRIC_SECTION_COMPOSITING_LIMITS
         ),
         boundary_section_limits: QuadricBoundarySectionLimits = (
             QUADRIC_BOUNDARY_SECTION_LIMITS
         ),
-        include_surface_boundaries: bool = True,
+        include_surface_boundaries: bool | None = None,
         generator_boundaries: Sequence[GeneratorBoundarySpec] = (),
         allocated_boundary_ids: Sequence[str] | None = None,
         geometry_prototype: QuadricGeometryPrototype | None = None,
         display_offset: Sequence[float] = (0.0, 0.0),
     ) -> None:
+        selected_profile = resolve_quadric_render_profile(render_profile)
+        resolved_style = QuadricManimStyle() if style is None else style
+        if selected_profile is None:
+            resolved_limits = QUADRIC_MANIM_LIMITS if limits is None else limits
+            resolved_max_chord_error = (
+                1.0e-3 if max_chord_error is None else max_chord_error
+            )
+            resolved_section_max_screen_error = (
+                0.08
+                if section_max_screen_error is None
+                else section_max_screen_error
+            )
+            resolved_surface_boundaries = (
+                True
+                if include_surface_boundaries is None
+                else include_surface_boundaries
+            )
+        else:
+            resolved_style = selected_profile.apply_style(resolved_style)
+            resolved_limits = selected_profile.limits if limits is None else limits
+            resolved_max_chord_error = (
+                selected_profile.max_chord_error
+                if max_chord_error is None
+                else max_chord_error
+            )
+            resolved_section_max_screen_error = (
+                selected_profile.section_max_screen_error
+                if section_max_screen_error is None
+                else section_max_screen_error
+            )
+            resolved_surface_boundaries = (
+                selected_profile.include_surface_boundaries
+                if include_surface_boundaries is None
+                else include_surface_boundaries
+            )
         if not isinstance(draw_section_boundary, bool):
             raise TypeError("draw_section_boundary must be a bool")
         if not isinstance(show_plane, bool):
@@ -150,6 +195,7 @@ class QuadricSection3D:
         if not isinstance(use_plane_patch_envelope, bool):
             raise TypeError("use_plane_patch_envelope must be a bool")
         self.scene = scene
+        self.render_profile: QuadricRenderProfile | None = selected_profile
         self.draw_section_boundary = draw_section_boundary
         self.show_plane = show_plane
         self.context = context
@@ -164,17 +210,17 @@ class QuadricSection3D:
         common = {
             "projection": projection,
             "paint_policy": paint_policy,
-            "style": style,
+            "style": resolved_style,
             "boundary_styles": boundary_styles,
-            "limits": limits,
-            "max_chord_error": max_chord_error,
+            "limits": resolved_limits,
+            "max_chord_error": resolved_max_chord_error,
             "painter_z_band": painter_z_band,
             "surface_constraints": surface_constraints,
             "context": context,
-            "section_max_screen_error": section_max_screen_error,
+            "section_max_screen_error": resolved_section_max_screen_error,
             "section_compositing_limits": section_compositing_limits,
             "boundary_section_limits": boundary_section_limits,
-            "include_surface_boundaries": include_surface_boundaries,
+            "include_surface_boundaries": resolved_surface_boundaries,
             "generator_boundaries": generator_boundaries,
             "allocated_boundary_ids": allocated_boundary_ids,
             "geometry_prototype": geometry_prototype,

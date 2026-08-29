@@ -226,6 +226,62 @@ class QuadricCapacityPlannerTests(unittest.TestCase):
                     self.assertEqual(replay.slot_identities(), identities)
                 replay.restore()
 
+    def test_scene_factory_scan_has_human_summary_and_calls_factory_once(
+        self,
+    ) -> None:
+        created: list[tuple[Scene, QuadricSection3D]] = []
+
+        def scene_factory(progress: ValueTracker) -> QuadricSection3D:
+            scene = Scene()
+
+            def plane() -> SectionPlane:
+                return SectionPlane(
+                    "factory-plane",
+                    (0.0, 0.0, -0.2 + 0.8 * progress.get_value()),
+                    (0.7, 0.0, 1.0),
+                    u_axis=(0.0, 1.0, 0.0),
+                )
+
+            authoring = QuadricSection3D(
+                scene,
+                surface=_cone(ConeModel.CLOSED_SINGLE),
+                section_id="factory-section",
+                plane=plane,
+                projection=VIEW,
+                render_profile="preview",
+            )
+            created.append((scene, authoring))
+            return authoring
+
+        plan = QuadricCapacityPlanner.scan(
+            scene_factory,
+            frames=range(0, 3),
+        )
+
+        self.assertEqual(len(created), 1)
+        scene, authoring = created[0]
+        self.assertFalse(authoring.attached)
+        self.assertEqual(scene.mobjects, [])
+        self.assertEqual(len(plan.samples), 3)
+        self.assertEqual(
+            tuple(sample.progress for sample in plan.samples),
+            (0.0, 0.5, 1.0),
+        )
+        self.assertEqual(plan.profile_id, "preview")
+        self.assertEqual(plan.recommended_profile_id, "preview")
+        self.assertIn("Peak boundary sources:", plan.summary())
+        chinese = plan.summary(locale="zh-CN")
+        self.assertIn("边界源峰值：", chinese)
+        self.assertIn("建议 profile：preview", chinese)
+        self.assertIsInstance(plan.recommended_limits, QuadricManimLimits)
+
+    def test_scene_factory_scan_rejects_invalid_frame_indices(self) -> None:
+        with self.assertRaisesRegex(
+            QuadricCapacityPlanningError,
+            "non-negative integer",
+        ):
+            QuadricCapacityPlanner.scan(lambda progress: object(), frames=(-1, 0))
+
     def test_schedule_grid_includes_eased_frames_and_every_analytic_knot(
         self,
     ) -> None:
