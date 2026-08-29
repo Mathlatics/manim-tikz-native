@@ -46,6 +46,8 @@ to SVG. Unsupported syntax is reported explicitly.
 [Automatic occlusion](docs/automatic-occlusion.md) ·
 [Quadrics and conic sections](docs/quadric-occlusion.md) ·
 [Quadric quick start](docs/quadric-authoring-workflow.md) ·
+[Dandelin spheres v1](docs/dandelin-spheres-v1.md) ·
+[Dandelin classroom lesson](examples/classroom_dandelin_spheres/README.md) ·
 [Finite-cone section v1 contract](docs/quadric-section-v1-contract.md) ·
 [Fast and extended Cairo acceptance](docs/extended-quadric-ci.md) ·
 [Classroom cone-section gallery](examples/classroom_cone_sections/README.md) ·

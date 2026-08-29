@@ -98,6 +98,11 @@ Preview、Final、Release/Evidence 三档的准确区别，以及一行容量扫
 变化、双曲线分支标签翻转和周期参数缝则统一映射到固定槽。画面事务失败时，平面
 状态也会一起回滚。
 
+丹德林球的解析几何、有限圆锥认证和静态 Cairo 教学叠加入口见
+[丹德林球 v1 契约](docs/dandelin-spheres-v1.md)；其中的球体图层是讲解用示意叠加，
+并不声称已经完成圆锥与相切球之间的真实多实体遮挡。可直接渲染的椭圆、抛物线、
+双曲线三幕示例见[丹德林球课堂场景](examples/classroom_dandelin_spheres/README.md)。
+
 ## 显式三维平面、圆和椭圆
 
 普通 TikZ 的 `circle` 和 `ellipse` 只给出中心与二维半径，不能唯一确定它们在三维

@@ -9,11 +9,14 @@ import numpy as np
 
 from polyhedron_visibility.parallel_solver import ParallelView
 from polyhedron_visibility.quadrics.contract import (
+    ConeModel,
     ConeSpec,
     CylinderSpec,
+    SectionPlane,
     SphereSpec,
 )
 from polyhedron_visibility.quadrics.curves import SegmentCurve
+from polyhedron_visibility.quadrics.dandelin import compute_dandelin_construction
 from polyhedron_visibility.quadrics.global_occlusion import (
     GlobalQuadricOcclusionError,
     canonical_global_quadric_frame_json,
@@ -308,6 +311,46 @@ class GlobalQuadricSceneTests(unittest.TestCase):
 
 
 class GlobalQuadricFailClosedTests(unittest.TestCase):
+    def test_generic_compositor_rejects_dandelin_spheres_tangent_inside_cone(
+        self,
+    ) -> None:
+        cone = ConeSpec(
+            "dandelin-cone",
+            (0.0, 0.0, 0.0),
+            (0.0, 0.0, 1.0),
+            pi / 6.0,
+            (0.0, 20.0),
+            radial_axis=(1.0, 0.0, 0.0),
+            model=ConeModel.OPEN_SINGLE,
+        )
+        plane = SectionPlane(
+            "dandelin-plane",
+            (0.0, 0.0, 2.0),
+            (0.6, 0.0, 0.8),
+            u_axis=(0.0, 1.0, 0.0),
+        )
+        construction = compute_dandelin_construction(
+            "generic-compositor-rejection",
+            cone,
+            plane,
+        )
+
+        self.assertEqual(len(construction.spheres), 2)
+        for record in construction.spheres:
+            surfaces = (cone, record.sphere)
+            with self.subTest(sphere_id=record.sphere_id, stage="separation"):
+                with self.assertRaisesRegex(
+                    GlobalQuadricOcclusionError,
+                    "touching, intersecting, or numerically inseparable",
+                ):
+                    verify_strict_quadric_separation(surfaces)
+            with self.subTest(sphere_id=record.sphere_id, stage="compositor"):
+                with self.assertRaisesRegex(
+                    GlobalQuadricOcclusionError,
+                    "touching, intersecting, or numerically inseparable",
+                ):
+                    compute_global_quadric_frame((), surfaces, IDENTITY_VIEW)
+
     def test_touching_and_intersecting_spheres_are_rejected(self) -> None:
         first = SphereSpec("first", (0.0, 0.0, 0.0), 1.0)
         for name, center in (("touch", 2.0), ("overlap", 1.5)):

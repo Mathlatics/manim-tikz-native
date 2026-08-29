@@ -14,6 +14,12 @@ from polyhedron_visibility.quadrics import (
     Circle3DSpec,
     ConeSpec,
     CylinderSpec,
+    DandelinConicFamily,
+    DandelinConstruction3D,
+    DandelinConstructionError,
+    DandelinDirectrix3D,
+    DandelinPlaneSide,
+    DandelinSphere3D,
     Ellipse3DSpec,
     PlanarCurveScene3D,
     PlanarFrame3D,
@@ -36,6 +42,8 @@ from polyhedron_visibility.quadrics import (
     SphereSpec,
     build_section_transition_plan,
     compile_section_timeline,
+    canonical_dandelin_construction_json,
+    compute_dandelin_construction,
     compute_quadric_section,
     compute_quadric_section_boundary,
     compute_quadric_section_boundary_curves,
@@ -95,6 +103,14 @@ class PublicPackageTests(unittest.TestCase):
         self.assertEqual(Circle3DSpec.__name__, "Circle3DSpec")
         self.assertEqual(Ellipse3DSpec.__name__, "Ellipse3DSpec")
         self.assertEqual(PlanarCurveScene3D.__name__, "PlanarCurveScene3D")
+        self.assertEqual(DandelinConicFamily.__name__, "DandelinConicFamily")
+        self.assertEqual(DandelinPlaneSide.__name__, "DandelinPlaneSide")
+        self.assertEqual(DandelinConstruction3D.__name__, "DandelinConstruction3D")
+        self.assertEqual(DandelinSphere3D.__name__, "DandelinSphere3D")
+        self.assertEqual(DandelinDirectrix3D.__name__, "DandelinDirectrix3D")
+        self.assertTrue(issubclass(DandelinConstructionError, ValueError))
+        self.assertTrue(callable(compute_dandelin_construction))
+        self.assertTrue(callable(canonical_dandelin_construction_json))
         self.assertEqual(SectionPlane.__name__, "SectionPlane")
         self.assertEqual(SectionTransitionPlan.__name__, "SectionTransitionPlan")
         self.assertEqual(SectionTimeline.__name__, "SectionTimeline")
@@ -130,6 +146,11 @@ class PublicPackageTests(unittest.TestCase):
                     "SectionTransitionPlan, build_section_transition_plan, "
                     "PlanarFrame3D, Circle3DSpec, Ellipse3DSpec, "
                     "PlanarPoint3D, PlanarCurveScene3D, "
+                    "DandelinConicFamily, DandelinConstruction3D, "
+                    "DandelinConstructionError, DandelinDirectrix3D, "
+                    "DandelinPlaneSide, DandelinSphere3D, "
+                    "canonical_dandelin_construction_json, "
+                    "compute_dandelin_construction, "
                     "QuadricSectionBoundary, compute_quadric_section_boundary, "
                     "compute_quadric_section_boundary_curves, "
                     "section_cap_chord_curve_ids; "
@@ -139,6 +160,14 @@ class PublicPackageTests(unittest.TestCase):
                     "assert Circle3DSpec.__name__; "
                     "assert Ellipse3DSpec.__name__; "
                     "assert PlanarCurveScene3D.__name__; "
+                    "assert DandelinConicFamily.__name__; "
+                    "assert DandelinConstruction3D.__name__; "
+                    "assert issubclass(DandelinConstructionError, ValueError); "
+                    "assert DandelinDirectrix3D.__name__; "
+                    "assert DandelinPlaneSide.__name__; "
+                    "assert DandelinSphere3D.__name__; "
+                    "assert callable(canonical_dandelin_construction_json); "
+                    "assert callable(compute_dandelin_construction); "
                     "assert QuadricSectionBoundary.__name__; "
                     "assert callable(compute_quadric_section_boundary); "
                     "assert callable(build_section_transition_plan); "

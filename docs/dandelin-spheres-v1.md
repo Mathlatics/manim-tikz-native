@@ -1,0 +1,247 @@
+# Dandelin spheres v1
+
+This document freezes the first public contract for constructing Dandelin
+spheres for a finite right circular cone and one static cutting plane. The
+renderer-neutral solver derives analytic sphere, focus, cone-contact-circle,
+directrix, and finite-fit evidence. It does not resize, clip, or visually fit a
+sphere when the authored finite cone cannot contain the mathematical result.
+
+The accompanying Manim facade is deliberately narrower: it is a static Cairo
+**diagrammatic teaching overlay**. The ordinary cone/section controller still
+computes the supported cone, cutting-plane, and section-curve relationships,
+but the auxiliary spheres are painted in a separate teaching band. Their
+front/behind relationship with the tangent cone is not physically composited.
+The public evidence makes this explicit with
+`visibility_authoritative=False` and `overlay_mode="diagrammatic"`.
+
+## Certified geometry
+
+Let
+
+- `A` be the cone apex;
+- `a` be its unit axis;
+- `alpha` be its half angle;
+- `[L, U]` be its authored axial range;
+- `n` be the section plane's unit normal; and
+- `h = n . (P - A)` for any authored point `P` on the plane.
+
+Write `q = n . a`, `s = sin(alpha)`, and `c = cos(alpha)`. A sphere tangent to
+the cone has its centre on the cone axis. If its signed axial centre is `z`,
+its centre and radius are
+
+```text
+C = A + z a
+r = |z| s
+```
+
+Tangency to the cutting plane requires
+
+```text
+|q z - h| = r.
+```
+
+For one authored nappe sign `tau in {-1, +1}`, write the signed axial centre
+as `z = tau d` with `d > 0`. The two analytic candidates then come from the
+stable plane-side signs `k in {-1, +1}`:
+
+```text
+d_(tau,k) = h / (tau q - k s)
+z_(tau,k) = tau d_(tau,k).
+```
+
+Only candidates with finite `d_(tau,k) > 0` belong to that nappe. This nappe
+factor matters for the two sides of an `OPEN_DOUBLE`; omitting it would produce
+the wrong negative-nappe sphere.
+
+A denominator at the exactly certified parabolic angle represents the
+classical sphere at infinity. V1 records only the remaining finite sphere; it
+does not create a huge or synthetic infinity placeholder. A merely
+near-parabolic input is not snapped to this event.
+
+For every finite candidate the solver derives
+
+```text
+focus F                 = C - (n . (C - P)) n
+contact-circle centre K = A + z c^2 a
+contact-circle radius   = |z| s c
+eccentricity e          = sqrt(max(0, 1 - q^2)) / c.
+```
+
+The contact circle is an explicit `Circle3DSpec` in its real plane, not an end
+cap or an invented disk. A non-circular section also receives the directrix
+obtained by intersecting the section plane with that contact-circle plane.
+The mathematical directrix remains infinite; a teaching view clips it to a
+finite `PlaneDisplayPatchSpec` and records the resulting `SegmentCurve`.
+
+Construction certifies more than the formulas alone. The focus must lie on the
+cutting plane and on its sphere; cardinal points of every contact circle must
+lie on both support quadrics; cone and sphere normals must be parallel there;
+and all values must remain representable at the authored scale. The canonical
+JSON records `finiteFitCertified: true` only after these checks pass. It also
+records the resolved `certificationContext` and optional coefficient tolerance.
+The frozen public construction re-derives one canonical sphere-record set from
+the cone and plane during validation: changing a derived centre, radius,
+extent, focus, contact circle, directrix, family, or eccentricity—even by less
+than the geometric residual tolerance—cannot retain the certification flag.
+Geometric tolerances still govern analytic residuals and finite-boundary
+decisions; they are not used as permission to mutate canonical evidence.
+Signed zero is normalized during canonical JSON encoding, so numerically
+equivalent `0.0` and `-0.0` inputs cannot create distinct evidence bytes.
+
+## Finite-cone rule
+
+For a candidate with axial centre `z` and radius `r`, its complete axial extent
+is `[z - r, z + r]`. V1 accepts it only when the sphere fits strictly inside
+the authored range:
+
+```text
+L + epsilon < z - r
+z + r < U - epsilon
+```
+
+`epsilon` comes from the same resolved `GeometryContext` used by the section
+solver. Exact or tolerance-level contact with a terminal plane is rejected:
+that would introduce an additional cap/trim contact whose ownership is not
+part of this contract. An open cone shell is tested with this analytic trim
+condition; the solver does not pretend that the shell is a filled volume.
+
+The finite section itself must be non-degenerate. Empty and point-only
+sections, a plane through the apex, intersecting-line degeneracies, and any
+section containing a real filled-end-cap chord fail explicitly.
+
+## Support matrix
+
+| Authored cone | Section family | V1 result |
+| --- | --- | --- |
+| `CLOSED_SINGLE` | Circle or ellipse | Supported only when the complete section is a pure closed lateral curve, has no cap chord, and both spheres fit strictly inside the finite range |
+| `CLOSED_SINGLE` | Parabola or hyperbola | Rejected; a finite closed cone cannot provide this contract without an incomplete family or a real cap boundary |
+| `OPEN_SINGLE` | Circle or ellipse | Supported when the section is a complete closed lateral curve and both same-nappe spheres fit strictly inside the trim range |
+| `OPEN_SINGLE` | Exact parabola | Supported with its one finite sphere; the sphere-at-infinity branch is omitted explicitly |
+| `OPEN_SINGLE` | Hyperbola | Rejected because one nappe cannot supply the complete two-focus construction |
+| `OPEN_DOUBLE` | Hyperbola | Supported when one finite sphere fits strictly in each nappe and the existing composite-section constraints also pass |
+| `OPEN_DOUBLE` | Circle, ellipse, or parabola | Rejected by v1; these families use the single-nappe contract |
+| `ANALYTIC_DOUBLE` | Any family | Rejected because it is an infinite support object, not a finite directly renderable teaching object |
+
+Every supported row is still conditional on numerical certification and the
+finite-range rule. “Supported” never means that an invalid or under-resolved
+frame will be guessed.
+
+## Renderer-neutral API
+
+Use `compute_dandelin_construction()` when only the mathematical evidence is
+needed. Importing this path does not require Manim.
+
+```python
+from math import pi
+
+from polyhedron_visibility.quadrics import (
+    ConeModel,
+    ConeSpec,
+    SectionPlane,
+    compute_dandelin_construction,
+)
+
+cone = ConeSpec(
+    "cone",
+    apex=(0, 0, 0),
+    axis=(0, 0, 1),
+    half_angle=pi / 6,
+    axial_range=(0, 9),
+    model=ConeModel.OPEN_SINGLE,
+)
+plane = SectionPlane(
+    "cut",
+    point=(0, 0, 2),
+    normal=(0.6, 0, 0.8),
+    u_axis=(0, 1, 0),
+)
+
+construction = compute_dandelin_construction(
+    "ellipse-proof",
+    cone,
+    plane,
+)
+
+for record in construction.spheres:
+    print(record.sphere.center, record.sphere.radius)
+    print(record.focus.world_point)
+    print(record.cone_contact_circle)
+```
+
+`DandelinConstruction3D` exposes the certified `sphere_surfaces`,
+`focus_points`, `cone_contact_circles`, and `directrices`. Its
+`canonical_json()` form preserves stable semantic identities and the finite-fit
+evidence. `canonical_dandelin_construction_json()` is the corresponding strict
+helper.
+
+For a custom teaching renderer,
+`build_dandelin_teaching_overlay(construction, patch)` bundles the sphere
+surfaces, contact curves, clipped directrices, focus identities, and a stable
+diagrammatic draw order. It accepts only `mode="diagrammatic"`; requests for
+`physical` or `depth_aware_diagrammatic` fail instead of making an unsupported
+visibility claim.
+
+## Static Manim teaching facade
+
+Inside a Cairo `Scene`, `DandelinSection3D` builds the supported cone section
+and the separate auxiliary teaching overlay:
+
+```python
+from polyhedron_visibility.quadrics import DandelinSection3D
+
+DandelinSection3D(
+    self,
+    cone=cone,
+    plane=plane,
+    construction_id="ellipse-proof",
+    show_contact_circles=True,
+    show_directrices=True,
+    show_foci=True,
+).attach()
+```
+
+The cone, plane, and projection are immutable for the lifetime of this v1
+facade. A projection callback is rejected. `attach()`, `restore()` / `detach()`,
+and `session()` retain the existing transactional Scene lifecycle, while
+`slot_identities()` exposes the preallocated display identities for tests.
+
+The ordinary cone/section part remains subject to its own certified painter
+graph. The auxiliary sphere surfaces, contact circles, finite directrix
+segments, and focus dots are then drawn in a separate top teaching band. Thus
+the facade is suitable for explaining the focus construction, but it does not
+prove which parts of a Dandelin sphere are physically hidden by the cone or
+vice versa. In particular, it does not pass the tangent cone and spheres to the
+ordinary global multi-quadric compositor, whose contract requires strictly
+separated entities.
+
+## Projection and renderer boundary
+
+- The mathematical solver is renderer-neutral.
+- The current facade accepts one immutable orthographic or general parallel
+  projection. Perspective projection is unsupported.
+- The production Manim path targets Cairo. OpenGL is unsupported and fails
+  through the existing quadric binding.
+- Camera/projection animation, moving cone or plane callbacks, and scheduled
+  ellipse/parabola/hyperbola transitions are outside this static v1 facade.
+- The section plane must satisfy the existing finite-section compositor
+  requirements. A projection in which that plane has no certifiable display
+  area still fails explicitly.
+- `OPEN_DOUBLE` hyperbola display also retains the existing shared-apex-only
+  projected-contact requirement of `CompositeQuadricSection3D`.
+
+Physical cone-sphere occlusion would require a dedicated tangent-surface
+compositor. Adding that compositor is a future capability, not an implied part
+of the certified geometry or this diagrammatic overlay.
+
+## TikZ semantic boundary
+
+V1 does not infer a Dandelin relation from an arbitrary authored circle or
+sphere-like drawing. The derived construction is currently requested through
+the Python relation `cone + section plane -> DandelinConstruction3D`; its real
+contact circles already reuse the same explicit `Circle3DSpec` contract as the
+TikZ-native three-dimensional planar-circle work.
+
+A future source-authoritative TikZ directive should reference stable cone and
+plane identities and request this derived relation explicitly. It must not
+guess that an unrelated `circle` is a contact circle merely because it looks
+plausible in one projection.

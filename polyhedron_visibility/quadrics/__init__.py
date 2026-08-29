@@ -56,6 +56,65 @@ _EXPORTS: Final[dict[str, tuple[str, str]]] = {
     "Ellipse3DSpec": (".planar_curves", "Ellipse3DSpec"),
     "PlanarCurve3DSpec": (".planar_curves", "PlanarCurve3DSpec"),
     "PlanarCurveScene3D": (".planar_curves", "PlanarCurveScene3D"),
+    "DANDELIN_CONSTRUCTION_SCHEMA": (
+        ".dandelin",
+        "DANDELIN_CONSTRUCTION_SCHEMA",
+    ),
+    "DANDELIN_DIRECTRIX_SCHEMA": (
+        ".dandelin",
+        "DANDELIN_DIRECTRIX_SCHEMA",
+    ),
+    "DANDELIN_SPHERE_SCHEMA": (".dandelin", "DANDELIN_SPHERE_SCHEMA"),
+    "DandelinConicFamily": (".dandelin", "DandelinConicFamily"),
+    "DandelinConstruction3D": (".dandelin", "DandelinConstruction3D"),
+    "DandelinConstructionError": (
+        ".dandelin",
+        "DandelinConstructionError",
+    ),
+    "DandelinDirectrix3D": (".dandelin", "DandelinDirectrix3D"),
+    "DandelinPlaneSide": (".dandelin", "DandelinPlaneSide"),
+    "DandelinSphere3D": (".dandelin", "DandelinSphere3D"),
+    "canonical_dandelin_construction_json": (
+        ".dandelin",
+        "canonical_dandelin_construction_json",
+    ),
+    "compute_dandelin_construction": (
+        ".dandelin",
+        "compute_dandelin_construction",
+    ),
+    "DANDELIN_TEACHING_OVERLAY_SCHEMA": (
+        ".dandelin_overlay",
+        "DANDELIN_TEACHING_OVERLAY_SCHEMA",
+    ),
+    "DandelinTeachingOverlay3D": (
+        ".dandelin_overlay",
+        "DandelinTeachingOverlay3D",
+    ),
+    "DandelinTeachingOverlayError": (
+        ".dandelin_overlay",
+        "DandelinTeachingOverlayError",
+    ),
+    "build_dandelin_teaching_overlay": (
+        ".dandelin_overlay",
+        "build_dandelin_teaching_overlay",
+    ),
+    "canonical_dandelin_teaching_overlay_json": (
+        ".dandelin_overlay",
+        "canonical_dandelin_teaching_overlay_json",
+    ),
+    "DEFAULT_DANDELIN_OVERLAY_STYLE": (
+        ".dandelin_authoring",
+        "DEFAULT_DANDELIN_OVERLAY_STYLE",
+    ),
+    "DEFAULT_DANDELIN_SECTION_STYLE": (
+        ".dandelin_authoring",
+        "DEFAULT_DANDELIN_SECTION_STYLE",
+    ),
+    "DandelinSection3D": (".dandelin_authoring", "DandelinSection3D"),
+    "DandelinSectionAuthoringError": (
+        ".dandelin_authoring",
+        "DandelinSectionAuthoringError",
+    ),
     "CRITICAL_EVENT_SCHEMA": (".critical", "CRITICAL_EVENT_SCHEMA"),
     "CriticalEvidence": (".critical", "CriticalEvidence"),
     "CriticalEvent": (".critical", "CriticalEvent"),

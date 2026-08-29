@@ -778,6 +778,8 @@ points are:
 - `QuadricSection3D`, the low-level finite-section authoring facade;
 - `QuadricSectionRig`, `SectionState`, and `QuadricSectionAction`, the natural
   fixed-topology mathematical-action layer;
+- `compute_dandelin_construction()`, `DandelinConstruction3D`, and the static
+  diagrammatic `DandelinSection3D` teaching facade;
 - `QUADRIC_PREVIEW_PROFILE`, `QUADRIC_FINAL_PROFILE`,
   and `QuadricCapacityPlanner`;
 - `QuadricOcclusion3D`, `QuadricManimStyle`, `QuadricBoundaryStyle`, and
@@ -873,6 +875,59 @@ arbitrary TikZ circle, ellipse, fill, dash, or arc syntax. Advanced callers may
 still pass lowered `CircleArcCurve` / `EllipseArcCurve` values to the existing
 visibility or Manim layers, but that manual composition is separate from the
 static TikZ adapter.
+
+### Certified Dandelin spheres and teaching overlays
+
+`compute_dandelin_construction(construction_id, cone, plane)` derives the
+finite Dandelin spheres, their focus points on the section plane, their real
+cone-contact `Circle3DSpec` values, and their directrices. It first reuses the
+ordinary analytic section solver, then requires every complete sphere extent
+to fit strictly inside the authored `ConeSpec.axial_range`. A sphere that
+touches or crosses a terminal plane, a cap-chord section, a plane through the
+apex, or another degenerate/incomplete construction fails explicitly. The
+result is a renderer-neutral `DandelinConstruction3D` with deterministic
+canonical JSON.
+
+```python
+from math import pi
+from polyhedron_visibility.quadrics import (
+    ConeModel, ConeSpec, SectionPlane, compute_dandelin_construction,
+)
+
+cone = ConeSpec(
+    "cone", (0, 0, 0), (0, 0, 1), pi / 6, (0, 9),
+    model=ConeModel.OPEN_SINGLE,
+)
+plane = SectionPlane(
+    "cut", (0, 0, 2), (0.6, 0, 0.8), u_axis=(0, 1, 0),
+)
+construction = compute_dandelin_construction("ellipse-proof", cone, plane)
+```
+
+The v1 support rows are deliberately finite and narrow: circle/ellipse use one
+single nappe and require two finite spheres; an exact-parabola `OPEN_SINGLE`
+uses its one finite sphere and does not create an infinity placeholder; a
+complete hyperbola requires one finite sphere on each nappe of an
+`OPEN_DOUBLE`. `ANALYTIC_DOUBLE`, a single-nappe hyperbola, an ellipse or
+parabola authored on `OPEN_DOUBLE`, and any section with a real cap chord are
+rejected. `CLOSED_SINGLE` circle/ellipse works only when it remains a complete
+pure lateral section and both spheres fit before the real terminal cap.
+
+`DandelinSection3D(scene, cone=..., plane=...,
+construction_id=...).attach()` is the matching static Cairo authoring facade.
+It retains the existing cone/section compositor, then draws the certified
+spheres, contact circles, clipped directrices, and focus dots in a separate
+top teaching band. This is intentionally a diagrammatic overlay:
+`visibility_authoritative` is `False`, `overlay_mode` is `"diagrammatic"`, and
+the tangent cone/spheres have **not** been physically multi-surface
+composited. `build_dandelin_teaching_overlay()` likewise rejects `physical`
+and `depth_aware_diagrammatic` mode requests.
+
+The facade accepts one immutable parallel projection and immutable cone/plane
+geometry. Projection callbacks, perspective, OpenGL, and dynamic family
+transitions are outside v1. Full formulas, the support/rejection matrix, and
+the finite-fit rule are in
+[Dandelin spheres v1](dandelin-spheres-v1.md).
 
 The Manim binding accepts immutable surface/curve sequences or callbacks that
 return a new sequence for the current frame.  IDs and counts remain fixed for

@@ -599,6 +599,8 @@ print(json.dumps({
         for path in (
             "@tool/polyhedron_visibility/quadrics/sections.py",
             "@tool/polyhedron_visibility/quadrics/planar_curves.py",
+            "@tool/polyhedron_visibility/quadrics/dandelin.py",
+            "@tool/polyhedron_visibility/quadrics/dandelin_overlay.py",
         ):
             with self.subTest(path=path):
                 mutated = self._probe_copy(path)
@@ -650,17 +652,20 @@ print(json.dumps({
 
     def test_editing_quadric_manim_changes_only_manim(self) -> None:
         baseline = provider_component_revisions()
-        mutated = self._probe_copy(
-            "@tool/polyhedron_visibility/quadrics/manim.py"
-        )
-        components = mutated["components"]
-        self.assertNotEqual(
-            components[COMPONENT_QUADRIC_MANIM],
-            baseline[COMPONENT_QUADRIC_MANIM],
-        )
-        for component in baseline:
-            if component != COMPONENT_QUADRIC_MANIM:
-                self.assertEqual(components[component], baseline[component])
+        for path in (
+            "@tool/polyhedron_visibility/quadrics/manim.py",
+            "@tool/polyhedron_visibility/quadrics/dandelin_authoring.py",
+        ):
+            with self.subTest(path=path):
+                mutated = self._probe_copy(path)
+                components = mutated["components"]
+                self.assertNotEqual(
+                    components[COMPONENT_QUADRIC_MANIM],
+                    baseline[COMPONENT_QUADRIC_MANIM],
+                )
+                for component in baseline:
+                    if component != COMPONENT_QUADRIC_MANIM:
+                        self.assertEqual(components[component], baseline[component])
 
     def test_editing_global_parallel_rig_changes_only_manim(self) -> None:
         baseline = provider_component_revisions()
