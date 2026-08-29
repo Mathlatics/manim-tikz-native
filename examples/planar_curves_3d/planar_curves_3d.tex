@@ -1,0 +1,32 @@
+\begin{tikzpicture}[space view={(-0.35,-0.35),(1,0),(0,1)}]
+  \coordinate (O) at (0,0,0);
+  \coordinate (U) at (2,0,0);
+  \coordinate (V) at (0,2,0);
+  \DeclareSpacePlane{base-plane}{O/U/V};
+  \DrawSpaceCircle[draw=blue,line width=1.1pt]
+    {circle-oblique}{base-plane}{-1,0}{1.35};
+  \DrawSpaceEllipse[draw=red,line width=1.1pt]
+    {ellipse-oblique}{base-plane}{1.25,0}{1.8}{0.8};
+\end{tikzpicture}
+
+\begin{tikzpicture}[x={(1cm,0cm)},y={(0cm,0cm)},z={(0cm,1cm)}]
+  \coordinate (O) at (0,0,0);
+  \coordinate (U) at (2,0,0);
+  \coordinate (V) at (0,2,0);
+  \DeclareSpacePlane{base-plane}{O/U/V};
+  \DrawSpaceCircle[draw=blue,line width=1.1pt]
+    {circle-edge-on}{base-plane}{-1,0}{1.35};
+  \DrawSpaceEllipse[draw=red,line width=1.1pt]
+    {ellipse-edge-on}{base-plane}{1.25,0}{1.8}{0.8};
+\end{tikzpicture}
+
+\begin{tikzpicture}[3d view={115}{24}]
+  \coordinate (O) at (0,0,0);
+  \coordinate (U) at (2,0,1);
+  \coordinate (V) at (0,2,0);
+  \DeclareSpacePlane{tilted-plane}{O/U/V};
+  \DrawSpaceCircle[draw=blue,line width=1.1pt]
+    {circle-world}{tilted-plane}{-1,0}{1.2};
+  \DrawSpaceEllipse[draw=red,line width=1.1pt]
+    {ellipse-world}{tilted-plane}{1.2,0}{1.7}{0.7};
+\end{tikzpicture}

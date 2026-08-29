@@ -192,12 +192,14 @@ before. The adapter preserves the existing source/owner IDs, parameter
 orientation, occlusion scope, style, and painter-slot identities. In
 particular, a trim rim still has no disk semantics.
 
-This contract is not yet connected to TikZ parsing, the TikZ source-project
-schema, or a Manim authoring facade. It neither creates VMobjects nor attaches
-a controller to a Scene. A caller may manually feed the lowered analytic curves
-to existing lower-level APIs, but ordinary TikZ input and the advertised
-supported TikZ subset are unchanged until a separate semantic frontend and
-Manim authoring integration are implemented and tested.
+These renderer-neutral contracts still do not create VMobjects or attach a
+controller to a Scene. The controlled static TikZ frontend now maps
+`\DeclareSpacePlane`, `\DrawSpaceCircle`, and `\DrawSpaceEllipse` into them and
+renders the result through the fixed-view or world-space renderer. That narrow
+adapter supports only a complete continuous stroke on static O/U/V evidence;
+it is not a general Manim authoring facade and does not add fill, dash, arc,
+embedded geometry-driver, or automatic quadric-compositing semantics. A caller
+may still feed lowered analytic curves to existing lower-level APIs manually.
 
 ## Section solving
 

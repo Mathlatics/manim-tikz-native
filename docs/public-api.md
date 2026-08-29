@@ -15,18 +15,23 @@ if picture.unsupported:
     raise ValueError(picture.unsupported)
 ```
 
-Use `NativeManimRenderer` for 2D and `NativeManim3DRenderer` for a fixed 3D
-projection:
+Use `NativeManimRenderer` for 2D, `NativeFixedViewRenderer` when a 3D TikZ
+picture should become ordinary 2D Mobjects in its authored projection, and
+`NativeManim3DRenderer` when the objects must remain in world space for a
+Manim 3D camera:
 
 ```python
 from tikz_native.manim_renderer import NativeManimRenderer
+from tikz_native.fixed_view_renderer import NativeFixedViewRenderer
 from tikz_native.manim_renderer_3d import NativeManim3DRenderer
 
-figure_2d = NativeManimRenderer(scene_unit_per_cm=1.0).render(picture)
-figure_3d = NativeManim3DRenderer(scene_unit_per_cm=1.0).render(picture)
+# Compile `picture_2d` and `picture_3d` from the corresponding source files.
+figure_2d = NativeManimRenderer(scene_unit_per_cm=1.0).render(picture_2d)
+figure_fixed_3d = NativeFixedViewRenderer(scene_unit_per_cm=1.0).render(picture_3d)
+figure_world_3d = NativeManim3DRenderer(scene_unit_per_cm=1.0).render(picture_3d)
 ```
 
-Both figures expose an object mapping keyed by stable semantic IDs. Pass a
+These figures expose an object mapping keyed by stable semantic IDs. Pass a
 custom Manim `TexTemplate` to the renderer when the portable Fandol/Latin
 Modern defaults are not suitable.
 
@@ -282,6 +287,59 @@ The three short Cairo scenes in
 [parallel_camera_advanced_compositor_demo.py](../examples/parallel_camera_advanced_compositor_demo.py)
 exercise a non-identity viewport with a tangent point, the three compositing
 axes, and cross-Rig global occlusion.
+
+## Explicit TikZ planar curves in 3D
+
+The restricted compiler does not infer a spatial supporting plane from a
+screen-space circle or ellipse. Declare one static plane from named 3D points,
+then author the curve in its local coordinates:
+
+```tex
+\begin{tikzpicture}[space view={(-0.35,-0.35),(1,0),(0,1)}]
+  \coordinate (O) at (0,0,0);
+  \coordinate (U) at (1,0,0);
+  \coordinate (V) at (0,1,0);
+  \DeclareSpacePlane{base-plane}{O/U/V};
+  \DrawSpaceCircle[draw=red,line width=1pt]
+    {circle-a}{base-plane}{0,0}{1.5};
+  \DrawSpaceEllipse[draw=blue]
+    {ellipse-a}{base-plane}{0.5,-0.25}{2}{1};
+\end{tikzpicture}
+```
+
+`O` is the origin of `base-plane`; `O -> U` fixes its local-u direction and
+the curve's parameter phase; non-collinear `V` fixes the positive local-v
+side. The lengths of `O -> U` and `O -> V` are orientation evidence, not scale
+factors: local centers and semi-axis lengths use world-coordinate units. A
+circle takes `(curve ID, plane ID, local center, radius)`. An ellipse
+takes `(curve ID, plane ID, local center, semi-u, semi-v)`. The compiler stores
+the canonical `PlanarFrame3D` and `Circle3DSpec` / `Ellipse3DSpec` evidence in
+the object geometry rather than reducing the curve to sampled screen points.
+
+This v1 frontend is static-safe and supports one complete revolution with one
+visible solid stroke. It accepts draw color, positive line width,
+draw/overall opacity, line cap, and line join. It explicitly rejects fill,
+fill opacity, dashes, arrow tips, additional canvas transforms, partial arcs,
+and animated O/U/V authorship. The present embedded geometry-driver runtime
+also rejects a picture containing these curve kinds, even if the registered
+plane is fixed and unrelated to the active hinge; this rejection happens in
+rig analysis instead of failing later during playback. Ordinary
+two-dimensional circle and ellipse paths remain supported. An ordinary
+three-dimensional circle/ellipse path or named path fails closed because it
+has no explicit supporting plane; the physical `circle (1pt)` point-marker
+form remains a dot.
+
+`NativeFixedViewRenderer` directly projects both authored semi-axis vectors.
+For rank two it applies their full affine screen basis to a unit circle; for an
+exact edge-on rank-one projection it emits exactly one finite `Line` between
+the curve extrema. It neither inverts a nearly singular ellipse basis nor
+extends the segment to an infinite chord. `NativeManim3DRenderer` instead
+applies the authored world-space center and two semi-axis vectors to a unit
+circle, retaining the actual supporting plane and the same Mobject while the
+camera changes. Neither path turns static O/U/V evidence into animated curve
+geometry. The result is a standalone curve object; it is not a planar disk and
+is not automatically registered with quadric visibility or unified
+compositing.
 
 ## Source-authoritative project builds
 
@@ -804,13 +862,17 @@ visibility, painter ordering, and Manim fixed slots still have one analytic
 curve runtime. A trim rim remains only a boundary circle; this adapter does not
 invent a closing disk for an open shell.
 
-These five types are geometry contracts only. They do not parse TikZ, do not
-extend the supported TikZ subset or source-project schema, and do not create,
-attach, style, or animate Manim objects. There is currently no
-`PlanarCurveScene3D` Manim authoring facade. An advanced caller may explicitly
-pass the lowered `CircleArcCurve` / `EllipseArcCurve` values to the existing
-visibility or Manim layers, but that manual composition is separate from this
-contract.
+These five types remain renderer-neutral geometry contracts: they do not
+themselves parse, style, attach, or animate Manim objects. The controlled TikZ
+frontend described in
+[Explicit TikZ planar curves in 3D](#explicit-tikz-planar-curves-in-3d) now
+maps its three static commands into those contracts and consumes them through
+the fixed-view or world-space renderer. This is a deliberately narrow adapter,
+not a general `PlanarCurveScene3D` Manim authoring facade and not support for
+arbitrary TikZ circle, ellipse, fill, dash, or arc syntax. Advanced callers may
+still pass lowered `CircleArcCurve` / `EllipseArcCurve` values to the existing
+visibility or Manim layers, but that manual composition is separate from the
+static TikZ adapter.
 
 The Manim binding accepts immutable surface/curve sequences or callbacks that
 return a new sequence for the current frame.  IDs and counts remain fixed for
