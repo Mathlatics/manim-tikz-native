@@ -360,6 +360,39 @@ class QuadricManimLimits:
         )
 
 
+def estimate_quadric_mobject_count(
+    *,
+    surface_count: int,
+    source_count: int,
+    max_fragments_per_curve: int,
+    section_enabled: bool,
+) -> int:
+    """Return the exact fixed-family estimate checked by this binding.
+
+    ``source_count`` is the size of the immutable slot-source union, not only
+    the number of sources painted in one frame.  Dash capacity is deliberately
+    absent because every fragment stores all dashed subpaths in one VMobject.
+    """
+
+    for name, value in (
+        ("surface_count", surface_count),
+        ("source_count", source_count),
+        ("max_fragments_per_curve", max_fragments_per_curve),
+    ):
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+            raise ValueError(f"{name} must be a non-negative integer")
+    if not isinstance(section_enabled, bool):
+        raise TypeError("section_enabled must be a bool")
+    return (
+        6 * surface_count
+        + (20 if section_enabled else 0)
+        + 1
+        + source_count
+        * _curve_slots_family_capacity(max_fragments_per_curve)
+        + 4
+    )
+
+
 QUADRIC_MANIM_LIMITS = QuadricManimLimits()
 
 
@@ -431,6 +464,9 @@ class _PreparedNumericFrame:
         str, tuple[_PreparedBoundaryFragment, ...]
     ] | None = None
     boundary_opacities: Mapping[str, float] | None = None
+    projected_source_segment_counts: Mapping[str, int] = field(
+        default_factory=dict
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -785,13 +821,11 @@ class QuadricOcclusion3D:
                 f"curve count exceeds fixed limit {limits.max_curves}"
             )
 
-        estimated_mobjects = (
-            6 * len(self._surface_ids)
-            + (20 if self._section_enabled else 0)
-            + 1
-            + len(self._slot_source_ids)
-            * _curve_slots_family_capacity(limits.max_fragments_per_curve)
-            + 4
+        estimated_mobjects = estimate_quadric_mobject_count(
+            surface_count=len(self._surface_ids),
+            source_count=len(self._slot_source_ids),
+            max_fragments_per_curve=limits.max_fragments_per_curve,
+            section_enabled=self._section_enabled,
         )
         if estimated_mobjects > limits.max_total_mobjects:
             raise QuadricManimCapacityError(
@@ -1775,6 +1809,9 @@ class QuadricOcclusion3D:
             boundary_frame=boundary_frame,
             boundary_fragments=boundary_batch.fragments,
             boundary_opacities=boundary_opacities,
+            projected_source_segment_counts=(
+                boundary_batch.projected_source_segment_counts
+            ),
         )
 
     def _translate_prepared_numeric(
@@ -2110,6 +2147,7 @@ class QuadricOcclusion3D:
                 by_curve[fragment.curve_id].append(fragment)
 
         prepared_by_curve: dict[str, tuple[_PreparedCurveFragment, ...]] = {}
+        projected_source_segment_counts: dict[str, int] = {}
         next_maps: dict[str, Mapping[str, int]] = {
             curve_id: {} for curve_id in self._slot_source_ids
         }
@@ -2137,6 +2175,10 @@ class QuadricOcclusion3D:
                     max_chord_error=self.max_chord_error,
                     max_segments=self.limits.max_segments_per_fragment,
                 )
+            projected_source_segment_counts[curve_id] = max(
+                0,
+                len(source_points) - 1,
+            )
             if performance_attempt is not None:
                 performance_attempt.increment_count(
                     "projected_curve_source_count"
@@ -2218,15 +2260,16 @@ class QuadricOcclusion3D:
                 else section_layers.frame.ray_classification_count,
             )
         numeric = _PreparedNumericFrame(
-            frame,
-            global_frame,
-            tuple(surface_plans),
-            prepared_by_curve,
-            curve_opacities,
-            next_maps,
-            item_mobjects,
-            tuple(painter_draw_order),
-            section_layers,
+            frame=frame,
+            global_frame=global_frame,
+            surfaces=tuple(surface_plans),
+            fragments=prepared_by_curve,
+            curve_opacities=curve_opacities,
+            fragment_slot_maps=next_maps,
+            item_mobjects=item_mobjects,
+            painter_draw_order=tuple(painter_draw_order),
+            section_layers=section_layers,
+            projected_source_segment_counts=projected_source_segment_counts,
         )
         return self._translate_prepared_numeric(numeric)
 
@@ -3061,4 +3104,5 @@ __all__ = [
     "QuadricManimLimits",
     "QuadricManimStyle",
     "QuadricOcclusion3D",
+    "estimate_quadric_mobject_count",
 ]

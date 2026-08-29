@@ -13,6 +13,10 @@ from polyhedron_visibility.open_faces import OpenFaceScene3D
 from polyhedron_visibility.quadrics import (
     ConeSpec,
     CylinderSpec,
+    QUADRIC_FINAL_PROFILE,
+    QUADRIC_PREVIEW_PROFILE,
+    QuadricCapacityPlanner,
+    QuadricRenderProfile,
     QuadricSectionBoundary,
     QuadricSection3D,
     QuadricSectionTransition3D,
@@ -62,6 +66,9 @@ class PublicPackageTests(unittest.TestCase):
         self.assertEqual(SectionTransitionPlan.__name__, "SectionTransitionPlan")
         self.assertEqual(QuadricSectionBoundary.__name__, "QuadricSectionBoundary")
         self.assertEqual(QuadricSection3D.__name__, "QuadricSection3D")
+        self.assertEqual(QuadricCapacityPlanner.__name__, "QuadricCapacityPlanner")
+        self.assertIsInstance(QUADRIC_PREVIEW_PROFILE, QuadricRenderProfile)
+        self.assertIsInstance(QUADRIC_FINAL_PROFILE, QuadricRenderProfile)
         self.assertEqual(
             QuadricSectionTransition3D.__name__, "QuadricSectionTransition3D"
         )

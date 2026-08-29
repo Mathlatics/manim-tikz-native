@@ -282,6 +282,7 @@ class _PreparedBoundaryBatch:
     fragments: Mapping[str, tuple[_PreparedBoundaryFragment, ...]]
     fragment_slot_maps: Mapping[str, Mapping[str, int]]
     item_mobjects: Mapping[str, Mobject]
+    projected_source_segment_counts: Mapping[str, int]
 
 
 @dataclass(slots=True)
@@ -1587,6 +1588,7 @@ def _prepare_boundary_fragments(
     prepared_by_source: dict[
         str, tuple[_PreparedBoundaryFragment, ...]
     ] = {}
+    projected_source_segment_counts: dict[str, int] = {}
     item_mobjects: dict[str, Mobject] = {}
     for source_id in sorted(by_source):
         source = source_map[source_id]
@@ -1617,6 +1619,10 @@ def _prepare_boundary_fragments(
                 max_chord_error=max_chord_error,
                 max_segments=limits.max_segments_per_fragment,
             )
+        projected_source_segment_counts[source_id] = max(
+            0,
+            len(source_points) - 1,
+        )
         source_cumulative, _source_length = _polyline_lengths(source_points)
         if performance_attempt is not None:
             performance_attempt.increment_count(
@@ -1688,6 +1694,7 @@ def _prepare_boundary_fragments(
         fragments=prepared_by_source,
         fragment_slot_maps=next_maps,
         item_mobjects=item_mobjects,
+        projected_source_segment_counts=projected_source_segment_counts,
     )
 
 
