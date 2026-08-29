@@ -498,6 +498,13 @@ ink. This ordinary facade still rejects `OPEN_DOUBLE` and direct
 allocation. Use the dedicated composite facade for the former. Neither mode
 creates a second renderer or a second rollback path.
 
+Scheduled rigid motion may opt into `use_plane_patch_envelope=True`. This
+precomputes one fixed, display-only patch from a certified finite-solid radius
+about the authored rotation pivot and reuses it at every progress value. The
+option is rejected in static/callback mode, where no complete motion range is
+available. `fit_plane_motion_display_patch_envelope()` exposes the same
+renderer-neutral evidence to advanced callers.
+
 `CompositeQuadricSection3D(surface=..., section_id=..., plane=...)` accepts one
 finite `OPEN_DOUBLE`. It expands the shell into its canonical negative and
 positive nappes, calls the existing local section solver for each, paints the

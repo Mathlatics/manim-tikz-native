@@ -400,6 +400,15 @@ controller = QuadricSection3D(
 ).attach()
 ```
 
+The default continues to fit the visible plane rectangle to each current
+pose.  When a known rigid schedule should keep one stable rectangle instead,
+set `use_plane_patch_envelope=True`.  The facade then computes one certified
+full-motion enclosure from exact finite-solid radii about the rotation pivot
+and reuses that immutable patch throughout the animation.  It does not sample
+keyframes, does not affect visibility truth, and is intentionally available
+only in scheduled mode because an arbitrary plane callback has no declared
+motion range.
+
 This mode delegates to `QuadricSectionTransition3D`; the static mode delegates
 to `QuadricOcclusion3D`.  The facade does not contain a second section solver,
 painter graph, Manim slot pool, or rollback implementation.  Advanced callers
@@ -626,7 +635,10 @@ does not replace the controller's last-good frame.
 The Cairo commit itself is incremental. Each prepared fixed slot has a display
 digest derived from its certified numeric paths, style, intent, and effective
 opacity. Identical active slots are not rewritten, only formerly active slots
-are hidden, and an unchanged painter-band signature is not reapplied. The
+are hidden, and an unchanged painter-band signature is not reapplied. If the
+draw order changes only locally, the painter band writes and snapshots only
+the items whose rank or bound Mobject identity changed; trace evidence records
+that number as `painter_band_modified_item_count`. The
 transaction snapshots only those fixed Mobject families which can change in
 that commit. Trace counts expose active, changed, unchanged, hidden, mutation-
 target, and snapshot sizes; this optimization does not weaken capacity checks
@@ -658,6 +670,14 @@ publish `surface_view_base`, `surface_component_fill`, and
 `static_surface_boundaries` cache evidence. Each named cache holds only its
 latest exact entry and is cleared by `restore()`, so an animated camera or
 surface cannot create an unbounded history.
+
+The global-frame builder also takes an exact one-surface path: it still builds
+the same projection proxy, visibility result, crossings, and painter frame,
+but omits pairwise separation and inter-surface depth ordering because there
+is no pair. Projected curve crossings first compare outward-rounded analytic
+screen bounds for each active finite interval. A pair enters the polynomial
+root solver only when those certified bounds overlap within the same screen
+tolerance; sampled bounds are never used to reject a pair.
 
 Boundary display preparation performs one adaptive projection for each source
 which has painted fragments. All current fragment endpoints are mandatory

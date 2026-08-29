@@ -67,6 +67,8 @@ to SVG. Unsupported syntax is reported explicitly.
   existing fixed-capacity transition controller; during a conic-family
   cross-fade, the two lateral traces use separate banks while each real end-cap
   chord keeps one stable semantic identity on the current cutting plane;
+  scheduled rigid motion may opt into one certified full-motion display-patch
+  envelope instead of refitting the visible rectangle at every frame;
   `show_plane=False` deliberately disables the complete plane compositor, not
   only the visible patch;
 - a sibling `CompositeQuadricSection3D` coordinator for one finite
