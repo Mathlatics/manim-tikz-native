@@ -334,7 +334,7 @@ JSON bridges.
 
 ## Status
 
-Version `0.1.0` is an alpha release. The public contracts are versioned and the
+Version `0.1.1` is an alpha release. The public contracts are versioned and the
 compiler fails closed, but the accepted TikZ language is intentionally smaller
 than TikZ itself. Please report a minimal `.tex` example when requesting new
 syntax.

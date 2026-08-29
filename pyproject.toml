@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "manim-tikz-native"
-version = "0.1.0"
+version = "0.1.1"
 description = "Compile a restricted semantic TikZ subset into native Manim objects, animation rigs, and automatic 3D occlusion."
 readme = "README.md"
 requires-python = ">=3.11"
