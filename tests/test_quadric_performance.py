@@ -311,6 +311,10 @@ class QuadricPerformanceTraceTests(unittest.TestCase):
                 self.assertEqual(snapshot.counts["display_changed_slot_count"], 0)
                 self.assertEqual(snapshot.counts["display_hidden_slot_count"], 0)
                 self.assertEqual(snapshot.counts["painter_band_changed_count"], 0)
+                self.assertEqual(
+                    snapshot.counts["painter_band_modified_item_count"],
+                    0,
+                )
                 self.assertEqual(snapshot.counts["mutation_target_root_count"], 0)
                 self.assertEqual(
                     snapshot.counts["transaction_snapshot_mobject_count"],
