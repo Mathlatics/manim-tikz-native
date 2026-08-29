@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from math import pi
 import unittest
+from unittest.mock import patch
 
 import numpy as np
 
@@ -142,6 +143,30 @@ class GlobalQuadricPairOrderingTests(unittest.TestCase):
 
 
 class GlobalQuadricSceneTests(unittest.TestCase):
+    def test_single_surface_skips_pairwise_separation_and_ordering(self) -> None:
+        sphere = SphereSpec("sphere", (0.0, 0.0, 0.0), 1.0)
+        with (
+            patch(
+                "polyhedron_visibility.quadrics.global_occlusion."
+                "_verify_render_component_separation",
+                side_effect=AssertionError("single-surface separation was entered"),
+            ),
+            patch(
+                "polyhedron_visibility.quadrics.global_occlusion."
+                "_automatic_surface_order",
+                side_effect=AssertionError("single-surface ordering was entered"),
+            ),
+        ):
+            result = compute_global_quadric_frame((), (sphere,), IDENTITY_VIEW)
+
+        self.assertEqual(result.separation_evidence, ())
+        self.assertEqual(result.surface_depth_evidence, ())
+        self.assertEqual(result.surface_constraints, ())
+        self.assertEqual(
+            result.frame.draw_order,
+            ("surface:sphere:opaque-projection",),
+        )
+
     def test_three_overlapping_spheres_form_one_acyclic_global_order(self) -> None:
         surfaces = (
             SphereSpec("middle", (0.0, 0.0, 3.0), 0.8),
