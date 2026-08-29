@@ -757,6 +757,15 @@ every curve must reference the exact registered frame with the same ID.
 order; `to_dict()` and `canonical_json()` expose the corresponding serializable
 contract.
 
+Finite cylinder/cone terminal circles use the same contract. A
+`PlanarCapSpec` or `CircularTrimRimSpec` exposes its normalized
+`planar_frame`, and `boundary_circle(curve_id)` returns a `Circle3DSpec` with
+the existing cap/rim identity and parameter phase. Surface-boundary
+compositing immediately lowers that value to the existing `CircleArcCurve`, so
+visibility, painter ordering, and Manim fixed slots still have one analytic
+curve runtime. A trim rim remains only a boundary circle; this adapter does not
+invent a closing disk for an open shell.
+
 These four types are geometry contracts only. They do not parse TikZ, do not
 extend the supported TikZ subset or source-project schema, and do not create,
 attach, style, or animate Manim objects. There is currently no

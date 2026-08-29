@@ -345,13 +345,7 @@ def _surface_rim_sources(
         source_id = f"boundary:{surface.surface_id}:{cap.role}:rim"
         result.append(
             curve_boundary_source(
-                CircleArcCurve(
-                    source_id,
-                    cap.center,
-                    cap.radius,
-                    cap.normal,
-                    radial_axis=cap.radial_axis,
-                ),
+                cap.boundary_circle(source_id).lower_to_analytic_curve(),
                 source_kind=BoundarySourceKind.SURFACE_CAP_RIM,
                 semantic_kind=BoundarySemanticKind.SURFACE_BOUNDARY,
                 occlusion_scope=BoundaryOcclusionScope.OWNER_AND_EXTERNAL,
@@ -365,13 +359,7 @@ def _surface_rim_sources(
             source_id = f"boundary:{surface.surface_id}:{rim.role}:rim"
             result.append(
                 curve_boundary_source(
-                    CircleArcCurve(
-                        source_id,
-                        rim.center,
-                        rim.radius,
-                        rim.normal,
-                        radial_axis=rim.radial_axis,
-                    ),
+                    rim.boundary_circle(source_id).lower_to_analytic_curve(),
                     source_kind=BoundarySourceKind.SURFACE_TRIM_RIM,
                     semantic_kind=BoundarySemanticKind.SURFACE_BOUNDARY,
                     occlusion_scope=BoundaryOcclusionScope.OWNER_AND_EXTERNAL,

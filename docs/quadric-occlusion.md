@@ -147,6 +147,14 @@ those same analytic curve types in stable curve-ID order. The existing
 visibility, intersection, compositing, and fixed-capacity layers therefore do
 not gain a second circle or ellipse implementation.
 
+`PlanarCapSpec` and `CircularTrimRimSpec` also expose this shared representation
+through `planar_frame` and `boundary_circle(curve_id)`. Cylinder caps, closed
+cone caps, and open cone trim rims are therefore authored as explicit planar
+circles before being lowered to the same `CircleArcCurve` boundary sources as
+before. The adapter preserves the existing source/owner IDs, parameter
+orientation, occlusion scope, style, and painter-slot identities. In
+particular, a trim rim still has no disk semantics.
+
 This contract is not yet connected to TikZ parsing, the TikZ source-project
 schema, or a Manim authoring facade. It neither creates VMobjects nor attaches
 a controller to a Scene. A caller may manually feed the lowered analytic curves

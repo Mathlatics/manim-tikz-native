@@ -13,7 +13,7 @@ silently changing the mathematical quadric.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 from math import isfinite, pi, tan
 from typing import Literal, Sequence
@@ -32,6 +32,7 @@ from .algebra import (
     HomogeneousQuadric,
     QuadricAlgebraError,
 )
+from .planar_curves import Circle3DSpec, PlanarCurve3DContractError, PlanarFrame3D
 
 
 class QuadricContractError(ValueError):
@@ -228,6 +229,11 @@ class PlanarCapSpec:
     radius: float
     radial_axis: tuple[float, float, float] | None = None
     role: Literal["cap_min", "cap_max"] = "cap_max"
+    _planar_frame: PlanarFrame3D = field(
+        init=False,
+        repr=False,
+        compare=False,
+    )
 
     def __post_init__(self) -> None:
         cap_id = _identity(self.cap_id, "cap_id")
@@ -241,20 +247,36 @@ class PlanarCapSpec:
         )
         if self.role not in {"cap_min", "cap_max"}:
             raise QuadricContractError("cap role must be 'cap_min' or 'cap_max'")
-        frame = _frame(center, normal, radial, "cap")
+        try:
+            planar_frame = PlanarFrame3D(cap_id, center, normal, radial)
+        except PlanarCurve3DContractError as exc:
+            raise QuadricContractError(f"invalid cap frame: {exc}") from exc
         object.__setattr__(self, "cap_id", cap_id)
         object.__setattr__(self, "parent_surface_id", parent_id)
         object.__setattr__(self, "center", center)
-        object.__setattr__(self, "normal", frame.z_axis)
-        object.__setattr__(self, "radial_axis", frame.x_axis)
+        object.__setattr__(self, "normal", planar_frame.normal)
+        object.__setattr__(self, "radial_axis", planar_frame.u_axis)
         object.__setattr__(self, "radius", _positive(self.radius, "cap radius"))
+        object.__setattr__(self, "_planar_frame", planar_frame)
 
     @property
     def frame(self) -> AffineFrame3D:
-        return AffineFrame3D.from_axis(
+        return self._planar_frame.affine_frame
+
+    @property
+    def planar_frame(self) -> PlanarFrame3D:
+        """Return the shared authored-plane contract for this terminal disk."""
+
+        return self._planar_frame
+
+    def boundary_circle(self, curve_id: str) -> Circle3DSpec:
+        """Describe the cap rim without introducing another curve runtime."""
+
+        return Circle3DSpec(
+            curve_id,
+            self._planar_frame,
             self.center,
-            self.normal,
-            radial_axis=self.radial_axis,
+            self.radius,
         )
 
     @property
@@ -333,6 +355,11 @@ class CircularTrimRimSpec:
     radius: float
     radial_axis: tuple[float, float, float] | None = None
     role: Literal["trim_min", "trim_max"] = "trim_max"
+    _planar_frame: PlanarFrame3D = field(
+        init=False,
+        repr=False,
+        compare=False,
+    )
 
     def __post_init__(self) -> None:
         rim_id = _identity(self.rim_id, "rim_id")
@@ -348,20 +375,36 @@ class CircularTrimRimSpec:
             raise QuadricContractError(
                 "trim-rim role must be 'trim_min' or 'trim_max'"
             )
-        frame = _frame(center, normal, radial, "trim rim")
+        try:
+            planar_frame = PlanarFrame3D(rim_id, center, normal, radial)
+        except PlanarCurve3DContractError as exc:
+            raise QuadricContractError(f"invalid trim rim frame: {exc}") from exc
         object.__setattr__(self, "rim_id", rim_id)
         object.__setattr__(self, "parent_surface_id", parent_id)
         object.__setattr__(self, "center", center)
-        object.__setattr__(self, "normal", frame.z_axis)
-        object.__setattr__(self, "radial_axis", frame.x_axis)
+        object.__setattr__(self, "normal", planar_frame.normal)
+        object.__setattr__(self, "radial_axis", planar_frame.u_axis)
         object.__setattr__(self, "radius", _positive(self.radius, "trim-rim radius"))
+        object.__setattr__(self, "_planar_frame", planar_frame)
 
     @property
     def frame(self) -> AffineFrame3D:
-        return AffineFrame3D.from_axis(
+        return self._planar_frame.affine_frame
+
+    @property
+    def planar_frame(self) -> PlanarFrame3D:
+        """Return the shared authored-plane contract for this open rim."""
+
+        return self._planar_frame
+
+    def boundary_circle(self, curve_id: str) -> Circle3DSpec:
+        """Describe the trim rim without inventing a closing disk."""
+
+        return Circle3DSpec(
+            curve_id,
+            self._planar_frame,
             self.center,
-            self.normal,
-            radial_axis=self.radial_axis,
+            self.radius,
         )
 
     @property
