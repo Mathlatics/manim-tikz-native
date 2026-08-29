@@ -699,6 +699,8 @@ points are:
 
 - `SphereSpec`, `CylinderSpec`, `ConeSpec`, `ConeModel`,
   `CircularTrimRimSpec`, and `SectionPlane`;
+- `PlanarFrame3D`, `Circle3DSpec`, `Ellipse3DSpec`, and
+  `PlanarCurveScene3D`;
 - `build_cone_projection_layers()`, `ConeProjectionLayers`, and
   `ConeProjectionSheet`;
 - `compute_quadric_section()`, `section_trace_curves()`,
@@ -722,6 +724,46 @@ points are:
   and `QuadricCapacityPlanner`;
 - `QuadricOcclusion3D`, `QuadricManimStyle`, `QuadricBoundaryStyle`, and
   `QuadricManimLimits`.
+
+### Authored planar circles and ellipses in 3D
+
+`PlanarFrame3D(frame_id, point, normal, u_axis=None)` is the
+renderer-neutral supporting-plane contract for an authored 3D circle or
+ellipse. It normalizes a stable right-handed in-plane basis; an explicit
+`u_axis` fixes both the curve orientation and parameter phase instead of
+leaving those choices to a display helper. The automatic basis is deterministic
+for one fixed normal, but it is not promised to vary continuously while the
+normal moves across a world-axis tie. Animated frames that need continuous
+curve phase must provide a continuous `u_axis` explicitly.
+
+`Circle3DSpec(curve_id, frame, center, radius, domain=...)` and
+`Ellipse3DSpec(curve_id, frame, center, semi_u, semi_v, domain=...)` require
+their centers to lie on that supporting plane, require positive radii or
+semi-axis lengths, and accept at most one revolution of a
+`ParameterInterval`. They do not introduce another analytic-curve runtime:
+`lower_to_analytic_curve()` returns the existing `CircleArcCurve` or
+`EllipseArcCurve`, preserving the authored curve ID, supporting frame, and
+parameter domain.
+
+Finite input alone is not sufficient at the extreme limits of floating-point
+arithmetic. Construction fails explicitly when the existing analytic runtime
+cannot certify finite axes, normals, points, and tangents at the requested
+scale; it never accepts a spec that is already known to fail during lowering.
+
+`PlanarCurveScene3D(frames, curves)` is a deterministic renderer-neutral
+registry. Frame IDs and curve IDs must be unique and globally distinct, and
+every curve must reference the exact registered frame with the same ID.
+`lower_to_analytic_curves()` returns the lowered curves in stable `curve_id`
+order; `to_dict()` and `canonical_json()` expose the corresponding serializable
+contract.
+
+These four types are geometry contracts only. They do not parse TikZ, do not
+extend the supported TikZ subset or source-project schema, and do not create,
+attach, style, or animate Manim objects. There is currently no
+`PlanarCurveScene3D` Manim authoring facade. An advanced caller may explicitly
+pass the lowered `CircleArcCurve` / `EllipseArcCurve` values to the existing
+visibility or Manim layers, but that manual composition is separate from this
+contract.
 
 The Manim binding accepts immutable surface/curve sequences or callbacks that
 return a new sequence for the current frame.  IDs and counts remain fixed for

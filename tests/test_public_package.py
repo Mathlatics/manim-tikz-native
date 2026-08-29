@@ -11,8 +11,12 @@ import tikz_native
 from polyhedron_visibility import OcclusionScene3D
 from polyhedron_visibility.open_faces import OpenFaceScene3D
 from polyhedron_visibility.quadrics import (
+    Circle3DSpec,
     ConeSpec,
     CylinderSpec,
+    Ellipse3DSpec,
+    PlanarCurveScene3D,
+    PlanarFrame3D,
     QUADRIC_FINAL_PROFILE,
     QUADRIC_PREVIEW_PROFILE,
     QuadricCapacityPlanner,
@@ -85,6 +89,10 @@ class PublicPackageTests(unittest.TestCase):
         self.assertEqual(SphereSpec.__name__, "SphereSpec")
         self.assertEqual(CylinderSpec.__name__, "CylinderSpec")
         self.assertEqual(ConeSpec.__name__, "ConeSpec")
+        self.assertEqual(PlanarFrame3D.__name__, "PlanarFrame3D")
+        self.assertEqual(Circle3DSpec.__name__, "Circle3DSpec")
+        self.assertEqual(Ellipse3DSpec.__name__, "Ellipse3DSpec")
+        self.assertEqual(PlanarCurveScene3D.__name__, "PlanarCurveScene3D")
         self.assertEqual(SectionPlane.__name__, "SectionPlane")
         self.assertEqual(SectionTransitionPlan.__name__, "SectionTransitionPlan")
         self.assertEqual(SectionTimeline.__name__, "SectionTimeline")
@@ -118,10 +126,16 @@ class PublicPackageTests(unittest.TestCase):
                 (
                     "import sys; from polyhedron_visibility.quadrics import "
                     "SectionTransitionPlan, build_section_transition_plan, "
+                    "PlanarFrame3D, Circle3DSpec, Ellipse3DSpec, "
+                    "PlanarCurveScene3D, "
                     "QuadricSectionBoundary, compute_quadric_section_boundary, "
                     "compute_quadric_section_boundary_curves, "
                     "section_cap_chord_curve_ids; "
                     "assert SectionTransitionPlan.__name__; "
+                    "assert PlanarFrame3D.__name__; "
+                    "assert Circle3DSpec.__name__; "
+                    "assert Ellipse3DSpec.__name__; "
+                    "assert PlanarCurveScene3D.__name__; "
                     "assert QuadricSectionBoundary.__name__; "
                     "assert callable(compute_quadric_section_boundary); "
                     "assert callable(build_section_transition_plan); "

@@ -571,20 +571,29 @@ print(json.dumps({
 
     def test_editing_quadric_geometry_changes_its_recursive_dependents(self) -> None:
         baseline = provider_component_revisions()
-        mutated = self._probe_copy(
-            "@tool/polyhedron_visibility/quadrics/sections.py"
-        )
-        components = mutated["components"]
         changed = {
             COMPONENT_QUADRIC_GEOMETRY,
             COMPONENT_QUADRIC_VISIBILITY,
             COMPONENT_QUADRIC_MANIM,
         }
-        for component in changed:
-            self.assertNotEqual(components[component], baseline[component])
-        for component in baseline:
-            if component not in changed:
-                self.assertEqual(components[component], baseline[component])
+        for path in (
+            "@tool/polyhedron_visibility/quadrics/sections.py",
+            "@tool/polyhedron_visibility/quadrics/planar_curves.py",
+        ):
+            with self.subTest(path=path):
+                mutated = self._probe_copy(path)
+                components = mutated["components"]
+                for component in changed:
+                    self.assertNotEqual(
+                        components[component],
+                        baseline[component],
+                    )
+                for component in baseline:
+                    if component not in changed:
+                        self.assertEqual(
+                            components[component],
+                            baseline[component],
+                        )
 
     def test_editing_semantic_compositing_changes_geometry_dependents(self) -> None:
         baseline = provider_component_revisions()

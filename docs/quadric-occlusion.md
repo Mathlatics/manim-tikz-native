@@ -123,6 +123,37 @@ Every frame resolves one `GeometryContext` from the participating surface
 scales, trim bounds, and paths.  Root validation, topology partitioning, and
 depth comparisons use that same resolved context.
 
+### Authored planar circles and ellipses
+
+`PlanarFrame3D` makes the missing 3D plane semantics of an authored circle or
+ellipse explicit. Its `point` and `normal` define the infinite supporting
+plane, while its normalized `u_axis` and derived `v_axis` fix a stable
+right-handed parameter frame. `Circle3DSpec` adds an on-plane world-space
+center, radius, and parameter domain. `Ellipse3DSpec` adds the same center and
+domain plus positive `semi_u` and `semi_v` lengths along the frame axes.
+The automatically chosen `u_axis` is deterministic for static geometry but is
+not a continuous moving-frame algorithm; animated normals that require stable
+parameter phase must author a continuous `u_axis`. Extreme finite scales that
+the existing analytic runtime cannot evaluate without underflow or overflow
+fail explicitly during spec construction.
+
+These are renderer-neutral geometry contracts for authored data, not new
+visibility primitives.
+`Circle3DSpec.lower_to_analytic_curve()` lowers to the existing
+`CircleArcCurve`; `Ellipse3DSpec.lower_to_analytic_curve()` lowers to the
+existing `EllipseArcCurve`. `PlanarCurveScene3D` validates a deterministic
+registry of shared frames and curves, then `lower_to_analytic_curves()` returns
+those same analytic curve types in stable curve-ID order. The existing
+visibility, intersection, compositing, and fixed-capacity layers therefore do
+not gain a second circle or ellipse implementation.
+
+This contract is not yet connected to TikZ parsing, the TikZ source-project
+schema, or a Manim authoring facade. It neither creates VMobjects nor attaches
+a controller to a Scene. A caller may manually feed the lowered analytic curves
+to existing lower-level APIs, but ordinary TikZ input and the advertised
+supported TikZ subset are unchanged until a separate semantic frontend and
+Manim authoring integration are implemented and tested.
+
 ## Section solving
 
 For an orthonormal plane frame

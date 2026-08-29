@@ -422,6 +422,7 @@ _COMPONENT_DEFINITIONS: Final[dict[str, dict[str, tuple[str, ...]]]] = {
             "@tool/polyhedron_visibility/quadrics/contract.py",
             "@tool/polyhedron_visibility/quadrics/curves.py",
             "@tool/polyhedron_visibility/quadrics/parallel_plane_motion.py",
+            "@tool/polyhedron_visibility/quadrics/planar_curves.py",
             "@tool/polyhedron_visibility/quadrics/plane_motion.py",
             "@tool/polyhedron_visibility/quadrics/plane_patch.py",
             "@tool/polyhedron_visibility/quadrics/roots.py",
