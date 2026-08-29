@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+## 0.1.1 - 2026-08-29
+
 - bypass pairwise solid-separation and inter-surface ordering work for the
   exact one-quadric global-frame case while retaining the same proxy,
   visibility, crossing, painter-frame, and injected-constraint validation;

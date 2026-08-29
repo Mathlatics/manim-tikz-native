@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Final
 
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"
 PROTOCOL_VERSION = 1
 REQUEST_SCHEMA = "tikz-native-bridge.request/v1"
 RESPONSE_SCHEMA = "tikz-native-bridge.response/v1"
