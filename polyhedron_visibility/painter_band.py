@@ -28,6 +28,20 @@ class PreparedPainterBand:
     items: tuple[PreparedPainterItem, ...]
 
 
+class _PainterBandActiveState(dict[str, float]):
+    """Rollback state with identity metadata and ordinary mapping behavior."""
+
+    def __init__(
+        self,
+        z_indices: Mapping[str, float],
+        mobject_ids: Mapping[str, int],
+    ) -> None:
+        super().__init__((str(key), float(value)) for key, value in z_indices.items())
+        self.mobject_ids = {
+            str(key): int(value) for key, value in mobject_ids.items()
+        }
+
+
 def _scene_family(containers: Sequence[list[object]]) -> tuple[object, ...]:
     result: list[object] = []
     seen: set[int] = set()
@@ -85,6 +99,7 @@ class ManagedPainterBand:
         self._z_high = 0.0
         self._configured = False
         self._active_z_indices: dict[str, float] = {}
+        self._active_mobject_ids: dict[str, int] = {}
 
     @staticmethod
     def _validate_explicit_band(value: tuple[float, float]) -> tuple[float, float]:
@@ -191,23 +206,51 @@ class ManagedPainterBand:
         )
 
     def apply(self, prepared: PreparedPainterBand) -> None:
+        changed = {item.item_id for item in self.changed_items(prepared)}
         active: dict[str, float] = {}
+        active_mobjects: dict[str, int] = {}
         for item in prepared.items:
-            item.mobject.set_z_index(item.z_index, family=True)
+            if item.item_id in changed:
+                item.mobject.set_z_index(item.z_index, family=True)
             active[item.item_id] = item.z_index
+            active_mobjects[item.item_id] = id(item.mobject)
         self._active_z_indices = active
+        self._active_mobject_ids = active_mobjects
+
+    def changed_items(
+        self,
+        prepared: PreparedPainterBand,
+    ) -> tuple[PreparedPainterItem, ...]:
+        """Return only painter items whose family needs a z-index write."""
+
+        if not isinstance(prepared, PreparedPainterBand):
+            raise TypeError("prepared must be a PreparedPainterBand")
+        return tuple(
+            item
+            for item in prepared.items
+            if self._active_z_indices.get(item.item_id) != item.z_index
+            or self._active_mobject_ids.get(item.item_id) != id(item.mobject)
+        )
 
     @property
     def active_z_indices(self) -> dict[str, float]:
         return dict(self._active_z_indices)
 
     def capture_active_state(self) -> dict[str, float]:
-        return dict(self._active_z_indices)
+        return _PainterBandActiveState(
+            self._active_z_indices,
+            self._active_mobject_ids,
+        )
 
     def restore_active_state(self, state: Mapping[str, float]) -> None:
         self._active_z_indices = {
             str(item_id): float(value) for item_id, value in state.items()
         }
+        self._active_mobject_ids = (
+            dict(state.mobject_ids)
+            if isinstance(state, _PainterBandActiveState)
+            else {}
+        )
 
     @property
     def z_band(self) -> tuple[float, float]:
@@ -217,6 +260,7 @@ class ManagedPainterBand:
 
     def restore(self) -> None:
         self._active_z_indices = {}
+        self._active_mobject_ids = {}
         self._configured = False
         self._z_low = 0.0
         self._z_high = 0.0

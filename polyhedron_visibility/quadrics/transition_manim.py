@@ -47,6 +47,10 @@ from .section_compositing import (
 )
 from .surface_boundaries import GeneratorBoundarySpec
 from .plane_motion import ScheduledSectionAnimation
+from .plane_patch import (
+    PlaneMotionPatchEnvelope,
+    fit_plane_motion_display_patch_envelope,
+)
 from .sections import (
     FiniteSectionBoundaryCurve,
     QuadricSurfaceSpec,
@@ -207,6 +211,7 @@ class QuadricSectionTransition3D:
         draw_section_boundary: bool = True,
         show_plane: bool = True,
         plane_patch_margin: float = 0.08,
+        use_plane_patch_envelope: bool = False,
         section_max_screen_error: float = 0.08,
         section_compositing_limits: QuadricSectionCompositingLimits = (
             QUADRIC_SECTION_COMPOSITING_LIMITS
@@ -245,7 +250,17 @@ class QuadricSectionTransition3D:
         self.draw_section_boundary = draw_section_boundary
         if not isinstance(show_plane, bool):
             raise TypeError("show_plane must be a bool")
+        if not isinstance(use_plane_patch_envelope, bool):
+            raise TypeError("use_plane_patch_envelope must be a bool")
         self.show_plane = show_plane
+        self.plane_patch_envelope: PlaneMotionPatchEnvelope | None = None
+        if show_plane and use_plane_patch_envelope:
+            self.plane_patch_envelope = fit_plane_motion_display_patch_envelope(
+                f"{scheduled.schedule.motion.base_plane.plane_id}:motion-display-patch",
+                scheduled.schedule.motion,
+                (surface,),
+                margin_ratio=plane_patch_margin,
+            )
         self._cap_curve_ids = (
             section_cap_chord_curve_ids(self.plan.section_id, surface)
             if draw_section_boundary
@@ -278,6 +293,11 @@ class QuadricSectionTransition3D:
             surface_constraints=surface_constraints,
             surface_order_mode="automatic",
             section_plane=(self._active_plane if show_plane else None),
+            section_patch=(
+                self.plane_patch_envelope.patch
+                if self.plane_patch_envelope is not None
+                else None
+            ),
             section_patch_margin=plane_patch_margin,
             section_max_screen_error=section_max_screen_error,
             section_compositing_limits=section_compositing_limits,

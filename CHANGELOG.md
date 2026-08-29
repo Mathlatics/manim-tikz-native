@@ -4,6 +4,18 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+- bypass pairwise solid-separation and inter-surface ordering work for the
+  exact one-quadric global-frame case while retaining the same proxy,
+  visibility, crossing, painter-frame, and injected-constraint validation;
+- reject analytically disjoint projected boundary intervals before entering
+  the polynomial crossing solver, using outward-rounded closed-form screen
+  bounds rather than sampled polylines;
+- optionally reuse one certified display-only plane-patch envelope throughout
+  a scheduled rigid rotation, eliminating per-frame patch fitting and visible
+  rectangle jitter without changing section or occlusion truth;
+- update managed painter bands sparsely: snapshot and rewrite only items whose
+  z-rank or bound Mobject identity changed, while preserving the fixed-capacity
+  transaction and last-good-frame rollback contract;
 - batch the signed half-plane distances for every convex partition polygon,
   so the open-shell section arrangement no longer converts and classifies
   both endpoints of every edge independently; the batch retains the exact

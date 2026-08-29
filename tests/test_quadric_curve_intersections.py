@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from math import acosh, cos, pi, sin, tau
 import unittest
+from unittest.mock import patch
 
 import numpy as np
 
@@ -58,6 +59,21 @@ PLANE_EMBEDDING = (
 
 
 class ProjectedSegmentCrossingTests(unittest.TestCase):
+    def test_disjoint_screen_bounds_skip_the_analytic_pair_solver(self) -> None:
+        left = SegmentCurve("left", (-3.0, -1.0, 0.0), (-3.0, 1.0, 0.0))
+        right = SegmentCurve("right", (3.0, -1.0, 0.0), (3.0, 1.0, 0.0))
+
+        with patch(
+            "polyhedron_visibility.quadrics.curve_intersections."
+            "_candidate_source_parameters",
+            side_effect=AssertionError("disjoint pair entered the root solver"),
+        ):
+            crossings = compute_projected_curve_crossings(
+                (right, left), IDENTITY_VIEW
+            )
+
+        self.assertEqual(crossings, ())
+
     def test_crossing_segments_record_objective_far_to_near_order(self) -> None:
         farther = SegmentCurve("far", (-1.0, 0.0, -2.0), (1.0, 0.0, -2.0))
         nearer = SegmentCurve("near", (0.0, -1.0, 3.0), (0.0, 1.0, 3.0))

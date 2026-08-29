@@ -1579,10 +1579,13 @@ class CompositeQuadricSection3D:
             painter_changed = (
                 painter_signature != self._last_painter_band_signature
             )
-            painter_roots = (
-                tuple(item.mobject for item in prepared.painter_band.items)
+            painter_items = (
+                self._band.changed_items(prepared.painter_band)
                 if painter_changed
                 else ()
+            )
+            painter_roots = (
+                tuple(item.mobject for item in painter_items)
             )
             mutation_roots = (*delta.mutation_roots, *painter_roots)
             if attempt is not None:
@@ -1597,6 +1600,9 @@ class CompositeQuadricSection3D:
                 attempt.set_count("display_hidden_slot_count", len(delta.hidden))
                 attempt.set_count(
                     "painter_band_changed_count", int(painter_changed)
+                )
+                attempt.set_count(
+                    "painter_band_modified_item_count", len(painter_roots)
                 )
                 attempt.set_count(
                     "mutation_target_root_count",
@@ -1793,6 +1799,9 @@ class CompositeQuadricSection3D:
                             )
                             attempt.set_count("display_hidden_slot_count", 0)
                             attempt.set_count("painter_band_changed_count", 0)
+                            attempt.set_count(
+                                "painter_band_modified_item_count", 0
+                            )
                             attempt.set_count("mutation_target_root_count", 0)
                             attempt.set_count(
                                 "transaction_snapshot_mobject_count", 0

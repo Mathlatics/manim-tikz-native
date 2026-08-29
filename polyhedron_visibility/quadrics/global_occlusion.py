@@ -1311,10 +1311,20 @@ def compute_global_quadric_frame(
     resolved = _resolve_context(surface_items, context, curves=curve_items)
     iteration_limit = _iteration_limit(gjk_max_iterations)
 
-    separation = _verify_render_component_separation(
-        surface_items,
-        context=resolved,
-        gjk_max_iterations=iteration_limit,
+    # A single finite surface has no pair to separate or globally depth-sort.
+    # Section rendering uses this path for every frame, so avoid re-validating
+    # the same surface collection and entering the pairwise ordering machinery.
+    # The resulting evidence and constraints are exactly the empty tuples that
+    # the general path would have produced.
+    single_surface = len(surface_items) == 1
+    separation = (
+        ()
+        if single_surface
+        else _verify_render_component_separation(
+            surface_items,
+            context=resolved,
+            gjk_max_iterations=iteration_limit,
+        )
     )
     proxies: list[OpaqueProjectionProxy] = []
     if max_chord_error is not None:
@@ -1335,13 +1345,17 @@ def compute_global_quadric_frame(
             )
         )
     proxy_items = tuple(sorted(proxies, key=lambda item: item.surface_id))
-    depth_evidence, automatic = _automatic_surface_order(
-        surface_items,
-        proxy_items,
-        view,
-        context=resolved,
-        gjk_max_iterations=iteration_limit,
-    )
+    if single_surface:
+        depth_evidence: tuple[SurfaceDepthEvidence, ...] = ()
+        automatic: tuple[SurfaceOrderConstraint, ...] = ()
+    else:
+        depth_evidence, automatic = _automatic_surface_order(
+            surface_items,
+            proxy_items,
+            view,
+            context=resolved,
+            gjk_max_iterations=iteration_limit,
+        )
     injected = _normalize_injected_constraints(
         additional_surface_constraints,
         {surface.surface_id for surface in surface_items},

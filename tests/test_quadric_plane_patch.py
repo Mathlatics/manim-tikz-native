@@ -18,12 +18,16 @@ from polyhedron_visibility.quadrics.contract import (
 )
 from polyhedron_visibility.quadrics.plane_patch import (
     DEFAULT_PLANE_PATCH_MARGIN_RATIO,
+    PLANE_MOTION_PATCH_ENVELOPE_SCHEMA,
     PLANE_PATCH_FIT_SCHEMA,
     PlanePatchFitError,
     canonical_fitted_plane_display_patch_json,
+    canonical_plane_motion_patch_envelope_json,
     finite_surface_support_interval,
     fit_plane_display_patch,
+    fit_plane_motion_display_patch_envelope,
 )
+from polyhedron_visibility.quadrics.plane_motion import AxisAnglePlaneMotion
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -385,6 +389,105 @@ class PlanePatchFitTests(unittest.TestCase):
         enormous = SphereSpec("enormous", (1.0e308, 0, 0), 1.0e308)
         with self.assertRaises(PlanePatchFitError):
             fit_plane_display_patch("display", plane, (enormous,))
+
+
+class PlaneMotionPatchEnvelopeTests(unittest.TestCase):
+    def test_one_fixed_patch_contains_every_dynamic_fit_in_the_motion(self) -> None:
+        plane = SectionPlane("plane", (1.0, -0.5, 0.25), (0, 0, 1), (1, 0, 0))
+        motion = AxisAnglePlaneMotion(
+            "motion",
+            plane,
+            axis_point=(0.25, -0.25, 0.5),
+            axis_direction=(1.0, 2.0, -1.0),
+            start_angle=-0.8,
+            end_angle=1.1,
+        )
+        surfaces = (
+            SphereSpec("sphere", (-1.0, 0.5, 0.0), 0.75),
+            CylinderSpec(
+                "cylinder",
+                (1.5, -0.5, -1.0),
+                (0.0, 0.0, 1.0),
+                0.4,
+                (-1.0, 2.0),
+            ),
+            ConeSpec(
+                "cone",
+                (0.0, 1.0, -0.5),
+                (0.0, 0.0, 1.0),
+                0.35,
+                (0.0, 2.5),
+            ),
+        )
+        margin = 0.13
+        envelope = fit_plane_motion_display_patch_envelope(
+            "motion-patch",
+            motion,
+            surfaces,
+            margin_ratio=margin,
+        )
+        envelope_u = (
+            envelope.patch.center_coordinates[0] - envelope.patch.half_width,
+            envelope.patch.center_coordinates[0] + envelope.patch.half_width,
+        )
+        envelope_v = (
+            envelope.patch.center_coordinates[1] - envelope.patch.half_height,
+            envelope.patch.center_coordinates[1] + envelope.patch.half_height,
+        )
+
+        for progress in np.linspace(0.0, 1.0, 101):
+            fitted = fit_plane_display_patch(
+                "dynamic",
+                motion.plane_at(float(progress)),
+                surfaces,
+                margin_ratio=margin,
+            ).patch
+            dynamic_u = (
+                fitted.center_coordinates[0] - fitted.half_width,
+                fitted.center_coordinates[0] + fitted.half_width,
+            )
+            dynamic_v = (
+                fitted.center_coordinates[1] - fitted.half_height,
+                fitted.center_coordinates[1] + fitted.half_height,
+            )
+            self.assertLessEqual(envelope_u[0], dynamic_u[0] + 1.0e-12)
+            self.assertGreaterEqual(envelope_u[1], dynamic_u[1] - 1.0e-12)
+            self.assertLessEqual(envelope_v[0], dynamic_v[0] + 1.0e-12)
+            self.assertGreaterEqual(envelope_v[1], dynamic_v[1] - 1.0e-12)
+
+    def test_motion_envelope_is_deterministic_and_not_visibility_truth(self) -> None:
+        plane = SectionPlane("plane", (0, 0, 0), (0, 0, 1), (1, 0, 0))
+        motion = AxisAnglePlaneMotion(
+            "motion",
+            plane,
+            axis_point=(0, 0, 0),
+            axis_direction=(0, 1, 0),
+            start_angle=0.0,
+            end_angle=pi / 2,
+        )
+        surfaces = (
+            SphereSpec("z", (2, 0, 0), 1),
+            SphereSpec("a", (-1, 0, 0), 0.5),
+        )
+        first = fit_plane_motion_display_patch_envelope(
+            "motion-patch", motion, surfaces, margin_ratio=0.1
+        )
+        second = fit_plane_motion_display_patch_envelope(
+            "motion-patch", motion, tuple(reversed(surfaces)), margin_ratio=0.1
+        )
+        first_json = canonical_plane_motion_patch_envelope_json(first)
+        self.assertEqual(
+            first_json,
+            canonical_plane_motion_patch_envelope_json(second),
+        )
+        parsed = json.loads(first_json)
+        self.assertEqual(parsed["schema"], PLANE_MOTION_PATCH_ENVELOPE_SCHEMA)
+        self.assertEqual(parsed["boundingRadius"], 3.0)
+        self.assertFalse(parsed["visibilityAuthoritative"])
+        self.assertEqual(
+            [item["surfaceId"] for item in parsed["surfaceRadii"]],
+            ["a", "z"],
+        )
 
 
 if __name__ == "__main__":
