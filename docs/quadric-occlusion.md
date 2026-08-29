@@ -733,7 +733,7 @@ visibility, or enter deterministic frame hashes.
 ## Preview/final profiles and capacity planning
 
 Camera, labels, and colour work should not pay release-render cost on every
-iteration. Two opt-in profiles collect the matching display and approximation
+iteration. Two named profiles collect the matching display and approximation
 settings without mutating Manim globals:
 
 | profile | Manim output | geometry settings | component shading |
@@ -762,9 +762,16 @@ with tempconfig(profile.manim_config()):
         section_id="lesson-section",
         plane=current_plane,
         projection=VIEW,
-        **profile.controller_kwargs(style=STYLE),
+        render_profile="preview",
+        style=STYLE,
     ).attach()
 ```
+
+The facade also accepts `render_profile="final"` or a custom immutable
+`QuadricRenderProfile`. Explicit `limits`, `max_chord_error`,
+`section_max_screen_error`, and `include_surface_boundaries` values override
+the matching profile defaults. Manim resolution remains in `tempconfig` or the
+CLI because the renderer exists before the controller.
 
 `QuadricCapacityPlanner` replaces one-size-fits-all capacity guesses with an
 offline deterministic scan. It drives the ordinary production controller, so
@@ -773,35 +780,26 @@ projection, dash generator, fixed slots, and rollback path. It does not own a
 second geometry implementation.
 
 ```python
-from manim import ValueTracker
-from polyhedron_visibility.quadrics import (
-    QUADRIC_FINAL_PROFILE,
-    QUADRIC_PREVIEW_PROFILE,
-    QuadricCapacityPlanner,
-    QuadricSection3D,
-)
+from manim import Scene
+from polyhedron_visibility.quadrics import QuadricCapacityPlanner, QuadricSection3D
 
-progress = ValueTracker(0.0)
+def scene_factory(progress):
+    return QuadricSection3D(
+        Scene(), surface=cone, section_id="lesson-section",
+        plane=lambda: plane_at(progress.get_value()),
+        projection=VIEW, render_profile="final",
+    )
 
-# Use preview geometry/error settings but generous fixed slots for this one
-# offline scan. The planner removes the excess from its recommendation.
-probe = QuadricSection3D(
-    self,
-    scheduled=scheduled,
-    progress=progress,
-    projection=VIEW,
-    **QUADRIC_PREVIEW_PROFILE.controller_kwargs(
-        style=STYLE,
-        limits=QUADRIC_FINAL_PROFILE.limits,
-    ),
-)
-plan = QuadricCapacityPlanner(probe, progress=progress).scan_schedule(
-    scheduled,
-    profile=QUADRIC_PREVIEW_PROFILE,
-    rate_function=linear,
-)
+plan = QuadricCapacityPlanner.scan(scene_factory, frames=range(0, 121))
+print(plan.summary())
 tight_limits = plan.recommended_limits
 ```
+
+The factory receives one normalized `ValueTracker`, is called exactly once,
+and returns an unattached controller or high-level facade. The listed frame
+indices are mapped linearly from progress `0` to `1`, so every sample uses the
+same fixed slots and production transaction path. A Chinese summary is
+available with `plan.summary(locale="zh-CN")`.
 
 The scan preserves the original tracker value, `scene.mobjects`, fixed slot
 identities, and attachment state. It records the peak active surface, curve,
@@ -814,7 +812,8 @@ source projection before its painted fragments are sliced, so the plan exposes
 both `maxSegmentsPerFragment` and `maxProjectedSourceSegments` and sizes the
 limit from the latter.
 
-`scan_schedule()` combines the selected profile's deterministic output-frame
+For analytic topology motion, construct the ordinary planner and use
+`scan_schedule()`. It combines the selected profile's deterministic output-frame
 grid with every analytic schedule knot, including tangencies and topology
 events. Supply the same easing function used by the Manim animation. The
 result explicitly says `continuousIntervalCertified=false`: it certifies the
@@ -823,6 +822,12 @@ them. For an unusual time map or manually driven tracker, pass the exact values
 to `scan()` instead. Missing required values, geometry ambiguity, or a probe
 capacity overflow aborts the plan; no partial or guessed recommendation is
 returned.
+
+The shorter product path, matching render commands, and the formal Preview /
+Final / Release-Evidence distinction are collected in the
+[finite-quadric authoring workflow](quadric-authoring-workflow.md). Existing
+`QuadricCapacityPlanner(controller, progress=tracker).scan(progresses)` calls
+remain supported.
 
 ## Unified semantic boundary visibility
 

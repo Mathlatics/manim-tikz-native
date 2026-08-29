@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+- let `QuadricSection3D` consume named Preview/Final render profiles directly;
+  add a one-factory capacity scan with deterministic human-readable summaries,
+  preserve the existing progress-scan and immutable limit APIs, and publish a
+  short moving-cone Quick Start plus the formal Preview/Final/Release-Evidence
+  authoring workflow;
+
 ## 0.1.1 - 2026-08-29
 
 - bypass pairwise solid-separation and inter-surface ordering work for the

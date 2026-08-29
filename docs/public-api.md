@@ -463,6 +463,8 @@ points are:
 - `build_section_transition_plan()` and
   `QuadricSectionTransition3D`;
 - `QuadricSection3D`, the preferred finite-section authoring facade;
+- `QUADRIC_PREVIEW_PROFILE`, `QUADRIC_FINAL_PROFILE`,
+  and `QuadricCapacityPlanner`;
 - `QuadricOcclusion3D`, `QuadricManimStyle`, `QuadricBoundaryStyle`, and
   `QuadricManimLimits`.
 
@@ -485,7 +487,8 @@ resolve in that registry; unknown identities and fixed dash-slot overflow fail
 before a frame is committed. Built-in IDs preserve the historical curve,
 surface-boundary, silhouette, and section-outline appearance.
 For ordinary section authoring, prefer `QuadricSection3D(surface=...,
-section_id=..., plane=...)`. It computes the complete finite section boundary,
+section_id=..., plane=..., render_profile="preview")`. It computes the
+complete finite section boundary,
 reserves every potential cap-chord identity, and passes the same current plane
 and active curves to the existing unified `QuadricOcclusion3D`. A plane
 callback supports fixed-topology motion. For a scheduled ellipse/parabola/
@@ -497,6 +500,17 @@ ink. This ordinary facade still rejects `OPEN_DOUBLE` and direct
 `ANALYTIC_DOUBLE` rendering at construction rather than after Manim slot
 allocation. Use the dedicated composite facade for the former. Neither mode
 creates a second renderer or a second rollback path.
+
+`render_profile="preview"` and `"final"` expand to the matching style,
+approximation, and fixed-capacity defaults inside this facade. Explicit
+capacity, error, and semantic-boundary values override profile defaults.
+Output resolution remains an
+explicit Manim CLI or `tempconfig` setting. For offline planning,
+`QuadricCapacityPlanner.scan(scene_factory, frames=...)` calls the factory once,
+drives one normalized tracker through the same fixed slots, and returns a
+human-readable `summary()` plus immutable `recommended_limits`. The legacy
+instance-level `planner.scan(progresses)` and analytic `scan_schedule()` forms
+remain available.
 
 Scheduled rigid motion may opt into `use_plane_patch_envelope=True`. This
 precomputes one fixed, display-only patch from a certified finite-solid radius

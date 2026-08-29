@@ -1,9 +1,9 @@
-"""Opt-in preview and final-render recipes for finite quadric scenes.
+"""Preview and final-render recipes for finite quadric scenes.
 
 The profiles collect display resolution and the matching Manim approximation
-limits in one immutable value.  They do not change global Manim configuration
-or a controller by themselves; authors explicitly consume ``manim_config()``
-and ``controller_kwargs()`` at the scene boundary.
+limits in one immutable value.  ``QuadricSection3D`` can consume a profile by
+name, while ``manim_config()`` remains the explicit authority for output
+resolution because Manim creates its renderer before a scene controller.
 """
 
 from __future__ import annotations
@@ -194,10 +194,39 @@ QUADRIC_RENDER_PROFILES: Mapping[str, QuadricRenderProfile] = MappingProxyType(
 )
 
 
+QuadricRenderProfileInput = QuadricRenderProfile | str | None
+
+
+def resolve_quadric_render_profile(
+    value: QuadricRenderProfileInput,
+) -> QuadricRenderProfile | None:
+    """Resolve a public profile name without changing global Manim state."""
+
+    if value is None:
+        return None
+    if isinstance(value, QuadricRenderProfile):
+        return value
+    if not isinstance(value, str):
+        raise TypeError(
+            "render_profile must be 'preview', 'final', a "
+            "QuadricRenderProfile, or None"
+        )
+    profile_id = value.strip().lower()
+    try:
+        return QUADRIC_RENDER_PROFILES[profile_id]
+    except KeyError as exc:
+        choices = ", ".join(sorted(QUADRIC_RENDER_PROFILES))
+        raise ValueError(
+            f"unknown quadric render profile {value!r}; choose {choices}"
+        ) from exc
+
+
 __all__ = [
     "QUADRIC_FINAL_PROFILE",
     "QUADRIC_PREVIEW_PROFILE",
     "QUADRIC_RENDER_PROFILE_SCHEMA",
     "QUADRIC_RENDER_PROFILES",
     "QuadricRenderProfile",
+    "QuadricRenderProfileInput",
+    "resolve_quadric_render_profile",
 ]

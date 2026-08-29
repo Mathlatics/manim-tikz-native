@@ -23,11 +23,55 @@ to SVG. Unsupported syntax is reported explicitly.
 [中文说明](README.zh-CN.md) · [Public API](docs/public-api.md) ·
 [Automatic occlusion](docs/automatic-occlusion.md) ·
 [Quadrics and conic sections](docs/quadric-occlusion.md) ·
+[Quadric quick start](docs/quadric-authoring-workflow.md) ·
 [Finite-cone section v1 contract](docs/quadric-section-v1-contract.md) ·
 [Fast and extended Cairo acceptance](docs/extended-quadric-ci.md) ·
 [Classroom cone-section gallery](examples/classroom_cone_sections/README.md) ·
 [Supported TikZ subset](docs/supported-tikz.md) ·
 [Source-authoritative projects](docs/source-authoritative-projects.md)
+
+## Cone-section quick start
+
+One high-level controller derives the complete moving section, hidden dashes,
+surface/plane order, and fixed-capacity slots. Ordinary authors do not need to
+manage curve IDs, cap-chord IDs, fragments, or painter bands.
+
+```python
+from math import pi
+from manim import Scene, ValueTracker, linear
+from polyhedron_visibility.quadrics import (
+    ConeSpec, QuadricManimStyle, QuadricSection3D, SectionPlane,
+)
+
+class ConeSectionQuickStart(Scene):
+    def construct(self):
+        progress = ValueTracker(0)
+        cone = ConeSpec("cone", (0, 0, -1.5), (0, 0, 1), pi / 6, (0, 4))
+        def plane():
+            return SectionPlane(
+                "cut", (0, 0, -1 + 2.7 * progress.get_value()),
+                (0.65, 0, 1), u_axis=(0, 1, 0),
+            )
+        QuadricSection3D(
+            self, surface=cone, section_id="cone-section", plane=plane,
+            paint_policy="depth_aware_diagrammatic", render_profile="preview",
+            style=QuadricManimStyle(surface_fill_opacity=.62),
+        ).attach()
+        self.play(progress.animate.set_value(1), run_time=4, rate_func=linear)
+```
+
+Render the [checked-in scene](examples/quadrics/quadric_section_quick_start.py)
+at the matching Preview output size:
+
+```bash
+manim -r 480,270 --fps 15 \
+  examples/quadrics/quadric_section_quick_start.py ConeSectionQuickStart
+```
+
+Change `render_profile` to `"final"` and render at 960x540, 30 fps for the
+classroom master. The separate
+[Preview / Final / Release-Evidence workflow](docs/quadric-authoring-workflow.md)
+also gives the one-call capacity-planning path.
 
 ## What it provides
 

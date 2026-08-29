@@ -13,8 +13,10 @@ from dataclasses import dataclass
 from hashlib import sha256
 import json
 from math import ceil, isfinite
+from operator import index as integer_index
 from typing import Callable, Sequence
 
+from manim import ValueTracker
 import numpy as np
 
 from .manim import (
@@ -26,7 +28,7 @@ from .plane_motion import (
     ScheduledSectionAnimation,
     canonical_plane_motion_schedule_json,
 )
-from .profiles import QuadricRenderProfile
+from .profiles import QUADRIC_RENDER_PROFILES, QuadricRenderProfile
 
 
 QUADRIC_CAPACITY_PLAN_SCHEMA = "manim-quadric-capacity-plan/v1"
@@ -66,6 +68,44 @@ def _canonical_progresses(values: Sequence[float]) -> tuple[float, ...]:
             "capacity planning requires at least one progress value"
         )
     return tuple(result)
+
+
+def _canonical_frame_indices(values: Sequence[int]) -> tuple[int, ...]:
+    if isinstance(values, (str, bytes)):
+        raise QuadricCapacityPlanningError(
+            "frames must contain non-negative integer frame indices"
+        )
+    result: set[int] = set()
+    for value in values:
+        if isinstance(value, bool):
+            raise QuadricCapacityPlanningError(
+                "frames must contain non-negative integer frame indices"
+            )
+        try:
+            frame = integer_index(value)
+        except TypeError as exc:
+            raise QuadricCapacityPlanningError(
+                "frames must contain non-negative integer frame indices"
+            ) from exc
+        if frame < 0:
+            raise QuadricCapacityPlanningError(
+                "frames must contain non-negative integer frame indices"
+            )
+        result.add(frame)
+    if not result:
+        raise QuadricCapacityPlanningError(
+            "capacity planning requires at least one frame"
+        )
+    return tuple(sorted(result))
+
+
+def _normalized_frame_progresses(frames: Sequence[int]) -> tuple[float, ...]:
+    values = _canonical_frame_indices(frames)
+    if len(values) == 1:
+        return (0.0,)
+    first = values[0]
+    span = values[-1] - first
+    return tuple((frame - first) / span for frame in values)
 
 
 def _contains_progress(values: Sequence[float], target: float) -> bool:
@@ -285,6 +325,56 @@ class QuadricCapacityPlan:
     continuous_interval_certified: bool = False
     schema: str = QUADRIC_CAPACITY_PLAN_SCHEMA
 
+    @property
+    def recommended_profile_id(self) -> str:
+        """Return the selected profile, or the smallest profile holding the plan."""
+
+        if self.profile_id in QUADRIC_RENDER_PROFILES:
+            assert self.profile_id is not None
+            return self.profile_id
+        required = self.recommended_limits
+        for profile_id in ("preview", "final"):
+            available = QUADRIC_RENDER_PROFILES[profile_id].limits
+            if all(
+                float(getattr(required, name)) <= float(getattr(available, name))
+                for name in QuadricManimLimits.__dataclass_fields__
+            ):
+                return profile_id
+        return "custom"
+
+    def summary(self, *, locale: str = "en") -> str:
+        """Return a compact deterministic summary intended for people."""
+
+        normalized_locale = locale.strip().lower().replace("_", "-")
+        peaks = self.peaks
+        if normalized_locale in ("zh", "zh-cn", "zh-hans"):
+            return "\n".join(
+                (
+                    f"扫描样本：{len(self.samples)} 帧（只认证这些帧）",
+                    f"边界源峰值：{peaks.active_source_count}",
+                    f"每源 fragment 峰值：{peaks.max_fragments_per_source}",
+                    f"每 fragment dash 峰值：{peaks.max_dashes_per_fragment}",
+                    f"平面 fragment 峰值：{peaks.plane_fragment_count}",
+                    f"射线分类峰值：{peaks.ray_classification_count}",
+                    f"预计固定 Mobject：{self.estimated_mobject_total}",
+                    f"建议 profile：{self.recommended_profile_id}",
+                )
+            )
+        if normalized_locale not in ("en", "en-us", "en-gb"):
+            raise ValueError("locale must be 'en' or 'zh-CN'")
+        return "\n".join(
+            (
+                f"Scanned samples: {len(self.samples)} frames (listed frames only)",
+                f"Peak boundary sources: {peaks.active_source_count}",
+                f"Peak fragments per source: {peaks.max_fragments_per_source}",
+                f"Peak dashes per fragment: {peaks.max_dashes_per_fragment}",
+                f"Peak plane fragments: {peaks.plane_fragment_count}",
+                f"Peak ray classifications: {peaks.ray_classification_count}",
+                f"Estimated fixed Mobjects: {self.estimated_mobject_total}",
+                f"Recommended profile: {self.recommended_profile_id}",
+            )
+        )
+
     def to_dict(self) -> dict[str, object]:
         limits = self.recommended_limits
         return {
@@ -494,6 +584,15 @@ def _recommended_limits(
     )
 
 
+class _CapacityScanDispatcher:
+    """Keep legacy instance scans and expose one class-level factory scan."""
+
+    def __get__(self, instance: object, owner: type) -> Callable[..., object]:
+        if instance is None:
+            return owner.scan_scene
+        return instance.scan_progresses
+
+
 class QuadricCapacityPlanner:
     """Scan a controller without rendering pixels and generate tight limits.
 
@@ -501,7 +600,15 @@ class QuadricCapacityPlanner:
     planner preserves its original value, fixed slot identities, and Scene
     ownership.  A controller supplied unattached is attached only for the scan
     and restored before the method returns.
+
+    ``QuadricCapacityPlanner.scan(scene_factory, frames=...)`` is the compact
+    authoring entry point.  The factory receives one normalized
+    :class:`~manim.ValueTracker` and returns an unattached controller or facade.
+    Existing code may continue to instantiate the planner and call
+    ``planner.scan(progresses)``.
     """
+
+    scan = _CapacityScanDispatcher()
 
     def __init__(self, controller: object, *, progress: object) -> None:
         self.controller = controller
@@ -536,7 +643,7 @@ class QuadricCapacityPlanner:
             ).encode("utf-8")
         ).hexdigest()
 
-    def scan(
+    def scan_progresses(
         self,
         progresses: Sequence[float],
         *,
@@ -553,6 +660,55 @@ class QuadricCapacityPlanner:
             schedule_digest=None,
             profile_id=None,
             frame_rate=None,
+        )
+
+    @classmethod
+    def scan_scene(
+        cls,
+        scene_factory: Callable[[ValueTracker], object],
+        *,
+        frames: Sequence[int],
+        headroom: QuadricCapacityHeadroom = QuadricCapacityHeadroom(),
+    ) -> QuadricCapacityPlan:
+        """Build one controller and scan normalized progress for ``frames``.
+
+        Frame indices are mapped linearly from the first listed frame to
+        progress ``0`` and from the last listed frame to progress ``1``.  The
+        factory is called exactly once, so all samples exercise the same fixed
+        Manim slots and the ordinary transactional update path.
+        """
+
+        if not callable(scene_factory):
+            raise TypeError("scene_factory must be callable")
+        progresses = _normalized_frame_progresses(frames)
+        progress = ValueTracker(0.0)
+        try:
+            controller = scene_factory(progress)
+        except Exception as exc:
+            raise QuadricCapacityPlanningError(
+                "scene_factory failed before capacity scanning: "
+                f"{type(exc).__name__}: {exc}"
+            ) from exc
+        try:
+            planner = cls(controller, progress=progress)
+        except Exception as exc:
+            raise QuadricCapacityPlanningError(
+                "scene_factory must return a supported quadric controller: "
+                f"{type(exc).__name__}: {exc}"
+            ) from exc
+        profile = getattr(controller, "render_profile", None)
+        if profile is not None and not isinstance(profile, QuadricRenderProfile):
+            raise QuadricCapacityPlanningError(
+                "controller render_profile is not a QuadricRenderProfile"
+            )
+        return planner._scan(
+            progresses,
+            required_progresses=(),
+            coverage="listed_frames_normalized_to_progress",
+            headroom=headroom,
+            schedule_digest=None,
+            profile_id=None if profile is None else profile.profile_id,
+            frame_rate=None if profile is None else profile.frame_rate,
         )
 
     def scan_schedule(
