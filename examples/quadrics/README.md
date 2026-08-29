@@ -16,6 +16,9 @@ manim -pql examples/quadrics/quadric_occlusion_demo.py \
   ConeSectionFamiliesDemo ConeSectionTopologyTransitionDemo \
   GlobalQuadricOcclusionDemo
 
+manim -r 480,270 --fps 15 \
+  examples/quadrics/quadric_section_quick_start.py ConeSectionQuickStart
+
 manim -pql examples/quadrics/unified_boundary_visibility_demo.py \
   UnifiedBoundaryVisibilityComparison
 
@@ -45,6 +48,8 @@ manim -ql --fps 8 \
 
 - `MovingSphereSectionDemo` recomputes a moving circular section and its
   front/hidden spans on every frame.
+- `ConeSectionQuickStart` is the short product example: one cone, one live
+  plane callback, one named render profile, and no manual curve/cap/slot IDs.
 - `ObliqueCylinderSectionDemo` rotates an infinite mathematical plane while
   keeping a stable finite ellipse branch.
 - `ConeSectionFamiliesDemo` shows finite ellipse, parabola, and hyperbola

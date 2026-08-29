@@ -17,6 +17,47 @@ TikZ 图压成一张 SVG 或图片。转换后的直线、面、点、标签仍�
 中的竖直轴在画面中保持竖直。作者仍可显式传入其他平行投影；从 TikZ 编译的
 图形则继续以 TikZ 源码中写明的投影为准。
 
+## 圆锥截口 Quick Start
+
+普通使用者只需要声明圆锥和当前截平面。高层控制器会自动生成完整截线、判断
+实线/虚线、排好曲面与平面图层，并在动画开始前建立固定容量对象；不需要手工管理
+曲线 ID、端盖弦 ID、fragment 槽或 painter band。
+
+```python
+from math import pi
+from manim import Scene, ValueTracker, linear
+from polyhedron_visibility.quadrics import (
+    ConeSpec, QuadricManimStyle, QuadricSection3D, SectionPlane,
+)
+
+class ConeSectionQuickStart(Scene):
+    def construct(self):
+        progress = ValueTracker(0)
+        cone = ConeSpec("cone", (0, 0, -1.5), (0, 0, 1), pi / 6, (0, 4))
+        def plane():
+            return SectionPlane(
+                "cut", (0, 0, -1 + 2.7 * progress.get_value()),
+                (0.65, 0, 1), u_axis=(0, 1, 0),
+            )
+        QuadricSection3D(
+            self, surface=cone, section_id="cone-section", plane=plane,
+            paint_policy="depth_aware_diagrammatic", render_profile="preview",
+            style=QuadricManimStyle(surface_fill_opacity=.62),
+        ).attach()
+        self.play(progress.animate.set_value(1), run_time=4, rate_func=linear)
+```
+
+直接渲染仓库中的完整示例：
+
+```bash
+manim -r 480,270 --fps 15 \
+  examples/quadrics/quadric_section_quick_start.py ConeSectionQuickStart
+```
+
+正式课堂视频只需把 `render_profile` 改为 `"final"`，并使用 960×540、30 fps。
+Preview、Final、Release/Evidence 三档的准确区别，以及一行容量扫描入口，见
+[圆锥截口创作工作流](docs/quadric-authoring-workflow.md)。
+
 现在还提供一套独立的二次曲面模块：在正交投影或一般平行投影下，支持有限
 球体、带端盖圆柱、封闭单锥、张口单锥壳和有限张口双锥壳。封闭单锥的底面是
 真正的平面端盖；张口圆锥只有侧面和开口圆周，不会把开口误当成底面。双锥壳
@@ -244,6 +285,7 @@ SVG 或位图。这样做的目的，是保证动画中的每个对象都可读�
 
 - [公共 API](docs/public-api.md)
 - [自动遮挡](docs/automatic-occlusion.md)
+- [圆锥截口创作工作流](docs/quadric-authoring-workflow.md)
 - [二次曲面与圆锥曲线遮挡](docs/quadric-occlusion.md)
 - [圆锥截口 v1 支持契约](docs/quadric-section-v1-contract.md)
 - [快速 CI 与扩展 Cairo 验收](docs/extended-quadric-ci.md)
