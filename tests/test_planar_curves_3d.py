@@ -141,6 +141,110 @@ class PlanarFrame3DTests(unittest.TestCase):
             atol=2.0e-4,
         )
 
+    def test_large_parameter_oblique_frames_accept_generated_points(self) -> None:
+        cases = (
+            (
+                (
+                    0.2928276418206841,
+                    -0.9698281416274352,
+                    -0.30029473129904827,
+                ),
+                (
+                    1.4132667908068457,
+                    0.03110221354462144,
+                    -0.04297320205816883,
+                ),
+                (
+                    -1.7089423051639878,
+                    -0.29089177871842153,
+                    -0.42087323476286687,
+                ),
+                (-806385650.80464, 345678239.24749994),
+                1.0e-4,
+            ),
+            (
+                (
+                    999999974545.5985,
+                    -1000000013149.2682,
+                    1000000065638.9359,
+                ),
+                (
+                    -0.16339442802267765,
+                    -0.017823951555097507,
+                    -2.0393041821364486,
+                ),
+                (
+                    0.050700283512341654,
+                    0.23215715911284332,
+                    0.7554161502498049,
+                ),
+                (980466899147.6327, -83336070685.51752),
+                1.0e-2,
+            ),
+        )
+        for index, (point, normal, u_axis, uv, off_plane) in enumerate(cases):
+            with self.subTest(index=index):
+                frame = PlanarFrame3D(
+                    f"large-parameter-plane-{index}",
+                    point,
+                    normal,
+                    u_axis,
+                )
+                generated = frame.point_from_coordinates(uv)
+
+                circle = Circle3DSpec(
+                    f"large-parameter-circle-{index}",
+                    frame,
+                    tuple(generated),
+                    1.0,
+                )
+                self.assertEqual(circle.radius, 1.0)
+
+                displaced = generated + off_plane * np.asarray(frame.normal)
+                with self.assertRaisesRegex(
+                    PlanarCurve3DContractError,
+                    "does not lie",
+                ):
+                    Circle3DSpec(
+                        f"off-plane-circle-{index}",
+                        frame,
+                        tuple(displaced),
+                        1.0,
+                    )
+
+    def test_feature_relative_membership_has_no_absolute_epsilon_floor(
+        self,
+    ) -> None:
+        frame = PlanarFrame3D(
+            "tiny-feature-plane",
+            (0.0, 0.0, 0.0),
+            (0.0, 0.0, 1.0),
+            (1.0, 0.0, 0.0),
+        )
+
+        with self.assertRaisesRegex(PlanarCurve3DContractError, "does not lie"):
+            Circle3DSpec(
+                "tiny-off-plane-circle",
+                frame,
+                (0.0, 0.0, 1.0e-14),
+                1.0e-15,
+            )
+
+        canonicalized = Circle3DSpec(
+            "within-relative-tolerance",
+            frame,
+            (0.0, 0.0, 0.5e-10),
+            1.0,
+        )
+        self.assertEqual(canonicalized.center, (0.0, 0.0, 0.0))
+        with self.assertRaisesRegex(PlanarCurve3DContractError, "does not lie"):
+            Circle3DSpec(
+                "outside-relative-tolerance",
+                frame,
+                (0.0, 0.0, 2.0e-10),
+                1.0,
+            )
+
 
 class PlanarCurve3DSpecTests(unittest.TestCase):
     def setUp(self) -> None:

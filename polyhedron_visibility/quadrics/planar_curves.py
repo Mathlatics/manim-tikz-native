@@ -155,6 +155,9 @@ def _plane_membership_epsilon(
     origin: tuple[float, float, float],
     delta: np.ndarray,
     normal: tuple[float, float, float],
+    u_axis: np.ndarray,
+    v_axis: np.ndarray,
+    coordinates: np.ndarray,
 ) -> float:
     normal_array = np.asarray(normal, dtype=float)
     dot_roundoff = (
@@ -173,11 +176,13 @@ def _plane_membership_epsilon(
             * np.abs(normal_array)
         )
     )
-    epsilon = max(
-        _ROUND_OFF_MULTIPLIER * float(np.finfo(float).eps),
-        dot_roundoff,
-        coordinate_quantization,
+    basis_orthogonality = (
+        abs(float(coordinates[0]))
+        * abs(float(np.dot(u_axis, normal_array)))
+        + abs(float(coordinates[1]))
+        * abs(float(np.dot(v_axis, normal_array)))
     )
+    epsilon = dot_roundoff + coordinate_quantization + basis_orthogonality
     if not isfinite(epsilon):
         raise PlanarCurve3DContractError(
             "plane membership cannot be certified at this coordinate scale"
@@ -276,11 +281,24 @@ class PlanarFrame3D:
             raise PlanarCurve3DContractError(
                 "plane membership is outside the certifiable finite range"
             )
+        u_axis = np.asarray(self.u_axis, dtype=float)
+        v_axis = np.asarray(self.v_axis, dtype=float)
+        coordinates = np.asarray(
+            (float(np.dot(delta, u_axis)), float(np.dot(delta, v_axis))),
+            dtype=float,
+        )
+        if not np.all(np.isfinite(coordinates)):
+            raise PlanarCurve3DContractError(
+                "plane coordinates are outside the certifiable finite range"
+            )
         epsilon = _plane_membership_epsilon(
             value,
             self.point,
             delta,
             self.normal,
+            u_axis,
+            v_axis,
+            coordinates,
         )
         if feature_scale is not None:
             scale = _positive(feature_scale, "plane feature_scale")
@@ -291,16 +309,6 @@ class PlanarFrame3D:
         if abs(distance) > epsilon:
             raise PlanarCurve3DContractError(
                 "point does not lie on its authored supporting plane"
-            )
-        u_axis = np.asarray(self.u_axis, dtype=float)
-        v_axis = np.asarray(self.v_axis, dtype=float)
-        coordinates = np.asarray(
-            (float(np.dot(delta, u_axis)), float(np.dot(delta, v_axis))),
-            dtype=float,
-        )
-        if not np.all(np.isfinite(coordinates)):
-            raise PlanarCurve3DContractError(
-                "plane coordinates are outside the certifiable finite range"
             )
         return (
             _canonical_float(coordinates[0]),
