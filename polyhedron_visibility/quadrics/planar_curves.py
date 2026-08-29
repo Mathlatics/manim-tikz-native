@@ -740,6 +740,16 @@ def _curve_center(
         return center.world_point, center.coordinates
 
     authored_center = _point3(center, f"{label} center")
+    if supplied_coordinates is not None:
+        certified = frame.certified_point(supplied_coordinates)
+        if certified.world_point == authored_center:
+            # Frozen dataclasses expose the normalized world center and the
+            # original plane coordinates as separate init fields.  A plain
+            # ``dataclasses.replace(curve)`` feeds both back into ``__init__``;
+            # retain the already-certified authorship evidence instead of
+            # deriving the coordinates a second time and demanding a bitwise
+            # inverse round trip from floating-point projection.
+            return authored_center, supplied_coordinates
     resolved_coordinates = frame.coordinates_in_plane(authored_center)
     if (
         supplied_coordinates is not None
