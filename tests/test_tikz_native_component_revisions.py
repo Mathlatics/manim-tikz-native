@@ -159,6 +159,30 @@ TIKZ_CONVEX_SECTION_3D_REVISION = (
     "source-sha256:b0623617cf182f17eaaa7ef260540c12749b532e0fbf9fe079316cfbc8da166a"
 )
 
+QUADRIC_GEOMETRY_RECURSIVE_COMPONENTS = frozenset(
+    {
+        COMPONENT_ASSET_COMPILER,
+        COMPONENT_EMBEDDED_MOTION_3D,
+        COMPONENT_GENERATED_OPEN_FACE_VISIBILITY_3D,
+        COMPONENT_GEOMETRY_RIG_2D,
+        COMPONENT_GEOMETRY_RIG_3D,
+        COMPONENT_MOTION_PREVIEW_2D,
+        COMPONENT_MOTION_PREVIEW_3D,
+        COMPONENT_NATIVE_MANIM_SOURCE_2D,
+        COMPONENT_NATIVE_MANIM_SOURCE_3D,
+        COMPONENT_NATIVE_MANIM_SOURCE_3D_V2,
+        COMPONENT_NATIVE_MANIM_SOURCE_3D_V3,
+        COMPONENT_NATIVE_RIG_2D,
+        COMPONENT_QUADRIC_GEOMETRY,
+        COMPONENT_QUADRIC_MANIM,
+        COMPONENT_QUADRIC_VISIBILITY,
+        COMPONENT_TIKZ_CONVEX_SECTION_3D,
+        COMPONENT_TIKZ_OPEN_FACE_STATIC_ASSET_3D,
+        COMPONENT_TIKZ_OPEN_FACE_VISIBILITY_3D,
+        COMPONENT_TIKZ_POLYHEDRON_VISIBILITY_3D,
+    }
+)
+
 
 def _owned_tool_path(relative: str) -> str:
     if relative.startswith("@tool/"):
@@ -571,11 +595,7 @@ print(json.dumps({
 
     def test_editing_quadric_geometry_changes_its_recursive_dependents(self) -> None:
         baseline = provider_component_revisions()
-        changed = {
-            COMPONENT_QUADRIC_GEOMETRY,
-            COMPONENT_QUADRIC_VISIBILITY,
-            COMPONENT_QUADRIC_MANIM,
-        }
+        changed = set(QUADRIC_GEOMETRY_RECURSIVE_COMPONENTS)
         for path in (
             "@tool/polyhedron_visibility/quadrics/sections.py",
             "@tool/polyhedron_visibility/quadrics/planar_curves.py",
@@ -702,11 +722,7 @@ print(json.dumps({
             "@tool/polyhedron_visibility/quadrics/transition.py"
         )
         components = mutated["components"]
-        changed = {
-            COMPONENT_QUADRIC_GEOMETRY,
-            COMPONENT_QUADRIC_VISIBILITY,
-            COMPONENT_QUADRIC_MANIM,
-        }
+        changed = set(QUADRIC_GEOMETRY_RECURSIVE_COMPONENTS)
         for component in changed:
             self.assertNotEqual(components[component], baseline[component])
         for component in baseline:
@@ -817,7 +833,7 @@ print(json.dumps({
         )
         components = mutated["components"]
         self.assertNotEqual(mutated["build"], provider_revision())
-        changed = {
+        changed = set(QUADRIC_GEOMETRY_RECURSIVE_COMPONENTS) | {
             COMPONENT_POLYHEDRON_VISIBILITY,
             COMPONENT_FACE_DEPTH_CUE_3D,
             COMPONENT_CONVEX_SECTION_3D,
@@ -826,15 +842,6 @@ print(json.dumps({
             COMPONENT_OPEN_FACE_VISIBILITY,
             COMPONENT_OPEN_FACE_UNIFIED_COMPOSITING,
             COMPONENT_OPEN_FACE_UNIFIED_MANIM,
-            COMPONENT_TIKZ_POLYHEDRON_VISIBILITY_3D,
-            COMPONENT_TIKZ_CONVEX_SECTION_3D,
-            COMPONENT_TIKZ_OPEN_FACE_VISIBILITY_3D,
-            COMPONENT_TIKZ_OPEN_FACE_STATIC_ASSET_3D,
-            COMPONENT_NATIVE_MANIM_SOURCE_3D_V3,
-            COMPONENT_GENERATED_OPEN_FACE_VISIBILITY_3D,
-            COMPONENT_QUADRIC_GEOMETRY,
-            COMPONENT_QUADRIC_VISIBILITY,
-            COMPONENT_QUADRIC_MANIM,
         }
         for component in changed:
             self.assertNotEqual(components[component], baseline[component])

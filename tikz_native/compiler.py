@@ -17,6 +17,19 @@ from .projection_3d import (
     tikz_three_d_view_basis,
 )
 from .occlusion_3d import OcclusionGeometryError, parallel_occlusion_interval
+from .planar_curve_style import (
+    PlanarCurveStyleError,
+    validate_planar_curve_stroke_style,
+)
+from .planar_curves_3d import (
+    PlanarTikz3DError,
+    circle_from_plane_coordinates,
+    ellipse_from_plane_coordinates,
+    frame_from_named_points,
+    planar_curve_geometry_payload,
+    planar_frame_geometry_payload,
+    restore_planar_frame_geometry,
+)
 
 
 TEX_PT_PER_CM = 72.27 / 2.54
@@ -178,6 +191,7 @@ class PictureSpec:
     coordinate_dependencies: dict[str, dict[str, Any]] = field(default_factory=dict)
     symbols: dict[str, float | Length] = field(default_factory=dict)
     named_paths: dict[str, NamedPathSpec] = field(default_factory=dict)
+    planar_frames_3d: dict[str, dict[str, Any]] = field(default_factory=dict)
     intersections: list[IntersectionSpec] = field(default_factory=list)
     objects: list[ObjectSpec] = field(default_factory=list)
     occlusion_relations: list[OcclusionRelationSpec] = field(default_factory=list)
@@ -281,7 +295,12 @@ def _extract_balanced(
     raise TikzNativeError(f"Unbalanced {opener}{closer} starting at {start}")
 
 
-def _split_top_level(text: str, delimiter: str = ",") -> list[str]:
+def _split_top_level(
+    text: str,
+    delimiter: str = ",",
+    *,
+    keep_empty: bool = False,
+) -> list[str]:
     parts: list[str] = []
     buffer: list[str] = []
     stack: list[str] = []
@@ -303,13 +322,13 @@ def _split_top_level(text: str, delimiter: str = ",") -> list[str]:
             stack.pop()
         if char == delimiter and not stack:
             part = "".join(buffer).strip()
-            if part:
+            if part or keep_empty:
                 parts.append(part)
             buffer = []
         else:
             buffer.append(char)
     part = "".join(buffer).strip()
-    if part:
+    if part or keep_empty:
         parts.append(part)
     return parts
 
@@ -480,6 +499,7 @@ class TikzNativeCompiler:
         self.macros = self._extract_zero_arg_gdefs(self.clean_text)
         self.entry_macro = entry_macro.strip().lstrip("\\") if entry_macro else None
         self._object_ids: dict[str, int] = {}
+        self._reserved_semantic_ids: set[str] = set()
         self._point_components: dict[tuple[str, str], float] = {}
 
     def compile(self) -> DocumentSpec:
@@ -1040,6 +1060,7 @@ class TikzNativeCompiler:
 
     def _compile_picture(self, source: _PictureSource) -> PictureSpec:
         self._object_ids = {}
+        self._reserved_semantic_ids = set()
         self._point_components = {}
         symbols: dict[str, float | Length] = {}
         if source.prelude:
@@ -1170,6 +1191,9 @@ class TikzNativeCompiler:
             "DrawSpaceLineBehindParallelogramFace": (2, 6),
             "DrawSpacePlaneInteraction": (6, 2),
             "DeclareSpaceHinge": (0, 4),
+            "DeclareSpacePlane": (0, 2),
+            "DrawSpaceCircle": (1, 4),
+            "DrawSpaceEllipse": (1, 5),
             "setSpaceOcclusionProjection": (0, 6),
         }
         for name, (optional_count, group_count) in signatures.items():
@@ -1249,7 +1273,8 @@ class TikzNativeCompiler:
             r"\\(coordinate|path|draw|filldraw|fill|node|pic|"
             r"DrawSpaceLineBehindHorizontalFace|DrawSpaceLineBehindTriFace|"
             r"DrawSpaceLineBehindParallelogramFace|DrawSpacePlaneInteraction|"
-            r"DeclareSpaceHinge|"
+            r"DeclareSpaceHinge|DeclareSpacePlane|"
+            r"DrawSpaceCircle|DrawSpaceEllipse|"
             r"setSpaceOcclusionProjection)\b",
             statement,
         )
@@ -1265,6 +1290,23 @@ class TikzNativeCompiler:
                 source_line,
             )
             return []
+        if command == "DeclareSpacePlane":
+            self._compile_space_plane_declaration(
+                statement,
+                picture,
+            )
+            return []
+        if command in {"DrawSpaceCircle", "DrawSpaceEllipse"}:
+            return [
+                self._compile_space_planar_curve(
+                    command,
+                    statement,
+                    picture,
+                    defaults,
+                    z_index,
+                    source_line,
+                )
+            ]
         if command.startswith("DrawSpace"):
             return self._compile_space_semantic_command(
                 command,
@@ -1329,6 +1371,153 @@ class TikzNativeCompiler:
         picture.coordinates[name] = coordinate.xy
         if coordinate.dependency is not None:
             picture.coordinate_dependencies[name] = coordinate.dependency
+
+    @staticmethod
+    def _portable_space_identity(value: str, label: str) -> str:
+        identity = value.strip()
+        if not re.fullmatch(r"[A-Za-z][A-Za-z0-9_.:-]{0,127}", identity):
+            raise TikzNativeError(
+                f"{label} must be a portable identifier"
+            )
+        return identity
+
+    def _compile_space_plane_declaration(
+        self,
+        statement: str,
+        picture: PictureSpec,
+    ) -> None:
+        if picture.dimension != 3 or picture.projection_3d is None:
+            raise TikzNativeError(
+                "DeclareSpacePlane requires a three-dimensional TikZ picture"
+            )
+        _optional, required = self._parse_semantic_arguments(
+            statement,
+            "DeclareSpacePlane",
+            [],
+            2,
+        )
+        plane_id = self._portable_space_identity(
+            required[0],
+            "DeclareSpacePlane plane ID",
+        )
+        if plane_id in picture.planar_frames_3d:
+            raise TikzNativeError(
+                f"duplicate DeclareSpacePlane plane ID: {plane_id}"
+            )
+        if any(item.id == plane_id for item in picture.objects):
+            raise TikzNativeError(
+                f"DeclareSpacePlane plane ID collides with curve ID: {plane_id}"
+            )
+        point_names = tuple(item.strip() for item in required[1].split("/"))
+        if len(point_names) != 3 or any(not item for item in point_names):
+            raise TikzNativeError(
+                "DeclareSpacePlane requires exactly three non-empty coordinate names O/U/V"
+            )
+        try:
+            frame = frame_from_named_points(
+                plane_id,
+                point_names,
+                picture.coordinates,
+            )
+            payload = planar_frame_geometry_payload(
+                frame,
+                point_names,
+            )
+        except PlanarTikz3DError as exc:
+            raise TikzNativeError(str(exc)) from exc
+        self._reserve_explicit_semantic_id(
+            plane_id,
+            "DeclareSpacePlane plane ID",
+        )
+        picture.planar_frames_3d[plane_id] = payload
+
+    def _compile_space_planar_curve(
+        self,
+        command: str,
+        statement: str,
+        picture: PictureSpec,
+        defaults: StyleSpec,
+        z_index: int,
+        source_line: int,
+    ) -> ObjectSpec:
+        if picture.dimension != 3 or picture.projection_3d is None:
+            raise TikzNativeError(
+                f"{command} requires a three-dimensional TikZ picture"
+            )
+        required_count = 4 if command == "DrawSpaceCircle" else 5
+        optional, required = self._parse_semantic_arguments(
+            statement,
+            command,
+            ["draw"],
+            required_count,
+        )
+        curve_id = self._portable_space_identity(
+            required[0],
+            f"{command} curve ID",
+        )
+        plane_id = required[1].strip()
+        if plane_id not in picture.planar_frames_3d:
+            raise TikzNativeError(
+                f"{command} references unknown plane ID: {plane_id}"
+            )
+        if curve_id in picture.planar_frames_3d or any(
+            item.id == curve_id for item in picture.objects
+        ):
+            raise TikzNativeError(
+                f"duplicate or colliding planar curve ID: {curve_id}"
+            )
+        coordinate_parts = _split_top_level(required[2], keep_empty=True)
+        if len(coordinate_parts) != 2 or any(
+            not item.strip() for item in coordinate_parts
+        ):
+            raise TikzNativeError(
+                f"{command} center must contain two comma-separated plane coordinates"
+            )
+        center_coordinates = tuple(
+            self._eval_expr(item, picture.symbols)
+            for item in coordinate_parts
+        )
+        style = self._parse_style(optional[0], "draw", defaults, picture)
+        try:
+            validate_planar_curve_stroke_style(style)
+            plane = restore_planar_frame_geometry(
+                picture.planar_frames_3d[plane_id],
+                expected_plane_id=plane_id,
+            )
+            if command == "DrawSpaceCircle":
+                curve = circle_from_plane_coordinates(
+                    curve_id,
+                    plane.frame,
+                    center_coordinates,
+                    self._eval_expr(required[3], picture.symbols),
+                )
+                kind = "planar_circle_3d"
+            else:
+                curve = ellipse_from_plane_coordinates(
+                    curve_id,
+                    plane.frame,
+                    center_coordinates,
+                    self._eval_expr(required[3], picture.symbols),
+                    self._eval_expr(required[4], picture.symbols),
+                )
+                kind = "planar_ellipse_3d"
+            geometry = planar_curve_geometry_payload(
+                plane.frame,
+                curve,
+                plane.plane_point_names,
+            )
+        except (PlanarCurveStyleError, PlanarTikz3DError) as exc:
+            raise TikzNativeError(str(exc)) from exc
+        self._reserve_explicit_semantic_id(curve_id, f"{command} curve ID")
+        return self._object(
+            curve_id,
+            kind,
+            geometry,
+            style,
+            z_index,
+            source_line,
+            statement,
+        )
 
     @staticmethod
     def _parse_semantic_arguments(
@@ -1780,11 +1969,12 @@ class TikzNativeCompiler:
             flags=re.DOTALL,
         )
         if ellipse_match:
+            center = self._parse_coord(ellipse_match.group(1).strip(), picture)
             if picture.dimension == 3:
                 raise TikzNativeError(
-                    "3D ellipse paths require an explicit semantic plane and are not supported"
+                    "3D named ellipses require an explicit supporting plane; "
+                    "use DeclareSpacePlane and DrawSpaceEllipse"
                 )
-            center = self._parse_coord(ellipse_match.group(1).strip(), picture)
             radii = dict(
                 part.split("=", 1)
                 for part in _split_top_level(ellipse_match.group(2))
@@ -1814,11 +2004,12 @@ class TikzNativeCompiler:
             flags=re.DOTALL,
         )
         if circle_match:
+            center = self._parse_coord(circle_match.group(1).strip(), picture)
             if picture.dimension == 3:
                 raise TikzNativeError(
-                    "3D circle paths require an explicit semantic plane and are not supported"
+                    "3D named circles require an explicit supporting plane; "
+                    "use DeclareSpacePlane and DrawSpaceCircle"
                 )
-            center = self._parse_coord(circle_match.group(1).strip(), picture)
             radius = self._eval_expr(circle_match.group(2), picture.symbols)
             if radius <= 0:
                 raise TikzNativeError("named circle radius must be positive")
@@ -2379,11 +2570,12 @@ class TikzNativeCompiler:
             flags=re.DOTALL,
         )
         if ellipse_match:
+            center = self._parse_coord(ellipse_match.group(1).strip(), picture)
             if picture.dimension == 3:
                 raise TikzNativeError(
-                    "3D ellipse paths require an explicit semantic plane and are not supported"
+                    "3D ellipse paths require an explicit supporting plane; "
+                    "use DeclareSpacePlane and DrawSpaceEllipse"
                 )
-            center = self._parse_coord(ellipse_match.group(1).strip(), picture)
             radii = dict(
                 part.split("=", 1) for part in _split_top_level(ellipse_match.group(2))
             )
@@ -2443,9 +2635,10 @@ class TikzNativeCompiler:
                     "center_name": center.name,
                     "radius": radius,
                 }
-            if picture.dimension == 3 and kind == "circle":
+            if picture.dimension == 3 and kind != "dot":
                 raise TikzNativeError(
-                    "3D circle paths require an explicit semantic plane and are not supported"
+                    "3D circle paths require an explicit supporting plane; "
+                    "use DeclareSpacePlane and DrawSpaceCircle"
                 )
             objects = [
                 self._object(
@@ -2978,9 +3171,21 @@ class TikzNativeCompiler:
     def _semantic_id(self, prefix: str, parts: Iterable[str | None]) -> str:
         core = ".".join(part for part in parts if part)
         base = f"{prefix}.{core}" if core else prefix
-        count = self._object_ids.get(base, 0) + 1
-        self._object_ids[base] = count
-        return base if count == 1 else f"{base}.{count}"
+        count = self._object_ids.get(base, 0)
+        while True:
+            count += 1
+            candidate = base if count == 1 else f"{base}.{count}"
+            if candidate not in self._reserved_semantic_ids:
+                self._object_ids[base] = count
+                self._reserved_semantic_ids.add(candidate)
+                return candidate
+
+    def _reserve_explicit_semantic_id(self, identity: str, label: str) -> None:
+        if identity in self._reserved_semantic_ids:
+            raise TikzNativeError(
+                f"duplicate or colliding {label}: {identity}"
+            )
+        self._reserved_semantic_ids.add(identity)
 
     @staticmethod
     def _object(

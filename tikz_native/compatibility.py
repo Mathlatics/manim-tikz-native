@@ -22,6 +22,8 @@ OBJECT_FEATURES = {
     "angle": "marker.angle",
     "angle_label": "marker.angle",
     "right_angle": "marker.right_angle",
+    "planar_circle_3d": "object.planar_circle_3d",
+    "planar_ellipse_3d": "object.planar_ellipse_3d",
 }
 
 DEPENDENCY_FEATURES = {
@@ -138,6 +140,11 @@ def audit_picture_compatibility(
 
     _add(counts, "relation.named_path", len(picture.named_paths))
     _add(counts, "relation.hinge_3d", len(picture.hinge_relations))
+    _add(
+        counts,
+        "geometry.planar_frame_3d",
+        len(getattr(picture, "planar_frames_3d", {})),
+    )
     for relation in picture.intersections:
         kinds = {
             picture.named_paths[relation.path_a].kind,

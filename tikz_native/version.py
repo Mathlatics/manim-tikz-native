@@ -115,7 +115,7 @@ _UNRELEASED_COMPONENT_REVISIONS: Final[dict[str, str]] = {
 
 _COMPONENT_DEFINITIONS: Final[dict[str, dict[str, tuple[str, ...]]]] = {
     COMPONENT_ASSET_COMPILER: {
-        "dependencies": (),
+        "dependencies": (COMPONENT_QUADRIC_GEOMETRY,),
         "files": (
             "animation.py",
             "bridge.py",
@@ -125,6 +125,9 @@ _COMPONENT_DEFINITIONS: Final[dict[str, dict[str, tuple[str, ...]]]] = {
             "macro_frontend.py",
             "manim_renderer.py",
             "occlusion_3d.py",
+            "planar_curve_projection.py",
+            "planar_curve_style.py",
+            "planar_curves_3d.py",
             "projection_3d.py",
             "provider.py",
             "schemas/asset-v1.schema.json",

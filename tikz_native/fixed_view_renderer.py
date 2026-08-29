@@ -3,10 +3,23 @@ from __future__ import annotations
 from collections.abc import Sequence
 
 import numpy as np
-from manim import RIGHT, UP
+from manim import Circle, Line, Mobject, ORIGIN, RIGHT, UP
 
-from .compiler import PictureSpec
+from polyhedron_visibility.quadrics.planar_curves import (
+    Circle3DSpec,
+    Ellipse3DSpec,
+)
+
+from .compiler import ObjectSpec, PictureSpec
 from .manim_renderer import NativeFigure, NativeManimRenderer
+from .planar_curve_projection import project_planar_curve_2d
+from .planar_curve_style import (
+    certify_planar_curve_affine_display,
+    certify_planar_curve_display_segment,
+    certify_planar_curve_display_scale,
+    validate_planar_curve_stroke_style,
+)
+from .planar_curves_3d import restore_registered_planar_curve_geometry
 from .projection_3d import project_point
 
 
@@ -28,6 +41,16 @@ class NativeFixedViewRenderer(NativeManimRenderer):
         if picture.dimension == 3 and picture.projection_3d is None:
             raise ValueError("fixed-view 3D picture has no TikZ projection")
         if picture.dimension == 3:
+            plane_less_curves = [
+                item.id
+                for item in picture.objects
+                if item.kind in {"circle", "ellipse"}
+            ]
+            if plane_less_curves:
+                raise ValueError(
+                    "fixed-view 3D renderer refuses plane-less circle/ellipse "
+                    "objects: " + ", ".join(plane_less_curves)
+                )
             unsupported_canvas_nodes = [
                 item.id
                 for item in picture.objects
@@ -40,6 +63,96 @@ class NativeFixedViewRenderer(NativeManimRenderer):
                     "canvas nodes: " + ", ".join(unsupported_canvas_nodes)
                 )
         return super().render(picture)
+
+    def _build(self, spec: ObjectSpec, picture: PictureSpec) -> Mobject:
+        if spec.kind in {"planar_circle_3d", "planar_ellipse_3d"}:
+            return self._build_planar_curve_3d(spec, picture)
+        return super()._build(spec, picture)
+
+    def _build_planar_curve_3d(
+        self,
+        spec: ObjectSpec,
+        picture: PictureSpec,
+    ) -> Mobject:
+        if picture.projection_3d is None:
+            raise ValueError("explicit 3D planar curve has no projection matrix")
+        validate_planar_curve_stroke_style(spec.style)
+        geometry = restore_registered_planar_curve_geometry(
+            spec.geometry,
+            picture.planar_frames_3d,
+            expected_curve_id=spec.id,
+        )
+        expected_type = (
+            Circle3DSpec
+            if spec.kind == "planar_circle_3d"
+            else Ellipse3DSpec
+        )
+        if not isinstance(geometry.curve, expected_type):
+            raise ValueError(
+                f"object kind {spec.kind!r} disagrees with its planar curve payload"
+            )
+        analytic = geometry.curve.lower_to_analytic_curve()
+        if not analytic.closed:
+            raise ValueError(
+                "explicit 3D planar curve v1 requires one full revolution"
+            )
+        projected = project_planar_curve_2d(
+            geometry.curve,
+            picture.projection_3d.matrix,
+        )
+        display_scale = certify_planar_curve_display_scale(
+            self.unit,
+            picture.scale,
+        )
+        if projected.rank == 1:
+            assert projected.segment_start_offset is not None
+            assert projected.segment_end_offset is not None
+            with np.errstate(over="ignore", invalid="ignore"):
+                screen_center = display_scale * np.asarray(
+                    projected.center,
+                    dtype=float,
+                )
+                start_offset = display_scale * np.asarray(
+                    projected.segment_start_offset,
+                    dtype=float,
+                )
+                end_offset = display_scale * np.asarray(
+                    projected.segment_end_offset,
+                    dtype=float,
+                )
+            screen_start, screen_end = certify_planar_curve_display_segment(
+                screen_center,
+                start_offset,
+                end_offset,
+            )
+            start = np.asarray((*screen_start, 0.0), dtype=float)
+            end = np.asarray((*screen_end, 0.0), dtype=float)
+            return Line(start, end, **self._line_kwargs(spec.style))
+
+        with np.errstate(over="ignore", invalid="ignore"):
+            basis = display_scale * projected.screen_basis
+            screen_center = display_scale * np.asarray(
+                projected.center,
+                dtype=float,
+            )
+        certify_planar_curve_affine_display(screen_center, basis)
+        center = np.asarray((*screen_center, 0.0), dtype=float)
+        transform = np.array(
+            (
+                (basis[0, 0], basis[0, 1], 0.0),
+                (basis[1, 0], basis[1, 1], 0.0),
+                (0.0, 0.0, 1.0),
+            ),
+            dtype=float,
+        )
+        curve = Circle(
+            radius=1.0,
+            fill_opacity=0.0,
+            **self._line_kwargs(spec.style),
+        )
+        curve.apply_matrix(transform, about_point=ORIGIN)
+        curve.shift(center)
+        return curve
 
     def point(
         self,
