@@ -71,6 +71,12 @@ to SVG. Unsupported syntax is reported explicitly.
   envelope instead of refitting the visible rectangle at every frame;
   `show_plane=False` deliberately disables the complete plane compositor, not
   only the visible patch;
+- explicit `QUADRIC_PREVIEW_PROFILE` and `QUADRIC_FINAL_PROFILE` recipes keep
+  480x270 composition work separate from 960x540 Cairo acceptance, while
+  `QuadricCapacityPlanner` scans the declared animation frames and analytic
+  schedule knots through the real controller, publishes fragment/dash/plane/
+  ray peaks, and generates a compact `QuadricManimLimits` without claiming a
+  continuous bound for unscanned progress values;
 - a sibling `CompositeQuadricSection3D` coordinator for one finite
   `OPEN_DOUBLE`: it expands the authored double shell into its two canonical
   nappes, reuses the ordinary one-surface section solver twice, paints the

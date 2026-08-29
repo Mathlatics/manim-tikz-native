@@ -460,7 +460,7 @@ For a rotating plane that changes conic family, use the scheduled transition
 controller:
 
 ```python
-from manim import ValueTracker
+from manim import ValueTracker, linear
 from polyhedron_visibility.quadrics import (
     QuadricSectionTransition3D,
     track_scheduled_plane_section,
@@ -729,6 +729,100 @@ subprocesses additionally publish a per-rendered-frame trace with the Cairo
 render duration. Timing values are machine-dependent and are therefore used for
 profiling and performance budgets only; they never select geometry, change
 visibility, or enter deterministic frame hashes.
+
+## Preview/final profiles and capacity planning
+
+Camera, labels, and colour work should not pay release-render cost on every
+iteration. Two opt-in profiles collect the matching display and approximation
+settings without mutating Manim globals:
+
+| profile | Manim output | geometry settings | component shading |
+| --- | --- | --- | --- |
+| `QUADRIC_PREVIEW_PROFILE` | 480x270, 15 fps | chord error `0.025`, section screen error `0.14`, 256 surface segments, 160 projected-source segments, 16 fragments/source, 48 dashes/fragment | disabled |
+| `QUADRIC_FINAL_PROFILE` | 960x540, 30 fps | chord error `0.001`, section screen error `0.08`, ordinary release limits | preserved |
+
+Preview mode still computes the true section curves, semantic surface/plane
+boundaries, visibility spans, and painter graph. It only uses a coarser bounded
+display approximation and removes the optional cone component-colour bands.
+It is therefore useful for composition work, but it is not final pixel
+acceptance.
+
+```python
+from manim import tempconfig
+from polyhedron_visibility.quadrics import (
+    QUADRIC_PREVIEW_PROFILE,
+    QuadricSection3D,
+)
+
+profile = QUADRIC_PREVIEW_PROFILE
+with tempconfig(profile.manim_config()):
+    controller = QuadricSection3D(
+        self,
+        surface=cone,
+        section_id="lesson-section",
+        plane=current_plane,
+        projection=VIEW,
+        **profile.controller_kwargs(style=STYLE),
+    ).attach()
+```
+
+`QuadricCapacityPlanner` replaces one-size-fits-all capacity guesses with an
+offline deterministic scan. It drives the ordinary production controller, so
+it reuses the real section solver, semantic-boundary compositor, adaptive
+projection, dash generator, fixed slots, and rollback path. It does not own a
+second geometry implementation.
+
+```python
+from manim import ValueTracker
+from polyhedron_visibility.quadrics import (
+    QUADRIC_FINAL_PROFILE,
+    QUADRIC_PREVIEW_PROFILE,
+    QuadricCapacityPlanner,
+    QuadricSection3D,
+)
+
+progress = ValueTracker(0.0)
+
+# Use preview geometry/error settings but generous fixed slots for this one
+# offline scan. The planner removes the excess from its recommendation.
+probe = QuadricSection3D(
+    self,
+    scheduled=scheduled,
+    progress=progress,
+    projection=VIEW,
+    **QUADRIC_PREVIEW_PROFILE.controller_kwargs(
+        style=STYLE,
+        limits=QUADRIC_FINAL_PROFILE.limits,
+    ),
+)
+plan = QuadricCapacityPlanner(probe, progress=progress).scan_schedule(
+    scheduled,
+    profile=QUADRIC_PREVIEW_PROFILE,
+    rate_function=linear,
+)
+tight_limits = plan.recommended_limits
+```
+
+The scan preserves the original tracker value, `scene.mobjects`, fixed slot
+identities, and attachment state. It records the peak active surface, curve,
+source, and fragment counts; maximum sliced-fragment segment and dash counts;
+the complete adaptive source-polyline segment count; projected fragment
+length; plane-fragment count; ray-classification count; and the exact Mobject
+family estimate for the recommended limits. The historical
+`max_segments_per_fragment` setting is actually passed to the one complete
+source projection before its painted fragments are sliced, so the plan exposes
+both `maxSegmentsPerFragment` and `maxProjectedSourceSegments` and sizes the
+limit from the latter.
+
+`scan_schedule()` combines the selected profile's deterministic output-frame
+grid with every analytic schedule knot, including tangencies and topology
+events. Supply the same easing function used by the Manim animation. The
+result explicitly says `continuousIntervalCertified=false`: it certifies the
+listed output frames and analytic knots, not unexamined real numbers between
+them. For an unusual time map or manually driven tracker, pass the exact values
+to `scan()` instead. Missing required values, geometry ambiguity, or a probe
+capacity overflow aborts the plan; no partial or guessed recommendation is
+returned.
 
 ## Unified semantic boundary visibility
 

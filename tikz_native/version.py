@@ -92,9 +92,9 @@ _PUBLIC_0_1_COMPONENT_REVISIONS: Final[dict[str, str]] = {
     COMPONENT_TIKZ_OPEN_FACE_STATIC_ASSET_3D: "source-sha256:f74e221297d3444a17b9165ae9759ae41ca4cf7bda013333e28ab3b9d157a54e",
     COMPONENT_GENERATED_OPEN_FACE_VISIBILITY_3D: "source-sha256:d75c0f26754b524da806a747ac91d43b8dec444343a8762fb9f6fe57fb81278b",
     COMPONENT_SOURCE_PROJECT_BUILD: "source-sha256:00579e342012a96443c098c7004be672d265d32fe6f82d66b0c6b11ba64305b7",
-    COMPONENT_QUADRIC_GEOMETRY: "source-sha256:2e9d35b85cc9ef169925d33f9d5995c7f8dc65030100d64cd9ea63555f7c0c51",
-    COMPONENT_QUADRIC_VISIBILITY: "source-sha256:a31a373ea119f350c3be9651f8f7908896a603e92f057c66a5f916c5e72cdb9c",
-    COMPONENT_QUADRIC_MANIM: "source-sha256:ddcf262647435e86ce368a3baf31eb0c44fcc42e904016b9f1806a111d78cbb3",
+    COMPONENT_QUADRIC_GEOMETRY: "source-sha256:2d70a1abb2f75a76896a072808fb00f8fe2df91f70b98f0fa2b65fe90a21a62c",
+    COMPONENT_QUADRIC_VISIBILITY: "source-sha256:e7f7a2a5dd28370daa45fb71404bc9b8866285f506eb37d828980908d5271262",
+    COMPONENT_QUADRIC_MANIM: "source-sha256:f25dfc6501a6f43c0402228a6c118512b08779f05385b8a8c24512fb0472e413",
 }
 
 
@@ -424,10 +424,12 @@ _COMPONENT_DEFINITIONS: Final[dict[str, dict[str, tuple[str, ...]]]] = {
         ),
         "files": (
             "@tool/polyhedron_visibility/quadrics/authoring.py",
+            "@tool/polyhedron_visibility/quadrics/capacity.py",
             "@tool/polyhedron_visibility/quadrics/composite_authoring.py",
             "@tool/polyhedron_visibility/quadrics/manim.py",
             "@tool/polyhedron_visibility/quadrics/manim_runtime.py",
             "@tool/polyhedron_visibility/quadrics/performance.py",
+            "@tool/polyhedron_visibility/quadrics/profiles.py",
             "@tool/polyhedron_visibility/quadrics/transition_manim.py",
         ),
     },
@@ -535,13 +537,13 @@ _DECLARED_IMPLEMENTATION_DIGESTS: Final[dict[str, str]] = {
         "00579e342012a96443c098c7004be672d265d32fe6f82d66b0c6b11ba64305b7"
     ),
     COMPONENT_QUADRIC_GEOMETRY: (
-        "2e9d35b85cc9ef169925d33f9d5995c7f8dc65030100d64cd9ea63555f7c0c51"
+        "2d70a1abb2f75a76896a072808fb00f8fe2df91f70b98f0fa2b65fe90a21a62c"
     ),
     COMPONENT_QUADRIC_VISIBILITY: (
-        "a31a373ea119f350c3be9651f8f7908896a603e92f057c66a5f916c5e72cdb9c"
+        "e7f7a2a5dd28370daa45fb71404bc9b8866285f506eb37d828980908d5271262"
     ),
     COMPONENT_QUADRIC_MANIM: (
-        "ddcf262647435e86ce368a3baf31eb0c44fcc42e904016b9f1806a111d78cbb3"
+        "f25dfc6501a6f43c0402228a6c118512b08779f05385b8a8c24512fb0472e413"
     ),
 }
 

@@ -473,6 +473,39 @@ _EXPORTS: Final[dict[str, tuple[str, str]]] = {
     "QuadricBoundaryStyle": (".manim", "QuadricBoundaryStyle"),
     "QuadricGeometryPrototype": (".manim", "QuadricGeometryPrototype"),
     "QuadricOcclusion3D": (".manim", "QuadricOcclusion3D"),
+    "estimate_quadric_mobject_count": (
+        ".manim",
+        "estimate_quadric_mobject_count",
+    ),
+    "QUADRIC_RENDER_PROFILE_SCHEMA": (
+        ".profiles",
+        "QUADRIC_RENDER_PROFILE_SCHEMA",
+    ),
+    "QUADRIC_PREVIEW_PROFILE": (".profiles", "QUADRIC_PREVIEW_PROFILE"),
+    "QUADRIC_FINAL_PROFILE": (".profiles", "QUADRIC_FINAL_PROFILE"),
+    "QUADRIC_RENDER_PROFILES": (".profiles", "QUADRIC_RENDER_PROFILES"),
+    "QuadricRenderProfile": (".profiles", "QuadricRenderProfile"),
+    "QUADRIC_CAPACITY_PLAN_SCHEMA": (
+        ".capacity",
+        "QUADRIC_CAPACITY_PLAN_SCHEMA",
+    ),
+    "QuadricCapacityHeadroom": (".capacity", "QuadricCapacityHeadroom"),
+    "QuadricCapacityPeaks": (".capacity", "QuadricCapacityPeaks"),
+    "QuadricCapacityPlan": (".capacity", "QuadricCapacityPlan"),
+    "QuadricCapacityPlanner": (".capacity", "QuadricCapacityPlanner"),
+    "QuadricCapacityPlanningError": (
+        ".capacity",
+        "QuadricCapacityPlanningError",
+    ),
+    "QuadricCapacitySample": (".capacity", "QuadricCapacitySample"),
+    "canonical_quadric_capacity_plan_json": (
+        ".capacity",
+        "canonical_quadric_capacity_plan_json",
+    ),
+    "scheduled_capacity_progresses": (
+        ".capacity",
+        "scheduled_capacity_progresses",
+    ),
     "PlaneInput": (".authoring", "PlaneInput"),
     "QuadricSection3D": (".authoring", "QuadricSection3D"),
     "CompositeQuadricSection3D": (
