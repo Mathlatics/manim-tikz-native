@@ -1,11 +1,11 @@
 {
   "schema": "manim-quadric-section-release-manifest/v1",
-  "release_id": "quadric-section-v1-capacity-planning-2026-08-29",
+  "release_id": "quadric-section-v1-v0.1.1-2026-08-29",
   "contract_id": "quadric-section-v1",
-  "implementation_base_commit": "5be43415901cfb892b4088733ac3737fcc10527d",
-  "implementation_head_commit": "573fa661d814e403ca65458b547df617de49cd33",
-  "implementation_tree_sha": "e3ee1ee164423d377acfaa35a7462511d94f8746",
-  "merged_main_commit": "ab2bb6acf3205050b3af6a3ef630c0035fef103d",
+  "implementation_base_commit": "b5c93d6d3633d5f5ab18fa0765e348e5ca5d3b40",
+  "implementation_head_commit": "da6dd19a17d4d8ae80afdb086b653e4625ff54bd",
+  "implementation_tree_sha": "cfb929391824966c6b2df0f0cd48e1e28a052380",
+  "merged_main_commit": "0e3cd778afdaf823631160fbda88583e47ddc62b",
   "components": {
     "quadric_geometry": {
       "contract_revision": "tikz-native-contract:quadric_geometry/v1",
@@ -21,7 +21,7 @@
     }
   },
   "build_artifacts": {
-    "source_date_epoch": 1787973625,
+    "source_date_epoch": 1787990145,
     "builder_python": "3.12.13",
     "build_frontend": "build 1.6.0",
     "build_backend": "setuptools 84.0.0",
@@ -29,12 +29,12 @@
     "build_isolation": false,
     "twine_check": "twine 7.0.0 passed",
     "wheel": {
-      "filename": "manim_tikz_native-0.1.0-py3-none-any.whl",
-      "sha256": "a968f2b398a17a8082f729fa1c6f925132b4e2f4511432ef34a3bac80bb502ad"
+      "filename": "manim_tikz_native-0.1.1-py3-none-any.whl",
+      "sha256": "cc1844b265b3fa8b4007d6717ca6f73bc6d549acd322a35c466c37be328b6fa2"
     },
     "sdist": {
-      "filename": "manim_tikz_native-0.1.0.tar.gz",
-      "sha256": "c4485a7823f064c5d71a391c9cb3f8cc08066005481f1d2cecfb4cfa40182959",
+      "filename": "manim_tikz_native-0.1.1.tar.gz",
+      "sha256": "d878e82772209178241d830c92b547454cfbdc69378f240248f9518cd9085d82",
       "normalization": "sorted regular files and links; USTAR; uid/gid 0; root owner/group; SOURCE_DATE_EPOCH mtime; gzip -n -9 equivalent; gzip OS byte 255"
     }
   },
