@@ -30,20 +30,50 @@ class ProjectionPreset:
     principal_point: np.ndarray = field(default_factory=lambda: np.zeros(2))
 
     def __post_init__(self) -> None:
-        matrix = np.asarray(self.matrix, dtype=float)
-        view_center = np.asarray(self.view_center, dtype=float)
-        principal_point = np.asarray(self.principal_point, dtype=float)
-        if matrix.shape != (3, 3) or abs(np.linalg.det(matrix)) < 1e-9:
-            raise ValueError("ProjectionPreset.matrix must be an invertible 3x3 matrix")
-        if not 0.0 <= self.perspective_strength <= 1.0:
-            raise ValueError("perspective_strength must be inside [0, 1]")
-        if self.focal_distance <= 0:
-            raise ValueError("focal_distance must be positive")
-        if view_center.shape != (3,):
-            raise ValueError("view_center must be a 3D vector")
-        if principal_point.shape != (2,):
-            raise ValueError("principal_point must be a 2D vector")
+        matrix = np.array(self.matrix, dtype=float, copy=True)
+        view_center = np.array(self.view_center, dtype=float, copy=True)
+        principal_point = np.array(self.principal_point, dtype=float, copy=True)
+        if matrix.shape != (3, 3) or not np.all(np.isfinite(matrix)):
+            raise ValueError("ProjectionPreset.matrix must be a finite invertible 3x3 matrix")
+
+        # Invertibility is a directional property.  Normalize every row before
+        # checking the determinant so a valid TikZ projection is not rejected
+        # merely because its authored screen units are tiny or huge.
+        row_scales = np.max(np.abs(matrix), axis=1)
+        if np.any(row_scales == 0.0) or not np.all(np.isfinite(row_scales)):
+            raise ValueError("ProjectionPreset.matrix must be a finite invertible 3x3 matrix")
+        normalized = matrix / row_scales[:, np.newaxis]
+        row_norms = np.linalg.norm(normalized, axis=1)
+        if np.any(row_norms == 0.0) or not np.all(np.isfinite(row_norms)):
+            raise ValueError("ProjectionPreset.matrix must be a finite invertible 3x3 matrix")
+        normalized /= row_norms[:, np.newaxis]
+        determinant = float(np.linalg.det(normalized))
+        if not np.isfinite(determinant) or abs(determinant) <= 1.0e-12:
+            raise ValueError("ProjectionPreset.matrix must be a finite invertible 3x3 matrix")
+
+        try:
+            perspective_strength = float(self.perspective_strength)
+            focal_distance = float(self.focal_distance)
+        except (TypeError, ValueError, OverflowError) as exc:
+            raise ValueError("projection scalar parameters must be finite numbers") from exc
+        if not np.isfinite(perspective_strength) or not 0.0 <= perspective_strength <= 1.0:
+            raise ValueError("perspective_strength must be a finite number inside [0, 1]")
+        if not np.isfinite(focal_distance) or focal_distance <= 0.0:
+            raise ValueError("focal_distance must be finite and positive")
+        if view_center.shape != (3,) or not np.all(np.isfinite(view_center)):
+            raise ValueError("view_center must be a finite 3D vector")
+        if principal_point.shape != (2,) or not np.all(np.isfinite(principal_point)):
+            raise ValueError("principal_point must be a finite 2D vector")
+
+        # ``frozen=True`` does not make NumPy buffers immutable by itself.
+        # Copy and freeze all arrays so caller-owned inputs and public presets
+        # cannot silently mutate a camera state after validation.
+        matrix.setflags(write=False)
+        view_center.setflags(write=False)
+        principal_point.setflags(write=False)
         object.__setattr__(self, "matrix", matrix)
+        object.__setattr__(self, "perspective_strength", perspective_strength)
+        object.__setattr__(self, "focal_distance", focal_distance)
         object.__setattr__(self, "view_center", view_center)
         object.__setattr__(self, "principal_point", principal_point)
 

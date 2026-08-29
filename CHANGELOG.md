@@ -9,6 +9,14 @@ All notable changes to this project will be documented in this file.
   preserve the existing progress-scan and immutable limit APIs, and publish a
   short moving-cone Quick Start plus the formal Preview/Final/Release-Evidence
   authoring workflow;
+- make TikZ and shared-occlusion 3D projection validation scale-invariant,
+  reject non-finite or ill-conditioned camera state, avoid overflow/underflow
+  while deriving view directions, and make validated camera presets immutable;
+- allocate non-overlapping deterministic painter z bands for distinct
+  source-project figure identities and reject contradictory or malformed
+  selections at source-project/direct 3D-rig boundaries;
+- fail closed on 3D circle/ellipse paths that have no explicit semantic
+  supporting plane instead of reporting them as supported until render time;
 
 ## 0.1.1 - 2026-08-29
 

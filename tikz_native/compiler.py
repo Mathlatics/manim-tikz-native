@@ -1780,6 +1780,10 @@ class TikzNativeCompiler:
             flags=re.DOTALL,
         )
         if ellipse_match:
+            if picture.dimension == 3:
+                raise TikzNativeError(
+                    "3D ellipse paths require an explicit semantic plane and are not supported"
+                )
             center = self._parse_coord(ellipse_match.group(1).strip(), picture)
             radii = dict(
                 part.split("=", 1)
@@ -1810,6 +1814,10 @@ class TikzNativeCompiler:
             flags=re.DOTALL,
         )
         if circle_match:
+            if picture.dimension == 3:
+                raise TikzNativeError(
+                    "3D circle paths require an explicit semantic plane and are not supported"
+                )
             center = self._parse_coord(circle_match.group(1).strip(), picture)
             radius = self._eval_expr(circle_match.group(2), picture.symbols)
             if radius <= 0:
@@ -2371,6 +2379,10 @@ class TikzNativeCompiler:
             flags=re.DOTALL,
         )
         if ellipse_match:
+            if picture.dimension == 3:
+                raise TikzNativeError(
+                    "3D ellipse paths require an explicit semantic plane and are not supported"
+                )
             center = self._parse_coord(ellipse_match.group(1).strip(), picture)
             radii = dict(
                 part.split("=", 1) for part in _split_top_level(ellipse_match.group(2))
@@ -2431,6 +2443,10 @@ class TikzNativeCompiler:
                     "center_name": center.name,
                     "radius": radius,
                 }
+            if picture.dimension == 3 and kind == "circle":
+                raise TikzNativeError(
+                    "3D circle paths require an explicit semantic plane and are not supported"
+                )
             objects = [
                 self._object(
                     self._semantic_id(kind, [center.name]),

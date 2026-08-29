@@ -284,6 +284,62 @@ class ParallelVisibilitySolverTests(unittest.TestCase):
         self.assertLess(interval[0], 0.3)
         self.assertGreater(interval[1], 0.7)
 
+    def test_parallel_view_projection_validation_is_scale_invariant(self) -> None:
+        for screen_scale in (1.0e-200, 1.0e-150, 1.0, 1.0e150, 1.0e200):
+            with self.subTest(screen_scale=screen_scale):
+                view = ParallelView.from_matrix(
+                    np.diag((screen_scale, screen_scale, 1.0))
+                )
+                np.testing.assert_allclose(
+                    view.view_direction,
+                    (0.0, 0.0, 1.0),
+                    rtol=0.0,
+                    atol=1.0e-15,
+                )
+
+        mixed = ParallelView.from_matrix(
+            np.diag((1.0e-200, 1.0e200, 1.0e-150))
+        )
+        np.testing.assert_allclose(
+            mixed.view_direction,
+            (0.0, 0.0, 1.0),
+            rtol=0.0,
+            atol=1.0e-15,
+        )
+
+    def test_scaled_parallel_projection_preserves_occlusion_interval(self) -> None:
+        start = (-2.0, 0.17, 0.0)
+        end = (2.0, -0.23, 0.0)
+        face = (
+            (-1.0, -1.0, 1.0),
+            (1.0, -1.0, 1.0),
+            (1.0, 1.0, 1.0),
+            (-1.0, 1.0, 1.0),
+        )
+        expected = segment_face_occlusion_interval(
+            start, end, face, ParallelView.from_matrix(IDENTITY_VIEW)
+        )
+        self.assertIsNotNone(expected)
+        for scales in (
+            (1.0e-200, 1.0e-150, 1.0e-100),
+            (1.0e150, 1.0e200, 1.0e175),
+            (1.0e-200, 1.0e200, 1.0e-150),
+        ):
+            with self.subTest(scales=scales):
+                actual = segment_face_occlusion_interval(
+                    start,
+                    end,
+                    face,
+                    ParallelView.from_matrix(np.diag(scales)),
+                )
+                np.testing.assert_allclose(actual, expected, rtol=0.0, atol=1.0e-12)
+
+    def test_parallel_view_rejects_nonfinite_projection_rows(self) -> None:
+        with self.assertRaisesRegex(SolverError, "finite 3x3"):
+            ParallelView.from_matrix(
+                ((np.nan, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0))
+            )
+
     def test_parallel_view_direct_constructor_cannot_bypass_matrix_contract(self) -> None:
         matrix = tuple(tuple(float(value) for value in row) for row in IDENTITY_VIEW)
         with self.assertRaisesRegex(SolverError, "view direction"):

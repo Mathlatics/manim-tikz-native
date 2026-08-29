@@ -176,7 +176,7 @@ class TikzNativeReadableManim3DV2Tests(unittest.TestCase):
         self.assertEqual(rig["status"], "ready")
         self.assertEqual(
             rig["nativeManimSource"]["sourceSha256"],
-            "2f2a7a6e6d24d3492ea6087a5a271e9f4b0d087812b0b434f12eed9384db7d9a",
+            "7904edbc0975fae18302298764e3df1bc9b387ff4eaea7daee05f23e98272fd9",
         )
         self.assertIsNotNone(rig["nativeManimSourceV2"])
 

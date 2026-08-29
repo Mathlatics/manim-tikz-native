@@ -9,10 +9,10 @@ is classified as dynamic-safe (A), static-safe (B), or unsupported (C).
 - named 2D and 3D coordinates;
 - numeric, side-effect-free macros in the controlled frontend;
 - interpolation, translation, projection, and explicit 3D hinge relations;
-- named paths for lines, circles, and ellipses;
+- named paths for lines, circles, and ellipses in 2D;
 - line-line and line-ellipse intersections with explicit path ordering;
-- lines, Stealth arrows, polygons, circles, ellipses, dots, labels, angle arcs,
-  and right-angle markers;
+- lines, Stealth arrows, polygons, dots, labels, angle arcs, and right-angle
+  markers in 2D/3D; circles and ellipses are currently native 2D objects only;
 - explicit line widths, dash patterns, xcolor mixes, opacity, and controlled
   font-size commands;
 - `3d view` and explicit TikZ x/y/z parallel-projection bases;
@@ -33,7 +33,8 @@ is classified as dynamic-safe (A), static-safe (B), or unsupported (C).
 - complex node shapes, automatic text wrapping, or TikZ matrices;
 - nested transformed scopes with inherited geometry and style;
 - arbitrary macros, conditionals, file access, or complex `pgfkeys`;
-- topology-changing intersections such as tangency merge/disappearance.
+- topology-changing intersections such as tangency merge/disappearance;
+- 3D circles or ellipses without an explicit semantic supporting plane.
 
 Unsupported syntax is reported with its source statement. Strict conversion
 stops; it never silently substitutes SVG, raster output, or an uneditable
