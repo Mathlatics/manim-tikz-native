@@ -310,8 +310,19 @@ def _spherical_bezier_matrix(source, control, target, alpha):
 def _polar_projection_parts(matrix):
     """Split an invertible projection into rotation and symmetric stretch."""
     value = np.asarray(matrix, dtype=float)
-    if value.shape != (3, 3) or abs(float(np.linalg.det(value))) <= 1e-9:
-        raise ValueError("local camera projection must be an invertible 3x3 matrix")
+    if value.shape != (3, 3) or not np.all(np.isfinite(value)):
+        raise ValueError("local camera projection must be a finite invertible 3x3 matrix")
+    row_scales = np.max(np.abs(value), axis=1)
+    if np.any(row_scales == 0.0) or not np.all(np.isfinite(row_scales)):
+        raise ValueError("local camera projection must be a finite invertible 3x3 matrix")
+    normalized = value / row_scales[:, np.newaxis]
+    row_norms = np.linalg.norm(normalized, axis=1)
+    if np.any(row_norms == 0.0) or not np.all(np.isfinite(row_norms)):
+        raise ValueError("local camera projection must be a finite invertible 3x3 matrix")
+    normalized /= row_norms[:, np.newaxis]
+    determinant = float(np.linalg.det(normalized))
+    if not np.isfinite(determinant) or abs(determinant) <= 1.0e-12:
+        raise ValueError("local camera projection must be a finite invertible 3x3 matrix")
     left, singular_values, right = np.linalg.svd(value)
     rotation = left @ right
     if float(np.linalg.det(rotation)) < 0.0:

@@ -13,8 +13,10 @@ from manim import Dot3D, Line, MathTex, ParametricFunction, Polygon, VGroup
 from tikz_native import compile_document
 from tikz_native.manim_renderer_3d import NativeManim3DRenderer
 from tikz_native.projection_3d import (
+    matrix_from_tikz_basis,
     matrix_from_tikz_three_d_view,
     project_point,
+    screen_delta_to_world,
 )
 
 
@@ -82,6 +84,89 @@ class TikzNative3DTests(unittest.TestCase):
         )
         self.assertAlmostEqual(actual[0], expected_u, places=12)
         self.assertAlmostEqual(actual[1], expected_v, places=12)
+
+    def test_projection_basis_independence_is_scale_invariant(self) -> None:
+        for scale in (1.0e-20, 1.0e150):
+            with self.subTest(scale=scale):
+                matrix = matrix_from_tikz_basis(
+                    (scale, 0.0),
+                    (0.0, scale),
+                    (0.0, 0.0),
+                )
+                np.testing.assert_allclose(
+                    np.asarray(matrix)[:2],
+                    np.array(
+                        [
+                            [scale, 0.0, 0.0],
+                            [0.0, scale, 0.0],
+                        ]
+                    ),
+                    rtol=0.0,
+                    atol=0.0,
+                )
+                np.testing.assert_allclose(
+                    matrix[2],
+                    (0.0, 0.0, 1.0),
+                    rtol=0.0,
+                    atol=1.0e-15,
+                )
+
+    def test_screen_delta_inverse_is_scale_invariant(self) -> None:
+        for scale in (1.0e-20, 1.0e150):
+            with self.subTest(scale=scale):
+                matrix = matrix_from_tikz_basis(
+                    (scale, 0.0),
+                    (0.0, scale),
+                    (0.0, 0.0),
+                )
+                displacement = screen_delta_to_world(
+                    matrix,
+                    2.0 * scale,
+                    -3.0 * scale,
+                )
+                np.testing.assert_allclose(
+                    displacement,
+                    (2.0, -3.0, 0.0),
+                    rtol=1.0e-12,
+                    atol=1.0e-12,
+                )
+
+    def test_screen_delta_inverse_matches_nonorthogonal_row_span(self) -> None:
+        matrix = matrix_from_tikz_basis(
+            (2.0, 1.0),
+            (1.0, 3.0),
+            (0.5, -0.4),
+        )
+        first = np.asarray(matrix[0])
+        second = np.asarray(matrix[1])
+        expected = 0.7 * first - 0.2 * second
+        displacement = screen_delta_to_world(
+            matrix,
+            float(np.dot(first, expected)),
+            float(np.dot(second, expected)),
+        )
+        np.testing.assert_allclose(
+            displacement,
+            expected,
+            rtol=1.0e-12,
+            atol=1.0e-12,
+        )
+
+    def test_nearly_parallel_projection_basis_is_rejected_relatively(self) -> None:
+        with self.assertRaisesRegex(ValueError, "线性相关"):
+            matrix_from_tikz_basis(
+                (1.0, 1.0),
+                (0.0, 1.0e-7),
+                (0.0, 0.0),
+            )
+
+    def test_nonfinite_projection_basis_is_rejected(self) -> None:
+        with self.assertRaisesRegex(ValueError, "有限非零向量"):
+            matrix_from_tikz_basis(
+                (math.nan, 0.0),
+                (0.0, 1.0),
+                (0.0, 0.0),
+            )
 
     def test_demo_compiles_to_native_semantic_inventory(self) -> None:
         self.assertFalse(self.picture.unsupported)
@@ -383,6 +468,50 @@ class TikzNative3DTests(unittest.TestCase):
             [(item.geometry["start_name"], item.geometry["end_name"]) for item in lines],
             [("A", "B"), ("C", "D")],
         )
+
+    def test_3d_circle_and_ellipse_fail_closed_until_a_plane_is_explicit(self) -> None:
+        cases = {
+            "circle": r"\draw (O) circle (1cm);",
+            "ellipse": r"\draw (O) ellipse [x radius=1, y radius=0.5];",
+        }
+        for kind, statement in cases.items():
+            with self.subTest(kind=kind):
+                source = rf"""
+\begin{{tikzpicture}}[space view={{(-0.35,-0.35),(1,0),(0,1)}}]
+  \coordinate (O) at (0,0,0);
+  {statement}
+\end{{tikzpicture}}
+"""
+                picture = compile_document(source_text=source).pictures[0]
+                self.assertFalse([item for item in picture.objects if item.kind == kind])
+                self.assertTrue(picture.unsupported)
+                self.assertIn("explicit semantic plane", picture.unsupported[0])
+
+        dot_source = r"""
+\begin{tikzpicture}[space view={(-0.35,-0.35),(1,0),(0,1)}]
+  \coordinate (O) at (0,0,0);
+  \fill (O) circle (1pt);
+\end{tikzpicture}
+"""
+        dot_picture = compile_document(source_text=dot_source).pictures[0]
+        self.assertFalse(dot_picture.unsupported)
+        self.assertEqual([item.kind for item in dot_picture.objects], ["dot"])
+
+        for name, path_statement in {
+            "circle": r"\path[name path=c] (O) circle (1);",
+            "ellipse": r"\path[name path=e] (O) ellipse [x radius=1, y radius=0.5];",
+        }.items():
+            with self.subTest(named_path=name):
+                source = rf"""
+\begin{{tikzpicture}}[space view={{(-0.35,-0.35),(1,0),(0,1)}}]
+  \coordinate (O) at (0,0,0);
+  {path_statement}
+\end{{tikzpicture}}
+"""
+                picture = compile_document(source_text=source).pictures[0]
+                self.assertFalse(picture.named_paths)
+                self.assertTrue(picture.unsupported)
+                self.assertIn("explicit semantic plane", picture.unsupported[0])
 
     def test_unknown_semantic_prefix_is_not_silently_skipped(self) -> None:
         source = r"""

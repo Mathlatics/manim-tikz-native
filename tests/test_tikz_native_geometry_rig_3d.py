@@ -338,6 +338,22 @@ class TikzNativeGeometryRig3DTests(unittest.TestCase):
             "restore_entry",
         )
 
+    def test_selection_rejects_object_ids_in_both_include_and_exclude(
+        self,
+    ) -> None:
+        selection = self._selection()
+        selection["include_object_ids"] = [
+            "plane_interaction_fill.A.B.Beta1.Beta0",
+            "line.M.N",
+        ]
+        selection["exclude_object_ids"] = ["line.M.N"]
+
+        with self.assertRaisesRegex(
+            ValueError,
+            "includes and excludes the same objects",
+        ):
+            analyze_geometry_rig_3d(self.picture, selection=selection)
+
     def test_nonorthogonal_tikz_entry_advertises_no_orbit_transition(self) -> None:
         picture = deepcopy(self.picture)
         picture.projection_3d.matrix = (

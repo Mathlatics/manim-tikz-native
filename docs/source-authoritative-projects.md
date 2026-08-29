@@ -154,6 +154,17 @@ silently reuse an output built under old rules.
 Use `tikz-native health` to inspect the current component render and contract
 revisions.
 
+When `renderIntent.painterZBand` is omitted, the Provider hashes the TikZ bytes,
+projection, `pictureIndex`, and `entryMacro` into one of 4096 deterministic
+slots. Motion, paint-policy, and selection-only edits retain that figure's slot.
+Each preferred slot is 1024 units wide and begins 2048 z-index units after the
+previous slot, so different slots cannot overlap even though managed-band bounds
+are inclusive. Generated scenes reserve the preferred band when the controller
+attaches. If another generated controller already occupies it, including after
+a true hash collision, the later controller is moved to the next available band
+instead of overlapping it. An explicit `painterZBand` sets the preferred band
+when authored figures need a coordinated starting range.
+
 ## Unified output, not automatic legacy fallback
 
 Source-authoritative builds generate open-face scenes against the current

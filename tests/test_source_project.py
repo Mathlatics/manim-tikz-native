@@ -32,6 +32,7 @@ from tikz_native.source_project import (
     SourceProjectError,
     build_project,
     clean_project,
+    derive_painter_z_band,
     load_source_project,
     main,
     provider_component_descriptor,
@@ -170,6 +171,49 @@ class SourceProjectTestCase(unittest.TestCase):
         )
         self.assertEqual(project.output_directory.resolve(), (self.root / ".derived").resolve())
         self.assertFalse(hasattr(project, "compositing_mode"))
+
+    def test_derived_painter_bands_do_not_overlap_across_distinct_hash_slots(
+        self,
+    ) -> None:
+        project = load_source_project(self.write_project())
+        first = derive_painter_z_band(project, b"source-0\n")
+        second = derive_painter_z_band(project, b"source-3\n")
+
+        self.assertNotEqual(first, second)
+        self.assertTrue(
+            first.maximum < second.minimum
+            or second.maximum < first.minimum
+        )
+
+    def test_selection_rejects_contradictory_object_ids(self) -> None:
+        project_path = self.write_project(
+            bridge=True,
+            extra={
+                "selection": {
+                    "include_object_ids": ["line.M.N"],
+                    "exclude_object_ids": ["line.M.N"],
+                }
+            },
+        )
+        with self.assertRaisesRegex(
+            SourceProjectError,
+            "includes and excludes the same objects",
+        ):
+            load_source_project(project_path)
+
+    def test_selection_rejects_whitespace_ids_and_descending_range(self) -> None:
+        for selection, message in (
+            ({"candidate_id": "   "}, "candidate_id"),
+            ({"include_object_ids": ["   "]}, "include_object_ids"),
+            ({"range": [2.0, 1.0]}, "increasing"),
+        ):
+            with self.subTest(selection=selection):
+                project_path = self.write_project(
+                    bridge=True,
+                    extra={"selection": selection},
+                )
+                with self.assertRaisesRegex(SourceProjectError, message):
+                    load_source_project(project_path)
 
     def test_rejects_persisted_implementation_mode_at_any_depth(self) -> None:
         project_path = self.write_project()
@@ -352,7 +396,7 @@ class SourceProjectTestCase(unittest.TestCase):
 
     def test_picture_entry_and_selection_have_narrow_invalidation(self) -> None:
         project_path = self.write_project(bridge=True)
-        self.build(project_path)
+        original = self.build(project_path)
 
         raw = json.loads(project_path.read_text(encoding="utf-8"))
         raw["pictureIndex"] = 2
@@ -361,6 +405,7 @@ class SourceProjectTestCase(unittest.TestCase):
         self.assertEqual(
             picture_changed.built, ("shape", "compositing", "generated_source")
         )
+        self.assertNotEqual(picture_changed.painter_z_band, original.painter_z_band)
 
         raw["entryMacro"] = "figureTwo"
         project_path.write_text(json.dumps(raw), encoding="utf-8")
@@ -368,12 +413,14 @@ class SourceProjectTestCase(unittest.TestCase):
         self.assertEqual(
             entry_changed.built, ("shape", "compositing", "generated_source")
         )
+        self.assertNotEqual(entry_changed.painter_z_band, picture_changed.painter_z_band)
 
         raw["selection"] = {"include_object_ids": ["edge.AB"]}
         project_path.write_text(json.dumps(raw), encoding="utf-8")
         selection_changed = self.build(project_path)
         self.assertEqual(selection_changed.reused, ("shape", "compositing"))
         self.assertEqual(selection_changed.built, ("generated_source",))
+        self.assertEqual(selection_changed.painter_z_band, entry_changed.painter_z_band)
 
     def test_hooks_and_bridge_template_change_only_generated_source(self) -> None:
         project_path = self.write_project(hooks=True, bridge=True)

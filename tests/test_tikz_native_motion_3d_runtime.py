@@ -204,6 +204,23 @@ class EmbeddedMotion3DRuntimeTests(unittest.TestCase):
             )
             self.assertEqual(member.z_index, state["zIndex"])
 
+    def test_local_projection_state_validation_is_scale_invariant_and_finite(self) -> None:
+        for scale in (1.0e-20, 1.0e150):
+            with self.subTest(scale=scale):
+                state = motion_3d_runtime._LocalProjectionState(
+                    np.diag((scale, scale, 1.0))
+                )
+                np.testing.assert_allclose(
+                    state.matrix(),
+                    np.diag((scale, scale, 1.0)),
+                    rtol=0.0,
+                    atol=0.0,
+                )
+        with self.assertRaisesRegex(EmbeddedMotion3DError, "finite and invertible"):
+            motion_3d_runtime._LocalProjectionState(
+                np.array(((np.nan, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0)))
+            )
+
     def test_uses_local_projection_and_restores_exact_input(self) -> None:
         figure, shape, motion, definition, manifest, revision = self.fixture()
         scene = _InstantScene()
