@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import json
-from math import acos, asinh, atan2, ceil, floor, isfinite, sqrt, tau
+from math import acos, asinh, atanh, atan2, ceil, floor, isfinite, sqrt, tau
 from typing import Mapping, Sequence
 
 import numpy as np
@@ -1950,6 +1950,100 @@ def _curve_interval(
     )
 
 
+def _projected_interval_bounds(
+    curve: AnalyticCurve3D,
+    view: ParallelView,
+) -> tuple[float, float, float, float]:
+    """Return an outward-rounded exact AABB for one finite curve interval.
+
+    The supported parameterizations have closed-form coordinate extrema.  No
+    sampled polyline is used here: a broad-phase rejection is allowed only
+    when these certified bounds are separated by more than the pair's screen
+    tolerance.
+    """
+
+    candidates = {float(curve.domain.start), float(curve.domain.end)}
+    screen = view.matrix[:2]
+
+    if isinstance(curve, SegmentCurve):
+        pass
+    else:
+        if isinstance(curve, EllipseArcCurve):
+            first = screen @ np.asarray(curve.first_axis, dtype=float)
+            second = screen @ np.asarray(curve.second_axis, dtype=float)
+            kind = ConicKind.ELLIPSE
+            branch_sign = 1
+        else:
+            _origin, world_first, world_second = _world_branch_geometry(curve)
+            first = screen @ world_first
+            second = screen @ world_second
+            kind = curve.parameterization.kind
+            branch_sign = curve.parameterization.branch_sign
+
+        if kind in {ConicKind.CIRCLE, ConicKind.ELLIPSE}:
+            for coordinate in range(2):
+                first_value = float(first[coordinate])
+                second_value = float(second[coordinate])
+                if first_value == 0.0 and second_value == 0.0:
+                    continue
+                base = atan2(second_value, first_value)
+                candidates.update(
+                    _parameters_in_angular_domain(base, curve, 0.0)
+                )
+                candidates.update(
+                    _parameters_in_angular_domain(base + 0.5 * tau, curve, 0.0)
+                )
+        elif kind is ConicKind.HYPERBOLA:
+            for coordinate in range(2):
+                denominator = branch_sign * float(first[coordinate])
+                numerator = -float(second[coordinate])
+                if denominator == 0.0:
+                    continue
+                ratio = numerator / denominator
+                if abs(ratio) < 1.0:
+                    parameter = atanh(ratio)
+                    if curve.domain.start <= parameter <= curve.domain.end:
+                        candidates.add(float(parameter))
+        elif kind is ConicKind.PARABOLA:
+            for coordinate in range(2):
+                quadratic = float(second[coordinate])
+                if quadratic == 0.0:
+                    continue
+                parameter = -float(first[coordinate]) / (2.0 * quadratic)
+                if curve.domain.start <= parameter <= curve.domain.end:
+                    candidates.add(float(parameter))
+
+    points = np.asarray(
+        [
+            screen @ np.asarray(curve.point(parameter), dtype=float)
+            for parameter in sorted(candidates)
+        ],
+        dtype=float,
+    )
+    minimum = np.nextafter(np.min(points, axis=0), -np.inf)
+    maximum = np.nextafter(np.max(points, axis=0), np.inf)
+    return (
+        float(minimum[0]),
+        float(maximum[0]),
+        float(minimum[1]),
+        float(maximum[1]),
+    )
+
+
+def _projected_bounds_are_disjoint(
+    first: tuple[float, float, float, float],
+    second: tuple[float, float, float, float],
+    *,
+    screen_epsilon: float,
+) -> bool:
+    return bool(
+        first[1] + screen_epsilon < second[0]
+        or second[1] + screen_epsilon < first[0]
+        or first[3] + screen_epsilon < second[2]
+        or second[3] + screen_epsilon < first[2]
+    )
+
+
 def compute_projected_curve_crossings(
     curves: Sequence[AnalyticCurve3D],
     view: ParallelView,
@@ -1990,6 +2084,35 @@ def compute_projected_curve_crossings(
         float(np.linalg.norm(screen_matrix, ord=2)),
     )
     result: list[ProjectedCurveCrossing] = []
+    projected_interval_cache: dict[
+        tuple[str, float, float],
+        tuple[
+            AnalyticCurve3D,
+            _ProjectedModel,
+            tuple[float, float, float, float],
+        ],
+    ] = {}
+
+    def projected_interval(
+        curve: AnalyticCurve3D,
+        interval: ParameterInterval,
+    ) -> tuple[
+        AnalyticCurve3D,
+        _ProjectedModel,
+        tuple[float, float, float, float],
+    ]:
+        key = (curve.curve_id, float(interval.start), float(interval.end))
+        cached = projected_interval_cache.get(key)
+        if cached is not None:
+            return cached
+        active = _curve_interval(curve, interval)
+        prepared = (
+            active,
+            _projected_model(active, view),
+            _projected_interval_bounds(active, view),
+        )
+        projected_interval_cache[key] = prepared
+        return prepared
 
     for first_index, first_curve in enumerate(items):
         for second_curve in items[first_index + 1 :]:
@@ -2019,21 +2142,31 @@ def compute_projected_curve_crossings(
                 )
 
             for first_interval in domains[first_curve.curve_id]:
-                first_active = _curve_interval(first_curve, first_interval)
-                first_model = _projected_model(first_active, view)
+                first_active, first_model, first_bounds = projected_interval(
+                    first_curve,
+                    first_interval,
+                )
                 for second_interval in domains[second_curve.curve_id]:
-                    second_active = _curve_interval(second_curve, second_interval)
-                    second_model = _projected_model(second_active, view)
-                    local_depth_epsilon = _pair_depth_epsilon(
-                        first_active,
-                        second_active,
-                        depth_row,
-                        resolved,
+                    second_active, second_model, second_bounds = projected_interval(
+                        second_curve,
+                        second_interval,
                     )
                     screen_epsilon = _pair_screen_epsilon(
                         first_model,
                         second_model,
                         view,
+                        resolved,
+                    )
+                    if _projected_bounds_are_disjoint(
+                        first_bounds,
+                        second_bounds,
+                        screen_epsilon=screen_epsilon,
+                    ):
+                        continue
+                    local_depth_epsilon = _pair_depth_epsilon(
+                        first_active,
+                        second_active,
+                        depth_row,
                         resolved,
                     )
                     tangency_epsilon = _pair_tangency_epsilon(
