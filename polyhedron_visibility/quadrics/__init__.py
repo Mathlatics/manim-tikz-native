@@ -152,18 +152,32 @@ _EXPORTS: Final[dict[str, tuple[str, str]]] = {
         "DEFAULT_PLANE_PATCH_MARGIN_RATIO",
     ),
     "FittedPlaneDisplayPatch": (".plane_patch", "FittedPlaneDisplayPatch"),
+    "PLANE_MOTION_PATCH_ENVELOPE_SCHEMA": (
+        ".plane_patch",
+        "PLANE_MOTION_PATCH_ENVELOPE_SCHEMA",
+    ),
     "PLANE_PATCH_FIT_SCHEMA": (".plane_patch", "PLANE_PATCH_FIT_SCHEMA"),
+    "PlaneMotionPatchEnvelope": (".plane_patch", "PlaneMotionPatchEnvelope"),
     "PlanePatchFitError": (".plane_patch", "PlanePatchFitError"),
+    "SurfaceMotionRadius": (".plane_patch", "SurfaceMotionRadius"),
     "SurfacePlaneExtents": (".plane_patch", "SurfacePlaneExtents"),
     "canonical_fitted_plane_display_patch_json": (
         ".plane_patch",
         "canonical_fitted_plane_display_patch_json",
+    ),
+    "canonical_plane_motion_patch_envelope_json": (
+        ".plane_patch",
+        "canonical_plane_motion_patch_envelope_json",
     ),
     "finite_surface_support_interval": (
         ".plane_patch",
         "finite_surface_support_interval",
     ),
     "fit_plane_display_patch": (".plane_patch", "fit_plane_display_patch"),
+    "fit_plane_motion_display_patch_envelope": (
+        ".plane_patch",
+        "fit_plane_motion_display_patch_envelope",
+    ),
     "PROJECTED_CURVE_CROSSING_SCHEMA": (
         ".curve_intersections",
         "PROJECTED_CURVE_CROSSING_SCHEMA",

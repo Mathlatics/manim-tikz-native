@@ -271,6 +271,38 @@ class QuadricSectionTransitionControllerTests(unittest.TestCase):
             atol=1.0e-12,
         )
 
+    def test_scheduled_motion_can_reuse_one_certified_plane_patch(self) -> None:
+        scheduled = _scheduled()
+        with patch(
+            "polyhedron_visibility.quadrics.manim.fit_plane_display_patch",
+            side_effect=AssertionError("dynamic patch fitting was entered"),
+        ):
+            controller = QuadricSectionTransition3D(
+                Scene(),
+                scheduled=scheduled,
+                progress=0.0,
+                projection=VIEW,
+                use_plane_patch_envelope=True,
+                limits=_limits(),
+            )
+            envelope = controller.plane_patch_envelope
+            self.assertIsNotNone(envelope)
+            assert envelope is not None
+            surface = scheduled.schedule.samples[0].surface
+            patches = tuple(
+                controller.controller._resolve_section_patch(
+                    surface,
+                    scheduled.schedule.motion.plane_at(progress),
+                )
+                for progress in (0.0, 0.25, 0.5, 0.75, 1.0)
+            )
+
+        self.assertTrue(all(item is envelope.patch for item in patches))
+        self.assertEqual(
+            {item.patch_id for item in patches},
+            {"plane:motion-display-patch"},
+        )
+
     def test_explicit_geometry_context_is_shared_by_live_frames(self) -> None:
         context = GeometryContext(screen_tolerance=1.0e-4)
         base = _scheduled()

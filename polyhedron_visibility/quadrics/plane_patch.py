@@ -29,9 +29,13 @@ from .contract import (
     SectionPlane,
     SphereSpec,
 )
+from .plane_motion import AxisAnglePlaneMotion
 
 
 PLANE_PATCH_FIT_SCHEMA = "manim-quadric-plane-patch-fit/v1"
+PLANE_MOTION_PATCH_ENVELOPE_SCHEMA = (
+    "manim-quadric-plane-motion-patch-envelope/v1"
+)
 DEFAULT_PLANE_PATCH_MARGIN_RATIO = 0.1
 
 
@@ -40,6 +44,31 @@ QuadricSurfaceSpec = SphereSpec | CylinderSpec | ConeSpec
 
 class PlanePatchFitError(ValueError):
     """A finite display rectangle cannot be certified without guessing."""
+
+
+@dataclass(frozen=True, slots=True)
+class SurfaceMotionRadius:
+    """Certified farthest distance of one finite solid from a motion pivot."""
+
+    surface_id: str
+    surface_kind: str
+    radius: float
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "surface_id", _identity(self.surface_id, "surface_id"))
+        if self.surface_kind not in {"sphere", "cylinder", "cone"}:
+            raise PlanePatchFitError("surface_kind must identify a supported quadric")
+        radius = _canonical_float(self.radius, "surface motion radius")
+        if radius <= 0.0:
+            raise PlanePatchFitError("surface motion radius must be positive")
+        object.__setattr__(self, "radius", radius)
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "surfaceId": self.surface_id,
+            "surfaceKind": self.surface_kind,
+            "radius": self.radius,
+        }
 
 
 def _canonical_float(value: object, label: str) -> float:
@@ -342,6 +371,193 @@ class FittedPlaneDisplayPatch:
         }
 
 
+def _surface_motion_radius(
+    surface: QuadricSurfaceSpec,
+    pivot: np.ndarray,
+) -> float:
+    """Return the exact farthest solid distance from one fixed point."""
+
+    if isinstance(surface, SphereSpec):
+        return float(
+            np.linalg.norm(np.asarray(surface.center, dtype=float) - pivot)
+        ) + surface.radius
+
+    axis = np.asarray(surface.frame.z_axis, dtype=float)
+    base = np.asarray(
+        surface.origin if isinstance(surface, CylinderSpec) else surface.apex,
+        dtype=float,
+    )
+    candidates: list[float] = []
+    for axial in surface.axial_range:
+        center_delta = base + axial * axis - pivot
+        axial_distance = float(np.dot(center_delta, axis))
+        radial_distance = float(
+            np.linalg.norm(center_delta - axial_distance * axis)
+        )
+        radius = (
+            surface.radius
+            if isinstance(surface, CylinderSpec)
+            else abs(axial) * surface.slope
+        )
+        candidates.append(
+            float(np.hypot(axial_distance, radial_distance + radius))
+        )
+    return max(candidates)
+
+
+@dataclass(frozen=True, slots=True)
+class PlaneMotionPatchEnvelope:
+    """One fixed display patch certified for a complete rigid plane motion."""
+
+    motion: AxisAnglePlaneMotion
+    patch: PlaneDisplayPatchSpec
+    surface_radii: tuple[SurfaceMotionRadius, ...]
+    bounding_radius: float
+    margin_ratio: float = DEFAULT_PLANE_PATCH_MARGIN_RATIO
+    visibility_authoritative: bool = False
+    schema: str = PLANE_MOTION_PATCH_ENVELOPE_SCHEMA
+
+    def __post_init__(self) -> None:
+        if self.schema != PLANE_MOTION_PATCH_ENVELOPE_SCHEMA:
+            raise PlanePatchFitError("invalid plane-motion patch-envelope schema")
+        if not isinstance(self.motion, AxisAnglePlaneMotion):
+            raise TypeError("motion must be an AxisAnglePlaneMotion")
+        if not isinstance(self.patch, PlaneDisplayPatchSpec):
+            raise TypeError("patch must be a PlaneDisplayPatchSpec")
+        if self.patch.plane_id != self.motion.base_plane.plane_id:
+            raise PlanePatchFitError("patch plane_id does not match the motion plane")
+        if not self.surface_radii or not all(
+            isinstance(item, SurfaceMotionRadius) for item in self.surface_radii
+        ):
+            raise TypeError("surface_radii must contain SurfaceMotionRadius values")
+        identities = tuple(item.surface_id for item in self.surface_radii)
+        if identities != tuple(sorted(identities)) or len(set(identities)) != len(
+            identities
+        ):
+            raise PlanePatchFitError(
+                "surface_radii must have unique, sorted surface identities"
+            )
+        bounding_radius = _canonical_float(
+            self.bounding_radius,
+            "motion bounding radius",
+        )
+        expected_radius = max(item.radius for item in self.surface_radii)
+        tolerance = 128.0 * np.finfo(float).eps * max(1.0, expected_radius)
+        if bounding_radius <= 0.0 or abs(bounding_radius - expected_radius) > tolerance:
+            raise PlanePatchFitError(
+                "bounding_radius must equal the largest certified surface radius"
+            )
+        margin = _non_negative(self.margin_ratio, "margin_ratio")
+        pivot = np.asarray(self.motion.axis_point, dtype=float)
+        base_plane = self.motion.base_plane
+        u_axis, v_axis, _normal = base_plane.basis
+        plane_offset = np.asarray(base_plane.point, dtype=float) - pivot
+        expected_center = (
+            -float(np.dot(u_axis, plane_offset)),
+            -float(np.dot(v_axis, plane_offset)),
+        )
+        expected_half_extent = bounding_radius * (1.0 + margin)
+        patch_scale = max(
+            1.0,
+            abs(expected_center[0]),
+            abs(expected_center[1]),
+            expected_half_extent,
+        )
+        patch_tolerance = 128.0 * np.finfo(float).eps * patch_scale
+        if not np.allclose(
+            self.patch.center_coordinates,
+            expected_center,
+            rtol=0.0,
+            atol=patch_tolerance,
+        ) or not np.allclose(
+            (self.patch.half_width, self.patch.half_height),
+            (expected_half_extent, expected_half_extent),
+            rtol=0.0,
+            atol=patch_tolerance,
+        ):
+            raise PlanePatchFitError(
+                "patch geometry does not match the certified motion envelope"
+            )
+        if self.visibility_authoritative is not False:
+            raise PlanePatchFitError(
+                "a motion patch envelope cannot be visibility-authoritative"
+            )
+        object.__setattr__(self, "bounding_radius", bounding_radius)
+        object.__setattr__(self, "margin_ratio", margin)
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "schema": self.schema,
+            "motion": self.motion.to_dict(),
+            "surfaceRadii": [item.to_dict() for item in self.surface_radii],
+            "boundingRadius": self.bounding_radius,
+            "marginRatio": self.margin_ratio,
+            "visibilityAuthoritative": self.visibility_authoritative,
+            "patch": _patch_dict(self.patch),
+        }
+
+
+def fit_plane_motion_display_patch_envelope(
+    patch_id: str,
+    motion: AxisAnglePlaneMotion,
+    surfaces: Sequence[QuadricSurfaceSpec],
+    *,
+    margin_ratio: float = DEFAULT_PLANE_PATCH_MARGIN_RATIO,
+) -> PlaneMotionPatchEnvelope:
+    """Fit one fixed patch that covers every plane pose in ``motion``.
+
+    Every finite solid is enclosed by its exact farthest radius about the
+    rotation pivot.  Rigidly rotating the plane basis therefore maps all
+    authored points into one fixed square in plane coordinates for the whole
+    schedule, including positions between authored keyframes.
+    """
+
+    if not isinstance(motion, AxisAnglePlaneMotion):
+        raise TypeError("motion must be an AxisAnglePlaneMotion")
+    margin = _non_negative(margin_ratio, "margin_ratio")
+    if isinstance(surfaces, (str, bytes)):
+        raise TypeError("surfaces must be a non-empty sequence of finite quadrics")
+    checked = tuple(_validate_surface(surface) for surface in surfaces)
+    if not checked:
+        raise PlanePatchFitError("surfaces must not be empty")
+    identities = tuple(surface.surface_id for surface in checked)
+    if len(set(identities)) != len(identities):
+        raise PlanePatchFitError("surface identities must be unique")
+
+    pivot = np.asarray(motion.axis_point, dtype=float)
+    radii = tuple(
+        SurfaceMotionRadius(
+            surface.surface_id,
+            _surface_kind(surface),
+            _surface_motion_radius(surface, pivot),
+        )
+        for surface in sorted(checked, key=lambda item: item.surface_id)
+    )
+    bounding_radius = max(item.radius for item in radii)
+    base_plane = motion.base_plane
+    u_axis, v_axis, _normal = base_plane.basis
+    plane_offset = np.asarray(base_plane.point, dtype=float) - pivot
+    center = (
+        -float(np.dot(u_axis, plane_offset)),
+        -float(np.dot(v_axis, plane_offset)),
+    )
+    half_extent = bounding_radius * (1.0 + margin)
+    patch = PlaneDisplayPatchSpec(
+        patch_id=_identity(patch_id, "patch_id"),
+        plane_id=base_plane.plane_id,
+        half_width=half_extent,
+        half_height=half_extent,
+        center_coordinates=center,
+    )
+    return PlaneMotionPatchEnvelope(
+        motion=motion,
+        patch=patch,
+        surface_radii=radii,
+        bounding_radius=bounding_radius,
+        margin_ratio=margin,
+    )
+
+
 def fit_plane_display_patch(
     patch_id: str,
     plane: SectionPlane,
@@ -438,13 +654,32 @@ def canonical_fitted_plane_display_patch_json(
     )
 
 
+def canonical_plane_motion_patch_envelope_json(
+    envelope: PlaneMotionPatchEnvelope,
+) -> str:
+    if not isinstance(envelope, PlaneMotionPatchEnvelope):
+        raise TypeError("envelope must be a PlaneMotionPatchEnvelope")
+    return json.dumps(
+        envelope.to_dict(),
+        ensure_ascii=False,
+        allow_nan=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+
+
 __all__ = [
     "DEFAULT_PLANE_PATCH_MARGIN_RATIO",
     "FittedPlaneDisplayPatch",
+    "PLANE_MOTION_PATCH_ENVELOPE_SCHEMA",
     "PLANE_PATCH_FIT_SCHEMA",
+    "PlaneMotionPatchEnvelope",
     "PlanePatchFitError",
+    "SurfaceMotionRadius",
     "SurfacePlaneExtents",
     "canonical_fitted_plane_display_patch_json",
+    "canonical_plane_motion_patch_envelope_json",
     "finite_surface_support_interval",
+    "fit_plane_motion_display_patch_envelope",
     "fit_plane_display_patch",
 ]

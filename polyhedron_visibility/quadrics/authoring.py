@@ -129,6 +129,7 @@ class QuadricSection3D:
         draw_section_boundary: bool = True,
         show_plane: bool = True,
         plane_patch_margin: float = 0.08,
+        use_plane_patch_envelope: bool = False,
         section_max_screen_error: float = 0.08,
         section_compositing_limits: QuadricSectionCompositingLimits = (
             QUADRIC_SECTION_COMPOSITING_LIMITS
@@ -146,6 +147,8 @@ class QuadricSection3D:
             raise TypeError("draw_section_boundary must be a bool")
         if not isinstance(show_plane, bool):
             raise TypeError("show_plane must be a bool")
+        if not isinstance(use_plane_patch_envelope, bool):
+            raise TypeError("use_plane_patch_envelope must be a bool")
         self.scene = scene
         self.draw_section_boundary = draw_section_boundary
         self.show_plane = show_plane
@@ -214,6 +217,7 @@ class QuadricSection3D:
                 draw_section_boundary=draw_section_boundary,
                 show_plane=show_plane,
                 plane_patch_margin=plane_patch_margin,
+                use_plane_patch_envelope=use_plane_patch_envelope,
                 boundary_visibility_mode="unified",
                 **common,
             )
@@ -223,6 +227,10 @@ class QuadricSection3D:
         if progress is not _UNSET:
             raise QuadricSectionAuthoringError(
                 "progress is only valid together with scheduled"
+            )
+        if use_plane_patch_envelope:
+            raise QuadricSectionAuthoringError(
+                "use_plane_patch_envelope requires scheduled mode"
             )
         missing = tuple(
             name

@@ -469,6 +469,22 @@ class QuadricSectionAuthoringTests(unittest.TestCase):
             "requires progress",
         ):
             QuadricSection3D(Scene(), scheduled=_scheduled())
+        with self.assertRaisesRegex(
+            QuadricSectionAuthoringError,
+            "requires scheduled mode",
+        ):
+            QuadricSection3D(
+                Scene(),
+                surface=_cone(),
+                section_id="section",
+                plane=SectionPlane(
+                    "plane",
+                    (0.0, 0.0, 0.2),
+                    (0.0, 0.0, 1.0),
+                    u_axis=(1.0, 0.0, 0.0),
+                ),
+                use_plane_patch_envelope=True,
+            )
 
     def test_facade_rejects_double_cone_section_models_before_scene_mutation(
         self,
