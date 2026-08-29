@@ -40,6 +40,7 @@ _EXPORTS: Final[dict[str, tuple[str, str]]] = {
     "PointMarker3D": (".curves", "PointMarker3D"),
     "SegmentCurve": (".curves", "SegmentCurve"),
     "PLANAR_FRAME_3D_SCHEMA": (".planar_curves", "PLANAR_FRAME_3D_SCHEMA"),
+    "PLANAR_POINT_3D_SCHEMA": (".planar_curves", "PLANAR_POINT_3D_SCHEMA"),
     "PLANAR_CURVE_3D_SCHEMA": (".planar_curves", "PLANAR_CURVE_3D_SCHEMA"),
     "PLANAR_CURVE_SCENE_3D_SCHEMA": (
         ".planar_curves",
@@ -50,6 +51,7 @@ _EXPORTS: Final[dict[str, tuple[str, str]]] = {
         "PlanarCurve3DContractError",
     ),
     "PlanarFrame3D": (".planar_curves", "PlanarFrame3D"),
+    "PlanarPoint3D": (".planar_curves", "PlanarPoint3D"),
     "Circle3DSpec": (".planar_curves", "Circle3DSpec"),
     "Ellipse3DSpec": (".planar_curves", "Ellipse3DSpec"),
     "PlanarCurve3DSpec": (".planar_curves", "PlanarCurve3DSpec"),

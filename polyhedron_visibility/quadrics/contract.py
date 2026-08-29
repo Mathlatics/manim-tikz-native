@@ -229,8 +229,9 @@ class PlanarCapSpec:
     radius: float
     radial_axis: tuple[float, float, float] | None = None
     role: Literal["cap_min", "cap_max"] = "cap_max"
-    _planar_frame: PlanarFrame3D = field(
-        init=False,
+    _planar_frame: PlanarFrame3D | None = field(
+        default=None,
+        kw_only=True,
         repr=False,
         compare=False,
     )
@@ -247,10 +248,26 @@ class PlanarCapSpec:
         )
         if self.role not in {"cap_min", "cap_max"}:
             raise QuadricContractError("cap role must be 'cap_min' or 'cap_max'")
-        try:
-            planar_frame = PlanarFrame3D(cap_id, center, normal, radial)
-        except PlanarCurve3DContractError as exc:
-            raise QuadricContractError(f"invalid cap frame: {exc}") from exc
+        if self._planar_frame is not None and not isinstance(
+            self._planar_frame,
+            PlanarFrame3D,
+        ):
+            raise TypeError("_planar_frame must be a PlanarFrame3D")
+        reuse_frame = (
+            self._planar_frame is not None
+            and self._planar_frame.frame_id == cap_id
+            and self._planar_frame.point == center
+            and self._planar_frame.normal == normal
+            and self._planar_frame.u_axis == radial
+        )
+        if not reuse_frame:
+            try:
+                planar_frame = PlanarFrame3D(cap_id, center, normal, radial)
+            except PlanarCurve3DContractError as exc:
+                raise QuadricContractError(f"invalid cap frame: {exc}") from exc
+        else:
+            planar_frame = self._planar_frame
+            assert planar_frame is not None
         object.__setattr__(self, "cap_id", cap_id)
         object.__setattr__(self, "parent_surface_id", parent_id)
         object.__setattr__(self, "center", center)
@@ -261,21 +278,22 @@ class PlanarCapSpec:
 
     @property
     def frame(self) -> AffineFrame3D:
-        return self._planar_frame.affine_frame
+        return self.planar_frame.affine_frame
 
     @property
     def planar_frame(self) -> PlanarFrame3D:
         """Return the shared authored-plane contract for this terminal disk."""
 
+        assert self._planar_frame is not None
         return self._planar_frame
 
     def boundary_circle(self, curve_id: str) -> Circle3DSpec:
         """Describe the cap rim without introducing another curve runtime."""
 
-        return Circle3DSpec(
+        return Circle3DSpec.from_plane_coordinates(
             curve_id,
-            self._planar_frame,
-            self.center,
+            self.planar_frame,
+            (0.0, 0.0),
             self.radius,
         )
 
@@ -355,8 +373,9 @@ class CircularTrimRimSpec:
     radius: float
     radial_axis: tuple[float, float, float] | None = None
     role: Literal["trim_min", "trim_max"] = "trim_max"
-    _planar_frame: PlanarFrame3D = field(
-        init=False,
+    _planar_frame: PlanarFrame3D | None = field(
+        default=None,
+        kw_only=True,
         repr=False,
         compare=False,
     )
@@ -375,10 +394,26 @@ class CircularTrimRimSpec:
             raise QuadricContractError(
                 "trim-rim role must be 'trim_min' or 'trim_max'"
             )
-        try:
-            planar_frame = PlanarFrame3D(rim_id, center, normal, radial)
-        except PlanarCurve3DContractError as exc:
-            raise QuadricContractError(f"invalid trim rim frame: {exc}") from exc
+        if self._planar_frame is not None and not isinstance(
+            self._planar_frame,
+            PlanarFrame3D,
+        ):
+            raise TypeError("_planar_frame must be a PlanarFrame3D")
+        reuse_frame = (
+            self._planar_frame is not None
+            and self._planar_frame.frame_id == rim_id
+            and self._planar_frame.point == center
+            and self._planar_frame.normal == normal
+            and self._planar_frame.u_axis == radial
+        )
+        if not reuse_frame:
+            try:
+                planar_frame = PlanarFrame3D(rim_id, center, normal, radial)
+            except PlanarCurve3DContractError as exc:
+                raise QuadricContractError(f"invalid trim rim frame: {exc}") from exc
+        else:
+            planar_frame = self._planar_frame
+            assert planar_frame is not None
         object.__setattr__(self, "rim_id", rim_id)
         object.__setattr__(self, "parent_surface_id", parent_id)
         object.__setattr__(self, "center", center)
@@ -389,21 +424,22 @@ class CircularTrimRimSpec:
 
     @property
     def frame(self) -> AffineFrame3D:
-        return self._planar_frame.affine_frame
+        return self.planar_frame.affine_frame
 
     @property
     def planar_frame(self) -> PlanarFrame3D:
         """Return the shared authored-plane contract for this open rim."""
 
+        assert self._planar_frame is not None
         return self._planar_frame
 
     def boundary_circle(self, curve_id: str) -> Circle3DSpec:
         """Describe the trim rim without inventing a closing disk."""
 
-        return Circle3DSpec(
+        return Circle3DSpec.from_plane_coordinates(
             curve_id,
-            self._planar_frame,
-            self.center,
+            self.planar_frame,
+            (0.0, 0.0),
             self.radius,
         )
 

@@ -699,8 +699,8 @@ points are:
 
 - `SphereSpec`, `CylinderSpec`, `ConeSpec`, `ConeModel`,
   `CircularTrimRimSpec`, and `SectionPlane`;
-- `PlanarFrame3D`, `Circle3DSpec`, `Ellipse3DSpec`, and
-  `PlanarCurveScene3D`;
+- `PlanarFrame3D`, `PlanarPoint3D`, `Circle3DSpec`, `Ellipse3DSpec`,
+  and `PlanarCurveScene3D`;
 - `build_cone_projection_layers()`, `ConeProjectionLayers`, and
   `ConeProjectionSheet`;
 - `compute_quadric_section()`, `section_trace_curves()`,
@@ -735,12 +735,28 @@ leaving those choices to a display helper. The automatic basis is deterministic
 for one fixed normal, but it is not promised to vary continuously while the
 normal moves across a world-axis tie. Animated frames that need continuous
 curve phase must provide a continuous `u_axis` explicitly.
+An authored `u_axis` whose in-plane projection is no larger than
+`sqrt(machine epsilon)` relative to the supplied direction is rejected: at
+that scale its phase is no longer numerically trustworthy.
+
+`frame.certified_point((u, v))` returns a `PlanarPoint3D` carrying both the
+exact supporting-frame contract and its local coordinates. Use this form when
+the center is produced in plane coordinates, especially at large world or
+local scales. It avoids trying to infer lost authorship from a rounded world
+point. A certified point from a different frame is rejected.
 
 `Circle3DSpec(curve_id, frame, center, radius, domain=...)` and
 `Ellipse3DSpec(curve_id, frame, center, semi_u, semi_v, domain=...)` require
-their centers to lie on that supporting plane, require positive radii or
-semi-axis lengths, and accept at most one revolution of a
-`ParameterInterval`. They do not introduce another analytic-curve runtime:
+positive radii or semi-axis lengths and accept at most one revolution of a
+`ParameterInterval`. `center` may be a certified `PlanarPoint3D`. A raw
+world-space center instead goes through strict, exact-residual plane-membership
+certification based only on the coordinate quantization bound; curve size does
+not silently widen that bound. An accepted raw center remains the exact world
+point supplied by the caller; it is never snapped to a reconstructed point on
+the plane. `from_plane_coordinates(...)` is the compact constructor for the
+certified path. Both forms record canonical
+`centerCoordinates` in the serialized contract. They do not introduce another
+analytic-curve runtime:
 `lower_to_analytic_curve()` returns the existing `CircleArcCurve` or
 `EllipseArcCurve`, preserving the authored curve ID, supporting frame, and
 parameter domain.
@@ -748,7 +764,29 @@ parameter domain.
 Finite input alone is not sufficient at the extreme limits of floating-point
 arithmetic. Construction fails explicitly when the existing analytic runtime
 cannot certify finite axes, normals, points, and tangents at the requested
-scale; it never accepts a spec that is already known to fail during lowering.
+scale. It also verifies that the four cardinal semi-axis displacements remain
+representable after translation to the world-space center. A radius-one circle
+at a center whose floating-point spacing is already much larger than one fails
+instead of silently collapsing into a point or line.
+For both center-authoring channels, the forward plane-local-to-world embedding
+error must be no greater than `sqrt(machine epsilon)` times the circle radius,
+or the ellipse's smaller semi-axis. This relative error budget permits a large
+curve to remain usable at a large translation while requiring a small feature
+at the same translation to fail explicitly.
+
+`PlanarFrame3D.to_dict()` records canonical `normal` / `uAxis` / `vAxis`
+values together with scale-independent `normalSeed` / `uAxisSeed` direction
+evidence. `PlanarFrame3D.from_dict()` recomputes the basis from those seeds and
+requires an exact match; it never decides that arbitrary nearly orthogonal
+payload values are already certified. The point and curve contracts provide
+matching `from_dict()` methods. `PlanarCurveScene3D.from_dict()` and
+`from_json()` rebuild a complete registry, and a canonical scene JSON payload
+must round-trip byte-for-byte. This evidence also survives standard immutable
+`dataclasses.replace(...)` reconstruction. Replacing `normal` or `u_axis`
+reauthors fresh direction seeds; replacing a curve center with a certified
+`PlanarPoint3D` makes that new point authoritative over the old derived local
+coordinate field. A replacement that supplies a raw center must also reset
+`center_coordinates=None` so the coordinates are inferred and certified again.
 
 `PlanarCurveScene3D(frames, curves)` is a deterministic renderer-neutral
 registry. Frame IDs and curve IDs must be unique and globally distinct, and
@@ -766,7 +804,7 @@ visibility, painter ordering, and Manim fixed slots still have one analytic
 curve runtime. A trim rim remains only a boundary circle; this adapter does not
 invent a closing disk for an open shell.
 
-These four types are geometry contracts only. They do not parse TikZ, do not
+These five types are geometry contracts only. They do not parse TikZ, do not
 extend the supported TikZ subset or source-project schema, and do not create,
 attach, style, or animate Manim objects. There is currently no
 `PlanarCurveScene3D` Manim authoring facade. An advanced caller may explicitly

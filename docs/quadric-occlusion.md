@@ -128,14 +128,51 @@ depth comparisons use that same resolved context.
 `PlanarFrame3D` makes the missing 3D plane semantics of an authored circle or
 ellipse explicit. Its `point` and `normal` define the infinite supporting
 plane, while its normalized `u_axis` and derived `v_axis` fix a stable
-right-handed parameter frame. `Circle3DSpec` adds an on-plane world-space
-center, radius, and parameter domain. `Ellipse3DSpec` adds the same center and
-domain plus positive `semi_u` and `semi_v` lengths along the frame axes.
+right-handed parameter frame. `PlanarPoint3D` carries a frame plus certified
+local `(u, v)` coordinates. `Circle3DSpec` adds a center, radius, and parameter
+domain. `Ellipse3DSpec` adds the same center and domain plus positive `semi_u`
+and `semi_v` lengths along the frame axes.
 The automatically chosen `u_axis` is deterministic for static geometry but is
 not a continuous moving-frame algorithm; animated normals that require stable
 parameter phase must author a continuous `u_axis`. Extreme finite scales that
 the existing analytic runtime cannot evaluate without underflow or overflow
 fail explicitly during spec construction.
+An almost parallel authored `u_axis` is also rejected once its reliable
+in-plane component falls to `sqrt(machine epsilon)` of the input direction;
+accepting it would give the curve an unstable parameter phase.
+
+Centers authored by plane coordinates should use
+`frame.certified_point((u, v))` or the curve type's
+`from_plane_coordinates(...)` constructor. This preserves the frame evidence
+instead of trying to rediscover it from a rounded world point. Raw world-space
+centers remain supported, but they use exact rational residual arithmetic
+and only a component-wise floating-point quantization bound. Radius and
+semi-axis lengths never enlarge plane-membership tolerance, and the API has no
+implicit snapping mode. An accepted raw world point is preserved exactly, not
+rewritten to a nearby reconstructed point. A world point that cannot be
+certified fails explicitly.
+
+Lowering also certifies the four cardinal semi-axis displacements at the
+authored world-space center. A small circle or ellipse translated so far that
+floating-point addition would swallow or materially distort a semi-axis is
+rejected before it reaches visibility or animation code.
+The center embedding has its own explicit relative budget: its combined local
+coordinate and plane-normal error may not exceed `sqrt(machine epsilon)` times
+the radius, or the ellipse's smaller semi-axis. Thus a representable large
+curve may survive a large world translation, while a small curve whose center
+authorship has been lost at that same translation fails closed.
+
+Canonical frame persistence keeps both the normalized basis and deterministic
+direction seeds. Deserialization recomputes the basis from the seeds and
+requires exact agreement with all three serialized axes, so a merely
+near-orthogonal payload cannot enter the certified plane-local channel.
+`PlanarPoint3D`, both curve specs, and `PlanarCurveScene3D` expose matching
+strict reconstruction helpers; scene JSON round-trips without changing the
+frame, local center coordinates, or curve payload.
+Standard immutable replacement remains supported: direction changes reauthor
+the frame's seeds, and a replacement `PlanarPoint3D` is the authoritative new
+curve center. Raw replacement centers must clear the old derived
+`center_coordinates` so they are inferred again.
 
 These are renderer-neutral geometry contracts for authored data, not new
 visibility primitives.

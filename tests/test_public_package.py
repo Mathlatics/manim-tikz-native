@@ -17,6 +17,7 @@ from polyhedron_visibility.quadrics import (
     Ellipse3DSpec,
     PlanarCurveScene3D,
     PlanarFrame3D,
+    PlanarPoint3D,
     QUADRIC_FINAL_PROFILE,
     QUADRIC_PREVIEW_PROFILE,
     QuadricCapacityPlanner,
@@ -90,6 +91,7 @@ class PublicPackageTests(unittest.TestCase):
         self.assertEqual(CylinderSpec.__name__, "CylinderSpec")
         self.assertEqual(ConeSpec.__name__, "ConeSpec")
         self.assertEqual(PlanarFrame3D.__name__, "PlanarFrame3D")
+        self.assertEqual(PlanarPoint3D.__name__, "PlanarPoint3D")
         self.assertEqual(Circle3DSpec.__name__, "Circle3DSpec")
         self.assertEqual(Ellipse3DSpec.__name__, "Ellipse3DSpec")
         self.assertEqual(PlanarCurveScene3D.__name__, "PlanarCurveScene3D")
@@ -127,12 +129,13 @@ class PublicPackageTests(unittest.TestCase):
                     "import sys; from polyhedron_visibility.quadrics import "
                     "SectionTransitionPlan, build_section_transition_plan, "
                     "PlanarFrame3D, Circle3DSpec, Ellipse3DSpec, "
-                    "PlanarCurveScene3D, "
+                    "PlanarPoint3D, PlanarCurveScene3D, "
                     "QuadricSectionBoundary, compute_quadric_section_boundary, "
                     "compute_quadric_section_boundary_curves, "
                     "section_cap_chord_curve_ids; "
                     "assert SectionTransitionPlan.__name__; "
                     "assert PlanarFrame3D.__name__; "
+                    "assert PlanarPoint3D.__name__; "
                     "assert Circle3DSpec.__name__; "
                     "assert Ellipse3DSpec.__name__; "
                     "assert PlanarCurveScene3D.__name__; "

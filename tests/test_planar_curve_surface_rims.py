@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from math import pi, sqrt, tau
 import unittest
 from unittest.mock import patch
@@ -188,6 +189,98 @@ class PlanarSurfaceRimContractTests(unittest.TestCase):
             role="trim_min",
         )
         self.assert_support_circle(rim, "boundary:rim:slanted")
+
+    def test_boundary_replace_preserves_certified_frame_and_payload(self) -> None:
+        common = dict(
+            parent_surface_id="surface:replace",
+            center=(
+                0.2928276418206841,
+                -0.9698281416274352,
+                -0.30029473129904827,
+            ),
+            normal=(
+                1.4132667908068457,
+                0.03110221354462144,
+                -0.04297320205816883,
+            ),
+            radius=1.0e4,
+            radial_axis=(
+                -1.7089423051639878,
+                -0.29089177871842153,
+                -0.42087323476286687,
+            ),
+        )
+        boundaries = (
+            PlanarCapSpec("cap:replace", role="cap_max", **common),
+            CircularTrimRimSpec("rim:replace", role="trim_max", **common),
+        )
+
+        for boundary in boundaries:
+            with self.subTest(boundary=type(boundary).__name__):
+                rebuilt = replace(boundary)
+                curve_id = f"boundary:{boundary.parent_surface_id}:{boundary.role}:rim"
+                self.assertEqual(rebuilt, boundary)
+                self.assertEqual(rebuilt.planar_frame, boundary.planar_frame)
+                self.assertEqual(
+                    rebuilt.planar_frame.to_dict(),
+                    boundary.planar_frame.to_dict(),
+                )
+                self.assertEqual(
+                    rebuilt.boundary_circle(curve_id).to_dict(),
+                    boundary.boundary_circle(curve_id).to_dict(),
+                )
+
+    def test_boundary_replace_reauthors_changed_public_frame_fields(self) -> None:
+        boundaries = (
+            PlanarCapSpec(
+                "cap:old",
+                "surface:replace",
+                (0.0, 0.0, 0.0),
+                (0.0, 0.0, 1.0),
+                2.0,
+                radial_axis=(1.0, 0.0, 0.0),
+                role="cap_max",
+            ),
+            CircularTrimRimSpec(
+                "rim:old",
+                "surface:replace",
+                (0.0, 0.0, 0.0),
+                (0.0, 0.0, 1.0),
+                2.0,
+                radial_axis=(1.0, 0.0, 0.0),
+                role="trim_max",
+            ),
+        )
+
+        for boundary in boundaries:
+            with self.subTest(boundary=type(boundary).__name__):
+                identity_field = (
+                    {"cap_id": "cap:new"}
+                    if isinstance(boundary, PlanarCapSpec)
+                    else {"rim_id": "rim:new"}
+                )
+                changed = replace(
+                    boundary,
+                    **identity_field,
+                    center=(4.0, 5.0, 6.0),
+                    normal=(0.0, 1.0, 0.0),
+                    radial_axis=(1.0, 0.0, 0.0),
+                    radius=3.0,
+                )
+                expected_id = (
+                    changed.cap_id
+                    if isinstance(changed, PlanarCapSpec)
+                    else changed.rim_id
+                )
+                self.assertEqual(changed.planar_frame.frame_id, expected_id)
+                self.assertEqual(changed.planar_frame.point, changed.center)
+                self.assertEqual(changed.planar_frame.normal, changed.normal)
+                self.assertEqual(
+                    changed.planar_frame.u_axis,
+                    changed.radial_axis,
+                )
+                self.assertEqual(changed.radius, 3.0)
+                self.assert_support_circle(changed, f"boundary:{expected_id}")
 
     def test_slanted_cylinder_cap_sources_preserve_complete_contract(self) -> None:
         cylinder = CylinderSpec(
@@ -419,6 +512,22 @@ class PlanarSurfaceRimContractTests(unittest.TestCase):
                 VIEW,
                 include_silhouettes=False,
             )
+
+    def test_large_translation_cannot_swallow_surface_rim_radius(self) -> None:
+        rim = CircularTrimRimSpec(
+            "rim:translated",
+            "surface:translated",
+            (1.0e18, 0.0, 0.0),
+            (0.0, 0.0, 1.0),
+            1.0,
+            radial_axis=(1.0, 0.0, 0.0),
+        )
+
+        with self.assertRaisesRegex(
+            PlanarCurve3DContractError,
+            "semi-axis is not representable",
+        ):
+            rim.boundary_circle("boundary:translated")
 
 
 if __name__ == "__main__":
