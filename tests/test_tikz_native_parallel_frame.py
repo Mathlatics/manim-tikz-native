@@ -76,6 +76,20 @@ class _Camera:
         self.state = state
 
 
+class _Tracker:
+    def __init__(self, value: float) -> None:
+        self.value = value
+
+    def get_value(self) -> float:
+        return self.value
+
+
+class _TransitioningCamera(_Camera):
+    def __init__(self, state: ParallelCameraState, progress: float) -> None:
+        super().__init__(state)
+        self.transition_tracker = _Tracker(progress)
+
+
 class ParallelFrameCoordinatorTests(unittest.TestCase):
     def test_sources_resolve_once_and_phases_override_registration_order(
         self,
@@ -417,6 +431,68 @@ class ParallelFrameCoordinatorTests(unittest.TestCase):
         self.assertIs(camera.state, target)
         coordinator.restore()
         self.assertIs(camera.state, initial)
+
+    def test_camera_participant_rejects_incomplete_transition_snapshot(self) -> None:
+        initial = ParallelCameraState(IDENTITY)
+        target = ParallelCameraState(IDENTITY, target=(1.0, 0.0, 0.0))
+        camera = _TransitioningCamera(initial, 0.4)
+        coordinator: ParallelFrameCoordinator[ParallelFrameState]
+        coordinator = ParallelFrameCoordinator()
+        coordinator.add(parallel_camera_frame_participant(camera))
+
+        with self.assertRaisesRegex(
+            ParallelFrameCoordinatorError,
+            "static frame boundary",
+        ):
+            coordinator.update(ParallelFrameState(target))
+
+        self.assertIs(camera.state, initial)
+        self.assertEqual(camera.transition_tracker.get_value(), 0.4)
+        self.assertIsNone(coordinator.last_committed_frame)
+
+    def test_camera_participant_uses_full_transaction_snapshot_when_available(
+        self,
+    ) -> None:
+        initial = ParallelCameraState(IDENTITY)
+        target = ParallelCameraState(IDENTITY, target=(1.0, 0.0, 0.0))
+
+        class TransactionCamera(_TransitioningCamera):
+            def snapshot_parallel_transaction(self) -> tuple[object, ...]:
+                return (self.state, self.transition_tracker.value)
+
+            def restore_parallel_transaction(self, value: object) -> None:
+                state, progress = value  # type: ignore[misc]
+                self.state = state
+                self.transition_tracker.value = progress
+
+        camera = TransactionCamera(initial, 0.4)
+        failing = _MutableParticipant(
+            "failing",
+            ParallelFramePhase.PAINT,
+            0,
+            [],
+            fail_commit=True,
+        )
+        coordinator: ParallelFrameCoordinator[ParallelFrameState]
+        coordinator = ParallelFrameCoordinator()
+        coordinator.add(parallel_camera_frame_participant(camera))
+
+        binding = failing.binding()
+        coordinator.add(
+            ParallelFrameParticipant(
+                binding.participant_id,
+                binding.phase,
+                lambda _frame: 1,
+                binding.snapshot,
+                binding.commit,
+                binding.rollback,
+            )
+        )
+        with self.assertRaisesRegex(RuntimeError, "commit failed"):
+            coordinator.update(ParallelFrameState(target))
+
+        self.assertIs(camera.state, initial)
+        self.assertEqual(camera.transition_tracker.get_value(), 0.4)
 
     def test_invalid_configuration_and_empty_coordinator_fail_early(self) -> None:
         with self.assertRaisesRegex(

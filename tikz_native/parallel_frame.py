@@ -21,6 +21,7 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from enum import IntEnum
+from math import isfinite
 from types import MappingProxyType
 from typing import Generic, TypeVar, cast
 
@@ -457,8 +458,44 @@ def parallel_camera_frame_participant(
         raise TypeError(
             "camera must provide snapshot_parallel_state() and set_parallel_state()"
         )
+    transaction_snapshot = getattr(camera, "snapshot_parallel_transaction", None)
+    transaction_restore = getattr(camera, "restore_parallel_transaction", None)
+    if callable(transaction_snapshot) != callable(transaction_restore):
+        raise TypeError(
+            "camera transaction snapshot and restore methods must be provided together"
+        )
+    use_full_transaction = callable(transaction_snapshot)
+
+    def require_static_boundary() -> None:
+        if use_full_transaction:
+            return
+        readiness = getattr(camera, "parallel_transaction_ready", None)
+        if callable(readiness):
+            if not bool(readiness()):
+                raise ParallelFrameCoordinatorError(
+                    "camera coordinator requires a static frame boundary"
+                )
+            return
+        tracker = getattr(camera, "transition_tracker", None)
+        get_value = getattr(tracker, "get_value", None)
+        if callable(get_value):
+            try:
+                progress = float(get_value())
+            except (TypeError, ValueError, OverflowError) as exc:
+                raise ParallelFrameCoordinatorError(
+                    "camera transition progress must be finite"
+                ) from exc
+            if not isfinite(progress):
+                raise ParallelFrameCoordinatorError(
+                    "camera transition progress must be finite"
+                )
+            if progress != 1.0:
+                raise ParallelFrameCoordinatorError(
+                    "camera coordinator requires a static frame boundary"
+                )
 
     def prepare(frame: object) -> ParallelCameraState:
+        require_static_boundary()
         value = (
             state_getter(frame)
             if state_getter is not None
@@ -472,7 +509,10 @@ def parallel_camera_frame_participant(
             )
         return value
 
-    def capture() -> ParallelCameraState:
+    def capture() -> object:
+        require_static_boundary()
+        if use_full_transaction:
+            return transaction_snapshot()
         value = snapshot()
         if not isinstance(value, ParallelCameraState):
             raise TypeError(
@@ -486,6 +526,9 @@ def parallel_camera_frame_participant(
         setter(value)
 
     def rollback(value: object) -> None:
+        if use_full_transaction:
+            transaction_restore(value)
+            return
         if not isinstance(value, ParallelCameraState):
             raise TypeError("camera snapshot must be ParallelCameraState")
         setter(value)
