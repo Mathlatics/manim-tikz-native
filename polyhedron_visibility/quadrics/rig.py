@@ -17,13 +17,14 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from dataclasses import dataclass
-from math import acos, atan2, ceil, floor, isfinite, tau
+from math import acos, atan2, ceil, floor, isfinite, pi, tau
 from typing import Callable, Iterator, Mapping, Sequence
 
 import numpy as np
 from manim import Animation, Mobject
 
 from ..geometry import GeometryContext, ResolvedGeometryContext
+from ..parallel_solver import ParallelView
 from ..painter_band import (
     ScenePainterBandReservation,
     release_scene_painter_band,
@@ -41,11 +42,22 @@ from .animation import (
 )
 from .authoring import QuadricSection3D, QuadricSectionAuthoringError
 from .contract import ConeModel, ConeSpec, CylinderSpec, SectionPlane, SphereSpec
+from .manim import (
+    DEFAULT_QUADRIC_VIEW,
+    ProjectionValue,
+    QuadricManimError,
+)
+from .manim_runtime import (
+    _ResolvedParallelCameraFrame,
+    _coerce_projection_frame,
+)
 from .plane_motion import (
     AxisAnglePlaneMotion,
     PlaneMotionError,
+    _harmonic_coefficients,
     track_scheduled_plane_section,
 )
+from .section_compositing import PLANE_PATCH_RANK_RATIO_THRESHOLD
 from .sections import (
     QuadricSectionBoundary,
     QuadricSurfaceSpec,
@@ -108,13 +120,62 @@ def _surface(value: object) -> QuadricSurfaceSpec:
     if isinstance(value, ConeSpec):
         if value.model is ConeModel.OPEN_DOUBLE:
             raise QuadricSectionRigError(
-                "OPEN_DOUBLE unified section compositing is outside the v1 contract"
+                "OPEN_DOUBLE is outside the Phase 1 Rig contract; use "
+                "CompositeQuadricSection3D"
             )
         if value.model is ConeModel.ANALYTIC_DOUBLE:
             raise QuadricSectionRigError(
                 "ANALYTIC_DOUBLE is not a directly renderable finite surface"
             )
     return value
+
+
+def _static_projection_frame(
+    scene: object,
+    value: object,
+) -> _ResolvedParallelCameraFrame:
+    """Freeze one complete Phase 1 projection without evaluating callbacks."""
+
+    if callable(value):
+        raise QuadricSectionRigError(
+            "Phase 1 requires a static projection; callable projection is "
+            "unsupported"
+        )
+    try:
+        return _coerce_projection_frame(
+            DEFAULT_QUADRIC_VIEW if value is None else value,
+            scene=scene,
+        )
+    except (QuadricManimError, TypeError, ValueError) as exc:
+        raise QuadricSectionRigError(
+            f"invalid static parallel projection: {exc}"
+        ) from exc
+
+
+def _certify_plane_display_rank(
+    plane: SectionPlane,
+    view: ParallelView,
+    *,
+    action: str,
+    progress: float,
+) -> None:
+    """Require the Phase 1 AREA-only subset of the compositor rank contract."""
+
+    plane_u, plane_v, _normal = plane.basis
+    screen_basis = view.matrix[:2] @ np.column_stack((plane_u, plane_v))
+    determinant = float(np.linalg.det(screen_basis))
+    basis_scale = max(
+        float(np.linalg.norm(screen_basis, ord=2)),
+        1.0e-300,
+    )
+    if (
+        abs(determinant)
+        <= PLANE_PATCH_RANK_RATIO_THRESHOLD * basis_scale * basis_scale
+    ):
+        raise QuadricSectionRigError(
+            f"{action} cutting plane projects edge-on and loses display "
+            f"rank (progress={progress:.12g})"
+        )
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -219,6 +280,137 @@ def _canonical_progresses(values: Sequence[float]) -> tuple[float, ...]:
     else:
         ordered[-1] = 1.0
     return tuple(ordered)
+
+
+def _periodic_progresses(
+    motion: AxisAnglePlaneMotion,
+    phases: Sequence[float],
+) -> tuple[float, ...]:
+    """Return the first in-path occurrence of each periodic angle family."""
+
+    span = motion.end_angle - motion.start_angle
+    length = abs(span)
+    if length <= 0.0:  # pragma: no cover - AxisAnglePlaneMotion invariant
+        return ()
+    forward = span > 0.0
+    tolerance = (
+        128.0
+        * float(np.finfo(float).eps)
+        * max(
+            1.0,
+            min(length, tau),
+            abs(motion.start_angle % tau),
+            abs(motion.end_angle % tau),
+            *(abs(float(phase)) for phase in phases),
+        )
+    )
+    result: list[float] = []
+    for phase in phases:
+        signed_distance = (
+            float(phase) - motion.start_angle
+            if forward
+            else motion.start_angle - float(phase)
+        )
+        distance = signed_distance % tau
+        if distance <= tolerance or tau - distance <= tolerance:
+            distance = 0.0
+        if distance > length:
+            if distance - length > tolerance:
+                continue
+            distance = length
+        progress = min(1.0, max(0.0, distance / length))
+        if not any(
+            abs(progress - existing) <= _PROGRESS_TOLERANCE
+            for existing in result
+        ):
+            result.append(float(progress))
+    return tuple(sorted(result))
+
+
+def _certify_rotation_display_rank(
+    motion: AxisAnglePlaneMotion,
+    view: ParallelView,
+    *,
+    action: str,
+) -> None:
+    """Conservatively prove the compositor rank predicate over a rotation."""
+
+    cosine, sine_coefficient, constant = _harmonic_coefficients(
+        motion,
+        view.view_direction,
+    )
+    amplitude = float(np.hypot(cosine, sine_coefficient))
+    coefficient_error = (
+        4096.0
+        * float(np.finfo(float).eps)
+        * max(
+            1.0,
+            abs(cosine),
+            abs(sine_coefficient),
+            abs(constant),
+        )
+    )
+    stationary_progresses: tuple[float, ...] = ()
+    edge_on_progresses: tuple[float, ...] = ()
+    if amplitude > 0.0:
+        phase = atan2(sine_coefficient, cosine)
+        stationary_progresses = _periodic_progresses(
+            motion,
+            (phase, phase + pi),
+        )
+        if abs(constant) <= amplitude + coefficient_error:
+            ratio = min(1.0, max(-1.0, -constant / amplitude))
+            offset = acos(ratio)
+            edge_on_progresses = _periodic_progresses(
+                motion,
+                (phase - offset, phase + offset),
+            )
+    candidates = _canonical_progresses(
+        (0.0, 1.0, *edge_on_progresses, *stationary_progresses)
+    )
+    alignments = tuple(
+        abs(
+            float(
+                np.dot(
+                    np.asarray(motion.plane_at(progress).normal, dtype=float),
+                    np.asarray(view.view_direction, dtype=float),
+                )
+            )
+        )
+        for progress in candidates
+    )
+    minimum_index = min(range(len(candidates)), key=alignments.__getitem__)
+    failing_progress = candidates[minimum_index]
+    minimum_alignment = (
+        0.0 if edge_on_progresses else alignments[minimum_index]
+    )
+    if edge_on_progresses:
+        failing_progress = min(edge_on_progresses)
+
+    screen_projection = view.matrix[:2]
+    projection_scale = float(np.max(np.abs(screen_projection)))
+    normalized_projection = screen_projection / projection_scale
+    normalized_area_scale = float(
+        np.linalg.norm(
+            np.cross(normalized_projection[0], normalized_projection[1])
+        )
+    )
+    normalized_basis_bound = float(
+        np.linalg.norm(normalized_projection, ord=2)
+    )
+    certified_alignment = max(0.0, minimum_alignment - coefficient_error)
+    certified_area = normalized_area_scale * certified_alignment
+    required_area = (
+        PLANE_PATCH_RANK_RATIO_THRESHOLD
+        * normalized_basis_bound
+        * normalized_basis_bound
+    )
+    if certified_area <= required_area:
+        raise QuadricSectionRigError(
+            f"{action} cutting plane becomes edge-on or numerically "
+            "rank-deficient; display rank cannot be certified "
+            f"(progress={failing_progress:.12g})"
+        )
 
 
 def _with_interval_midpoints(values: Sequence[float]) -> tuple[float, ...]:
@@ -582,6 +774,7 @@ class QuadricSectionRig:
         surface: QuadricSurfaceSpec,
         plane: SectionPlane,
         section_id: str,
+        projection: ProjectionValue | None = None,
         painter_z_band: tuple[float, float] | None = None,
         preferred_painter_z_band: tuple[float, float] = (
             _DEFAULT_PREFERRED_PAINTER_Z_BAND
@@ -603,6 +796,29 @@ class QuadricSectionRig:
         self.scene = scene
         self.surface = _surface(surface)
         self.section_id = _identity(section_id, "section_id")
+        self._projection_frame = _static_projection_frame(scene, projection)
+        self._view = self._projection_frame.view
+        raw_show_plane = section_options.get("show_plane", True)
+        if not isinstance(raw_show_plane, bool):
+            raise TypeError("show_plane must be a bool")
+        self._show_plane = raw_show_plane
+        raw_draw_section_boundary = section_options.get(
+            "draw_section_boundary",
+            True,
+        )
+        if not isinstance(raw_draw_section_boundary, bool):
+            raise TypeError("draw_section_boundary must be a bool")
+        self._draw_section_boundary = raw_draw_section_boundary
+        self._requires_display_rank = (
+            self._show_plane or self._draw_section_boundary
+        )
+        if self._requires_display_rank:
+            _certify_plane_display_rank(
+                plane,
+                self._view,
+                action="initial rig view",
+                progress=0.0,
+            )
         self._state = SectionState(plane=plane)
         self._frame_state = self._state
         self._attach_state: SectionState | None = None
@@ -616,7 +832,9 @@ class QuadricSectionRig:
         self._resolved_progress = 0.0
         self._frame_token: _RigFrameToken | None = None
         self._action_index = 0
-        self._section_options: Mapping[str, object] = dict(section_options)
+        frozen_section_options = dict(section_options)
+        frozen_section_options["projection"] = self._projection_frame
+        self._section_options: Mapping[str, object] = frozen_section_options
         self._context = section_options.get("context")
         if self._context is not None and not isinstance(
             self._context,
@@ -658,6 +876,12 @@ class QuadricSectionRig:
     @property
     def plane(self) -> SectionPlane:
         return self._state.plane
+
+    @property
+    def view(self) -> ParallelView:
+        """Return the immutable static parallel view certified by Phase 1."""
+
+        return self._view
 
     @property
     def painter_z_band(self) -> tuple[float, float] | None:
@@ -954,6 +1178,12 @@ class QuadricSectionRig:
                 0.0,
                 amount,
             )
+            if self._requires_display_rank:
+                _certify_rotation_display_rank(
+                    motion,
+                    self._view,
+                    action=action,
+                )
             scheduled = track_scheduled_plane_section(
                 self.section_id,
                 self.surface,

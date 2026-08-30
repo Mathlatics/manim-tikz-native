@@ -44,6 +44,19 @@ heights of the finite sphere, cylinder, or cone. Stable tracked curve slots
 separate renderer identity from incidental `circle`/`ellipse`, hyperbola-label,
 and periodic-seam IDs. No Manim object or curve slot is created by an updater.
 
+Phase 1 also resolves and freezes one complete non-callable parallel
+`projection` when the rig is constructed. A semantic camera state's target,
+screen anchor, and zoom are retained; a callable projection is rejected instead
+of being sampled once.
+Whenever either `show_plane` or `draw_section_boundary` is enabled, the initial
+plane and the complete axis-angle rotation path are analytically certified as
+AREA projections; an interior edge-on or numerically rank-deficient view is
+rejected before playback with its analytic candidate progress. The lower-level
+facade and semantic-camera APIs can render certified edge-on LINE frames, but
+this narrower Phase 1 Rig does not animate through that rank handoff. Set both
+options to `False` only when no rank-sensitive plane or section ink should be
+displayed.
+
 This first layer deliberately fails before `Scene.play` when a path enters an
 empty or degenerate section, changes conic family, branch count, or component
 count. `animate_plane_to()` currently accepts only a target with the same

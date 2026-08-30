@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import FrozenInstanceError
 import json
-from math import atan, cos, pi, sin
+from math import acos, atan, cos, pi, sin, sqrt, tau
 from pathlib import Path
 import subprocess
 from tempfile import TemporaryDirectory
@@ -41,6 +41,7 @@ from polyhedron_visibility.quadrics.rig import (
     QuadricSectionRigError,
     SectionState,
 )
+from tikz_native.parallel_camera import ParallelCameraState
 
 
 VIEW = ParallelView.from_matrix(
@@ -129,6 +130,18 @@ def _assert_plane_close(
     np.testing.assert_allclose(actual.u_axis, expected.u_axis, rtol=0.0, atol=1.0e-12)
 
 
+def _scene_ownership_snapshot(scene: Scene) -> tuple[tuple[object, ...], ...]:
+    return tuple(
+        tuple(getattr(scene, name, ()))
+        for name in (
+            "mobjects",
+            "foreground_mobjects",
+            "moving_mobjects",
+            "static_mobjects",
+        )
+    )
+
+
 class QuadricSectionRigTests(unittest.TestCase):
     def setUp(self) -> None:
         self.config = tempconfig(
@@ -153,6 +166,307 @@ class QuadricSectionRigTests(unittest.TestCase):
             state.plane = _sphere_plane(0.2)  # type: ignore[misc]
         with self.assertRaisesRegex(TypeError, "SectionPlane"):
             SectionState(plane=object())  # type: ignore[arg-type]
+
+    def test_phase1_projection_is_static_and_initial_plane_has_display_rank(
+        self,
+    ) -> None:
+        scene = Scene()
+        sphere = SphereSpec("view-sphere", (0.0, 0.0, 0.0), 1.0)
+        plane = _sphere_plane(plane_id="view-plane")
+        before_scene = _scene_ownership_snapshot(scene)
+        calls = 0
+
+        def live_projection(_scene: object) -> ParallelView:
+            nonlocal calls
+            calls += 1
+            return VIEW
+
+        with self.assertRaisesRegex(
+            QuadricSectionRigError,
+            "static projection.*callable projection is unsupported",
+        ):
+            QuadricSectionRig(
+                scene,
+                surface=sphere,
+                plane=plane,
+                section_id="callable-view-section",
+                projection=live_projection,
+            )
+        self.assertEqual(calls, 0)
+        self.assertEqual(_scene_ownership_snapshot(scene), before_scene)
+        self.assertEqual(scene_painter_band_allocations(scene), ())
+
+        mutable_matrix = np.eye(3).tolist()
+        rig = QuadricSectionRig(
+            scene,
+            surface=sphere,
+            plane=plane,
+            section_id="static-view-section",
+            projection=mutable_matrix,
+        )
+        mutable_matrix[0][0] = 0.0
+        np.testing.assert_array_equal(rig.view.matrix, np.eye(3))
+
+        semantic_projection = ParallelCameraState(
+            np.eye(3),
+            target=np.asarray((1.0, -0.5, 0.25)),
+            screen_anchor=np.asarray((2.0, 3.0)),
+            zoom=1.75,
+        )
+        semantic_options = _band_only_options()
+        semantic_options["projection"] = semantic_projection
+        semantic_rig = QuadricSectionRig(
+            scene,
+            surface=sphere,
+            plane=plane,
+            section_id="semantic-static-view-section",
+            **semantic_options,
+        )
+        expected_matrix = np.eye(3)
+        expected_matrix[:2] *= semantic_projection.zoom
+        expected_offset = (
+            semantic_projection.screen_anchor
+            - expected_matrix[:2] @ semantic_projection.target
+        )
+        np.testing.assert_allclose(
+            semantic_rig.view.matrix,
+            expected_matrix,
+            rtol=0.0,
+            atol=0.0,
+        )
+        semantic_rig.attach()
+        try:
+            frozen_frame = semantic_rig.controller._resolve_projection_frame()
+            np.testing.assert_allclose(
+                frozen_frame.screen_offset,
+                expected_offset,
+                rtol=0.0,
+                atol=0.0,
+            )
+            self.assertTrue(frozen_frame.viewport_relative)
+        finally:
+            semantic_rig.restore()
+        self.assertEqual(_scene_ownership_snapshot(scene), before_scene)
+        self.assertEqual(scene_painter_band_allocations(scene), ())
+
+        edge_on = SectionPlane(
+            "edge-on-plane",
+            (0.0, 0.0, 0.0),
+            (1.0, 0.0, 0.0),
+            u_axis=(0.0, 0.0, 1.0),
+        )
+        with self.assertRaisesRegex(
+            QuadricSectionRigError,
+            r"initial rig view.*edge-on.*progress=0",
+        ):
+            QuadricSectionRig(
+                scene,
+                surface=sphere,
+                plane=edge_on,
+                section_id="edge-on-view-section",
+                projection=semantic_projection,
+            )
+        self.assertEqual(_scene_ownership_snapshot(scene), before_scene)
+        self.assertEqual(scene_painter_band_allocations(scene), ())
+
+    def test_great_circle_rotation_rejects_interior_edge_on_before_playback(
+        self,
+    ) -> None:
+        scene = Scene()
+        sphere = SphereSpec("great-circle-sphere", (0.0, 0.0, 0.0), 1.0)
+        plane = SectionPlane(
+            "great-circle-plane",
+            (0.0, 0.0, 0.0),
+            (0.0, 0.0, 1.0),
+            u_axis=(1.0, 0.0, 0.0),
+        )
+        rig = QuadricSectionRig(
+            scene,
+            surface=sphere,
+            plane=plane,
+            section_id="great-circle-section",
+            projection=np.eye(3),
+        )
+        before_scene = _scene_ownership_snapshot(scene)
+        before_bands = scene_painter_band_allocations(scene)
+
+        with self.assertRaisesRegex(
+            QuadricSectionRigError,
+            r"edge-on.*display rank.*progress=0\.666666666667",
+        ):
+            rig.animate_plane_rotation(
+                axis=(0.0, 1.0, 0.0),
+                angle=3.0 * pi / 4.0,
+                pivot=(0.0, 0.0, 0.0),
+            )
+
+        self.assertEqual(rig.state, SectionState(plane=plane))
+        self.assertEqual(rig.frame_state, rig.state)
+        self.assertFalse(rig.attached)
+        self.assertIsNone(rig.painter_z_band)
+        self.assertEqual(_scene_ownership_snapshot(scene), before_scene)
+        self.assertEqual(scene_painter_band_allocations(scene), before_bands)
+
+        curve_only = QuadricSectionRig(
+            scene,
+            surface=sphere,
+            plane=plane,
+            section_id="great-circle-curve-only",
+            projection=np.eye(3),
+            show_plane=False,
+        )
+        with self.assertRaisesRegex(
+            QuadricSectionRigError,
+            r"edge-on.*display rank.*progress=0\.666666666667",
+        ):
+            curve_only.animate_plane_rotation(
+                axis=(0.0, 1.0, 0.0),
+                angle=3.0 * pi / 4.0,
+                pivot=(0.0, 0.0, 0.0),
+            )
+
+        fully_hidden = QuadricSectionRig(
+            scene,
+            surface=sphere,
+            plane=plane,
+            section_id="great-circle-fully-hidden",
+            projection=np.eye(3),
+            show_plane=False,
+            draw_section_boundary=False,
+        )
+        action = fully_hidden.animate_plane_rotation(
+            axis=(0.0, 1.0, 0.0),
+            angle=3.0 * pi / 4.0,
+            pivot=(0.0, 0.0, 0.0),
+        )
+        self.assertEqual(action.target_state.plane, action._compiled.plane_at(1.0))
+        self.assertEqual(_scene_ownership_snapshot(scene), before_scene)
+        self.assertEqual(scene_painter_band_allocations(scene), before_bands)
+
+    def test_rotation_rank_proof_keeps_sub_tolerance_harmonic_extrema(
+        self,
+    ) -> None:
+        scene = Scene()
+        sphere = SphereSpec("micro-swing-sphere", (0.0, 0.0, 0.0), 1.0)
+        center_alignment = 1.5e-12
+        transverse_alignment = sqrt(1.0 - center_alignment**2)
+        axis = np.asarray(
+            (transverse_alignment, 0.0, center_alignment),
+            dtype=float,
+        )
+        perpendicular = np.asarray(
+            (-center_alignment, 0.0, transverse_alignment),
+            dtype=float,
+        )
+        swing = 8.0e-13
+        normal = cos(swing) * axis + sin(swing) * perpendicular
+        plane = SectionPlane(
+            "micro-swing-plane",
+            (0.0, 0.0, 0.0),
+            tuple(float(item) for item in normal),
+            u_axis=(0.0, 1.0, 0.0),
+        )
+        motion = AxisAnglePlaneMotion(
+            "micro-swing-motion",
+            plane,
+            (0.0, 0.0, 0.0),
+            tuple(float(item) for item in axis),
+            0.0,
+            tau,
+        )
+        self.assertGreater(abs(plane.normal[2]), 1.0e-12)
+        self.assertLess(abs(motion.plane_at(0.5).normal[2]), 1.0e-12)
+
+        rig = QuadricSectionRig(
+            scene,
+            surface=sphere,
+            plane=plane,
+            section_id="micro-swing-section",
+            projection=np.eye(3),
+        )
+        before_scene = _scene_ownership_snapshot(scene)
+        before_bands = scene_painter_band_allocations(scene)
+        with self.assertRaisesRegex(
+            QuadricSectionRigError,
+            r"rank-deficient.*display rank.*progress=0\.5",
+        ):
+            rig.animate_plane_rotation(
+                axis=axis,
+                angle=tau,
+                pivot=(0.0, 0.0, 0.0),
+            )
+
+        self.assertEqual(rig.state, SectionState(plane=plane))
+        self.assertEqual(rig.frame_state, rig.state)
+        self.assertFalse(rig.attached)
+        self.assertIsNone(rig.painter_z_band)
+        self.assertEqual(_scene_ownership_snapshot(scene), before_scene)
+        self.assertEqual(scene_painter_band_allocations(scene), before_bands)
+
+    def test_rotation_rejects_interior_numeric_rank_loss_without_a_zero_root(
+        self,
+    ) -> None:
+        scene = Scene()
+        sphere = SphereSpec("near-edge-sphere", (0.0, 0.0, 0.0), 1.0)
+        plane = SectionPlane(
+            "near-edge-plane",
+            (0.0, 0.0, 0.2),
+            (0.0, 0.0, 1.0),
+            u_axis=(1.0, 0.0, 0.0),
+        )
+        view = ParallelView.from_matrix(
+            (
+                (0.1, 0.0, 0.0),
+                (0.0, 1.0, 0.0),
+                (0.0, 0.0, 1.0),
+            )
+        )
+        delta = 5.0e-12
+        beta = 0.5 * acos(delta)
+        axis = (sin(beta), 0.0, cos(beta))
+        rig = QuadricSectionRig(
+            scene,
+            surface=sphere,
+            plane=plane,
+            section_id="near-edge-section",
+            projection=view,
+        )
+        before_scene = _scene_ownership_snapshot(scene)
+        before_bands = scene_painter_band_allocations(scene)
+
+        with self.assertRaisesRegex(
+            QuadricSectionRigError,
+            r"rank-deficient.*display rank.*progress=0\.5",
+        ):
+            rig.animate_plane_rotation(
+                axis=axis,
+                angle=tau,
+                pivot=(0.0, 0.0, 0.0),
+            )
+
+        self.assertEqual(rig.state, SectionState(plane=plane))
+        self.assertEqual(rig.frame_state, rig.state)
+        self.assertFalse(rig.attached)
+        self.assertIsNone(rig.painter_z_band)
+        self.assertEqual(_scene_ownership_snapshot(scene), before_scene)
+        self.assertEqual(scene_painter_band_allocations(scene), before_bands)
+
+        fully_hidden = QuadricSectionRig(
+            scene,
+            surface=sphere,
+            plane=plane,
+            section_id="near-edge-fully-hidden",
+            projection=view,
+            show_plane=False,
+            draw_section_boundary=False,
+        )
+        fully_hidden.animate_plane_rotation(
+            axis=axis,
+            angle=tau,
+            pivot=(0.0, 0.0, 0.0),
+        )
+        self.assertEqual(_scene_ownership_snapshot(scene), before_scene)
+        self.assertEqual(scene_painter_band_allocations(scene), before_bands)
 
     def test_shift_rotation_and_parallel_plane_to_have_exact_targets(self) -> None:
         sphere = SphereSpec("math-sphere", (0.0, 0.0, 0.0), 2.0)

@@ -686,7 +686,18 @@ animation, maps incidental raw conic labels to stable tracked slots, and joins
 its immutable state to the controller's frame transaction. Numeric painter
 bands are allocated automatically per Scene; an exact explicit override is
 still available. A path needing topology-transition banks fails before
-playback rather than relying on finite samples.
+playback rather than relying on finite samples. Phase 1 resolves and freezes
+one complete non-callable parallel projection when the rig is constructed,
+including a semantic state's target, screen anchor, and zoom; projection
+callbacks remain unsupported. Whenever either the plane or its section boundary
+is visible, it analytically certifies the complete
+axis-angle path as an AREA projection and rejects an unsafe action before
+playback without changing existing Scene ownership or its painter-band
+reservation. The lower-level facade and semantic-camera APIs still support
+certified edge-on LINE frames; this narrower Rig phase does not animate through
+that display-rank handoff. Only setting both `show_plane=False` and
+`draw_section_boundary=False` opts out because no rank-sensitive section ink is
+then displayed.
 
 `render_profile="preview"` and `"final"` expand to the matching style,
 approximation, and fixed-capacity defaults inside this facade. Explicit
