@@ -53,6 +53,7 @@ from .open_face_visibility_3d_manim import (
     TikzNativeOpenFaceAutoOcclusion3D,
     bind_picture_open_face_visibility_3d,
 )
+from .parallel_camera import CameraPlane, ParallelCameraState, ProjectionRank
 from .polyhedron_visibility_3d_adapter import (
     TikzNativeVisibility3DAdapterError,
     TikzNativeVisibility3DAdapterResult,
@@ -120,6 +121,7 @@ __all__ = [
     "COMPONENT_TIKZ_OPEN_FACE_VISIBILITY_3D",
     "COMPONENT_TIKZ_POLYHEDRON_VISIBILITY_3D",
     "CompiledAsset",
+    "CameraPlane",
     "DocumentSpec",
     "EllipseChordMetrics",
     "IntersectionSpec",
@@ -141,8 +143,10 @@ __all__ = [
     "ObjectSpec",
     "OcclusionRelationSpec",
     "PROTOCOL_VERSION",
+    "ParallelCameraState",
     "PictureSpec",
     "Projection3DSpec",
+    "ProjectionRank",
     "REQUEST_SCHEMA",
     "RESPONSE_SCHEMA",
     "TikzNativeAutoOcclusion3D",

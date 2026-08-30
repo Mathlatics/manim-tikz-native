@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+- add a renderer-neutral `ParallelCameraState` with arbitrary view direction,
+  target, final-screen anchor, zoom, and semantic normal/relative/along-plane
+  constructors; integrate it additively with `MultiProjectionCamera` through
+  safe invertible transitions while preserving legacy projection presets;
 - let `QuadricSection3D` consume named Preview/Final render profiles directly;
   add a one-factory capacity scan with deterministic human-readable summaries,
   preserve the existing progress-scan and immutable limit APIs, and publish a

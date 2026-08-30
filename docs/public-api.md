@@ -30,6 +30,86 @@ Both figures expose an object mapping keyed by stable semantic IDs. Pass a
 custom Manim `TexTemplate` to the renderer when the portable Fandol/Latin
 Modern defaults are not suitable.
 
+## Semantic parallel camera
+
+`ParallelCameraState` is a renderer-neutral parallel-camera contract. Its
+matrix rows are screen-right, screen-up, and positive depth towards the
+observer. `target` is the world point placed at `screen_anchor`; `zoom` changes
+the scale around that anchor instead of moving the anchor itself.
+
+```python
+from tikz_native import CameraPlane, ParallelCameraState
+
+cut_plane = CameraPlane(
+    point=(1.0, -0.5, 0.75),
+    normal=(1.0, 1.0, 1.0),
+    u_axis=(1.0, -1.0, 0.0),
+)
+
+front = ParallelCameraState.normal_to_plane(
+    cut_plane,
+    target=cut_plane.point,
+    screen_anchor=(-2.0, 0.5),
+    zoom=1.2,
+)
+oblique = ParallelCameraState.relative_to_plane(
+    cut_plane,
+    inclination_degrees=55,
+    azimuth_degrees=25,
+    target=cut_plane.point,
+)
+edge_on = ParallelCameraState.along_plane(
+    cut_plane,
+    azimuth_degrees=25,
+    target=cut_plane.point,
+)
+```
+
+`inclination_degrees=0` is normal to the plane; `90` is exactly along the
+plane. The latter is still a valid invertible 3D camera state even though that
+particular plane has a rank-one screen projection. `side="negative"` selects
+the opposite half-space, and positive `roll_degrees` rotates the rendered
+screen coordinates counter-clockwise.
+`SectionPlane` can be passed directly because the constructors use only its
+`point`, `normal`, and `u_axis` attributes; the camera module does not import
+the quadric package.
+
+Use the state with `MultiProjectionCamera`:
+
+```python
+from tikz_native.camera_3d import MultiProjectionCamera
+
+camera = MultiProjectionCamera()
+camera.register_parallel_state("cut-front", front)
+camera.set_parallel_state("cut-front")
+
+# In a Scene:
+scene.play(
+    camera.animate_to_parallel_state(oblique, transition="orbit"),
+    run_time=1.5,
+)
+```
+
+The new transition path uses rotation interpolation plus positive-definite
+stretch interpolation, so every intermediate 3-by-3 matrix stays finite,
+right-handed, and invertible. `transition="shortest"` is available when the
+two orientations are not exactly 180 degrees apart; an exact half-turn must
+use the explicit orbit path. Existing `ProjectionPreset`, `set_mode`,
+`animate_to`, and `animate_orbit_to` behavior remains available unchanged.
+
+Manim's inherited camera zoom composes multiplicatively with the state's
+`zoom`, while `screen_anchor` remains a final viewport-relative coordinate even
+when the inherited `frame_center` is non-zero. The semantic state's `target`
+remains an absolute world point.
+
+This camera API deliberately does not change the quadric section compositor's
+support contract. A generic finite plane can visually collapse to a line, but
+an exact edge-on `QuadricSection3D` cutting plane still fails explicitly until
+its separate one-dimensional occlusion contract is implemented.
+
+See the runnable
+[parallel-camera example](../examples/parallel_camera_views/README.md).
+
 ## Source-authoritative project builds
 
 Keep the TikZ file, optional motion and Bridge template, render intent, and any
