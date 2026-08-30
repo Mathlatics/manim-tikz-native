@@ -265,9 +265,9 @@ class QuadricRankOneConicCameraTests(unittest.TestCase):
         self.config = tempconfig(
             {
                 "renderer": "cairo",
-                "frame_rate": 4,
-                "pixel_width": 160,
-                "pixel_height": 90,
+                "frame_rate": 8,
+                "pixel_width": 320,
+                "pixel_height": 180,
                 "write_to_movie": False,
                 "save_last_frame": False,
                 "disable_caching": True,
@@ -610,7 +610,7 @@ class QuadricRankOneConicCameraTests(unittest.TestCase):
         facade: QuadricSection3D | None = None
         controller: QuadricOcclusion3D | None = None
         owned_ids: set[int] = set()
-        fixed_ids: set[int] = set()
+        root_family_ids: set[int] = set()
         try:
             facade = _build(
                 scene,
@@ -659,20 +659,19 @@ class QuadricRankOneConicCameraTests(unittest.TestCase):
             line_shot = ParallelCameraShot(
                 "rank-one-exact-side-view",
                 line,
-                duration=0.5,
+                duration=0.25,
                 transition="orbit",
                 arc_height=0.65,
             )
             area_shot = ParallelCameraShot(
                 "rank-one-return-area-view",
                 final,
-                duration=0.5,
+                duration=0.25,
                 transition="orbit",
                 arc_height=0.65,
             )
             with patch.object(controller, "update", side_effect=audited_update):
                 first_endpoint = play_parallel_camera_shot(scene, line_shot)
-                facade.update()
                 self.assertIs(first_endpoint, line)
                 self._assert_line_frame(
                     facade,
@@ -682,7 +681,6 @@ class QuadricRankOneConicCameraTests(unittest.TestCase):
                 assert_owned_state()
 
                 second_endpoint = play_parallel_camera_shot(scene, area_shot)
-                facade.update()
                 self.assertIs(second_endpoint, final)
                 final_section = facade.last_section_frame
                 self.assertIsNotNone(final_section)
@@ -718,7 +716,7 @@ class QuadricRankOneConicCameraTests(unittest.TestCase):
                 remaining_fixed_ids = {
                     id(item) for item in camera.fixed_in_frame_mobjects
                 }
-                self.assertTrue(fixed_ids.isdisjoint(remaining_fixed_ids))
+                self.assertTrue(root_family_ids.isdisjoint(remaining_fixed_ids))
 
 
 if __name__ == "__main__":
