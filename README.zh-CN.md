@@ -26,6 +26,14 @@ TikZ 图压成一张 SVG 或图片。转换后的直线、面、点、标签仍�
 一维实线/虚线按后侧在前、前侧在后的顺序绘制；退化为单点的端盖弦保留固定
 对象身份但不伪造一小段线。外部曲线或其他曲面的重合仍然不会被自动忽略。
 
+在这个相机状态之上，现在可以用 `ParallelCameraShot` 和
+`ParallelCameraShotSequence` 编排带名称、时长、停留、提示词和安全旋转路径的教学
+镜头；序列使用 `parallel-shot-sequence/v1` 契约。`ParallelCameraSafeFrame` 可以在
+不改变目标点及其画面锚点的前提下，为一组世界点自动求最大合适缩放。动态跟随则
+由 `ParallelCameraTargetFollowController` 在静态镜头准确到位后启用，只更新目标点，
+失败时自动拆除 updater 并恢复镜头。三个可直接渲染的验收动画见
+[语义相机镜头示例](examples/parallel_camera_shots/README.md)。
+
 ## 圆锥截口 Quick Start
 
 普通使用者只需要声明圆锥和当前截平面。高层控制器会自动生成完整截线、判断

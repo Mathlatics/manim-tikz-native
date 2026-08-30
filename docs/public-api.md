@@ -97,6 +97,55 @@ two orientations are not exactly 180 degrees apart; an exact half-turn must
 use the explicit orbit path. Existing `ProjectionPreset`, `set_mode`,
 `animate_to`, and `animate_orbit_to` behavior remains available unchanged.
 
+For a repeatable teaching sequence, author named static shots instead of
+calling the camera tracker directly:
+
+```python
+from tikz_native import (
+    ParallelCameraShot,
+    ParallelCameraShotSequence,
+    play_parallel_camera_shot_sequence,
+)
+
+front_shot = ParallelCameraShot.normal_to_plane(
+    "front",
+    cut_plane,
+    target=cut_plane.point,
+    screen_anchor=(-1.2, 0.2),
+    duration=1.0,
+    hold=0.3,
+)
+side_shot = ParallelCameraShot.along_plane(
+    "side",
+    cut_plane,
+    azimuth_degrees=25,
+    target=cut_plane.point,
+    duration=1.2,
+    cue="exact edge-on",
+)
+sequence = ParallelCameraShotSequence((front_shot, side_shot))
+play_parallel_camera_shot_sequence(scene, sequence)
+```
+
+`look_at`, `normal_to_plane`, `relative_to_plane`, and `along_plane` all create
+the same immutable `ParallelCameraShot` contract. A shot records its complete
+camera state, duration, optional hold/cue, transition mode, and orbit height.
+Sequences have unique IDs and serialize as `parallel-shot-sequence/v1`; the
+public schema is
+`tikz_native/schemas/parallel-shot-sequence-v1.schema.json`.
+
+`fit_points_to_parallel_camera_state()` computes the largest positive zoom that
+keeps a fixed point envelope inside an explicit `ParallelCameraSafeFrame`
+without moving the authored target or screen anchor. It supports both area and
+line-valued projections. A point set whose screen image collapses completely
+must provide an explicit fallback zoom instead of receiving a guessed scale.
+
+For a genuinely moving target, first play a static shot to its exact endpoint,
+then start `ParallelCameraTargetFollowController`. Its one preallocated updater
+changes only the target; `stop()` keeps the latest followed view and
+`restore()` returns to the authored endpoint. Playback or provider failure
+removes the updater and rolls the camera back.
+
 Manim's inherited camera zoom composes multiplicatively with the state's
 `zoom`, while `screen_anchor` remains a final viewport-relative coordinate even
 when the inherited `frame_center` is non-zero. The semantic state's `target`
@@ -146,7 +195,9 @@ section ID remains backward compatible for ordinary free curves and the finite
 plane patch, but those curves are not silently reclassified as a section.
 
 See the runnable
-[parallel-camera example](../examples/parallel_camera_views/README.md).
+[parallel-camera view example](../examples/parallel_camera_views/README.md) and
+the three
+[semantic shot acceptance scenes](../examples/parallel_camera_shots/README.md).
 
 ## Source-authoritative project builds
 

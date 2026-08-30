@@ -75,8 +75,8 @@ _PUBLIC_0_1_COMPONENT_REVISIONS: Final[dict[str, str]] = {
     COMPONENT_NATIVE_MANIM_SOURCE_3D: "source-sha256:1ba17fb69e455e3694ae477ebd69de321043555af05c8e7712c3ee22d20307c1",
     COMPONENT_NATIVE_MANIM_SOURCE_3D_V2: "source-sha256:9fb59765ba981108a73a0a4a340de5a32ce4c03707d4925cdb729b9a7ecdcb9c",
     COMPONENT_NATIVE_MANIM_SOURCE_3D_V3: "source-sha256:513935788725e3c72b74905268695a90c443df208a4f321229f05efcdd3ef5aa",
-    COMPONENT_EMBEDDED_MOTION_3D: "source-sha256:6bae85cf9a6c32dad28a8cd929edff1ce18a5ab4fca90e712889eb5097d9fe86",
-    COMPONENT_MOTION_PREVIEW_3D: "source-sha256:7afdd95b8638c45689e8812cc4e216f8b4a764e4293f2bc284fe0f3b4142aed7",
+    COMPONENT_EMBEDDED_MOTION_3D: "source-sha256:067f525651664788b4ad99904bde2443b98f5a8137205815ed9c27d93c1d2eb0",
+    COMPONENT_MOTION_PREVIEW_3D: "source-sha256:e439ed50d684b0796cb8f25679cc22cf1006288536a80b744e0795e124545a10",
     COMPONENT_POLYHEDRON_VISIBILITY: "source-sha256:8fff612f011f5b67cecaa66dc251af3126fe091cfe6b753e7fd5e9301cfcc53f",
     COMPONENT_FACE_DEPTH_CUE_3D: "source-sha256:499495b399f1078f0532413690821764208bbb87695f1f40019ce396f2ac347a",
     COMPONENT_CONVEX_SECTION_3D: "source-sha256:a6c71249ce429884b0fcc3341eeea33dacf2d64e14d875d1e0f222c1530637bf",
@@ -190,10 +190,13 @@ _COMPONENT_DEFINITIONS: Final[dict[str, dict[str, tuple[str, ...]]]] = {
         "files": (
             "camera_3d.py",
             "parallel_camera.py",
+            "parallel_shots.py",
+            "parallel_shots_manim.py",
             "dynamic_geometry.py",
             "manim_renderer_3d.py",
             "motion_3d.py",
             "motion_3d_runtime.py",
+            "schemas/parallel-shot-sequence-v1.schema.json",
             "schemas/motion-3d-v1.schema.json",
         ),
     },
@@ -487,10 +490,10 @@ _DECLARED_IMPLEMENTATION_DIGESTS: Final[dict[str, str]] = {
         "513935788725e3c72b74905268695a90c443df208a4f321229f05efcdd3ef5aa"
     ),
     COMPONENT_EMBEDDED_MOTION_3D: (
-        "6bae85cf9a6c32dad28a8cd929edff1ce18a5ab4fca90e712889eb5097d9fe86"
+        "067f525651664788b4ad99904bde2443b98f5a8137205815ed9c27d93c1d2eb0"
     ),
     COMPONENT_MOTION_PREVIEW_3D: (
-        "7afdd95b8638c45689e8812cc4e216f8b4a764e4293f2bc284fe0f3b4142aed7"
+        "e439ed50d684b0796cb8f25679cc22cf1006288536a80b744e0795e124545a10"
     ),
     COMPONENT_POLYHEDRON_VISIBILITY: (
         "8fff612f011f5b67cecaa66dc251af3126fe091cfe6b753e7fd5e9301cfcc53f"

@@ -54,6 +54,14 @@ class PublicPackageTests(unittest.TestCase):
             "bind_picture_open_face_visibility_3d",
             "bake_open_face_static_entry_3d",
             "generate_native_manim_source_3d_v3",
+            "ParallelCameraSafeFrame",
+            "ParallelCameraShot",
+            "ParallelCameraShotSequence",
+            "ParallelCameraTargetFollowController",
+            "canonical_parallel_camera_shot_sequence_json",
+            "fit_points_to_parallel_camera_state",
+            "play_parallel_camera_shot",
+            "play_parallel_camera_shot_sequence",
         ):
             with self.subTest(name=name):
                 self.assertTrue(callable(getattr(tikz_native, name)))
@@ -119,6 +127,9 @@ class PublicPackageTests(unittest.TestCase):
         self.assertTrue(schemas.joinpath("request-v1.schema.json").is_file())
         self.assertTrue(
             schemas.joinpath("geometry-rig-3d-source-v3-v1.schema.json").is_file()
+        )
+        self.assertTrue(
+            schemas.joinpath("parallel-shot-sequence-v1.schema.json").is_file()
         )
 
     def test_public_tree_contains_no_personal_or_editor_checkout_paths(self) -> None:
