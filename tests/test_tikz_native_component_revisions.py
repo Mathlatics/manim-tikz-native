@@ -96,13 +96,13 @@ NATIVE_SOURCE_3D_V3_REVISION = (
     "source-sha256:513935788725e3c72b74905268695a90c443df208a4f321229f05efcdd3ef5aa"
 )
 PARALLEL_CAMERA_CORE_REVISION = (
-    "source-sha256:6ea0e6870ffafbad664676e0a7429c4240ed56d1f1fdc073a075c6800da276cc"
+    "source-sha256:a6ca69204f5d7cbdaf0eaeff9c47fa8a2cc26d1f6c30436e04eb0aeaa717ab15"
 )
 EMBEDDED_MOTION_3D_REVISION = (
-    "source-sha256:d289d7c39fed4b95b856d61736ed84ef3e607c657c94cd10682d692a2f6eff49"
+    "source-sha256:b2da641f19baa9c0691d017f80c3389ac7911d60bf9eea28d7519209fb99c2df"
 )
 MOTION_PREVIEW_3D_REVISION = (
-    "source-sha256:0d0a8bb97386aefd0f74ef9896dbe359e0827e1fe2a2ca13c141b8d0815822c7"
+    "source-sha256:67fe4d97c1220cc4e638e6e0b400fc8b600f1524edad641e81207a192eb31060"
 )
 POLYHEDRON_VISIBILITY_REVISION = (
     "source-sha256:8fff612f011f5b67cecaa66dc251af3126fe091cfe6b753e7fd5e9301cfcc53f"
@@ -138,13 +138,13 @@ SOURCE_PROJECT_BUILD_REVISION = (
     "source-sha256:a99aff62e9f6a80030a55ca72c48997431b5ae15dbbae88df7a4df11edbe8c06"
 )
 QUADRIC_GEOMETRY_REVISION = (
-    "source-sha256:37e2f79b974a4329f97bfb355378b6bb11383e1e7423a01a9cf62709eb633d4a"
+    "source-sha256:1c25b35997f967635aa23df9b51a6d33f3199fcac4052c523dd0be2106a14765"
 )
 QUADRIC_VISIBILITY_REVISION = (
-    "source-sha256:8d5a40e6f1b01d6d6e5285a1cae4218fec5892d6f6ced928ce9cad2431a03420"
+    "source-sha256:490a8eeb87b02c1d4d621901b1d1e7949c9c6154cba5c4514d53c10b646d1b6b"
 )
 QUADRIC_MANIM_REVISION = (
-    "source-sha256:761a98f07a3b8d2b400c44a4e615084db1ffe9c97f15376ac93744a948172b94"
+    "source-sha256:0a42e52c318d4735f5e549a0425756b41e2fea4394b122ca0231687c06515fcc"
 )
 CONVEX_SECTION_3D_REVISION = (
     "source-sha256:a6c71249ce429884b0fcc3341eeea33dacf2d64e14d875d1e0f222c1530637bf"
@@ -277,8 +277,16 @@ class TikzNativeComponentRevisionTests(unittest.TestCase):
             self.assertIn(component, revisions)
             self.assertIn(component, contracts)
         self.assertEqual(
+            contracts[COMPONENT_QUADRIC_GEOMETRY],
+            "tikz-native-contract:quadric_geometry/v1",
+        )
+        self.assertEqual(
             contracts[COMPONENT_QUADRIC_VISIBILITY],
             "tikz-native-contract:quadric_visibility/v2",
+        )
+        self.assertEqual(
+            contracts[COMPONENT_QUADRIC_MANIM],
+            "tikz-native-contract:quadric_manim/v1",
         )
         self.assertEqual(
             motion_2d["revision"], revisions[COMPONENT_MOTION_PREVIEW_2D]
@@ -327,7 +335,36 @@ class TikzNativeComponentRevisionTests(unittest.TestCase):
                     record["component_contract_revisions"], contracts
                 )
 
-    def test_public_release_components_have_frozen_render_identities(self) -> None:
+    def test_public_0_1_component_history_is_not_relabelled(self) -> None:
+        historical = {
+            COMPONENT_PARALLEL_CAMERA_CORE: (
+                "source-sha256:6ea0e6870ffafbad664676e0a7429c4240ed56d1f1fdc073a075c6800da276cc"
+            ),
+            COMPONENT_EMBEDDED_MOTION_3D: (
+                "source-sha256:d289d7c39fed4b95b856d61736ed84ef3e607c657c94cd10682d692a2f6eff49"
+            ),
+            COMPONENT_MOTION_PREVIEW_3D: (
+                "source-sha256:0d0a8bb97386aefd0f74ef9896dbe359e0827e1fe2a2ca13c141b8d0815822c7"
+            ),
+            COMPONENT_QUADRIC_GEOMETRY: (
+                "source-sha256:37e2f79b974a4329f97bfb355378b6bb11383e1e7423a01a9cf62709eb633d4a"
+            ),
+            COMPONENT_QUADRIC_VISIBILITY: (
+                "source-sha256:8d5a40e6f1b01d6d6e5285a1cae4218fec5892d6f6ced928ce9cad2431a03420"
+            ),
+            COMPONENT_QUADRIC_MANIM: (
+                "source-sha256:761a98f07a3b8d2b400c44a4e615084db1ffe9c97f15376ac93744a948172b94"
+            ),
+        }
+        public_history = version_module._PUBLIC_0_1_COMPONENT_REVISIONS
+        for component, revision in historical.items():
+            self.assertEqual(public_history[component], revision)
+            self.assertNotEqual(
+                version_module._UNRELEASED_COMPONENT_REVISIONS[component],
+                revision,
+            )
+
+    def test_current_provider_components_have_declared_render_identities(self) -> None:
         revisions = provider_component_revisions()
         expected = {
             COMPONENT_ASSET_COMPILER: ASSET_REVISION,
@@ -514,10 +551,45 @@ print(json.dumps({
             if component not in changed:
                 self.assertEqual(components[component], baseline[component])
 
+    def test_editing_parallel_viewport_changes_camera_dependents(self) -> None:
+        baseline = provider_component_revisions()
+        mutated = self._probe_copy("parallel_viewport.py")
+        components = mutated["components"]
+        changed = {
+            COMPONENT_PARALLEL_CAMERA_CORE,
+            COMPONENT_EMBEDDED_MOTION_3D,
+            COMPONENT_MOTION_PREVIEW_3D,
+            COMPONENT_QUADRIC_GEOMETRY,
+            COMPONENT_QUADRIC_VISIBILITY,
+            COMPONENT_QUADRIC_MANIM,
+        }
+        for component in changed:
+            self.assertNotEqual(components[component], baseline[component])
+        for component in baseline:
+            if component not in changed:
+                self.assertEqual(components[component], baseline[component])
+
     def test_editing_quadric_geometry_changes_its_recursive_dependents(self) -> None:
         baseline = provider_component_revisions()
         mutated = self._probe_copy(
             "@tool/polyhedron_visibility/quadrics/sections.py"
+        )
+        components = mutated["components"]
+        changed = {
+            COMPONENT_QUADRIC_GEOMETRY,
+            COMPONENT_QUADRIC_VISIBILITY,
+            COMPONENT_QUADRIC_MANIM,
+        }
+        for component in changed:
+            self.assertNotEqual(components[component], baseline[component])
+        for component in baseline:
+            if component not in changed:
+                self.assertEqual(components[component], baseline[component])
+
+    def test_editing_semantic_compositing_changes_geometry_dependents(self) -> None:
+        baseline = provider_component_revisions()
+        mutated = self._probe_copy(
+            "@tool/polyhedron_visibility/quadrics/semantic_compositing.py"
         )
         components = mutated["components"]
         changed = {
@@ -552,6 +624,18 @@ print(json.dumps({
         mutated = self._probe_copy(
             "@tool/polyhedron_visibility/quadrics/manim.py"
         )
+        components = mutated["components"]
+        self.assertNotEqual(
+            components[COMPONENT_QUADRIC_MANIM],
+            baseline[COMPONENT_QUADRIC_MANIM],
+        )
+        for component in baseline:
+            if component != COMPONENT_QUADRIC_MANIM:
+                self.assertEqual(components[component], baseline[component])
+
+    def test_editing_global_parallel_rig_changes_only_manim(self) -> None:
+        baseline = provider_component_revisions()
+        mutated = self._probe_copy("global_parallel_rig.py")
         components = mutated["components"]
         self.assertNotEqual(
             components[COMPONENT_QUADRIC_MANIM],

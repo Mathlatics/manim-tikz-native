@@ -40,11 +40,7 @@ _REQUIRED_PARTICIPANTS = {
         ParallelFramePhase.PREFLIGHT,
         ParallelFrameBindingKind.PREFLIGHT_GATE,
     ),
-    "parallel-screen-transform-guard": (
-        ParallelFramePhase.PREFLIGHT,
-        ParallelFrameBindingKind.SCREEN_TRANSFORM_GUARD,
-    ),
-    "parallel-camera": (
+    "parallel-viewport": (
         ParallelFramePhase.CAMERA,
         ParallelFrameBindingKind.CAMERA,
     ),
@@ -59,6 +55,10 @@ _REQUIRED_PARTICIPANTS = {
     "section-semantic-display": (
         ParallelFramePhase.PAINT,
         ParallelFrameBindingKind.SECTION_DISPLAY,
+    ),
+    "section-semantic-compositing": (
+        ParallelFramePhase.PAINT,
+        ParallelFrameBindingKind.SECTION_COMPOSITING,
     ),
 }
 

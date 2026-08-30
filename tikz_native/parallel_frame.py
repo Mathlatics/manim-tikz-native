@@ -65,6 +65,7 @@ class ParallelFrameBindingKind(str, Enum):
     SECTION_BANK = "section-bank"
     SECTION_PLANE_PATCH = "section-plane-patch"
     SECTION_PAINTER = "section-painter"
+    SECTION_COMPOSITING = "section-compositing"
     SECTION_DISPLAY = "section-display"
 
 

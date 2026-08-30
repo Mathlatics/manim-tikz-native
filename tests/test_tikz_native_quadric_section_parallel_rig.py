@@ -23,16 +23,28 @@ from polyhedron_visibility.quadrics.parallel_plane_motion import (
 )
 from polyhedron_visibility.quadrics.section_timeline import compile_section_timeline
 from polyhedron_visibility.quadrics.semantic_display import (
+    SectionDisplayRole,
     SectionDisplayInstruction,
     compile_section_display,
 )
+from polyhedron_visibility.quadrics.semantic_compositing import (
+    SectionCompositingAxes,
+    SectionCompositingInstruction,
+    SectionCompositingOverride,
+    compile_section_compositing,
+)
+from polyhedron_visibility.quadrics.compositing import QuadricPaintPolicy
 from tikz_native.camera_3d import MultiProjectionCamera
 from tikz_native.parallel_camera import ParallelCameraState
 from tikz_native.parallel_frame import (
     ParallelFrameParticipant,
     ParallelFramePhase,
 )
-from tikz_native.parallel_preflight import ParallelPreflightLimits, ParallelSafeFrame
+from tikz_native.parallel_preflight import (
+    ParallelPreflightLimits,
+    ParallelSafeFrame,
+    ParallelScreenTransform,
+)
 from tikz_native.parallel_shots import ParallelCameraShot, ParallelCameraShotSequence
 from tikz_native.quadric_section_parallel_rig import (
     ParallelSectionRigBindingError,
@@ -52,7 +64,7 @@ def _limits() -> ParallelPreflightLimits:
     )
 
 
-def _inside_sphere_source():
+def _inside_sphere_source(*, surface_boundary_mode: str = "certified"):
     surface = SphereSpec("binding-sphere", (0.0, 0.0, 0.0), 1.2)
     plane = SectionPlane(
         "binding-plane",
@@ -78,6 +90,7 @@ def _inside_sphere_source():
         timeline,
         banks,
         include_plane=True,
+        surface_boundary_mode=surface_boundary_mode,
     )
     initial = ParallelCameraState.from_view_direction(
         (1.0, 1.0, 1.0),
@@ -108,9 +121,12 @@ def _inside_sphere_fixture(
     display_mode: str = "painted",
     emphasize_section: bool = False,
     dim_unemphasized: float = 0.25,
+    surface_boundary_mode: str = "certified",
     controller_options: dict[str, object] | None = None,
 ):
-    timeline, banks, catalog, initial, shots = _inside_sphere_source()
+    timeline, banks, catalog, initial, shots = _inside_sphere_source(
+        surface_boundary_mode=surface_boundary_mode,
+    )
     display = compile_section_display(
         catalog,
         SectionDisplayInstruction.for_mode(
@@ -170,24 +186,309 @@ class ParallelSectionRigBindingTests(unittest.TestCase):
             display_mode="outline-only",
             emphasize_section=True,
             dim_unemphasized=0.4,
+            surface_boundary_mode="legacy",
             controller_options={"style": authored_style},
         )
 
         compiled_style = binding.controller.style
         self.assertTrue(binding.controller.legacy_surface_stroke_fallback)
-        self.assertEqual(compiled_style.surface_fill_opacity, 0.0)
-        self.assertAlmostEqual(compiled_style.surface_stroke_opacity, 0.32)
+        self.assertEqual(compiled_style.surface_fill_opacity, 0.7)
+        self.assertAlmostEqual(compiled_style.surface_stroke_opacity, 0.8)
         self.assertEqual(compiled_style.surface_stroke_width, 3.25)
-        self.assertEqual(compiled_style.section_plane_fill_opacity, 0.0)
-        self.assertAlmostEqual(compiled_style.section_plane_stroke_opacity, 0.24)
+        self.assertEqual(compiled_style.section_plane_fill_opacity, 0.3)
+        self.assertAlmostEqual(compiled_style.section_plane_stroke_opacity, 0.6)
         self.assertEqual(compiled_style.section_plane_stroke_width, 2.75)
+        self.assertEqual(
+            binding._resolve_surface_opacities()["binding-sphere"],
+            0.0,
+        )
+        self.assertEqual(binding._resolve_section_plane_fill_opacity(), 0.0)
+        self.assertAlmostEqual(
+            binding._resolve_section_plane_stroke_opacity(),
+            0.4,
+        )
+        self.assertAlmostEqual(
+            binding._resolve_surface_stroke_opacities()["binding-sphere"],
+            0.4,
+        )
         self.assertEqual(authored_style.surface_fill_opacity, 0.7)
         self.assertEqual(authored_style.surface_stroke_opacity, 0.8)
         self.assertEqual(authored_style.section_plane_fill_opacity, 0.3)
         self.assertEqual(authored_style.section_plane_stroke_opacity, 0.6)
+
+        binding.attach()
+        front = binding.controller._section_surface_paint_slots[4].base
+        self.assertEqual(float(front.get_fill_opacity()), 0.0)
+        self.assertAlmostEqual(float(front.get_stroke_opacity()), 0.32)
+        binding.controller.display_mobject.set_opacity(0.5)
+        binding.controller.update()
+        self.assertEqual(float(front.get_fill_opacity()), 0.0)
+        self.assertAlmostEqual(float(front.get_stroke_opacity()), 0.16)
+        binding.restore()
         self.assertEqual(scene.mobjects, [])
 
-    def test_static_display_role_opacity_change_is_rejected(self) -> None:
+    def test_certified_surface_boundaries_replace_legacy_outline(self) -> None:
+        scene = ThreeDScene(camera_class=MultiProjectionCamera)
+        timeline, banks, catalog, initial, shots = _inside_sphere_source()
+        roles = {slot.role for slot in catalog.slots}
+        self.assertIn(SectionDisplayRole.CONTOUR, roles)
+        self.assertNotIn(SectionDisplayRole.SURFACE_OUTLINE, roles)
+        display = compile_section_display(
+            catalog,
+            SectionDisplayInstruction.for_mode("painted"),
+        )
+        binding = compile_parallel_section_rig_from_shots(
+            scene,
+            timeline,
+            shots,
+            initial,
+            tuple(display for _ in timeline.samples),
+            limits=_limits(),
+            semantic_bank_ids=banks,
+            frame_rate=4.0,
+            plane_patch_margin=0.1,
+        )
+
+        self.assertTrue(binding.controller.include_surface_boundaries)
+        self.assertFalse(binding.controller.legacy_surface_stroke_fallback)
+        contour_sources = {
+            slot.source_id
+            for slot in catalog.slots
+            if slot.role is SectionDisplayRole.CONTOUR
+        }
+        self.assertTrue(contour_sources)
+        self.assertTrue(
+            contour_sources.issubset(
+                set(binding.controller.allocated_boundary_ids)
+            )
+        )
+        self.assertEqual(scene.mobjects, [])
+
+    def test_legacy_surface_outline_compositing_opacity_updates_without_geometry(
+        self,
+    ) -> None:
+        scene = ThreeDScene(camera_class=MultiProjectionCamera)
+        timeline, banks, catalog, initial, shots = _inside_sphere_source(
+            surface_boundary_mode="legacy"
+        )
+        display = compile_section_display(
+            catalog,
+            SectionDisplayInstruction.for_mode("outline-only"),
+        )
+        outline_slot = next(
+            item.slot_id
+            for item in catalog.slots
+            if item.role is SectionDisplayRole.SURFACE_OUTLINE
+        )
+        dimmed_outline = compile_section_compositing(
+            catalog,
+            SectionCompositingInstruction.for_catalog(
+                catalog,
+                defaults=SectionCompositingAxes(
+                    depth_presentation="diagrammatic"
+                ),
+                overrides=(
+                    SectionCompositingOverride.for_slot(
+                        outline_slot,
+                        display_opacity=0.25,
+                    ),
+                ),
+            ),
+        )
+        binding = compile_parallel_section_rig_from_shots(
+            scene,
+            timeline,
+            shots,
+            initial,
+            tuple(display for _ in timeline.samples),
+            limits=_limits(),
+            semantic_bank_ids=banks,
+            frame_rate=4.0,
+            plane_patch_margin=0.1,
+            controller_options={
+                "style": QuadricManimStyle(surface_stroke_opacity=0.8)
+            },
+        )
+        scene.camera.set_parallel_state(initial)
+        binding.attach()
+        front = binding.controller._section_surface_paint_slots[4].base
+        self.assertEqual(float(front.get_fill_opacity()), 0.0)
+        self.assertAlmostEqual(float(front.get_stroke_opacity()), 0.8)
+
+        binding.controller.display_mobject.set_opacity(0.5)
+        binding.apply_section_compositing_frame(dimmed_outline)
+        with patch.object(
+            binding.controller,
+            "_prepare_numeric",
+            wraps=binding.controller._prepare_numeric,
+        ) as prepare_numeric:
+            binding.controller.update()
+        prepare_numeric.assert_not_called()
+        self.assertEqual(float(front.get_fill_opacity()), 0.0)
+        self.assertAlmostEqual(float(front.get_stroke_opacity()), 0.1)
+
+        binding.restore()
+        self.assertEqual(scene.mobjects, [])
+
+    def test_dynamic_compositing_axes_reach_the_real_controller_independently(
+        self,
+    ) -> None:
+        scene = ThreeDScene(camera_class=MultiProjectionCamera)
+        timeline, banks, catalog, initial, shots = _inside_sphere_source()
+        display = compile_section_display(
+            catalog,
+            SectionDisplayInstruction.for_mode("painted"),
+        )
+        surface_fill_slot = next(
+            slot.slot_id
+            for slot in catalog.slots
+            if slot.role is SectionDisplayRole.SURFACE_FILL
+        )
+        invisible_occluder = compile_section_compositing(
+            catalog,
+            SectionCompositingInstruction.for_catalog(
+                catalog,
+                defaults=SectionCompositingAxes(
+                    depth_presentation="diagrammatic",
+                ),
+                overrides=(
+                    SectionCompositingOverride.for_slot(
+                        surface_fill_slot,
+                        display_opacity=0.0,
+                    ),
+                ),
+            ),
+        )
+        opaque_paint_only = compile_section_compositing(
+            catalog,
+            SectionCompositingInstruction.for_catalog(
+                catalog,
+                defaults=SectionCompositingAxes(
+                    depth_presentation="physical",
+                ),
+                overrides=(
+                    SectionCompositingOverride.for_slot(
+                        surface_fill_slot,
+                        occlusion_participation="paint-only",
+                    ),
+                ),
+            ),
+        )
+        compositing = tuple(
+            invisible_occluder if index == 0 else opaque_paint_only
+            for index, _sample in enumerate(timeline.samples)
+        )
+        binding = compile_parallel_section_rig_from_shots(
+            scene,
+            timeline,
+            shots,
+            initial,
+            tuple(display for _ in timeline.samples),
+            compositing_frames=compositing,
+            limits=_limits(),
+            semantic_bank_ids=banks,
+            frame_rate=4.0,
+            plane_patch_margin=0.1,
+        )
+
+        binding._compositing_frame = binding.sequence.compositing_frames[0]
+        self.assertEqual(
+            binding._resolve_surface_opacities()["binding-sphere"],
+            0.0,
+        )
+        self.assertEqual(
+            binding._resolve_occluding_surface_ids(),
+            ("binding-sphere",),
+        )
+        self.assertIs(
+            binding._resolve_paint_policy(),
+            QuadricPaintPolicy.DIAGRAMMATIC,
+        )
+        binding._compositing_frame = binding.sequence.compositing_frames[-1]
+        self.assertEqual(
+            binding._resolve_surface_opacities()["binding-sphere"],
+            1.0,
+        )
+        self.assertEqual(binding._resolve_occluding_surface_ids(), ())
+        self.assertIs(
+            binding._resolve_paint_policy(),
+            QuadricPaintPolicy.PHYSICAL,
+        )
+        binding._reset_to_first_frame()
+        self.assertEqual(scene.mobjects, [])
+
+    def test_direct_compositing_apply_rejects_unsupported_roles_and_mixed_policy(
+        self,
+    ) -> None:
+        scene = ThreeDScene(camera_class=MultiProjectionCamera)
+        timeline, banks, catalog, initial, shots = _inside_sphere_source()
+        display = compile_section_display(
+            catalog,
+            SectionDisplayInstruction.for_mode("painted"),
+        )
+        binding = compile_parallel_section_rig_from_shots(
+            scene,
+            timeline,
+            shots,
+            initial,
+            tuple(display for _ in timeline.samples),
+            limits=_limits(),
+            semantic_bank_ids=banks,
+            frame_rate=4.0,
+            plane_patch_margin=0.1,
+        )
+        original = binding.snapshot_section_compositing_state()
+        curve_slot = next(
+            item.slot_id
+            for item in catalog.slots
+            if item.role is SectionDisplayRole.SECTION_CURVE
+        )
+        unsupported = compile_section_compositing(
+            catalog,
+            SectionCompositingInstruction.for_catalog(
+                catalog,
+                defaults=SectionCompositingAxes(
+                    depth_presentation="diagrammatic"
+                ),
+                overrides=(
+                    SectionCompositingOverride.for_slot(
+                        curve_slot,
+                        occlusion_participation="paint-only",
+                    ),
+                ),
+            ),
+        )
+        with self.assertRaisesRegex(
+            ParallelSectionRigBindingError,
+            "supported only by the surface-fill slot",
+        ):
+            binding.apply_section_compositing_frame(unsupported)
+        self.assertEqual(binding.snapshot_section_compositing_state(), original)
+
+        mixed_policy = compile_section_compositing(
+            catalog,
+            SectionCompositingInstruction.for_catalog(
+                catalog,
+                defaults=SectionCompositingAxes(
+                    depth_presentation="diagrammatic"
+                ),
+                overrides=(
+                    SectionCompositingOverride.for_slot(
+                        curve_slot,
+                        depth_presentation="physical",
+                    ),
+                ),
+            ),
+        )
+        with self.assertRaisesRegex(
+            ParallelSectionRigBindingError,
+            "one depth presentation policy",
+        ):
+            binding.apply_section_compositing_frame(mixed_policy)
+        self.assertEqual(binding.snapshot_section_compositing_state(), original)
+        self.assertEqual(scene.mobjects, [])
+
+    def test_surface_and_plane_display_opacity_can_change_per_frame(self) -> None:
         scene = ThreeDScene(camera_class=MultiProjectionCamera)
         timeline, banks, catalog, initial, shots = _inside_sphere_source()
         painted = compile_section_display(
@@ -201,26 +502,103 @@ class ParallelSectionRigBindingTests(unittest.TestCase):
         displays = [painted for _ in timeline.samples]
         displays[-1] = outline
 
-        with self.assertRaisesRegex(
-            ParallelSectionRigBindingError,
-            "static display role .* must remain constant",
-        ):
-            compile_parallel_section_rig_from_shots(
-                scene,
-                timeline,
-                shots,
-                initial,
-                tuple(displays),
-                limits=_limits(),
-                semantic_bank_ids=banks,
-                frame_rate=4.0,
-                plane_patch_margin=0.1,
-            )
+        binding = compile_parallel_section_rig_from_shots(
+            scene,
+            timeline,
+            shots,
+            initial,
+            tuple(displays),
+            limits=_limits(),
+            semantic_bank_ids=banks,
+            frame_rate=4.0,
+            plane_patch_margin=0.1,
+        )
+        binding.attach()
+        identities = binding.controller.slot_identities()
+        coordinator = binding.build_coordinator(scene.camera)
+        coordinator.update(binding.sequence.frames[0])
+        self.assertEqual(
+            binding._resolve_surface_opacities()["binding-sphere"],
+            1.0,
+        )
+        for frame in binding.sequence.frames[1:]:
+            coordinator.update(frame)
+        self.assertEqual(
+            binding._resolve_surface_opacities()["binding-sphere"],
+            0.0,
+        )
+        self.assertEqual(binding._resolve_section_plane_fill_opacity(), 0.0)
+        self.assertEqual(binding.controller.slot_identities(), identities)
+        coordinator.restore()
+        binding.restore()
         self.assertEqual(scene.mobjects, [])
 
     def test_real_painter_preflight_uses_one_controller_and_reaches_line(self) -> None:
         scene = ThreeDScene(camera_class=MultiProjectionCamera)
         _timeline, _initial, binding = _inside_sphere_fixture(scene)
+        self.assertEqual(scene.mobjects, [])
+
+    def test_nonidentity_viewport_moves_camera_and_fixed_slots_atomically(
+        self,
+    ) -> None:
+        scene = ThreeDScene(camera_class=MultiProjectionCamera)
+        timeline, banks, catalog, initial, shots = _inside_sphere_source()
+        display = compile_section_display(
+            catalog,
+            SectionDisplayInstruction.for_mode("painted"),
+        )
+        transforms = tuple(
+            ParallelScreenTransform(
+                inherited_zoom=1.0 + 0.4 * index / (len(timeline.samples) - 1),
+                frame_center=(0.5 * index, -0.25 * index),
+                display_offset=(0.2 * index, 0.1 * index),
+            )
+            for index, _sample in enumerate(timeline.samples)
+        )
+        binding = compile_parallel_section_rig_from_shots(
+            scene,
+            timeline,
+            shots,
+            initial,
+            tuple(display for _ in timeline.samples),
+            limits=_limits(),
+            semantic_bank_ids=banks,
+            frame_rate=4.0,
+            plane_patch_margin=0.1,
+            screen_transforms=transforms,
+        )
+        scene.camera.set_zoom(0.75)
+        scene.camera.frame_center[:] = (1.5, -1.0, 3.0)
+        binding.controller.display_offset = (9.0, 9.0)
+        binding.attach()
+        identities = binding.controller.slot_identities()
+        self.assertEqual(binding.controller.display_offset, (0.0, 0.0))
+
+        coordinator = binding.build_coordinator(scene.camera)
+        for frame, expected in zip(
+            binding.sequence.frames,
+            binding.sequence.screen_transforms,
+        ):
+            coordinator.update(frame)
+            self.assertEqual(scene.camera.get_zoom(), expected.inherited_zoom)
+            self.assertEqual(
+                tuple(float(item) for item in scene.camera.frame_center[:2]),
+                expected.frame_center,
+            )
+            self.assertEqual(
+                binding.controller.display_offset,
+                expected.display_offset,
+            )
+            self.assertEqual(binding.controller.slot_identities(), identities)
+
+        coordinator.restore()
+        self.assertEqual(scene.camera.get_zoom(), 0.75)
+        self.assertEqual(
+            tuple(float(item) for item in scene.camera.frame_center),
+            (1.5, -1.0, 3.0),
+        )
+        self.assertEqual(binding.controller.display_offset, (0.0, 0.0))
+        binding.restore()
         self.assertEqual(scene.mobjects, [])
         self.assertTrue(
             all(
@@ -349,7 +727,7 @@ class ParallelSectionRigBindingTests(unittest.TestCase):
         binding.restore()
         self.assertEqual(scene.mobjects, [])
 
-    def test_isolated_point_activation_fails_before_scene_ownership(self) -> None:
+    def test_isolated_point_activation_uses_fixed_point_slots(self) -> None:
         scene = ThreeDScene(camera_class=MultiProjectionCamera)
         surface = SphereSpec("point-sphere", (0.0, 0.0, 0.0), 1.0)
         plane = SectionPlane(
@@ -385,20 +763,53 @@ class ParallelSectionRigBindingTests(unittest.TestCase):
         shots = ParallelCameraShotSequence(
             (ParallelCameraShot("point-shot", camera, duration=2.0),)
         )
-        with self.assertRaisesRegex(
-            ParallelSectionRigBindingError,
-            "true fixed Manim point slot",
-        ):
-            compile_parallel_section_rig_from_shots(
-                scene,
-                timeline,
-                shots,
-                camera,
-                tuple(display for _ in timeline.samples),
-                limits=_limits(),
-                semantic_bank_ids=banks,
-                plane_patch_margin=0.1,
+        binding = compile_parallel_section_rig_from_shots(
+            scene,
+            timeline,
+            shots,
+            camera,
+            tuple(display for _ in timeline.samples),
+            limits=_limits(),
+            semantic_bank_ids=banks,
+            plane_patch_margin=0.1,
+        )
+        self.assertEqual(len(binding.allocated_point_ids), 2)
+        self.assertEqual(scene.mobjects, [])
+        point_frame_indices = tuple(
+            index
+            for index, frame in enumerate(binding.sequence.bank_render_frames)
+            if any(layer.isolated_point_count for layer in frame.layers)
+        )
+        self.assertTrue(point_frame_indices)
+        self.assertTrue(
+            all(
+                any(item.startswith("point:") for item in binding.sequence.painter_orders[index].draw_order)
+                for index in point_frame_indices
             )
+        )
+
+        scene.camera.set_parallel_state(camera)
+        binding.attach()
+        identities = binding.controller.slot_identities()
+        coordinator = binding.build_coordinator(scene.camera)
+        observed_point_counts: list[int] = []
+        for index, frame in enumerate(binding.sequence.frames):
+            coordinator.update(frame)
+            prepared = binding.controller._last_prepared_frame
+            assert prepared is not None
+            observed_point_counts.append(len(prepared.numeric.points))
+            self.assertEqual(binding.controller.slot_identities(), identities)
+            if index in point_frame_indices:
+                self.assertGreater(len(prepared.numeric.points), 0)
+                self.assertFalse(
+                    any(
+                        curve.curve_id in binding.allocated_point_ids
+                        for curve in binding._curves
+                    )
+                )
+        self.assertTrue(any(observed_point_counts))
+        coordinator.restore()
+        binding.restore()
         self.assertEqual(scene.mobjects, [])
 
     def test_cone_topology_banks_cap_chords_and_exact_side_view(self) -> None:

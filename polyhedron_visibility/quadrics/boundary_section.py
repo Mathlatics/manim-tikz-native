@@ -181,9 +181,34 @@ def _plane_intersection_parameters(
     plane: SectionPlane,
     context: ResolvedGeometryContext,
 ) -> tuple[float, ...]:
-    chart = _curve_chart(source.curve)
     normal = np.asarray(plane.normal, dtype=float)
     offset = float(np.dot(normal, np.asarray(plane.point, dtype=float)))
+    curve = source.curve
+    ellipse_world: tuple[np.ndarray, np.ndarray, np.ndarray] | None = None
+    if isinstance(curve, EllipseArcCurve):
+        ellipse_world = (
+            np.asarray(curve.center, dtype=float),
+            np.asarray(curve.first_axis, dtype=float),
+            np.asarray(curve.second_axis, dtype=float),
+        )
+    elif (
+        isinstance(curve, ParametricConicBranch)
+        and curve.parameterization.kind in {ConicKind.CIRCLE, ConicKind.ELLIPSE}
+    ):
+        ellipse_world = _parametric_world_geometry(curve)
+    if ellipse_world is not None:
+        origin, first_axis, second_axis = ellipse_world
+        values = _trigonometric_parameters(
+            source,
+            float(np.dot(normal, first_axis)),
+            float(np.dot(normal, second_axis)),
+            float(np.dot(normal, origin)) - offset,
+            context.epsilon(GeometryQuantity.BOUNDARY),
+            context.epsilon(GeometryQuantity.PARAMETER),
+        )
+        return () if values is None else values
+
+    chart = _curve_chart(curve)
     polynomial = Polynomial((0.0,))
     for component, numerator in zip(normal, chart.numerator):
         polynomial = polynomial + float(component) * numerator

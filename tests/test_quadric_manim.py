@@ -26,7 +26,11 @@ from polyhedron_visibility.quadrics.compositing import (
     QuadricPaintPolicy,
 )
 from polyhedron_visibility.quadrics.contract import SphereSpec
-from polyhedron_visibility.quadrics.curves import CircleArcCurve, SegmentCurve
+from polyhedron_visibility.quadrics.curves import (
+    CircleArcCurve,
+    PointMarker3D,
+    SegmentCurve,
+)
 from polyhedron_visibility.quadrics.global_occlusion import (
     GlobalQuadricOcclusionError,
 )
@@ -42,6 +46,7 @@ from polyhedron_visibility.quadrics.projection import (
     ProjectionProxyError,
     ProjectionSubdivisionError,
 )
+from polyhedron_visibility.visibility import VisibilityKind
 
 IDENTITY_VIEW = ParallelView.from_matrix(np.eye(3))
 
@@ -171,6 +176,241 @@ class QuadricManimBindingTests(unittest.TestCase):
         np.testing.assert_allclose(lengths, np.full(3, lengths[0]), atol=1e-12)
         self.assertAlmostEqual(float(matrix[0, 2]), 0.0, places=12)
         self.assertGreater(float(matrix[1, 2]), 0.0)
+
+    def test_point_marker_uses_fixed_dot_and_draw_only_opacity_update(self) -> None:
+        scene = Scene()
+        active = False
+        opacity = 1.0
+
+        def points() -> tuple[PointMarker3D, ...]:
+            return (PointMarker3D("tangent", (0.0, 0.0, 1.0)),) if active else ()
+
+        def point_opacities() -> dict[str, float]:
+            return {"tangent": opacity}
+
+        controller = QuadricOcclusion3D(
+            scene,
+            surfaces=(SphereSpec("sphere", (0.0, 0.0, 0.0), 1.0),),
+            curves=(),
+            points=points,
+            allocated_point_ids=("tangent",),
+            point_opacities=point_opacities,
+            projection=IDENTITY_VIEW,
+            limits=_limits(max_curves=1, max_points=1),
+        ).attach()
+        try:
+            identities = controller.slot_identities()
+            self.assertEqual(controller.allocated_point_ids, ("tangent",))
+            self.assertFalse(controller._last_prepared_frame.numeric.points)
+
+            active = True
+            controller.update()
+            prepared = controller._last_prepared_frame
+            assert prepared is not None
+            self.assertEqual(len(prepared.numeric.points), 1)
+            self.assertEqual(prepared.numeric.points[0].point_id, "tangent")
+            self.assertTrue(prepared.numeric.points[0].visible)
+            self.assertEqual(prepared.numeric.painter_draw_order[-1], "point:tangent")
+            np.testing.assert_allclose(
+                controller._point_slots["tangent"].get_center(),
+                (0.0, 0.0, 0.0),
+                atol=1.0e-12,
+            )
+            self.assertEqual(controller.slot_identities(), identities)
+
+            opacity = 0.25
+            with patch.object(
+                controller,
+                "_prepare_numeric",
+                wraps=controller._prepare_numeric,
+            ) as prepare_numeric:
+                controller.update()
+            prepare_numeric.assert_not_called()
+            self.assertAlmostEqual(
+                float(controller._point_slots["tangent"].get_fill_opacity()),
+                0.25,
+            )
+            self.assertEqual(controller.slot_identities(), identities)
+        finally:
+            controller.restore()
+        self.assertEqual(scene.mobjects, [])
+
+    def test_dynamic_surface_display_occlusion_and_depth_axes_are_independent(
+        self,
+    ) -> None:
+        scene = Scene()
+        surface_opacity = 1.0
+        occluding_surface_ids = ("sphere",)
+        paint_policy = QuadricPaintPolicy.DIAGRAMMATIC
+
+        def surface_opacities() -> dict[str, float]:
+            return {"sphere": surface_opacity}
+
+        def occluders() -> tuple[str, ...]:
+            return occluding_surface_ids
+
+        def policy() -> QuadricPaintPolicy:
+            return paint_policy
+
+        controller = QuadricOcclusion3D(
+            scene,
+            surfaces=(SphereSpec("sphere", (0.0, 0.0, 0.0), 1.0),),
+            curves=(
+                CircleArcCurve(
+                    "equator",
+                    (0.0, 0.0, 0.0),
+                    1.0,
+                    (1.0, 0.0, 0.0),
+                    radial_axis=(0.0, 1.0, 0.0),
+                ),
+            ),
+            projection=IDENTITY_VIEW,
+            paint_policy=policy,
+            surface_opacities=surface_opacities,
+            occluding_surface_ids=occluders,
+            boundary_visibility_mode="unified",
+            limits=_limits(max_boundary_sources=8),
+        ).attach()
+        try:
+            identities = controller.slot_identities()
+
+            def curve_fragments():
+                frame = controller.last_boundary_frame
+                assert frame is not None
+                return tuple(
+                    item for item in frame.fragments
+                    if item.source_id == "equator"
+                )
+
+            hidden = tuple(
+                item for item in curve_fragments()
+                if item.surface_visibility_kind is VisibilityKind.HIDDEN
+            )
+            self.assertTrue(hidden)
+            self.assertTrue(all(item.painted for item in hidden))
+
+            surface_opacity = 0.0
+            with patch.object(
+                controller,
+                "_prepare_numeric",
+                wraps=controller._prepare_numeric,
+            ) as prepare_numeric:
+                controller.update()
+            prepare_numeric.assert_not_called()
+            self.assertTrue(
+                all(
+                    float(member.get_fill_opacity()) == 0.0
+                    for member in controller._surface_slots[0].get_family()
+                )
+            )
+            self.assertTrue(
+                any(
+                    item.surface_visibility_kind is VisibilityKind.HIDDEN
+                    for item in curve_fragments()
+                )
+            )
+
+            occluding_surface_ids = ()
+            with patch.object(
+                controller,
+                "_prepare_numeric",
+                wraps=controller._prepare_numeric,
+            ) as prepare_numeric:
+                controller.update()
+            prepare_numeric.assert_called_once()
+            self.assertFalse(
+                any(
+                    item.surface_visibility_kind is VisibilityKind.HIDDEN
+                    for item in curve_fragments()
+                )
+            )
+
+            occluding_surface_ids = ("sphere",)
+            with patch.object(
+                controller,
+                "_prepare_numeric",
+                wraps=controller._prepare_numeric,
+            ) as prepare_numeric:
+                controller.update()
+            prepare_numeric.assert_called_once()
+            hidden = tuple(
+                item for item in curve_fragments()
+                if item.surface_visibility_kind is VisibilityKind.HIDDEN
+            )
+            self.assertTrue(hidden)
+            self.assertTrue(all(item.painted for item in hidden))
+
+            paint_policy = QuadricPaintPolicy.PHYSICAL
+            with patch.object(
+                controller,
+                "_prepare_numeric",
+                wraps=controller._prepare_numeric,
+            ) as prepare_numeric:
+                controller.update()
+            prepare_numeric.assert_called_once()
+            hidden = tuple(
+                item for item in curve_fragments()
+                if item.surface_visibility_kind is VisibilityKind.HIDDEN
+            )
+            self.assertTrue(hidden)
+            self.assertTrue(all(not item.painted for item in hidden))
+            self.assertEqual(controller.slot_identities(), identities)
+        finally:
+            controller.restore()
+        self.assertEqual(scene.mobjects, [])
+
+    def test_surface_fill_and_legacy_stroke_multipliers_are_independent_draw_inputs(
+        self,
+    ) -> None:
+        scene = Scene()
+        fill_multiplier = 0.5
+        stroke_multiplier = 0.25
+
+        controller = QuadricOcclusion3D(
+            scene,
+            surfaces=(SphereSpec("surface", (0.0, 0.0, 0.0), 1.0),),
+            curves=(),
+            projection=IDENTITY_VIEW,
+            surface_opacities=lambda: {"surface": fill_multiplier},
+            surface_stroke_opacities=(
+                lambda: {"surface": stroke_multiplier}
+            ),
+            style=QuadricManimStyle(
+                surface_fill_opacity=0.8,
+                surface_stroke_opacity=0.6,
+            ),
+            limits=_limits(max_curves=1),
+        ).attach()
+        try:
+            base = controller._surface_paint_slots[0].base
+            self.assertAlmostEqual(float(base.get_fill_opacity()), 0.4)
+            self.assertAlmostEqual(float(base.get_stroke_opacity()), 0.15)
+
+            controller.display_mobject.set_opacity(0.5)
+            with patch.object(
+                controller,
+                "_prepare_numeric",
+                wraps=controller._prepare_numeric,
+            ) as prepare_numeric:
+                controller.update()
+            prepare_numeric.assert_not_called()
+            self.assertAlmostEqual(float(base.get_fill_opacity()), 0.2)
+            self.assertAlmostEqual(float(base.get_stroke_opacity()), 0.075)
+
+            fill_multiplier = 0.0
+            stroke_multiplier = 0.4
+            with patch.object(
+                controller,
+                "_prepare_numeric",
+                wraps=controller._prepare_numeric,
+            ) as prepare_numeric:
+                controller.update()
+            prepare_numeric.assert_not_called()
+            self.assertEqual(float(base.get_fill_opacity()), 0.0)
+            self.assertAlmostEqual(float(base.get_stroke_opacity()), 0.12)
+        finally:
+            controller.restore()
+        self.assertEqual(scene.mobjects, [])
 
     def test_legacy_surface_stroke_fallback_is_explicit_and_opt_in(self) -> None:
         for fallback, expected_alpha in ((False, 0.0), (True, 0.6)):

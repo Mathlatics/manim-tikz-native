@@ -14,7 +14,7 @@ import json
 from math import isfinite
 from typing import Sequence
 
-from ..geometry import GeometryQuantity
+from ..geometry import GeometryQuantity, resolve_geometry_context
 from ..parallel_solver import ParallelView
 from ..topology import (
     ParameterInterval,
@@ -37,15 +37,70 @@ from .critical import (
     compute_curve_critical_events,
 )
 from .contract import ConeSpec, CylinderSpec, SphereSpec
-from .curves import EllipseArcCurve, ParametricConicBranch, SegmentCurve
+from .curves import (
+    EllipseArcCurve,
+    ParametricConicBranch,
+    PointMarker3D,
+    SegmentCurve,
+)
 
 
 QUADRIC_VISIBILITY_RECORD_SCHEMA = "manim-quadric-curve-visibility/v1"
 QUADRIC_VISIBILITY_FRAME_SCHEMA = "manim-quadric-visibility-frame/v1"
+POINT_VISIBILITY_RECORD_SCHEMA = "manim-quadric-point-visibility/v1"
 
 
 class QuadricVisibilityError(ValueError):
     """A finite-quadric visibility frame cannot be formed unambiguously."""
+
+
+@dataclass(frozen=True, slots=True)
+class PointVisibilityRecord:
+    """Exact front/back evidence for one isolated world-space point."""
+
+    point_id: str
+    point: tuple[float, float, float]
+    visible: bool
+    occluders: tuple[str, ...] = ()
+    schema: str = POINT_VISIBILITY_RECORD_SCHEMA
+
+    def __post_init__(self) -> None:
+        if self.schema != POINT_VISIBILITY_RECORD_SCHEMA:
+            raise QuadricVisibilityError("invalid point-visibility schema")
+        point_id = _identity(self.point_id, "point_id")
+        try:
+            point = tuple(float(item) for item in self.point)
+        except (TypeError, ValueError, OverflowError) as exc:
+            raise QuadricVisibilityError(
+                "point visibility coordinates must contain three finite values"
+            ) from exc
+        if len(point) != 3 or not all(isfinite(item) for item in point):
+            raise QuadricVisibilityError(
+                "point visibility coordinates must contain three finite values"
+            )
+        if not isinstance(self.visible, bool):
+            raise TypeError("visible must be a bool")
+        occluders = tuple(_identity(item, "occluder") for item in self.occluders)
+        if occluders != tuple(sorted(set(occluders))):
+            raise QuadricVisibilityError(
+                "point visibility occluders must be unique and sorted"
+            )
+        if self.visible == bool(occluders):
+            raise QuadricVisibilityError(
+                "visible points cannot name occluders and hidden points require one"
+            )
+        object.__setattr__(self, "point_id", point_id)
+        object.__setattr__(self, "point", point)  # type: ignore[arg-type]
+        object.__setattr__(self, "occluders", occluders)
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "schema": self.schema,
+            "pointId": self.point_id,
+            "point": list(self.point),
+            "visible": self.visible,
+            "occluders": list(self.occluders),
+        }
 
 
 def _identity(value: object, label: str) -> str:
@@ -294,6 +349,45 @@ def compute_curve_visibility(
     )
 
 
+def compute_point_visibility(
+    marker: PointMarker3D,
+    surfaces: Sequence[QuadricSurfaceSpec],
+    view: ParallelView,
+    *,
+    context: ContextInput = None,
+) -> PointVisibilityRecord:
+    """Classify one exact isolated point without inventing a curve tangent."""
+
+    if not isinstance(marker, PointMarker3D):
+        raise TypeError("marker must be a PointMarker3D")
+    if not isinstance(view, ParallelView):
+        raise TypeError("view must be a ParallelView")
+    surface_items = _validated_surfaces(surfaces)
+    positions = (
+        marker.point,
+        *(point for surface in surface_items for point in surface.characteristic_points),
+    )
+    resolved = resolve_geometry_context(context, positions=positions)
+    depth_epsilon = resolved.epsilon(GeometryQuantity.DEPTH)
+    occluders = tuple(
+        surface.surface_id
+        for surface in surface_items
+        if _occludes_midpoint(
+            surface,
+            marker.point,
+            view,
+            context=resolved,
+            depth_epsilon=depth_epsilon,
+        )
+    )
+    return PointVisibilityRecord(
+        marker.point_id,
+        marker.point,
+        not occluders,
+        tuple(sorted(occluders)),
+    )
+
+
 def compute_quadric_visibility(
     curves: Sequence[AnalyticCurve3D],
     surfaces: Sequence[QuadricSurfaceSpec],
@@ -348,12 +442,15 @@ def canonical_quadric_visibility_json(frame: CurveVisibilityFrame) -> str:
 
 
 __all__ = [
+    "POINT_VISIBILITY_RECORD_SCHEMA",
     "QUADRIC_VISIBILITY_FRAME_SCHEMA",
     "QUADRIC_VISIBILITY_RECORD_SCHEMA",
     "CurveVisibilityFrame",
     "CurveVisibilityRecord",
+    "PointVisibilityRecord",
     "QuadricVisibilityError",
     "canonical_quadric_visibility_json",
     "compute_curve_visibility",
+    "compute_point_visibility",
     "compute_quadric_visibility",
 ]

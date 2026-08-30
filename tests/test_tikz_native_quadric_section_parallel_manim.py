@@ -26,8 +26,8 @@ from tikz_native.parallel_frame import (
     ParallelFrameCoordinator,
     ParallelFrameParticipant,
     ParallelFramePhase,
-    parallel_camera_frame_participant,
 )
+from tikz_native.parallel_viewport import parallel_viewport_frame_participant
 from tikz_native.parallel_preflight import (
     PainterOrderEvidence,
     ParallelPreflightLimits,
@@ -39,10 +39,10 @@ from tikz_native.parallel_shots import (
 )
 from tikz_native.quadric_section_parallel import (
     compile_parallel_section_sequence_from_shots,
-    parallel_screen_transform_guard,
     parallel_section_preflight_gate,
     section_bank_frame_participant,
     section_display_frame_participant,
+    section_compositing_frame_participant,
     section_painter_order_participant,
 )
 from tikz_native.quadric_section_parallel_manim import (
@@ -138,6 +138,16 @@ class _StateTarget:
     def restore_section_display_state(self, value: object) -> None:
         self.state = value
 
+    def snapshot_section_compositing_state(self) -> object:
+        return self.state
+
+    def apply_section_compositing_frame(self, value: object) -> None:
+        self.state = value
+        self.applied.append(value)
+
+    def restore_section_compositing_state(self, value: object) -> None:
+        self.state = value
+
     def snapshot_section_painter_order_state(self) -> object:
         return self.state
 
@@ -195,17 +205,24 @@ def _complete_coordinator(scene, sequence):
     bank = _StateTarget("bank-baseline")
     painter = _StateTarget("painter-baseline")
     semantic = _StateTarget("display-baseline")
+    compositing = _StateTarget("compositing-baseline")
+    viewport_offset = {"value": (0.0, 0.0)}
     gate = parallel_section_preflight_gate(sequence)
     coordinator = ParallelFrameCoordinator()
     coordinator.add(gate.participant())
     coordinator.add(
-        parallel_screen_transform_guard(
-            lambda: sequence.screen_transforms[gate.next_frame_index]
+        parallel_viewport_frame_participant(
+            scene.camera,
+            display_offset_getter=lambda: viewport_offset["value"],
+            display_offset_setter=lambda value: viewport_offset.__setitem__(
+                "value",
+                value,
+            ),
         )
     )
-    coordinator.add(parallel_camera_frame_participant(scene.camera))
     coordinator.add(section_bank_frame_participant(bank))
     coordinator.add(section_painter_order_participant(painter))
+    coordinator.add(section_compositing_frame_participant(compositing))
     coordinator.add(section_display_frame_participant(semantic))
     return coordinator, gate, bank, painter, semantic
 
@@ -277,17 +294,24 @@ class ParallelSectionManimPlaybackTests(unittest.TestCase):
         bank = _StateTarget("bank-baseline")
         painter = _StateTarget("painter-baseline")
         semantic = _StateTarget("display-baseline")
+        compositing = _StateTarget("compositing-baseline")
+        viewport_offset = {"value": (0.0, 0.0)}
         gate = parallel_section_preflight_gate(sequence)
         coordinator = ParallelFrameCoordinator()
         coordinator.add(gate.participant())
         coordinator.add(
-            parallel_screen_transform_guard(
-                lambda: sequence.screen_transforms[gate.next_frame_index]
+            parallel_viewport_frame_participant(
+                scene.camera,
+                display_offset_getter=lambda: viewport_offset["value"],
+                display_offset_setter=lambda value: viewport_offset.__setitem__(
+                    "value",
+                    value,
+                ),
             )
         )
-        coordinator.add(parallel_camera_frame_participant(scene.camera))
         coordinator.add(section_bank_frame_participant(bank))
         coordinator.add(section_painter_order_participant(painter))
+        coordinator.add(section_compositing_frame_participant(compositing))
         coordinator.add(section_display_frame_participant(semantic))
 
         rendered_gate_positions: list[int] = []
@@ -545,10 +569,10 @@ class ParallelSectionManimPlaybackTests(unittest.TestCase):
         coordinator = ParallelFrameCoordinator()
         for participant_id in (
             "parallel-preflight-gate",
-            "parallel-screen-transform-guard",
-            "parallel-camera",
+            "parallel-viewport",
             "section-bank-render",
             "section-painter-order",
+            "section-semantic-compositing",
             "section-semantic-display",
         ):
             coordinator.add(

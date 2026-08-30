@@ -100,6 +100,19 @@ _PUBLIC_0_1_COMPONENT_REVISIONS: Final[dict[str, str]] = {
 }
 
 
+# Unreleased implementations receive their own current render identities.
+# Keep ``_PUBLIC_0_1_COMPONENT_REVISIONS`` byte-for-byte historical: released
+# assets and evidence bundles must never be relabelled when main advances.
+_UNRELEASED_COMPONENT_REVISIONS: Final[dict[str, str]] = {
+    COMPONENT_PARALLEL_CAMERA_CORE: "source-sha256:a6ca69204f5d7cbdaf0eaeff9c47fa8a2cc26d1f6c30436e04eb0aeaa717ab15",
+    COMPONENT_EMBEDDED_MOTION_3D: "source-sha256:b2da641f19baa9c0691d017f80c3389ac7911d60bf9eea28d7519209fb99c2df",
+    COMPONENT_MOTION_PREVIEW_3D: "source-sha256:67fe4d97c1220cc4e638e6e0b400fc8b600f1524edad641e81207a192eb31060",
+    COMPONENT_QUADRIC_GEOMETRY: "source-sha256:1c25b35997f967635aa23df9b51a6d33f3199fcac4052c523dd0be2106a14765",
+    COMPONENT_QUADRIC_VISIBILITY: "source-sha256:490a8eeb87b02c1d4d621901b1d1e7949c9c6154cba5c4514d53c10b646d1b6b",
+    COMPONENT_QUADRIC_MANIM: "source-sha256:0a42e52c318d4735f5e549a0425756b41e2fea4394b122ca0231687c06515fcc",
+}
+
+
 _COMPONENT_DEFINITIONS: Final[dict[str, dict[str, tuple[str, ...]]]] = {
     COMPONENT_ASSET_COMPILER: {
         "dependencies": (),
@@ -191,6 +204,7 @@ _COMPONENT_DEFINITIONS: Final[dict[str, dict[str, tuple[str, ...]]]] = {
             "parallel_frame.py",
             "parallel_preflight.py",
             "parallel_shots.py",
+            "parallel_viewport.py",
             "schemas/parallel-shot-sequence-v1.schema.json",
         ),
     },
@@ -414,6 +428,7 @@ _COMPONENT_DEFINITIONS: Final[dict[str, dict[str, tuple[str, ...]]]] = {
             "@tool/polyhedron_visibility/quadrics/section_timeline.py",
             "@tool/polyhedron_visibility/quadrics/section_timeline_transition.py",
             "@tool/polyhedron_visibility/quadrics/sections.py",
+            "@tool/polyhedron_visibility/quadrics/semantic_compositing.py",
             "@tool/polyhedron_visibility/quadrics/semantic_display.py",
             "@tool/polyhedron_visibility/quadrics/trace.py",
             "@tool/polyhedron_visibility/quadrics/transition.py",
@@ -446,6 +461,7 @@ _COMPONENT_DEFINITIONS: Final[dict[str, dict[str, tuple[str, ...]]]] = {
             COMPONENT_MANAGED_PAINTER_BAND,
         ),
         "files": (
+            "global_parallel_rig.py",
             "quadric_section_parallel_manim.py",
             "quadric_section_parallel_rig.py",
             "@tool/polyhedron_visibility/quadrics/authoring.py",
@@ -462,9 +478,10 @@ _COMPONENT_DEFINITIONS: Final[dict[str, dict[str, tuple[str, ...]]]] = {
 }
 
 
-_DECLARED_COMPONENT_REVISIONS: Final[dict[str, str]] = dict(
-    _PUBLIC_0_1_COMPONENT_REVISIONS
-)
+_DECLARED_COMPONENT_REVISIONS: Final[dict[str, str]] = {
+    **_PUBLIC_0_1_COMPONENT_REVISIONS,
+    **_UNRELEASED_COMPONENT_REVISIONS,
+}
 
 
 # Contract revisions describe the persisted author-data ABI, not the bytes of
@@ -512,13 +529,13 @@ _DECLARED_IMPLEMENTATION_DIGESTS: Final[dict[str, str]] = {
         "513935788725e3c72b74905268695a90c443df208a4f321229f05efcdd3ef5aa"
     ),
     COMPONENT_PARALLEL_CAMERA_CORE: (
-        "6ea0e6870ffafbad664676e0a7429c4240ed56d1f1fdc073a075c6800da276cc"
+        "a6ca69204f5d7cbdaf0eaeff9c47fa8a2cc26d1f6c30436e04eb0aeaa717ab15"
     ),
     COMPONENT_EMBEDDED_MOTION_3D: (
-        "d289d7c39fed4b95b856d61736ed84ef3e607c657c94cd10682d692a2f6eff49"
+        "b2da641f19baa9c0691d017f80c3389ac7911d60bf9eea28d7519209fb99c2df"
     ),
     COMPONENT_MOTION_PREVIEW_3D: (
-        "0d0a8bb97386aefd0f74ef9896dbe359e0827e1fe2a2ca13c141b8d0815822c7"
+        "67fe4d97c1220cc4e638e6e0b400fc8b600f1524edad641e81207a192eb31060"
     ),
     COMPONENT_POLYHEDRON_VISIBILITY: (
         "8fff612f011f5b67cecaa66dc251af3126fe091cfe6b753e7fd5e9301cfcc53f"
@@ -566,13 +583,13 @@ _DECLARED_IMPLEMENTATION_DIGESTS: Final[dict[str, str]] = {
         "a99aff62e9f6a80030a55ca72c48997431b5ae15dbbae88df7a4df11edbe8c06"
     ),
     COMPONENT_QUADRIC_GEOMETRY: (
-        "37e2f79b974a4329f97bfb355378b6bb11383e1e7423a01a9cf62709eb633d4a"
+        "1c25b35997f967635aa23df9b51a6d33f3199fcac4052c523dd0be2106a14765"
     ),
     COMPONENT_QUADRIC_VISIBILITY: (
-        "8d5a40e6f1b01d6d6e5285a1cae4218fec5892d6f6ced928ce9cad2431a03420"
+        "490a8eeb87b02c1d4d621901b1d1e7949c9c6154cba5c4514d53c10b646d1b6b"
     ),
     COMPONENT_QUADRIC_MANIM: (
-        "761a98f07a3b8d2b400c44a4e615084db1ffe9c97f15376ac93744a948172b94"
+        "0a42e52c318d4735f5e549a0425756b41e2fea4394b122ca0231687c06515fcc"
     ),
 }
 

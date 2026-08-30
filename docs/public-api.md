@@ -209,10 +209,79 @@ section, topology banks, finite plane patch, semantic display, and real
 [parallel camera/section sequence contract](parallel-camera-section-sequence.md)
 and its three
 [Cairo acceptance scenes](../examples/parallel_camera_section_rig_demo.py).
-That first binding opts into `legacy_surface_stroke_fallback=True` only for a
-static teaching outline while certified intrinsic surface boundaries are
-excluded.  The fallback is not occlusion evidence and remains disabled by
-default for ordinary `QuadricOcclusion3D` callers.
+
+The Rig binding uses certified surface silhouettes and finite cap rims by
+default.  Optional cone generators can be reserved at compile time.  An
+isolated tangent section uses a preallocated point Mobject; point activation
+does not allocate during playback and never substitutes a short line.  The
+older `surface_boundary_mode="legacy"` path remains an explicit display-only
+fallback and does not become occlusion evidence.
+
+Renderer-level affine terms are authored with `ParallelScreenTransform` and
+passed as `screen_transforms=`.  The semantic camera, positive inherited zoom,
+XY frame center, and final display offset are committed by one
+`ParallelViewportState` transaction.  This supports a non-identity first frame
+and later motion without double-applying the anchor or offset.
+
+Dynamic semantic compositing has three independent axes:
+
+```python
+from polyhedron_visibility.quadrics import (
+    SectionCompositingAxes,
+    SectionCompositingInstruction,
+    SectionCompositingOverride,
+    compile_section_compositing,
+)
+
+instruction = SectionCompositingInstruction.for_catalog(
+    catalog,
+    defaults=SectionCompositingAxes(
+        display_opacity=1.0,
+        occlusion_participation="certified",
+        depth_presentation="diagrammatic",
+    ),
+    overrides=(
+        SectionCompositingOverride.for_slot(
+            surface_fill_slot_id,
+            display_opacity=0.0,  # invisible but still an occluder
+        ),
+    ),
+)
+compositing_frame = compile_section_compositing(catalog, instruction)
+```
+
+`display_opacity` changes only painted alpha;
+`occlusion_participation="paint-only"` explicitly excludes a supported
+surface fill from visibility work; and `depth_presentation` selects physical,
+diagrammatic, or depth-aware diagrammatic painting.  No axis is inferred from
+another.  Opacity-only frames use the draw-only path, while participation and
+depth-policy changes force a fresh certified geometry frame.
+
+For several solids, compile each local Rig against the same Scene, time grid,
+camera, and viewport without attaching it, then aggregate them:
+
+```python
+from tikz_native import compile_global_parallel_rig
+
+global_binding = compile_global_parallel_rig((left_rig, right_rig))
+global_binding.attach()
+coordinator = global_binding.build_coordinator(scene.camera)
+for frame in global_binding.sequence.frames:
+    coordinator.update(frame)
+global_binding.restore()
+```
+
+The aggregate owns one global `QuadricOcclusion3D` and one painter band; it is
+not a z-ordering wrapper around separately painted Rigs.  Curves, isolated
+points, silhouettes, rims, and generators from one Rig can be occluded by any
+certified surface in another Rig.  Global v1 rejects visible plane patches,
+unequal frame grids/viewports, identity collisions, and intersecting or
+otherwise uncertifiable solids before Scene ownership.
+
+The three short Cairo scenes in
+[parallel_camera_advanced_compositor_demo.py](../examples/parallel_camera_advanced_compositor_demo.py)
+exercise a non-identity viewport with a tangent point, the three compositing
+axes, and cross-Rig global occlusion.
 
 ## Source-authoritative project builds
 

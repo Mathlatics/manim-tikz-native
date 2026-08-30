@@ -4,6 +4,29 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+- extend the parallel-camera section Rig with fixed isolated-point slots and
+  renderer-neutral `PointMarker3D` visibility, so tangent sections activate a
+  real point Mobject without allocating during playback or fabricating a short
+  curve segment;
+- make certified sphere/cylinder/cone silhouettes, finite cap rims, and
+  explicitly reserved generators the default Rig surface-boundary path, with
+  stable semantic identities through `2 -> 1 -> 0` cone-generator changes;
+  retain the older surface-stroke outline only as an explicit paint-only
+  compatibility mode;
+- add renderer-neutral per-slot compositing frames with three independent axes:
+  dynamic display opacity, certified versus paint-only occlusion participation,
+  and physical/diagrammatic/depth-aware presentation; classify opacity-only
+  changes as draw-only while participation or depth-policy changes rebuild the
+  certified geometry;
+- add atomic `ParallelViewportState` playback for the complete semantic camera,
+  inherited positive zoom, XY frame center, and final display offset; support
+  non-identity first frames and later viewport motion while preserving exact
+  target-anchor semantics and full rollback;
+- aggregate two or more compatible unattached section Rigs into one global
+  `QuadricOcclusion3D` and managed painter band, allowing cross-Rig curve,
+  isolated-point, silhouette, rim, and generator occlusion; fail closed on
+  visible multi-plane patches until a true multi-plane partition contract is
+  available;
 - add a renderer-neutral `ParallelCameraState` with arbitrary view direction,
   target, final-screen anchor, zoom, and semantic normal/relative/along-plane
   constructors; integrate it additively with `MultiProjectionCamera` through

@@ -19,6 +19,10 @@ from tikz_native.parallel_frame import (
     ParallelFrameState,
     parallel_camera_frame_participant,
 )
+from tikz_native.parallel_viewport import (
+    ParallelViewportState,
+    parallel_viewport_frame_participant,
+)
 
 
 class MultiProjectionParallelStateTests(unittest.TestCase):
@@ -137,6 +141,76 @@ class MultiProjectionParallelStateTests(unittest.TestCase):
             )
         ).astype(int)
         np.testing.assert_array_equal(pixels[0], expected)
+
+    def test_parallel_frame_center_xy_setter_is_bit_exact_and_preserves_z(
+        self,
+    ) -> None:
+        camera = MultiProjectionCamera(initial_mode="front")
+        camera._frame_center.points = np.asarray(
+            ((-5.0, 0.125, 7.25),),
+            dtype=float,
+        )
+
+        for target in (
+            (-1.8, 0.3),
+            (3.78112217016424, -2.625),
+            (-4.293676746462265, 1.1),
+        ):
+            camera.set_parallel_frame_center_xy(target)
+            np.testing.assert_array_equal(
+                camera.frame_center,
+                np.asarray((target[0], target[1], 7.25), dtype=float),
+            )
+
+        for invalid in (
+            (0.0,),
+            (0.0, 1.0, 2.0),
+            (float("nan"), 0.0),
+            (0.0, float("inf")),
+        ):
+            with self.subTest(invalid=invalid):
+                with self.assertRaisesRegex(ValueError, "two finite values"):
+                    camera.set_parallel_frame_center_xy(invalid)
+
+    def test_viewport_participant_uses_exact_real_camera_center_capability(
+        self,
+    ) -> None:
+        camera = MultiProjectionCamera(initial_mode="front")
+        camera._frame_center.points = np.asarray(((-5.0, 0.125, 7.25),))
+        display_offset = [(0.0, 0.0)]
+        coordinator: ParallelFrameCoordinator[ParallelViewportState]
+        coordinator = ParallelFrameCoordinator()
+        coordinator.add(
+            parallel_viewport_frame_participant(
+                camera,
+                display_offset_getter=lambda: display_offset[0],
+                display_offset_setter=lambda value: display_offset.__setitem__(
+                    0,
+                    tuple(value),
+                ),
+            )
+        )
+        target = ParallelViewportState.from_components(
+            ParallelCameraState.normal_to_plane(self.plane),
+            inherited_zoom=1.4,
+            frame_center=(-1.8, 0.3),
+            display_offset=(0.6, -0.2),
+        )
+
+        coordinator.update(target)
+
+        np.testing.assert_array_equal(
+            camera.frame_center,
+            np.asarray((-1.8, 0.3, 7.25)),
+        )
+        self.assertEqual(camera.get_zoom(), 1.4)
+        self.assertEqual(display_offset[0], (0.6, -0.2))
+        coordinator.restore()
+        np.testing.assert_array_equal(
+            camera.frame_center,
+            np.asarray((-5.0, 0.125, 7.25)),
+        )
+        self.assertEqual(display_offset[0], (0.0, 0.0))
 
     def test_snapshot_restore_bridges_semantic_and_legacy_states_exactly(self) -> None:
         camera = MultiProjectionCamera(initial_mode="oblique")

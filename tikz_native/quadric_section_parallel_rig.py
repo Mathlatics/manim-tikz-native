@@ -26,8 +26,11 @@ from polyhedron_visibility.quadrics.animation import (
     match_tracked_section_frame,
 )
 from polyhedron_visibility.quadrics.critical import AnalyticCurve3D
+from polyhedron_visibility.quadrics.boundary_compositing import BoundarySourceKind
+from polyhedron_visibility.quadrics.compositing import QuadricPaintPolicy
 from polyhedron_visibility.quadrics.curves import (
     ParametricConicBranch,
+    PointMarker3D,
     SegmentCurve,
 )
 from polyhedron_visibility.topology import ParameterInterval
@@ -44,22 +47,35 @@ from polyhedron_visibility.quadrics.section_timeline_transition import (
 from polyhedron_visibility.quadrics.sections import (
     compute_quadric_section_boundary,
 )
+from polyhedron_visibility.quadrics.surface_boundaries import (
+    GeneratorBoundarySpec,
+    SurfaceBoundarySlotDescriptor,
+    surface_boundary_slot_descriptors,
+)
 from polyhedron_visibility.quadrics.semantic_display import (
     SectionDisplayCatalog,
     SectionDisplayFrame,
     SectionDisplayRole,
     SectionSemanticSlot,
 )
+from polyhedron_visibility.quadrics.semantic_compositing import (
+    SectionCompositingFrame,
+    SectionDepthPresentationPolicy,
+    SectionOcclusionParticipation,
+)
 
 from .parallel_camera import ParallelCameraState
 from .parallel_frame import (
     ParallelFrameCoordinator,
-    parallel_camera_frame_participant,
 )
 from .parallel_preflight import (
     PainterOrderEvidence,
     ParallelPreflightLimits,
     ParallelScreenTransform,
+)
+from .parallel_viewport import (
+    ParallelViewportState,
+    parallel_viewport_frame_participant,
 )
 from .parallel_shots import ParallelCameraShotSequence
 from .quadric_section_parallel import (
@@ -67,11 +83,12 @@ from .quadric_section_parallel import (
     SECTION_TRANSITION_STATE_CHANNEL,
     ParallelSectionSequence,
     _bank_render_frame,
+    _display_catalog_from_frame,
     _timeline_plane_at_time,
     compile_parallel_section_sequence_from_shots,
-    parallel_screen_transform_guard,
     parallel_section_preflight_gate,
     section_display_frame_participant,
+    section_compositing_frame_participant,
     section_painter_order_participant,
     section_plane_patch_participant,
 )
@@ -86,22 +103,22 @@ class ParallelSectionRigBindingError(RuntimeError):
 
 
 _CURVE_INTERVAL_CAPACITY = 2
-_IDENTITY_SCREEN_TRANSFORM = ParallelScreenTransform()
-_STATIC_PAINT_ROLES = frozenset(
-    {
-        SectionDisplayRole.SURFACE_FILL,
-        SectionDisplayRole.SURFACE_OUTLINE,
-        SectionDisplayRole.PLANE_FILL,
-        SectionDisplayRole.PLANE_OUTLINE,
-    }
-)
-_UNSUPPORTED_BOUNDARY_ROLES = frozenset(
+_CERTIFIED_BOUNDARY_ROLES = frozenset(
     {
         SectionDisplayRole.GENERATOR,
         SectionDisplayRole.CONTOUR,
         SectionDisplayRole.CAP_RIM,
     }
 )
+_PAINT_POLICY_BY_PRESENTATION = {
+    SectionDepthPresentationPolicy.PHYSICAL: QuadricPaintPolicy.PHYSICAL,
+    SectionDepthPresentationPolicy.DIAGRAMMATIC: (
+        QuadricPaintPolicy.DIAGRAMMATIC
+    ),
+    SectionDepthPresentationPolicy.DEPTH_AWARE_DIAGRAMMATIC: (
+        QuadricPaintPolicy.DEPTH_AWARE_DIAGRAMMATIC
+    ),
+}
 
 
 def _camera_equal(left: ParallelCameraState, right: ParallelCameraState) -> bool:
@@ -131,22 +148,57 @@ def _require_semantic_scene_camera(scene: object) -> object:
     snapshot = getattr(camera, "snapshot_parallel_state", None)
     setter = getattr(camera, "set_parallel_state", None)
     get_zoom = getattr(camera, "get_zoom", None)
-    frame_center = getattr(camera, "frame_center", None)
+    set_zoom = getattr(camera, "set_zoom", None)
+    set_frame_center = getattr(camera, "set_parallel_frame_center_xy", None)
+    transaction_snapshot = getattr(camera, "snapshot_parallel_transaction", None)
+    transaction_restore = getattr(camera, "restore_parallel_transaction", None)
     if not callable(snapshot) or not callable(setter):
         raise ParallelSectionRigBindingError(
             "scene.camera must be a semantic parallel camera with snapshot and "
             "set methods"
         )
-    if not callable(get_zoom) or frame_center is None:
+    if not callable(get_zoom) or not callable(set_zoom):
         raise ParallelSectionRigBindingError(
-            "scene.camera does not expose its inherited screen transform"
+            "scene.camera must provide get_zoom() and set_zoom()"
         )
+    if not callable(set_frame_center):
+        raise ParallelSectionRigBindingError(
+            "scene.camera must provide set_parallel_frame_center_xy()"
+        )
+    if callable(transaction_snapshot) != callable(transaction_restore):
+        raise ParallelSectionRigBindingError(
+            "camera transaction snapshot and restore methods must be provided together"
+        )
+    try:
+        inherited_zoom = float(get_zoom())
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise ParallelSectionRigBindingError(
+            "scene.camera zoom must be finite and positive"
+        ) from exc
+    if not np.isfinite(inherited_zoom) or inherited_zoom <= 0.0:
+        raise ParallelSectionRigBindingError(
+            "scene.camera zoom must be finite and positive"
+        )
+    try:
+        frame_center = np.asarray(getattr(camera, "frame_center"), dtype=float)
+    except (AttributeError, TypeError, ValueError, OverflowError) as exc:
+        raise ParallelSectionRigBindingError(
+            "scene.camera frame_center must contain three finite values"
+        ) from exc
+    if frame_center.shape != (3,) or not np.all(np.isfinite(frame_center)):
+        raise ParallelSectionRigBindingError(
+            "scene.camera frame_center must contain three finite values"
+        )
+    camera_token = transaction_snapshot() if callable(transaction_snapshot) else None
     try:
         state = snapshot()
     except Exception as exc:
         raise ParallelSectionRigBindingError(
             f"scene.camera is not in a parallel snapshot state: {exc}"
         ) from exc
+    finally:
+        if callable(transaction_restore):
+            transaction_restore(camera_token)
     if not isinstance(state, ParallelCameraState):
         raise ParallelSectionRigBindingError(
             "scene.camera snapshot did not return ParallelCameraState"
@@ -154,36 +206,20 @@ def _require_semantic_scene_camera(scene: object) -> object:
     return camera
 
 
-def _camera_screen_transform(
-    camera: object,
-    *,
-    display_offset: Sequence[float] = (0.0, 0.0),
-) -> ParallelScreenTransform:
-    get_zoom = getattr(camera, "get_zoom")
-    frame_center = np.asarray(getattr(camera, "frame_center"), dtype=float)
-    if frame_center.shape != (3,) or not np.all(np.isfinite(frame_center)):
-        raise ParallelSectionRigBindingError(
-            "scene.camera frame_center must contain three finite values"
-        )
-    return ParallelScreenTransform(
-        inherited_zoom=float(get_zoom()),
-        frame_center=tuple(float(item) for item in frame_center[:2]),
-        display_offset=tuple(float(item) for item in display_offset),
-    )
-
-
 def build_parallel_section_rig_display_catalog(
     timeline: SectionTimeline,
     semantic_bank_ids: tuple[str, str],
     *,
     include_plane: bool,
+    surface_boundary_mode: str = "certified",
+    generator_boundaries: Sequence[GeneratorBoundarySpec] = (),
 ) -> SectionDisplayCatalog:
     """Build the complete fixed-slot catalog owned by this binding.
 
-    Each topology bank receives two branch slots, one future point slot, and
+    Each topology bank receives two branch slots, one point slot, and
     one cap-chord slot for every analytically possible finite cap chord.
-    Isolated points are preflighted by the renderer-neutral layer, but the
-    current Cairo binding still rejects a frame that activates one.
+    Certified mode allocates the analytic surface silhouette/rim/generator
+    sources instead of the legacy all-purpose surface outline.
     """
 
     if not isinstance(timeline, SectionTimeline):
@@ -193,16 +229,42 @@ def build_parallel_section_rig_display_catalog(
             "semantic_bank_ids must contain two unique identities"
         )
     prefix = timeline.section_id
+    if surface_boundary_mode not in {"certified", "legacy"}:
+        raise ParallelSectionRigBindingError(
+            "surface_boundary_mode must be 'certified' or 'legacy'"
+        )
     slots: list[SectionSemanticSlot] = [
         SectionSemanticSlot(
             f"{prefix}:display:surface-fill",
             SectionDisplayRole.SURFACE_FILL,
         ),
-        SectionSemanticSlot(
-            f"{prefix}:display:surface-outline",
-            SectionDisplayRole.SURFACE_OUTLINE,
-        ),
     ]
+    if surface_boundary_mode == "legacy":
+        slots.append(
+            SectionSemanticSlot(
+                f"{prefix}:display:surface-outline",
+                SectionDisplayRole.SURFACE_OUTLINE,
+            )
+        )
+    else:
+        descriptors = surface_boundary_slot_descriptors(
+            (timeline.samples[0].surface,),
+            generator_boundaries,
+        )
+        role_by_kind = {
+            BoundarySourceKind.SURFACE_SILHOUETTE: SectionDisplayRole.CONTOUR,
+            BoundarySourceKind.SURFACE_CAP_RIM: SectionDisplayRole.CAP_RIM,
+            BoundarySourceKind.SURFACE_TRIM_RIM: SectionDisplayRole.CAP_RIM,
+            BoundarySourceKind.SURFACE_GENERATOR: SectionDisplayRole.GENERATOR,
+        }
+        slots.extend(
+            SectionSemanticSlot(
+                descriptor.source_id,
+                role_by_kind[descriptor.source_kind],
+                source_id=descriptor.source_id,
+            )
+            for descriptor in descriptors
+        )
     if include_plane:
         slots.extend(
             (
@@ -248,7 +310,9 @@ def build_parallel_section_rig_display_catalog(
 class _BankSnapshot:
     frame: SectionBankRenderFrame
     curves: tuple[AnalyticCurve3D, ...]
+    points: tuple[PointMarker3D, ...]
     base_opacities: tuple[tuple[str, float], ...]
+    base_point_opacities: tuple[tuple[str, float], ...]
     section_sources_authoritative: bool
     controller_section_id: str | None
     controller_section_coefficient_tolerance: float | None
@@ -275,16 +339,54 @@ class ParallelSectionRigBinding:
         draft_sequence: ParallelSectionSequence,
         *,
         controller_options: Mapping[str, object] | None = None,
+        generator_boundaries: Sequence[GeneratorBoundarySpec] = (),
     ) -> None:
         if not isinstance(draft_sequence, ParallelSectionSequence):
             raise TypeError("draft_sequence must be a ParallelSectionSequence")
         self.scene = scene
         camera = _require_semantic_scene_camera(scene)
-        if _camera_screen_transform(camera) != _IDENTITY_SCREEN_TRANSFORM:
-            raise ParallelSectionRigBindingError(
-                "the live camera screen transform must be identity before binding"
-            )
         self._draft_sequence = draft_sequence
+        self._generator_boundaries = tuple(generator_boundaries)
+        if not all(
+            isinstance(item, GeneratorBoundarySpec)
+            for item in self._generator_boundaries
+        ):
+            raise TypeError(
+                "generator_boundaries must contain GeneratorBoundarySpec values"
+            )
+        surface = draft_sequence.timeline.samples[0].surface
+        expected_descriptors = surface_boundary_slot_descriptors(
+            (surface,),
+            self._generator_boundaries,
+        )
+        authored_boundary_slots = tuple(
+            item
+            for item in draft_sequence.display_frames[0].slots
+            if item.role in _CERTIFIED_BOUNDARY_ROLES
+        )
+        self._certified_surface_boundaries = bool(authored_boundary_slots)
+        if self._generator_boundaries and not self._certified_surface_boundaries:
+            raise ParallelSectionRigBindingError(
+                "generator_boundaries require a certified surface-boundary catalog"
+            )
+        if self._certified_surface_boundaries:
+            authored_by_source = {
+                item.source_id: item for item in authored_boundary_slots
+            }
+            expected_by_source = {
+                item.source_id: item for item in expected_descriptors
+            }
+            if set(authored_by_source) != set(expected_by_source):
+                raise ParallelSectionRigBindingError(
+                    "certified surface-boundary catalog differs from the "
+                    "surface/generator allocation"
+                )
+            self._boundary_display_slot_by_source = {
+                source_id: item.slot_id
+                for source_id, item in authored_by_source.items()
+            }
+        else:
+            self._boundary_display_slot_by_source = {}
         self._sequence: ParallelSectionSequence | None = None
         self._coordinator: ParallelFrameCoordinator | None = None
         self._validate_sequence_contract(draft_sequence)
@@ -296,6 +398,17 @@ class ParallelSectionRigBinding:
                     item.slot_id
                     for item in first_display.slots
                     if item.role is SectionDisplayRole.SECTION_CURVE
+                    and item.topology_bank == bank_id
+                )
+            )
+            for bank_id in draft_sequence.semantic_bank_ids
+        }
+        self._point_slots_by_bank = {
+            bank_id: tuple(
+                sorted(
+                    item.slot_id
+                    for item in first_display.slots
+                    if item.role is SectionDisplayRole.SECTION_POINT
                     and item.topology_bank == bank_id
                 )
             )
@@ -322,15 +435,28 @@ class ParallelSectionRigBinding:
                 "semantic curve slots produce colliding physical curve identities"
             )
         self._allocated_curve_ids = tuple(sorted(physical_ids))
+        self._allocated_point_ids = tuple(
+            sorted(
+                point_id
+                for values in self._point_slots_by_bank.values()
+                for point_id in values
+            )
+        )
 
         self._bank_frame = draft_sequence.bank_render_frames[0]
         self._display_frame = draft_sequence.display_frames[0]
+        self._compositing_frame = draft_sequence.compositing_frames[0]
         self._patch_fit = draft_sequence.plane_patch_fits[0]
         self._painter_order = draft_sequence.painter_orders[0]
         self._curves: tuple[AnalyticCurve3D, ...] = ()
+        self._points: tuple[PointMarker3D, ...] = ()
         self._base_curve_opacities: dict[str, float] = {}
-        self._projection_override: ParallelCameraState | None = (
-            draft_sequence.camera_samples[0].state
+        self._base_point_opacities: dict[str, float] = {}
+        self._projection_override: ParallelCameraState | ParallelViewportState | None = (
+            ParallelViewportState(
+                draft_sequence.camera_samples[0].state,
+                draft_sequence.screen_transforms[0],
+            )
         )
         self._dry_painters: dict[float, PainterOrderEvidence] = {}
         self._section_sources_authoritative = False
@@ -342,37 +468,16 @@ class ParallelSectionRigBinding:
             raise TypeError(
                 "controller_options['style'] must be a QuadricManimStyle"
             )
-        static_opacities = {
-            item.role: item.opacity_multiplier
-            for item in first_display.slots
-            if item.role in _STATIC_PAINT_ROLES
-        }
-        style = replace(
-            style,
-            surface_fill_opacity=(
-                style.surface_fill_opacity
-                * static_opacities[SectionDisplayRole.SURFACE_FILL]
-            ),
-            surface_stroke_opacity=(
-                style.surface_stroke_opacity
-                * static_opacities[SectionDisplayRole.SURFACE_OUTLINE]
-            ),
-            section_plane_fill_opacity=(
-                style.section_plane_fill_opacity
-                * static_opacities.get(SectionDisplayRole.PLANE_FILL, 1.0)
-            ),
-            section_plane_stroke_opacity=(
-                style.section_plane_stroke_opacity
-                * static_opacities.get(SectionDisplayRole.PLANE_OUTLINE, 1.0)
-            ),
-        )
         options["style"] = style
         owned = {
             "surfaces",
             "curves",
+            "points",
             "projection",
             "allocated_curve_ids",
             "curve_opacities",
+            "allocated_point_ids",
+            "point_opacities",
             "section_id",
             "section_coefficient_tolerance",
             "section_plane",
@@ -384,6 +489,15 @@ class ParallelSectionRigBinding:
             "display_offset",
             "automatic_updates",
             "legacy_surface_stroke_fallback",
+            "boundary_opacities",
+            "generator_boundaries",
+            "allocated_boundary_ids",
+            "surface_opacities",
+            "surface_stroke_opacities",
+            "occluding_surface_ids",
+            "paint_policy",
+            "section_plane_fill_opacity",
+            "section_plane_stroke_opacity",
         }
         conflicts = tuple(sorted(owned & set(options)))
         if conflicts:
@@ -391,15 +505,22 @@ class ParallelSectionRigBinding:
                 "controller_options cannot override binding-owned keys: "
                 + ", ".join(conflicts)
             )
-        surface = draft_sequence.timeline.samples[0].surface
         section_enabled = self._patch_fit is not None
         self.controller = QuadricOcclusion3D(
             scene,
             surfaces=(surface,),
+            surface_opacities=self._resolve_surface_opacities,
+            surface_stroke_opacities=(
+                self._resolve_surface_stroke_opacities
+            ),
+            occluding_surface_ids=self._resolve_occluding_surface_ids,
             curves=self._resolve_curves,
+            points=self._resolve_points,
             projection=self._resolve_projection,
             allocated_curve_ids=self._allocated_curve_ids,
             curve_opacities=self._resolve_curve_opacities,
+            allocated_point_ids=self._allocated_point_ids,
+            point_opacities=self._resolve_point_opacities,
             section_id=(
                 draft_sequence.timeline.section_id
                 if self._section_sources_authoritative and section_enabled
@@ -415,10 +536,21 @@ class ParallelSectionRigBinding:
             context=draft_sequence.timeline.geometry_context,
             surface_order_mode="automatic",
             boundary_visibility_mode="unified",
-            include_surface_boundaries=False,
+            include_surface_boundaries=self._certified_surface_boundaries,
+            generator_boundaries=self._generator_boundaries,
+            boundary_opacities=self._resolve_boundary_opacities,
+            paint_policy=self._resolve_paint_policy,
+            section_plane_fill_opacity=(
+                self._resolve_section_plane_fill_opacity
+            ),
+            section_plane_stroke_opacity=(
+                self._resolve_section_plane_stroke_opacity
+            ),
             display_offset=(0.0, 0.0),
             automatic_updates=False,
-            legacy_surface_stroke_fallback=True,
+            legacy_surface_stroke_fallback=(
+                not self._certified_surface_boundaries
+            ),
             **options,
         )
 
@@ -435,6 +567,10 @@ class ParallelSectionRigBinding:
         return self._allocated_curve_ids
 
     @property
+    def allocated_point_ids(self) -> tuple[str, ...]:
+        return self._allocated_point_ids
+
+    @property
     def attached(self) -> bool:
         return self.controller.attached
 
@@ -442,31 +578,48 @@ class ParallelSectionRigBinding:
     def display_mobject(self):
         return self.controller.display_mobject
 
+    def _validate_compositing_frame_contract(
+        self,
+        frame: SectionCompositingFrame,
+        display: SectionDisplayFrame,
+    ) -> None:
+        if not isinstance(frame, SectionCompositingFrame):
+            raise TypeError("frame must be a SectionCompositingFrame")
+        if not isinstance(display, SectionDisplayFrame):
+            raise TypeError("display must be a SectionDisplayFrame")
+        try:
+            frame.validate_catalog(_display_catalog_from_frame(display))
+        except (TypeError, ValueError) as exc:
+            raise ParallelSectionRigBindingError(
+                f"compositing frame does not match the fixed display catalog: {exc}"
+            ) from exc
+        policies = {item.depth_presentation for item in frame.slots}
+        if len(policies) != 1:
+            raise ParallelSectionRigBindingError(
+                "one Rig frame must use one depth presentation policy"
+            )
+        unsupported_paint_only = tuple(
+            item.role.value
+            for item in frame.slots
+            if (
+                item.occlusion_participation
+                is SectionOcclusionParticipation.PAINT_ONLY
+                and item.role is not SectionDisplayRole.SURFACE_FILL
+            )
+        )
+        if unsupported_paint_only:
+            raise ParallelSectionRigBindingError(
+                "paint-only occlusion participation is currently supported "
+                "only by the surface-fill slot; invalid roles="
+                + ", ".join(sorted(set(unsupported_paint_only)))
+            )
+
     def _validate_sequence_contract(self, sequence: ParallelSectionSequence) -> None:
-        if any(item != _IDENTITY_SCREEN_TRANSFORM for item in sequence.screen_transforms):
-            raise ParallelSectionRigBindingError(
-                "the first Cairo binding supports only identity screen transforms; "
-                "put target, screen anchor, and zoom in ParallelCameraState"
-            )
-        if any(
-            layer.isolated_point_count
-            for frame in sequence.bank_render_frames
-            for layer in frame.layers
-        ):
-            raise ParallelSectionRigBindingError(
-                "SECTION_POINT activation requires a true fixed Manim point slot; "
-                "this binding refuses to drop or imitate isolated points"
-            )
         first = sequence.display_frames[0]
         first_metadata = tuple(
             (item.slot_id, item.role, item.source_id, item.topology_bank)
             for item in first.slots
         )
-        first_static_opacities = {
-            item.slot_id: item.opacity_multiplier
-            for item in first.slots
-            if item.role in _STATIC_PAINT_ROLES
-        }
         for frame in sequence.display_frames:
             metadata = tuple(
                 (item.slot_id, item.role, item.source_id, item.topology_bank)
@@ -480,30 +633,16 @@ class ParallelSectionRigBinding:
                 raise ParallelSectionRigBindingError(
                     "semantic display slot metadata changed between frames"
                 )
-            unsupported = tuple(
-                item.role.value
-                for item in frame.slots
-                if item.role in _UNSUPPORTED_BOUNDARY_ROLES
-            )
-            if unsupported:
-                raise ParallelSectionRigBindingError(
-                    "the first binding does not own generator/contour/cap-rim "
-                    "semantic slots: " + ", ".join(sorted(set(unsupported)))
-                )
-            for item in frame.slots:
-                if (
-                    item.role in _STATIC_PAINT_ROLES
-                    and item.opacity_multiplier
-                    != first_static_opacities[item.slot_id]
-                ):
-                    raise ParallelSectionRigBindingError(
-                        f"opacity for static display role {item.role.value!r} "
-                        "must remain constant across the sequence"
-                    )
+        for display, frame in zip(
+            sequence.display_frames,
+            sequence.compositing_frames,
+        ):
+            self._validate_compositing_frame_contract(frame, display)
         required_roles = {
             SectionDisplayRole.SURFACE_FILL,
-            SectionDisplayRole.SURFACE_OUTLINE,
         }
+        if not self._certified_surface_boundaries:
+            required_roles.add(SectionDisplayRole.SURFACE_OUTLINE)
         if sequence.plane_patch_margin is not None:
             required_roles.update(
                 {
@@ -527,6 +666,26 @@ class ParallelSectionRigBinding:
             if len(curve_slots) < 2:
                 raise ParallelSectionRigBindingError(
                     f"topology bank {bank_id!r} requires two section-curve slots"
+                )
+            point_slots = tuple(
+                item
+                for item in first.slots
+                if item.role is SectionDisplayRole.SECTION_POINT
+                and item.topology_bank == bank_id
+            )
+            required_points = max(
+                (
+                    layer.isolated_point_count
+                    for frame in sequence.bank_render_frames
+                    for layer in frame.layers
+                    if layer.semantic_bank_id == bank_id
+                ),
+                default=0,
+            )
+            if len(point_slots) < required_points:
+                raise ParallelSectionRigBindingError(
+                    f"topology bank {bank_id!r} requires {required_points} "
+                    "fixed section-point slot(s)"
                 )
 
     def _sequence_structure_equal(
@@ -569,6 +728,7 @@ class ParallelSectionRigBinding:
             and left.semantic_bank_ids == right.semantic_bank_ids
             and cameras_equal
             and left.display_frames == right.display_frames
+            and left.compositing_frames == right.compositing_frames
             and left.bank_render_frames == right.bank_render_frames
             and left.plane_patch_margin == right.plane_patch_margin
             and left.plane_patch_fits == right.plane_patch_fits
@@ -589,18 +749,150 @@ class ParallelSectionRigBinding:
     def _resolve_curves(self) -> tuple[AnalyticCurve3D, ...]:
         return self._curves
 
-    def _resolve_curve_opacities(self) -> Mapping[str, float]:
-        display_opacity = {
+    def _resolve_points(self) -> tuple[PointMarker3D, ...]:
+        return self._points
+
+    def _effective_slot_opacities(self) -> dict[str, float]:
+        display = {
             item.slot_id: item.opacity_multiplier
             for item in self._display_frame.slots
         }
+        compositing = {
+            item.slot_id: item.display_opacity
+            for item in self._compositing_frame.slots
+        }
+        if set(display) != set(compositing):
+            raise ParallelSectionRigBindingError(
+                "display and compositing frames use different fixed slots"
+            )
+        return {
+            slot_id: display[slot_id] * compositing[slot_id]
+            for slot_id in display
+        }
+
+    def _compositing_state_for_role(self, role: SectionDisplayRole):
+        states = tuple(
+            item for item in self._compositing_frame.slots
+            if item.role is role
+        )
+        if len(states) != 1:
+            raise ParallelSectionRigBindingError(
+                f"the compositing frame requires exactly one {role.value!r} slot"
+            )
+        return states[0]
+
+    def _resolve_surface_opacities(self) -> Mapping[str, float]:
+        surface_id = self._draft_sequence.timeline.surface_id
+        slot = self._compositing_state_for_role(
+            SectionDisplayRole.SURFACE_FILL
+        )
+        return {surface_id: self._effective_slot_opacities()[slot.slot_id]}
+
+    def _resolve_surface_stroke_opacities(self) -> Mapping[str, float]:
+        surface_id = self._draft_sequence.timeline.surface_id
+        states = tuple(
+            item
+            for item in self._compositing_frame.slots
+            if item.role is SectionDisplayRole.SURFACE_OUTLINE
+        )
+        if not states:
+            return {surface_id: 1.0}
+        if len(states) != 1:
+            raise ParallelSectionRigBindingError(
+                "the compositing frame has duplicate surface-outline slots"
+            )
+        return {
+            surface_id: self._effective_slot_opacities()[states[0].slot_id]
+        }
+
+    def _resolve_occluding_surface_ids(self) -> tuple[str, ...]:
+        state = self._compositing_state_for_role(
+            SectionDisplayRole.SURFACE_FILL
+        )
+        if (
+            state.occlusion_participation
+            is SectionOcclusionParticipation.CERTIFIED
+        ):
+            return (self._draft_sequence.timeline.surface_id,)
+        return ()
+
+    def _resolve_paint_policy(self) -> QuadricPaintPolicy:
+        policies = {
+            item.depth_presentation for item in self._compositing_frame.slots
+        }
+        if len(policies) != 1:
+            raise ParallelSectionRigBindingError(
+                "one Rig frame must use one depth presentation policy"
+            )
+        return _PAINT_POLICY_BY_PRESENTATION[next(iter(policies))]
+
+    def _resolve_section_plane_fill_opacity(self) -> float:
+        states = tuple(
+            item for item in self._compositing_frame.slots
+            if item.role is SectionDisplayRole.PLANE_FILL
+        )
+        if not states:
+            return 0.0
+        if len(states) != 1:
+            raise ParallelSectionRigBindingError(
+                "the compositing frame has duplicate plane-fill slots"
+            )
+        return self._effective_slot_opacities()[states[0].slot_id]
+
+    def _resolve_section_plane_stroke_opacity(self) -> float:
+        states = tuple(
+            item for item in self._compositing_frame.slots
+            if item.role is SectionDisplayRole.PLANE_OUTLINE
+        )
+        if not states:
+            return 0.0
+        if len(states) != 1:
+            raise ParallelSectionRigBindingError(
+                "the compositing frame has duplicate plane-outline slots"
+            )
+        return self._effective_slot_opacities()[states[0].slot_id]
+
+    def _resolve_curve_opacities(self) -> Mapping[str, float]:
+        display_opacity = self._effective_slot_opacities()
         return {
             physical_id: base_opacity
             * display_opacity[self._physical_to_semantic[physical_id]]
             for physical_id, base_opacity in self._base_curve_opacities.items()
         }
 
-    def _resolve_projection(self, _scene: object) -> ParallelCameraState:
+    def _resolve_point_opacities(self) -> Mapping[str, float]:
+        display_opacity = self._effective_slot_opacities()
+        return {
+            point_id: base_opacity * display_opacity[point_id]
+            for point_id, base_opacity in self._base_point_opacities.items()
+        }
+
+    def _resolve_boundary_opacities(self) -> Mapping[str, float]:
+        display_opacity = self._effective_slot_opacities()
+        plane_outline = tuple(
+            item.slot_id for item in self._display_frame.slots
+            if item.role is SectionDisplayRole.PLANE_OUTLINE
+        )
+        result: dict[str, float] = {}
+        for source_id in self.controller.allocated_boundary_ids:
+            slot_id = self._boundary_display_slot_by_source.get(source_id)
+            result[source_id] = (
+                (
+                    display_opacity[plane_outline[0]]
+                    if slot_id is None
+                    and source_id.startswith("boundary:plane:")
+                    and len(plane_outline) == 1
+                    else 1.0
+                )
+                if slot_id is None
+                else display_opacity[slot_id]
+            )
+        return result
+
+    def _resolve_projection(
+        self,
+        _scene: object,
+    ) -> ParallelCameraState | ParallelViewportState:
         if self._projection_override is not None:
             return self._projection_override
         snapshot = getattr(self.scene.camera, "snapshot_parallel_state", None)
@@ -644,7 +936,9 @@ class ParallelSectionRigBinding:
             layer.geometry_time == frame.time for layer in frame.layers
         )
         curves: list[AnalyticCurve3D] = []
+        points: list[PointMarker3D] = []
         base_opacities: dict[str, float] = {}
+        base_point_opacities: dict[str, float] = {}
         for layer in frame.layers:
             plane = _timeline_plane_at_time(timeline, layer.geometry_time)
             boundary = compute_quadric_section_boundary(
@@ -706,6 +1000,20 @@ class ParallelSectionRigBinding:
                 raise ParallelSectionRigBindingError(
                     "materialized branch count differs from bank evidence"
                 )
+            isolated = boundary.trace.isolated_world_points
+            if len(isolated) != layer.isolated_point_count:
+                raise ParallelSectionRigBindingError(
+                    "materialized isolated-point count differs from bank evidence"
+                )
+            point_slots = self._point_slots_by_bank[layer.semantic_bank_id]
+            if len(isolated) > len(point_slots):
+                raise ParallelSectionRigBindingError(
+                    "isolated section points exceed the fixed bank capacity"
+                )
+            for point_index, point in enumerate(isolated):
+                point_id = point_slots[point_index]
+                points.append(PointMarker3D(point_id, point))
+                base_point_opacities[point_id] = layer.opacity
             for curve in materialized:
                 curves.append(curve)
                 base_opacities[curve.curve_id] = layer.opacity
@@ -739,8 +1047,15 @@ class ParallelSectionRigBinding:
             raise ParallelSectionRigBindingError(
                 "active topology banks produced duplicate physical curve ids"
             )
+        point_identities = tuple(item.point_id for item in points)
+        if len(set(point_identities)) != len(point_identities):
+            raise ParallelSectionRigBindingError(
+                "active topology banks produced duplicate physical point ids"
+            )
         self._curves = tuple(sorted(curves, key=lambda item: item.curve_id))
+        self._points = tuple(sorted(points, key=lambda item: item.point_id))
         self._base_curve_opacities = base_opacities
+        self._base_point_opacities = base_point_opacities
         controller = getattr(self, "controller", None)
         if controller is not None:
             controller.section_id = (
@@ -778,9 +1093,14 @@ class ParallelSectionRigBinding:
             raise ParallelSectionRigBindingError(
                 "painter provider inputs differ from the draft sequence"
             )
-        self._projection_override = camera
+        self._projection_override = ParallelViewportState(
+            camera,
+            self._draft_sequence.screen_transforms[index],
+        )
+        self.controller.display_offset = (0.0, 0.0)
         self._bank_frame = self._draft_sequence.bank_render_frames[index]
         self._display_frame = self._draft_sequence.display_frames[index]
+        self._compositing_frame = self._draft_sequence.compositing_frames[index]
         self._patch_fit = expected_patch
         self._apply_bank_geometry(self._bank_frame)
         numeric = self.controller._prepare_numeric(None)
@@ -814,9 +1134,14 @@ class ParallelSectionRigBinding:
 
     def _reset_to_first_frame(self) -> None:
         sequence = self.sequence
-        self._projection_override = sequence.camera_samples[0].state
+        self._projection_override = ParallelViewportState(
+            sequence.camera_samples[0].state,
+            sequence.screen_transforms[0],
+        )
+        self.controller.display_offset = (0.0, 0.0)
         self._bank_frame = sequence.bank_render_frames[0]
         self._display_frame = sequence.display_frames[0]
+        self._compositing_frame = sequence.compositing_frames[0]
         self._patch_fit = sequence.plane_patch_fits[0]
         self._painter_order = sequence.painter_orders[0]
         self._apply_bank_geometry(self._bank_frame)
@@ -825,10 +1150,11 @@ class ParallelSectionRigBinding:
         sequence = self.sequence
         if self.controller.attached:
             return self
-        if self._live_screen_transform() != _IDENTITY_SCREEN_TRANSFORM:
-            raise ParallelSectionRigBindingError(
-                "the live renderer screen transform differs from preflight"
-            )
+        # Compilation certifies the camera state which existed at that time,
+        # but callers may keep authoring the Scene before ownership begins.
+        # Revalidate the complete live viewport contract immediately before
+        # the controller can add any Mobject to the Scene.
+        _require_semantic_scene_camera(self.scene)
         self._reset_to_first_frame()
         try:
             self.controller.attach()
@@ -857,7 +1183,9 @@ class ParallelSectionRigBinding:
         return _BankSnapshot(
             self._bank_frame,
             self._curves,
+            self._points,
             tuple(sorted(self._base_curve_opacities.items())),
+            tuple(sorted(self._base_point_opacities.items())),
             self._section_sources_authoritative,
             self.controller.section_id,
             self.controller.section_coefficient_tolerance,
@@ -874,7 +1202,9 @@ class ParallelSectionRigBinding:
             raise TypeError("snapshot must be a bank snapshot")
         self._bank_frame = snapshot.frame
         self._curves = snapshot.curves
+        self._points = snapshot.points
         self._base_curve_opacities = dict(snapshot.base_opacities)
+        self._base_point_opacities = dict(snapshot.base_point_opacities)
         self._section_sources_authoritative = (
             snapshot.section_sources_authoritative
         )
@@ -927,6 +1257,26 @@ class ParallelSectionRigBinding:
             self.controller.snapshot_transaction_state(),
         )
 
+    def snapshot_section_compositing_state(self) -> SectionCompositingFrame:
+        return self._compositing_frame
+
+    def apply_section_compositing_frame(
+        self,
+        frame: SectionCompositingFrame,
+    ) -> None:
+        if not isinstance(frame, SectionCompositingFrame):
+            raise TypeError("frame must be a SectionCompositingFrame")
+        self._validate_compositing_frame_contract(frame, self._display_frame)
+        self._compositing_frame = frame
+
+    def restore_section_compositing_state(
+        self,
+        frame: SectionCompositingFrame,
+    ) -> None:
+        if not isinstance(frame, SectionCompositingFrame):
+            raise TypeError("snapshot must be a SectionCompositingFrame")
+        self._compositing_frame = frame
+
     def _actual_painter_order(self) -> tuple[str, ...]:
         expected_z = self.controller.active_painter_z_indices
         prepared = self.controller._last_prepared_frame
@@ -965,16 +1315,6 @@ class ParallelSectionRigBinding:
                 "controller live painter band contains duplicate z indices"
             )
         return tuple(item_id for item_id, _z in sorted(live, key=lambda item: item[1]))
-
-    def _live_screen_transform(self) -> ParallelScreenTransform:
-        if self.controller.automatic_updates:
-            raise ParallelSectionRigBindingError(
-                "the coordinated controller must keep automatic_updates disabled"
-            )
-        return _camera_screen_transform(
-            self.scene.camera,
-            display_offset=self.controller.display_offset,
-        )
 
     def apply_section_display_frame(self, frame: SectionDisplayFrame) -> None:
         if not isinstance(frame, SectionDisplayFrame):
@@ -1015,13 +1355,21 @@ class ParallelSectionRigBinding:
         coordinator = ParallelFrameCoordinator()
         coordinator.add(gate.participant())
         coordinator.add(
-            parallel_screen_transform_guard(self._live_screen_transform)
+            parallel_viewport_frame_participant(
+                camera,
+                display_offset_getter=lambda: self.controller.display_offset,
+                display_offset_setter=lambda value: setattr(
+                    self.controller,
+                    "display_offset",
+                    value,
+                ),
+            )
         )
-        coordinator.add(parallel_camera_frame_participant(camera))
         coordinator.add(section_bank_frame_participant(self))
         if sequence.plane_patch_margin is not None:
             coordinator.add(section_plane_patch_participant(self))
         coordinator.add(section_painter_order_participant(self))
+        coordinator.add(section_compositing_frame_participant(self))
         coordinator.add(section_display_frame_participant(self))
         self._coordinator = coordinator
         return coordinator
@@ -1048,14 +1396,12 @@ def compile_parallel_section_rig_from_shots(
         SectionTimelineTransitionMode.CROSSFADE
     ),
     controller_options: Mapping[str, object] | None = None,
+    generator_boundaries: Sequence[GeneratorBoundarySpec] = (),
+    compositing_frames: Sequence[SectionCompositingFrame] | None = None,
 ) -> ParallelSectionRigBinding:
     """Compile real painter evidence and return one ready-to-attach binding."""
 
-    camera = _require_semantic_scene_camera(scene)
-    if _camera_screen_transform(camera) != _IDENTITY_SCREEN_TRANSFORM:
-        raise ParallelSectionRigBindingError(
-            "the live camera screen transform must be identity before compilation"
-        )
+    _require_semantic_scene_camera(scene)
     authored_displays = tuple(display_frames)
     authored_transforms = (
         None if screen_transforms is None else tuple(screen_transforms)
@@ -1081,6 +1427,9 @@ def compile_parallel_section_rig_from_shots(
         framing_points_by_frame=authored_framing,
         transition_fraction=transition_fraction,
         transition_mode=transition_mode,
+        compositing_frames=(
+            None if compositing_frames is None else tuple(compositing_frames)
+        ),
     )
     draft = compile_parallel_section_sequence_from_shots(
         timeline,
@@ -1094,6 +1443,7 @@ def compile_parallel_section_rig_from_shots(
         scene,
         draft,
         controller_options=controller_options,
+        generator_boundaries=generator_boundaries,
     )
     final = compile_parallel_section_sequence_from_shots(
         timeline,

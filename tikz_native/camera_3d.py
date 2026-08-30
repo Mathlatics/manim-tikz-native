@@ -8,7 +8,7 @@ rendered scenes remain portable with the versioned provider alone.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Mapping
+from typing import Mapping, Sequence
 
 import numpy as np
 from manim import ThreeDCamera, ValueTracker
@@ -542,6 +542,38 @@ class MultiProjectionCamera(ThreeDCamera):
             self.frame_center + self.get_view_center(),
             zoom * self.get_principal_point() - self.frame_center[:2],
         )
+
+    def set_parallel_frame_center_xy(
+        self,
+        value: Sequence[float],
+    ) -> None:
+        """Set renderer frame-center XY exactly while retaining authored Z.
+
+        Manim's public ``frame_center`` assignment is implemented as a relative
+        Mobject move.  Repeated viewport transactions can therefore retain one
+        floating-point ULP from the prior center.  The parallel viewport is a
+        source-authoritative frame contract, so it uses the same direct point
+        replacement as exact camera transaction restore.
+        """
+
+        try:
+            center_xy = np.asarray(value, dtype=float)
+        except (TypeError, ValueError, OverflowError) as exc:
+            raise ValueError(
+                "parallel frame-center XY must contain two finite values"
+            ) from exc
+        if center_xy.shape != (2,) or not np.all(np.isfinite(center_xy)):
+            raise ValueError(
+                "parallel frame-center XY must contain two finite values"
+            )
+        current = np.asarray(self.frame_center, dtype=float)
+        if current.shape != (3,) or not np.all(np.isfinite(current)):
+            raise ValueError(
+                "camera frame_center must contain three finite values"
+            )
+        exact = current.copy()
+        exact[:2] = center_xy
+        self._frame_center.points = exact[np.newaxis, :].copy()
 
     def snapshot_parallel_transaction(self) -> ParallelCameraTransactionSnapshot:
         """Capture the complete mutable camera state used by one frame commit.

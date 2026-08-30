@@ -31,13 +31,6 @@ from polyhedron_visibility.quadrics.section_compositing import (
     compute_quadric_section_compositing,
 )
 from polyhedron_visibility.quadrics.visibility import compute_quadric_visibility
-from tikz_native.version import (
-    COMPONENT_QUADRIC_GEOMETRY,
-    COMPONENT_QUADRIC_MANIM,
-    COMPONENT_QUADRIC_VISIBILITY,
-    provider_component_contract_revisions,
-    provider_component_revisions,
-)
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -163,30 +156,36 @@ class QuadricSectionV1ContractTests(unittest.TestCase):
         }
         self.assertEqual(actual, expected)
 
-    def test_component_contract_is_stable_and_release_matches_provider(self) -> None:
-        component_names = {
-            "quadric_geometry": COMPONENT_QUADRIC_GEOMETRY,
-            "quadric_visibility": COMPONENT_QUADRIC_VISIBILITY,
-            "quadric_manim": COMPONENT_QUADRIC_MANIM,
+    def test_component_contract_is_stable_and_release_is_frozen(self) -> None:
+        expected = {
+            "quadric_geometry": (
+                "tikz-native-contract:quadric_geometry/v1",
+                "source-sha256:37e2f79b974a4329f97bfb355378b6bb11383e1e7423a01a9cf62709eb633d4a",
+            ),
+            "quadric_visibility": (
+                "tikz-native-contract:quadric_visibility/v2",
+                "source-sha256:8d5a40e6f1b01d6d6e5285a1cae4218fec5892d6f6ced928ce9cad2431a03420",
+            ),
+            "quadric_manim": (
+                "tikz-native-contract:quadric_manim/v1",
+                "source-sha256:761a98f07a3b8d2b400c44a4e615084db1ffe9c97f15376ac93744a948172b94",
+            ),
         }
-        contract_revisions = provider_component_contract_revisions()
-        render_revisions = provider_component_revisions()
         semantic = self.contract["components"]
         release = self.release_manifest["components"]
-        for fixture_name, component_name in component_names.items():
+        for fixture_name, (contract_revision, render_revision) in expected.items():
             with self.subTest(component=fixture_name):
-                expected_contract = contract_revisions[component_name]
                 self.assertEqual(
                     semantic[fixture_name]["contract_revision"],
-                    expected_contract,
+                    contract_revision,
                 )
                 self.assertEqual(
                     release[fixture_name]["contract_revision"],
-                    expected_contract,
+                    contract_revision,
                 )
                 self.assertEqual(
                     release[fixture_name]["render_revision"],
-                    render_revisions[component_name],
+                    render_revision,
                 )
 
     def test_every_support_row_has_executable_layer_evidence(self) -> None:

@@ -563,6 +563,41 @@ class BoundarySectionPlacementTests(unittest.TestCase):
             },
         )
 
+    def test_parametric_section_subdomain_retains_authoritative_provenance(
+        self,
+    ) -> None:
+        sphere = SphereSpec("subdomain-sphere", (0.0, 0.0, 0.0), 1.0)
+        plane = SectionPlane(
+            "subdomain-plane",
+            (0.0, 0.0, 0.0),
+            (0.0, 0.0, 1.0),
+            u_axis=(1.0, 0.0, 0.0),
+        )
+        authoritative = compute_quadric_section_boundary_curves(
+            "subdomain-section",
+            sphere,
+            plane,
+        )
+        full = next(
+            item for item in authoritative if isinstance(item, ParametricConicBranch)
+        )
+        half = replace(
+            full,
+            curve_id="subdomain-section:bank-half",
+            domain=ParameterInterval(full.domain.start, full.domain.midpoint),
+        )
+        source = section_curve_boundary_source(
+            half,
+            sphere,
+            plane,
+            section_id="subdomain-section",
+            authoritative_curves=authoritative,
+        )
+        self.assertIs(source.source_kind, BoundarySourceKind.SECTION_CURVE)
+        self.assertEqual(source.owner_id, "subdomain-section")
+        self.assertEqual(source.section_surface_id, sphere.surface_id)
+        self.assertEqual(source.section_plane_id, plane.plane_id)
+
     def test_cap_chord_is_certified_as_an_exact_section_boundary(self) -> None:
         cone = ConeSpec(
             "closed-cone",

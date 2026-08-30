@@ -25,10 +25,12 @@ from polyhedron_visibility.quadrics.curves import (
     CircleArcCurve,
     EllipseArcCurve,
     ParametricConicBranch,
+    PointMarker3D,
     SegmentCurve,
 )
 from polyhedron_visibility.quadrics.visibility import (
     compute_curve_visibility,
+    compute_point_visibility,
     compute_quadric_visibility,
 )
 from polyhedron_visibility.quadrics.sections import (
@@ -540,6 +542,24 @@ class QuadricCurveVisibilityTests(unittest.TestCase):
         second_payload = json.dumps(second.to_dict(), sort_keys=True, allow_nan=False)
         self.assertEqual(first_payload, second_payload)
         self.assertEqual(tuple(first.record_map), ("a-section", "z-line"))
+
+    def test_isolated_point_visibility_uses_exact_forward_ray_hits(self) -> None:
+        sphere = SphereSpec("sphere", (0.0, 0.0, 0.0), 1.0)
+        visible = compute_point_visibility(
+            PointMarker3D("front", (0.0, 0.0, 1.0)),
+            (sphere,),
+            IDENTITY_VIEW,
+        )
+        hidden = compute_point_visibility(
+            PointMarker3D("back", (0.0, 0.0, -1.0)),
+            (sphere,),
+            IDENTITY_VIEW,
+        )
+        self.assertTrue(visible.visible)
+        self.assertEqual(visible.occluders, ())
+        self.assertFalse(hidden.visible)
+        self.assertEqual(hidden.occluders, ("sphere",))
+        self.assertEqual(hidden.to_dict()["pointId"], "back")
 
 
 if __name__ == "__main__":

@@ -39,8 +39,17 @@ from polyhedron_visibility.quadrics.section_timeline_transition import (
     section_timeline_transition_state_at,
 )
 from polyhedron_visibility.quadrics.semantic_display import (
+    SectionDisplayCatalog,
     SectionDisplayFrame,
     SectionDisplayRole,
+    SectionSemanticSlot,
+)
+from polyhedron_visibility.quadrics.semantic_compositing import (
+    SectionCompositingAxes,
+    SectionCompositingFrame,
+    SectionCompositingInstruction,
+    SectionDepthPresentationPolicy,
+    compile_section_compositing,
 )
 from polyhedron_visibility.quadrics.sections import (
     QuadricSectionError,
@@ -83,7 +92,7 @@ from .section_bank_render import (
 )
 
 
-PARALLEL_SECTION_SEQUENCE_SCHEMA = "parallel-quadric-section-sequence/v1"
+PARALLEL_SECTION_SEQUENCE_SCHEMA = "parallel-quadric-section-sequence/v2"
 SECTION_PRIMARY_REFERENCE_FRAME_CHANNEL = "section-primary-reference-frame"
 SECTION_EVALUATION_PLANE_CHANNEL = "section-evaluation-plane"
 # Backward-compatible names for the unpublished integration prototype.  The
@@ -91,6 +100,7 @@ SECTION_EVALUATION_PLANE_CHANNEL = "section-evaluation-plane"
 SECTION_TIMELINE_FRAME_CHANNEL = SECTION_PRIMARY_REFERENCE_FRAME_CHANNEL
 SECTION_PLANE_CHANNEL = SECTION_EVALUATION_PLANE_CHANNEL
 SECTION_DISPLAY_CHANNEL = "section-display"
+SECTION_COMPOSITING_CHANNEL = "section-compositing"
 SECTION_TOPOLOGY_BANK_CHANNEL = "section-topology-bank"
 SECTION_TRANSITION_STATE_CHANNEL = "section-transition-state"
 SECTION_BANK_RENDER_CHANNEL = "section-bank-render-frame"
@@ -219,6 +229,55 @@ def _digest_display(value: object) -> str:
     return value.digest
 
 
+def _digest_compositing(value: object) -> str:
+    if not isinstance(value, SectionCompositingFrame):
+        raise TypeError(
+            "section compositing channel must contain SectionCompositingFrame"
+        )
+    return value.digest
+
+
+def _display_catalog_from_frame(
+    frame: SectionDisplayFrame,
+) -> SectionDisplayCatalog:
+    if not isinstance(frame, SectionDisplayFrame):
+        raise TypeError("frame must be a SectionDisplayFrame")
+    catalog = SectionDisplayCatalog(
+        frame.section_id,
+        tuple(
+            SectionSemanticSlot(
+                item.slot_id,
+                item.role,
+                item.source_id,
+                item.topology_bank,
+            )
+            for item in frame.slots
+        ),
+    )
+    if catalog.digest != frame.catalog_digest:
+        raise ParallelSectionSequenceError(
+            "display frame metadata does not reproduce its semantic catalog"
+        )
+    return catalog
+
+
+def _default_compositing_frame(
+    display: SectionDisplayFrame,
+) -> SectionCompositingFrame:
+    catalog = _display_catalog_from_frame(display)
+    return compile_section_compositing(
+        catalog,
+        SectionCompositingInstruction.for_catalog(
+            catalog,
+            defaults=SectionCompositingAxes(
+                depth_presentation=(
+                    SectionDepthPresentationPolicy.DIAGRAMMATIC
+                ),
+            ),
+        ),
+    )
+
+
 def _digest_topology_banks(value: object) -> str:
     if not isinstance(value, tuple) or not value or any(
         isinstance(item, bool) or item not in {0, 1} for item in value
@@ -279,6 +338,7 @@ def parallel_section_channel_digesters(
         SECTION_TIMELINE_FRAME_CHANNEL: _digest_tracked_frame,
         SECTION_PLANE_CHANNEL: _digest_plane,
         SECTION_DISPLAY_CHANNEL: _digest_display,
+        SECTION_COMPOSITING_CHANNEL: _digest_compositing,
         SECTION_TOPOLOGY_BANK_CHANNEL: _digest_topology_banks,
         SECTION_TRANSITION_STATE_CHANNEL: _digest_transition_state,
         SECTION_BANK_RENDER_CHANNEL: _digest_bank_render_frame,
@@ -1332,6 +1392,7 @@ def compile_parallel_section_preflight_frames(
     screen_transforms: Sequence[ParallelScreenTransform],
     framing_points_by_frame: Sequence[Sequence[Sequence[float]]],
     semantic_bank_ids: tuple[str, str],
+    compositing_frames: Sequence[SectionCompositingFrame] | None = None,
 ) -> tuple[ParallelPreflightFrame, ...]:
     """Bind every runtime channel to one auditable preflight frame."""
 
@@ -1346,9 +1407,15 @@ def compile_parallel_section_preflight_frames(
         )
     if callable(painter_orders) or not isinstance(painter_orders, Sequence):
         raise TypeError("painter_orders must be a resolved sequence")
+    resolved_compositing = (
+        tuple(_default_compositing_frame(item) for item in display_frames)
+        if compositing_frames is None
+        else tuple(compositing_frames)
+    )
     values = {
         "camera_samples": tuple(camera_samples),
         "display_frames": tuple(display_frames),
+        "compositing_frames": resolved_compositing,
         "bank_render_frames": tuple(bank_render_frames),
         "plane_patch_fits": tuple(plane_patch_fits),
         "transition_states": tuple(transition_states),
@@ -1366,6 +1433,7 @@ def compile_parallel_section_preflight_frames(
         )
     cameras = values["camera_samples"]
     displays = values["display_frames"]
+    compositing = values["compositing_frames"]
     bank_frames = values["bank_render_frames"]
     patch_fits = values["plane_patch_fits"]
     transitions = values["transition_states"]
@@ -1379,6 +1447,14 @@ def compile_parallel_section_preflight_frames(
         raise TypeError("camera_samples must contain ParallelCameraShotSample values")
     if not all(isinstance(item, SectionDisplayFrame) for item in displays):
         raise TypeError("display_frames must contain SectionDisplayFrame values")
+    if not all(isinstance(item, SectionCompositingFrame) for item in compositing):
+        raise TypeError(
+            "compositing_frames must contain SectionCompositingFrame values"
+        )
+    for display, frame in zip(displays, compositing):
+        assert isinstance(display, SectionDisplayFrame)
+        assert isinstance(frame, SectionCompositingFrame)
+        frame.validate_catalog(_display_catalog_from_frame(display))
     if not all(isinstance(item, SectionBankRenderFrame) for item in bank_frames):
         raise TypeError(
             "bank_render_frames must contain SectionBankRenderFrame values"
@@ -1470,6 +1546,7 @@ def compile_parallel_section_preflight_frames(
     for index in range(count):
         camera = cameras[index]
         display = displays[index]
+        compositing_frame = compositing[index]
         bank_frame = bank_frames[index]
         patch_fit = patch_fits[index]
         transition = transitions[index]
@@ -1481,6 +1558,7 @@ def compile_parallel_section_preflight_frames(
         points = framing[index]
         assert isinstance(camera, ParallelCameraShotSample)
         assert isinstance(display, SectionDisplayFrame)
+        assert isinstance(compositing_frame, SectionCompositingFrame)
         assert isinstance(bank_frame, SectionBankRenderFrame)
         assert isinstance(transition, SectionTimelineTransitionState)
         assert isinstance(plane, SectionPlane)
@@ -1533,6 +1611,7 @@ def compile_parallel_section_preflight_frames(
             SECTION_TIMELINE_FRAME_CHANNEL: tracked,
             SECTION_PLANE_CHANNEL: plane,
             SECTION_DISPLAY_CHANNEL: display,
+            SECTION_COMPOSITING_CHANNEL: compositing_frame,
             SECTION_TOPOLOGY_BANK_CHANNEL: banks,
             SECTION_TRANSITION_STATE_CHANNEL: transition,
             SECTION_BANK_RENDER_CHANNEL: bank_frame,
@@ -1640,6 +1719,7 @@ class ParallelSectionSequence:
     semantic_bank_ids: tuple[str, str]
     camera_samples: tuple[ParallelCameraShotSample, ...]
     display_frames: tuple[SectionDisplayFrame, ...]
+    compositing_frames: tuple[SectionCompositingFrame, ...]
     bank_render_frames: tuple[SectionBankRenderFrame, ...]
     plane_patch_margin: float | None
     plane_patch_fits: tuple[FittedPlaneDisplayPatch | None, ...]
@@ -1669,6 +1749,7 @@ class ParallelSectionSequence:
             "semantic_bank_ids",
             "camera_samples",
             "display_frames",
+            "compositing_frames",
             "bank_render_frames",
             "plane_patch_fits",
             "painter_orders",
@@ -1711,6 +1792,7 @@ class ParallelSectionSequence:
         for label, values in (
             ("camera_samples", self.camera_samples),
             ("display_frames", self.display_frames),
+            ("compositing_frames", self.compositing_frames),
             ("bank_render_frames", self.bank_render_frames),
             ("plane_patch_fits", self.plane_patch_fits),
             ("painter_orders", self.painter_orders),
@@ -1725,6 +1807,11 @@ class ParallelSectionSequence:
         for label, values, expected_type in (
             ("camera_samples", self.camera_samples, ParallelCameraShotSample),
             ("display_frames", self.display_frames, SectionDisplayFrame),
+            (
+                "compositing_frames",
+                self.compositing_frames,
+                SectionCompositingFrame,
+            ),
             ("bank_render_frames", self.bank_render_frames, SectionBankRenderFrame),
             ("painter_orders", self.painter_orders, PainterOrderEvidence),
             ("screen_transforms", self.screen_transforms, ParallelScreenTransform),
@@ -1740,6 +1827,11 @@ class ParallelSectionSequence:
             raise TypeError(
                 "plane_patch_fits must contain FittedPlaneDisplayPatch or None"
             )
+        for display, compositing in zip(
+            self.display_frames,
+            self.compositing_frames,
+        ):
+            compositing.validate_catalog(_display_catalog_from_frame(display))
         if self.plane_patch_margin is None:
             margin = None
         else:
@@ -1882,6 +1974,7 @@ class ParallelSectionSequence:
             evaluation_time = self.evaluation_times[index]
             camera_sample = self.camera_samples[index]
             display = self.display_frames[index]
+            compositing = self.compositing_frames[index]
             bank_frame = self.bank_render_frames[index]
             plane_patch_fit = self.plane_patch_fits[index]
             painter = self.painter_orders[index]
@@ -1926,6 +2019,7 @@ class ParallelSectionSequence:
                 SECTION_TIMELINE_FRAME_CHANNEL: expected_primary,
                 SECTION_PLANE_CHANNEL: expected_plane,
                 SECTION_DISPLAY_CHANNEL: display,
+                SECTION_COMPOSITING_CHANNEL: compositing,
                 SECTION_TOPOLOGY_BANK_CHANNEL: expected_banks,
                 SECTION_TRANSITION_STATE_CHANNEL: expected_transition,
                 SECTION_BANK_RENDER_CHANNEL: bank_frame,
@@ -1991,6 +2085,9 @@ class ParallelSectionSequence:
             "semanticBankIds": list(self.semantic_bank_ids),
             "cameraSamples": [item.to_dict() for item in self.camera_samples],
             "displayFrames": [item.to_dict() for item in self.display_frames],
+            "compositingFrames": [
+                item.to_dict() for item in self.compositing_frames
+            ],
             "bankRenderFrames": [
                 item.to_dict() for item in self.bank_render_frames
             ],
@@ -2038,6 +2135,7 @@ def compile_parallel_section_sequence(
         SectionTimelineTransitionMode.CROSSFADE
     ),
     camera_provenance: ParallelCameraSamplingProvenance | None = None,
+    compositing_frames: Sequence[SectionCompositingFrame] | None = None,
 ) -> ParallelSectionSequence:
     """Compile, require joint preflight, then emit coordinated frame states."""
 
@@ -2106,6 +2204,34 @@ def compile_parallel_section_sequence(
     )
     if not all(isinstance(item, SectionDisplayFrame) for item in resolved_displays):
         raise TypeError("display_frames must contain SectionDisplayFrame values")
+    authored_compositing: tuple[object, ...] = (
+        tuple(_default_compositing_frame(item) for item in authored_displays)
+        if compositing_frames is None
+        else tuple(compositing_frames)
+    )
+    resolved_compositing = _resolve_keyframed_values(
+        authored_compositing,
+        timeline=timeline,
+        evaluation_times=evaluation_times,
+        transition_states=transition_states,
+        label="compositing_frames",
+        equivalent=lambda left, right: (
+            isinstance(left, SectionCompositingFrame)
+            and isinstance(right, SectionCompositingFrame)
+            and left.digest == right.digest
+        ),
+    )
+    if not all(
+        isinstance(item, SectionCompositingFrame)
+        for item in resolved_compositing
+    ):
+        raise TypeError(
+            "compositing_frames must contain SectionCompositingFrame values"
+        )
+    for display, compositing in zip(resolved_displays, resolved_compositing):
+        assert isinstance(display, SectionDisplayFrame)
+        assert isinstance(compositing, SectionCompositingFrame)
+        compositing.validate_catalog(_display_catalog_from_frame(display))
     if callable(painter_orders):
         try:
             resolved_painters = tuple(
@@ -2183,6 +2309,7 @@ def compile_parallel_section_sequence(
         screen_transforms=resolved_transforms,  # type: ignore[arg-type]
         framing_points_by_frame=framing,
         semantic_bank_ids=resolved_bank_ids,
+        compositing_frames=resolved_compositing,  # type: ignore[arg-type]
     )
     report = preflight_parallel_frames(preflight_frames, limits)
     report.require_accepted()
@@ -2194,6 +2321,7 @@ def compile_parallel_section_sequence(
                 SECTION_TIMELINE_FRAME_CHANNEL: tracked_frames[index],
                 SECTION_PLANE_CHANNEL: planes[index],
                 SECTION_DISPLAY_CHANNEL: resolved_displays[index],
+                SECTION_COMPOSITING_CHANNEL: resolved_compositing[index],
                 SECTION_TOPOLOGY_BANK_CHANNEL: topology_banks[index],
                 SECTION_TRANSITION_STATE_CHANNEL: transition_states[index],
                 SECTION_BANK_RENDER_CHANNEL: bank_frames[index],
@@ -2215,6 +2343,7 @@ def compile_parallel_section_sequence(
         semantic_bank_ids=resolved_bank_ids,
         camera_samples=cameras,
         display_frames=tuple(resolved_displays),  # type: ignore[arg-type]
+        compositing_frames=tuple(resolved_compositing),  # type: ignore[arg-type]
         bank_render_frames=bank_frames,
         plane_patch_margin=plane_patch_margin,
         plane_patch_fits=plane_patch_fits,
@@ -2249,6 +2378,7 @@ def compile_parallel_section_sequence_from_shots(
     transition_mode: SectionTimelineTransitionMode | str = (
         SectionTimelineTransitionMode.CROSSFADE
     ),
+    compositing_frames: Sequence[SectionCompositingFrame] | None = None,
 ) -> ParallelSectionSequence:
     """Compile a full render grid directly from source-authoritative shots."""
 
@@ -2361,6 +2491,9 @@ def compile_parallel_section_sequence_from_shots(
         transition_fraction=transition_fraction,
         transition_mode=transition_mode,
         camera_provenance=provenance,
+        compositing_frames=(
+            None if compositing_frames is None else tuple(compositing_frames)
+        ),
     )
 
 
@@ -2534,10 +2667,56 @@ def section_display_frame_participant(
     )
 
 
+def section_compositing_frame_participant(
+    target: object,
+    *,
+    channel_name: str = SECTION_COMPOSITING_CHANNEL,
+    participant_id: str = "section-semantic-compositing",
+) -> ParallelFrameParticipant[ParallelFrameState]:
+    """Commit the independent display/occlusion/depth axes before painting."""
+
+    channel = _identity(channel_name, "channel_name")
+    snapshot = getattr(target, "snapshot_section_compositing_state", None)
+    apply = getattr(target, "apply_section_compositing_frame", None)
+    restore = getattr(target, "restore_section_compositing_state", None)
+    if not all(callable(item) for item in (snapshot, apply, restore)):
+        raise TypeError(
+            "compositing target must provide snapshot, apply, and restore methods"
+        )
+
+    def prepare(frame: ParallelFrameState) -> SectionCompositingFrame:
+        if not isinstance(frame, ParallelFrameState):
+            raise TypeError("compositing participant requires ParallelFrameState")
+        value = frame.channel(channel)
+        if not isinstance(value, SectionCompositingFrame):
+            raise TypeError(
+                "compositing channel must contain SectionCompositingFrame"
+            )
+        return value
+
+    def commit(value: object) -> None:
+        if not isinstance(value, SectionCompositingFrame):
+            raise TypeError(
+                "prepared compositing value must be SectionCompositingFrame"
+            )
+        apply(value)
+
+    return ParallelFrameParticipant(
+        participant_id=participant_id,
+        phase=ParallelFramePhase.PAINT,
+        prepare=prepare,
+        snapshot=snapshot,
+        commit=commit,
+        rollback=restore,
+        binding_kind=ParallelFrameBindingKind.SECTION_COMPOSITING,
+    )
+
+
 __all__ = [
     "PARALLEL_SECTION_SEQUENCE_SCHEMA",
     "PARALLEL_SCREEN_TRANSFORM_CHANNEL",
     "SECTION_BANK_RENDER_CHANNEL",
+    "SECTION_COMPOSITING_CHANNEL",
     "SECTION_DISPLAY_CHANNEL",
     "SECTION_EVALUATION_PLANE_CHANNEL",
     "SECTION_PAINTER_ORDER_CHANNEL",
@@ -2563,6 +2742,7 @@ __all__ = [
     "parallel_section_render_times",
     "sample_parallel_camera_shot_sequence",
     "section_bank_frame_participant",
+    "section_compositing_frame_participant",
     "section_display_frame_participant",
     "section_plane_patch_participant",
     "section_painter_order_participant",

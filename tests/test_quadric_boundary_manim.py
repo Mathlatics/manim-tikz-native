@@ -126,6 +126,70 @@ class UnifiedBoundaryManimTests(unittest.TestCase):
         self.assertEqual(before, after)
         controller.restore()
 
+    def test_boundary_opacity_is_strict_and_uses_draw_only_update(self) -> None:
+        source_id = "boundary:opacity-sphere:silhouette"
+        opacity = 1.0
+
+        def boundary_opacities() -> dict[str, float]:
+            return {source_id: opacity}
+
+        controller = QuadricOcclusion3D(
+            Scene(),
+            surfaces=(SphereSpec("opacity-sphere", (0.0, 0.0, 0.0), 1.0),),
+            curves=(),
+            projection=VIEW,
+            boundary_visibility_mode="unified",
+            boundary_opacities=boundary_opacities,
+            limits=limits(),
+        ).attach()
+        try:
+            opacity = 0.2
+            with patch.object(
+                controller,
+                "_prepare_numeric",
+                wraps=controller._prepare_numeric,
+            ) as prepare_numeric:
+                controller.update()
+            prepare_numeric.assert_not_called()
+            active = [
+                slot
+                for slot in controller._curve_slots[source_id].fragments
+                if max(
+                    float(slot.solid.get_stroke_opacity()),
+                    float(slot.dashed.get_stroke_opacity()),
+                )
+                > 0.0
+            ]
+            self.assertTrue(active)
+            self.assertTrue(
+                all(
+                    max(
+                        float(slot.solid.get_stroke_opacity()),
+                        float(slot.dashed.get_stroke_opacity()),
+                    )
+                    <= 0.2000001
+                    for slot in active
+                )
+            )
+        finally:
+            controller.restore()
+
+        with self.assertRaisesRegex(
+            QuadricManimError,
+            "omitted allocated sources",
+        ):
+            QuadricOcclusion3D(
+                Scene(),
+                surfaces=(
+                    SphereSpec("missing-opacity", (0.0, 0.0, 0.0), 1.0),
+                ),
+                curves=(),
+                projection=VIEW,
+                boundary_visibility_mode="unified",
+                boundary_opacities={},
+                limits=limits(),
+            ).attach()
+
     def test_external_surface_occlusion_respects_all_three_policies(self) -> None:
         surfaces = (
             SphereSpec("far", (0.0, 0.0, 0.0), 1.0),

@@ -32,10 +32,12 @@ _EXPORTS: Final[dict[str, tuple[str, str]]] = {
     "SectionPlane": (".contract", "SectionPlane"),
     "SphereSpec": (".contract", "SphereSpec"),
     "ANALYTIC_CURVE_SCHEMA": (".curves", "ANALYTIC_CURVE_SCHEMA"),
+    "POINT_MARKER_SCHEMA": (".curves", "POINT_MARKER_SCHEMA"),
     "CircleArcCurve": (".curves", "CircleArcCurve"),
     "CurveContractError": (".curves", "CurveContractError"),
     "EllipseArcCurve": (".curves", "EllipseArcCurve"),
     "ParametricConicBranch": (".curves", "ParametricConicBranch"),
+    "PointMarker3D": (".curves", "PointMarker3D"),
     "SegmentCurve": (".curves", "SegmentCurve"),
     "CRITICAL_EVENT_SCHEMA": (".critical", "CRITICAL_EVENT_SCHEMA"),
     "CriticalEvidence": (".critical", "CriticalEvidence"),
@@ -138,14 +140,20 @@ _EXPORTS: Final[dict[str, tuple[str, str]]] = {
         ".visibility",
         "QUADRIC_VISIBILITY_RECORD_SCHEMA",
     ),
+    "POINT_VISIBILITY_RECORD_SCHEMA": (
+        ".visibility",
+        "POINT_VISIBILITY_RECORD_SCHEMA",
+    ),
     "CurveVisibilityFrame": (".visibility", "CurveVisibilityFrame"),
     "CurveVisibilityRecord": (".visibility", "CurveVisibilityRecord"),
+    "PointVisibilityRecord": (".visibility", "PointVisibilityRecord"),
     "QuadricVisibilityError": (".visibility", "QuadricVisibilityError"),
     "canonical_quadric_visibility_json": (
         ".visibility",
         "canonical_quadric_visibility_json",
     ),
     "compute_curve_visibility": (".visibility", "compute_curve_visibility"),
+    "compute_point_visibility": (".visibility", "compute_point_visibility"),
     "compute_quadric_visibility": (".visibility", "compute_quadric_visibility"),
     "DEFAULT_PLANE_PATCH_MARGIN_RATIO": (
         ".plane_patch",
@@ -282,6 +290,10 @@ _EXPORTS: Final[dict[str, tuple[str, str]]] = {
         "compute_quadric_boundary_compositing",
     ),
     "GeneratorBoundarySpec": (".surface_boundaries", "GeneratorBoundarySpec"),
+    "SurfaceBoundarySlotDescriptor": (
+        ".surface_boundaries",
+        "SurfaceBoundarySlotDescriptor",
+    ),
     "build_surface_boundary_sources": (
         ".surface_boundaries",
         "build_surface_boundary_sources",
@@ -295,6 +307,10 @@ _EXPORTS: Final[dict[str, tuple[str, str]]] = {
     "surface_boundary_source_ids": (
         ".surface_boundaries",
         "surface_boundary_source_ids",
+    ),
+    "surface_boundary_slot_descriptors": (
+        ".surface_boundaries",
+        "surface_boundary_slot_descriptors",
     ),
     "QuadricPaintRelation": (".compositing", "QuadricPaintRelation"),
     "QuadricStyleDescriptor": (".compositing", "QuadricStyleDescriptor"),
@@ -469,6 +485,54 @@ _EXPORTS: Final[dict[str, tuple[str, str]]] = {
     "compile_section_display": (
         ".semantic_display",
         "compile_section_display",
+    ),
+    "SECTION_COMPOSITING_FRAME_SCHEMA": (
+        ".semantic_compositing",
+        "SECTION_COMPOSITING_FRAME_SCHEMA",
+    ),
+    "SECTION_COMPOSITING_INSTRUCTION_SCHEMA": (
+        ".semantic_compositing",
+        "SECTION_COMPOSITING_INSTRUCTION_SCHEMA",
+    ),
+    "SectionCompositingAxes": (
+        ".semantic_compositing",
+        "SectionCompositingAxes",
+    ),
+    "SectionCompositingFrame": (
+        ".semantic_compositing",
+        "SectionCompositingFrame",
+    ),
+    "SectionCompositingInstruction": (
+        ".semantic_compositing",
+        "SectionCompositingInstruction",
+    ),
+    "SectionCompositingOverride": (
+        ".semantic_compositing",
+        "SectionCompositingOverride",
+    ),
+    "SectionCompositingSlotState": (
+        ".semantic_compositing",
+        "SectionCompositingSlotState",
+    ),
+    "SectionCompositingTargetKind": (
+        ".semantic_compositing",
+        "SectionCompositingTargetKind",
+    ),
+    "SectionDepthPresentationPolicy": (
+        ".semantic_compositing",
+        "SectionDepthPresentationPolicy",
+    ),
+    "SectionOcclusionParticipation": (
+        ".semantic_compositing",
+        "SectionOcclusionParticipation",
+    ),
+    "SectionSemanticCompositingError": (
+        ".semantic_compositing",
+        "SectionSemanticCompositingError",
+    ),
+    "compile_section_compositing": (
+        ".semantic_compositing",
+        "compile_section_compositing",
     ),
     "SectionTimelineTransitionPlan": (
         ".section_timeline_transition",

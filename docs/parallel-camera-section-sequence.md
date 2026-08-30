@@ -99,23 +99,38 @@ from only a report omits the section-specific digest functions.
 coordinator = ParallelFrameCoordinator()
 gate = parallel_section_preflight_gate(sequence)
 coordinator.add(gate.participant())
-coordinator.add(parallel_screen_transform_guard(read_live_screen_transform))
-coordinator.add(parallel_camera_frame_participant(camera))
+coordinator.add(parallel_viewport_frame_participant(
+    camera,
+    display_offset_getter=lambda: controller.display_offset,
+    display_offset_setter=lambda value: setattr(
+        controller, "display_offset", value,
+    ),
+))
 coordinator.add(section_bank_frame_participant(bank_binding))
 coordinator.add(section_plane_patch_participant(bank_binding))
 coordinator.add(section_painter_order_participant(painter_binding))
+coordinator.add(section_compositing_frame_participant(compositing_binding))
 coordinator.add(section_display_frame_participant(display_binding))
 
 for frame in sequence.frames:
     coordinator.update(frame)
 ```
 
-The bank and display bindings must each expose complete snapshot, apply, and
-restore methods.  Preparation is read-only; if any commit partially mutates a
-bank and then raises, the failing participant, the camera, and all earlier
-participants are restored in reverse order.  A live inherited zoom, frame
-center, or display offset that differs from preflight is rejected before any
-commit.
+`ParallelViewportState` joins the semantic camera with the renderer-level
+`ParallelScreenTransform`: a positive inherited zoom, an XY frame center, and
+one final XY display offset.  These values are authored inputs rather than a
+live-state guard.  The dry painter and the attached controller therefore see
+the same affine map even when the first frame is non-identity.  Semantic zoom
+and inherited zoom multiply; the target anchor, frame center, and display
+offset are each applied exactly once and are not themselves scaled.
+
+All bindings expose complete snapshot, apply, and restore methods.  Preparation
+and snapshot are observationally read-only.  If any commit partially mutates a
+bank, viewport, compositing state, or display and then raises, the failing
+participant and every earlier participant are restored in reverse order.  A
+camera which cannot provide a writable zoom/frame center and either a complete
+transaction pair or a certified static fallback is rejected before Scene
+ownership.
 
 The player verifies both participant identity and its audited binding kind and
 phase; same-name no-op participants are not accepted.  Manim cache identity is
@@ -153,10 +168,10 @@ unattached `QuadricOcclusion3D` then prepares its real numeric painter order for
 each frame; the second pass binds that evidence into the final preflight report.
 Only the final sequence can be attached and played.
 
-Here `scene` must use `MultiProjectionCamera`.  Keep its inherited zoom at
-`1`, inherited frame center at `(0, 0, 0)`, and the controller display offset
-at `(0, 0)`; author target, final screen anchor, and semantic zoom in
-`ParallelCameraState` so preflight and live rendering consume one affine state.
+Here `scene` must use a compatible semantic parallel camera such as
+`MultiProjectionCamera`.  Non-identity inherited zoom, frame center, and final
+display offset may be supplied per frame through `screen_transforms=`.  They
+are committed atomically with the semantic camera and are restored together.
 
 ```python
 catalog = build_parallel_section_rig_display_catalog(
@@ -179,6 +194,8 @@ binding = compile_parallel_section_rig_from_shots(
     semantic_bank_ids=("section-bank-a", "section-bank-b"),
     frame_rate=30,
     plane_patch_margin=0.08,
+    screen_transforms=screen_transforms,
+    compositing_frames=compositing_frames,
 )
 
 binding.attach()
@@ -200,13 +217,29 @@ seam can split without allocating a new Mobject.  A cap chord receives a
 separate semantic identity in each bank.  Its live opacity is the product of
 the bank handoff opacity and the semantic display opacity.
 
-This first adapter excludes intrinsic surface silhouettes and cap rims from
-the unified boundary solver.  Its `SURFACE_OUTLINE` role therefore uses the
-controller's explicit `legacy_surface_stroke_fallback`: one static,
-unoccluded teaching outline.  The controller default remains off, so existing
-`include_surface_boundaries=False` callers do not acquire a new stroke.  A
-future adapter that needs certified silhouette/cap-rim visibility must reserve
-those semantic roles instead of treating this fallback as occlusion evidence.
+Every bank also reserves a true point Mobject for an isolated `SECTION_POINT`;
+a tangent section can therefore activate a stable dot without faking a short
+line.  Certified mode is the default for surface boundaries.  Sphere and
+cylinder silhouettes, cone silhouettes, cap rims, and explicitly requested
+generators enter the same visibility solver as section curves.  Their semantic
+identities stay fixed when a cone silhouette changes from two generators to
+one or zero.  The older `legacy_surface_stroke_fallback` remains an explicit
+opt-in display-only outline and is never treated as occlusion evidence.
+
+`SectionCompositingFrame` adds three independent per-slot axes:
+
+- `display_opacity` changes only authored ink;
+- `occlusion_participation` selects certified participation or paint-only
+  display; and
+- `depth_presentation` selects physical, diagrammatic, or depth-aware
+  diagrammatic painting.
+
+Zero opacity does not silently stop a surface from occluding, and paint-only
+does not silently make it transparent.  Opacity-only changes reuse the last
+certified numeric frame; participation or depth-policy changes rebuild the
+view-dependent geometry.  Version one allows paint-only participation only on
+surface fill and requires one depth policy for the complete Rig frame.  Other
+combinations fail before attachment rather than being partially ignored.
 
 The display participant is the only participant that calls
 `QuadricOcclusion3D.update()`.  It verifies the committed z-order against the
@@ -224,17 +257,38 @@ first update and stays fixed across restored/re-attached playback sessions;
 add any custom finalizer before the first frame.  `binding.restore()` first
 restores an active coordinator, then releases the controller's Scene objects.
 
-The initial binding deliberately fails before Scene ownership when:
+The one-controller binding now supports isolated section points, dynamic
+surface/plane/curve/point/boundary opacity, certified contours/rims/generators,
+non-identity viewport transforms, topology-bank crossfades, finite plane
+patches, and exact rank-one side views without replacing Mobjects.
 
-- any frame activates an isolated `SECTION_POINT`; a true fixed point Mobject
-  slot is required and a short line is not an acceptable substitute;
-- a renderer-level `ParallelScreenTransform` is non-identity;
-- surface or plane fill/outline opacity changes between frames (one constant
-  multiplier per role is supported and is multiplied into the caller's
-  `QuadricManimStyle`);
-- generator, contour, or cap-rim semantic slots are requested.
+## Several Rigs in one global compositor
 
-These boundaries are explicit adapter limits, not limits of the
-renderer-neutral sequence.  Ordinary finite conic branches, topology-bank
-crossfades, cap chords, moving semantic cameras, finite plane patches, and an
-exact rank-one side view are all handled by the one-controller binding.
+Two or more already compiled but unattached `ParallelSectionRigBinding`
+objects can be aggregated with `compile_global_parallel_rig()` when they share
+one Scene, evaluation grid, camera/viewport sequence, and controller policy:
+
+```python
+global_binding = compile_global_parallel_rig((left_rig, right_rig))
+global_binding.attach()
+coordinator = global_binding.build_coordinator(scene.camera)
+try:
+    for frame in global_binding.sequence.frames:
+        coordinator.update(frame)
+finally:
+    global_binding.restore()
+```
+
+This does not attach or stack the local controllers.  It allocates one new
+`QuadricOcclusion3D`, one managed painter band, and one global visibility graph
+over the union of surfaces, section curves, isolated points, silhouettes,
+rims, and generators.  A curve or point from one Rig can therefore be hidden
+by a surface from another Rig, and the dry painter evidence is checked again
+after every live commit.
+
+Global v1 deliberately rejects finite plane patches and visible `PLANE_FILL`
+or `PLANE_OUTLINE` roles before Scene ownership.  Several independent plane
+fills need a true multi-plane partition contract; sorting already-painted
+local blocks would not be a certified global solution.  Perspective cameras,
+intersecting solids, identity collisions, unequal render grids, or unequal
+camera/viewport sequences likewise fail closed.
