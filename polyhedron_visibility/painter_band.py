@@ -81,9 +81,15 @@ def _validate_scene_painter_band(value: object) -> tuple[float, float]:
             "scene painter z band must be a two-value tuple"
         )
     low, high = (float(item) for item in value)
-    if not np.isfinite(low) or not np.isfinite(high) or low >= high:
+    if (
+        not np.isfinite(low)
+        or not np.isfinite(high)
+        or low >= high
+        or not np.isfinite(high - low)
+    ):
         raise ScenePainterBandError(
-            "scene painter z band must contain two finite increasing values"
+            "scene painter z band must contain two finite increasing values "
+            "with a finite span"
         )
     return low, high
 
@@ -159,8 +165,19 @@ def reserve_scene_painter_band(
             )
             if not conflicts:
                 break
-            low = max(other[1] for other in conflicts) + gap
-            actual = (low, low + width)
+            blocking_high = max(other[1] for other in conflicts)
+            low = blocking_high + gap
+            high = low + width
+            if (
+                not np.isfinite(low)
+                or not np.isfinite(high)
+                or not blocking_high < low < high
+            ):
+                raise ScenePainterBandError(
+                    "automatic Scene painter z band overflowed or could not "
+                    "advance above active reservations"
+                )
+            actual = (low, high)
 
     entry = _ScenePainterBandEntry(reservation, actual)
     if registry is None:

@@ -866,6 +866,7 @@ class QuadricSectionRig:
         self._resolved_action: QuadricSectionAction | None = None
         self._resolved_progress = 0.0
         self._frame_token: _RigFrameToken | None = None
+        self._committed_frame_token: _RigFrameToken | None = None
         self._action_index = 0
         frozen_section_options = dict(section_options)
         frozen_section_options["projection"] = self._projection_frame
@@ -1470,8 +1471,13 @@ class QuadricSectionRig:
         return tuple(sorted(curves, key=lambda item: item.curve_id))
 
     def _begin_quadric_frame(self) -> _RigFrameToken:
-        if self._frame_token is not None:
-            raise QuadricSectionRigError("nested rig frame transaction")
+        if (
+            self._frame_token is not None
+            or self._committed_frame_token is not None
+        ):
+            raise QuadricSectionRigError(
+                "nested or unfinalized rig frame transaction"
+            )
         token = _RigFrameToken(
             self._state,
             self._idle_reference,
@@ -1495,12 +1501,23 @@ class QuadricSectionRig:
         self._resolved_frame_state = None
         self._resolved_action = None
         self._resolved_progress = 0.0
+        self._committed_frame_token = token
         self._frame_token = None
+
+    def _finalize_quadric_frame(self, token: object) -> None:
+        """Forget rollback evidence after the joint frame commit succeeds."""
+
+        if token is not self._committed_frame_token or self._frame_token is not None:
+            raise QuadricSectionRigError("invalid rig frame finalize token")
+        self._committed_frame_token = None
 
     def _rollback_quadric_frame(self, token: object) -> None:
         """Discard a failed frame without retaining its mathematical plane."""
 
-        if token is not self._frame_token or not isinstance(token, _RigFrameToken):
+        if not isinstance(token, _RigFrameToken) or (
+            token is not self._frame_token
+            and token is not self._committed_frame_token
+        ):
             raise QuadricSectionRigError("invalid rig frame rollback token")
         self._state = token.committed_state
         self._frame_state = token.committed_state
@@ -1512,12 +1529,14 @@ class QuadricSectionRig:
         self._resolved_action = None
         self._resolved_progress = 0.0
         self._frame_token = None
+        self._committed_frame_token = None
 
     def _cancel_quadric_frame(self) -> None:
         self._resolved_frame_state = None
         self._resolved_action = None
         self._resolved_progress = 0.0
         self._frame_token = None
+        self._committed_frame_token = None
         self._frame_state = self._state
         self._staged_reference = self._idle_reference
         self._active_action = None

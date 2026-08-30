@@ -863,6 +863,153 @@ class QuadricSectionRigTests(unittest.TestCase):
         finally:
             rig.restore()
 
+    def test_author_commit_fault_rolls_back_display_cache_and_author_together(
+        self,
+    ) -> None:
+        scene = Scene()
+        initial = _sphere_plane(0.0, plane_id="author-fault-plane")
+        rig = QuadricSectionRig(
+            scene,
+            surface=SphereSpec("author-fault-sphere", (0.0, 0.0, 0.0), 1.0),
+            plane=initial,
+            section_id="author-fault-section",
+            **_display_options(),
+        ).attach()
+        try:
+            controller = rig.controller
+            self.assertIsNone(rig._frame_token)
+            self.assertIsNone(rig._committed_frame_token)
+            state = rig.state
+            frame_state = rig.frame_state
+            idle_reference = rig._idle_reference
+            staged_reference = rig._staged_reference
+            scene_state = _scene_ownership_snapshot(scene)
+            painter_band = rig.painter_z_band
+            allocations = scene_painter_band_allocations(scene)
+            snapshot = rig.slot_snapshot()
+            identities = rig.slot_identities()
+            z_indices = rig.active_painter_z_indices
+            last_frame = rig.last_frame
+            last_global_frame = rig.last_global_frame
+            last_section_frame = rig.last_section_frame
+            last_boundary_frame = rig.last_boundary_frame
+            fragment_slot_maps = {
+                source_id: dict(slots)
+                for source_id, slots in controller._fragment_slot_maps.items()
+            }
+            display_slot_state = dict(controller._display_slot_state)
+            painter_signature = controller._last_painter_band_signature
+            geometry_signature = controller._last_input_geometry_signature
+            draw_signature = controller._last_input_draw_signature
+            opacity = controller._last_input_opacity
+            prepared_frame = controller._last_prepared_frame
+            performance_counts = dict(
+                controller._last_prepared_performance_counts
+            )
+
+            action = rig.animate_plane_shift(0.2, rate_func=linear)
+            action.begin()
+            action.interpolate_mobject(1.0)
+            original_author_commit = rig._commit_quadric_frame
+
+            def fail_author_commit(token: object) -> None:
+                self.assertNotEqual(rig.slot_snapshot(), snapshot)
+                self.assertIsNot(controller._last_prepared_frame, prepared_frame)
+                self.assertNotEqual(
+                    controller._last_input_geometry_signature,
+                    geometry_signature,
+                )
+                original_author_commit(token)
+                self.assertNotEqual(rig.state, state)
+                self.assertIs(rig._committed_frame_token, token)
+                raise RuntimeError("injected author commit fault")
+
+            with (
+                patch.object(
+                    rig,
+                    "_commit_quadric_frame",
+                    side_effect=fail_author_commit,
+                ),
+                self.assertRaisesRegex(
+                    RuntimeError,
+                    "injected author commit fault",
+                ),
+            ):
+                rig.update()
+
+            self.assertEqual(rig.state, state)
+            self.assertEqual(rig.frame_state, frame_state)
+            self.assertIs(rig._idle_reference, idle_reference)
+            self.assertIs(rig._staged_reference, staged_reference)
+            self.assertIsNone(rig._active_action)
+            self.assertEqual(rig._active_progress, 0.0)
+            self.assertIsNone(rig._resolved_frame_state)
+            self.assertIsNone(rig._resolved_action)
+            self.assertIsNone(rig._frame_token)
+            self.assertIsNone(rig._committed_frame_token)
+            self.assertEqual(rig.slot_snapshot(), snapshot)
+            self.assertEqual(rig.slot_identities(), identities)
+            self.assertEqual(rig.active_painter_z_indices, z_indices)
+            self.assertIs(rig.last_frame, last_frame)
+            self.assertIs(rig.last_global_frame, last_global_frame)
+            self.assertIs(rig.last_section_frame, last_section_frame)
+            self.assertIs(rig.last_boundary_frame, last_boundary_frame)
+            self.assertEqual(controller._fragment_slot_maps, fragment_slot_maps)
+            self.assertEqual(controller._display_slot_state, display_slot_state)
+            self.assertEqual(
+                controller._last_painter_band_signature,
+                painter_signature,
+            )
+            self.assertEqual(
+                controller._last_input_geometry_signature,
+                geometry_signature,
+            )
+            self.assertEqual(controller._last_input_draw_signature, draw_signature)
+            self.assertEqual(controller._last_input_opacity, opacity)
+            self.assertIs(controller._last_prepared_frame, prepared_frame)
+            self.assertEqual(
+                controller._last_prepared_performance_counts,
+                performance_counts,
+            )
+            self.assertEqual(_scene_ownership_snapshot(scene), scene_state)
+            self.assertEqual(scene_painter_band_allocations(scene), allocations)
+            self.assertEqual(rig.painter_z_band, painter_band)
+            self.assertTrue(rig.attached)
+
+            finalize_action = rig.animate_plane_shift(0.2, rate_func=linear)
+            finalize_action.begin()
+            finalize_action.interpolate_mobject(1.0)
+            with (
+                patch.object(
+                    rig,
+                    "_finalize_quadric_frame",
+                    side_effect=RuntimeError("injected author finalize fault"),
+                ),
+                self.assertRaisesRegex(
+                    RuntimeError,
+                    "injected author finalize fault",
+                ),
+            ):
+                rig.update()
+
+            self.assertEqual(rig.state, state)
+            self.assertEqual(rig.frame_state, frame_state)
+            self.assertIsNone(rig._frame_token)
+            self.assertIsNone(rig._committed_frame_token)
+            self.assertEqual(rig.slot_snapshot(), snapshot)
+            self.assertEqual(rig.active_painter_z_indices, z_indices)
+            self.assertIs(rig.last_section_frame, last_section_frame)
+            self.assertEqual(
+                controller._last_input_geometry_signature,
+                geometry_signature,
+            )
+            self.assertIs(controller._last_prepared_frame, prepared_frame)
+            self.assertEqual(_scene_ownership_snapshot(scene), scene_state)
+            self.assertEqual(scene_painter_band_allocations(scene), allocations)
+            self.assertTrue(rig.attached)
+        finally:
+            rig.restore()
+
     def test_rate_failure_and_restore_failure_still_clear_action_and_band(self) -> None:
         scene = Scene()
         initial = _sphere_plane(0.0, plane_id="cleanup-plane")

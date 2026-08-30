@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sys
 from types import SimpleNamespace
 import unittest
 
@@ -115,6 +116,50 @@ class ScenePainterBandAllocatorTests(unittest.TestCase):
                 exact=1,  # type: ignore[arg-type]
             )
         self.assertEqual(scene_painter_band_allocations(scene), ())
+
+    def test_automatic_upward_overflow_fails_without_mutating_allocations(
+        self,
+    ) -> None:
+        scene = SimpleNamespace()
+        maximum = sys.float_info.max
+        occupied = ScenePainterBandReservation(
+            "occupied-near-maximum",
+            (0.94 * maximum, 0.95 * maximum),
+            exact=True,
+        )
+        reserve_scene_painter_band(scene, occupied)
+        before = scene_painter_band_allocations(scene)
+        overflowing = ScenePainterBandReservation(
+            "overflowing-automatic",
+            (0.94 * maximum, 0.99 * maximum),
+        )
+
+        with self.assertRaisesRegex(ScenePainterBandError, "automatic.*overflow"):
+            reserve_scene_painter_band(scene, overflowing)
+
+        self.assertEqual(scene_painter_band_allocations(scene), before)
+
+    def test_automatic_upward_rounding_stall_fails_closed(self) -> None:
+        scene = SimpleNamespace()
+        occupied = ScenePainterBandReservation(
+            "wide-occupied",
+            (0.0, 1.0e308),
+            exact=True,
+        )
+        reserve_scene_painter_band(scene, occupied)
+        before = scene_painter_band_allocations(scene)
+        stalled = ScenePainterBandReservation(
+            "stalled-automatic",
+            (0.0, 1.0),
+        )
+
+        with self.assertRaisesRegex(
+            ScenePainterBandError,
+            "automatic.*could not advance",
+        ):
+            reserve_scene_painter_band(scene, stalled)
+
+        self.assertEqual(scene_painter_band_allocations(scene), before)
 
 
 if __name__ == "__main__":
