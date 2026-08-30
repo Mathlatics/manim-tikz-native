@@ -22,6 +22,11 @@ All notable changes to this project will be documented in this file.
   auditable boundary painter evidence as
   `manim-quadric-boundary-compositing/v3` while retaining the compatible
   persisted `quadric_visibility/v2` author-data contract;
+- extend `CompositeQuadricSection3D` to certified exact side views: require
+  matching rank-one evidence from both canonical nappes, merge their finite
+  plane outline without fill, holes, or duplicate strokes, keep two independent
+  section-source groups for boundary order, and reuse the same fixed Cairo
+  slots transactionally through `AREA -> LINE -> AREA`;
 - let `QuadricSection3D` consume named Preview/Final render profiles directly;
   add a one-factory capacity scan with deterministic human-readable summaries,
   preserve the existing progress-scan and immutable limit APIs, and publish a

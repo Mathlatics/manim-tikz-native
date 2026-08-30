@@ -11,7 +11,10 @@ verbatim and the common outside region is the first local outside partition
 minus the second convex projection proxy.  The result paints the cutting plane
 once, keeps both pairs of surface sheets, and supplies one deterministic
 far-to-near painter graph.  Remote point contact, a nonzero coincident segment,
-or positive-area nappe overlap fails explicitly.
+or positive-area nappe overlap fails explicitly.  When the finite cutting patch
+projects rank-one, the same contact certificate is retained while the two local
+near-side outline chains are merged as one finite scalar interval partition;
+no plane fill is invented.
 """
 
 from __future__ import annotations
@@ -34,6 +37,8 @@ from .compositing import QuadricPaintRelation
 from .contract import ConeModel, ConeSpec, PlaneDisplayPatchSpec, SectionPlane
 from .section_compositing import (
     PlaneDepthRole,
+    PlanePatchProjectionEvidence,
+    PlanePatchProjectionKind,
     QUADRIC_SECTION_COMPOSITING_LIMITS,
     QuadricPlaneFragment,
     QuadricPlaneOutlineFragment,
@@ -43,7 +48,7 @@ from .section_compositing import (
 
 
 COMPOSITE_QUADRIC_SECTION_COMPOSITING_SCHEMA = (
-    "manim-composite-quadric-section-compositing/v2"
+    "manim-composite-quadric-section-compositing/v3"
 )
 
 
@@ -362,6 +367,7 @@ class CompositeQuadricSectionCompositingFrame:
     plane: SectionPlane
     patch: PlaneDisplayPatchSpec
     child_frames: tuple[QuadricSectionCompositingFrame, ...]
+    patch_projection: PlanePatchProjectionEvidence
     plane_fragments: tuple[QuadricPlaneFragment, ...]
     plane_outline_fragments: tuple[QuadricPlaneOutlineFragment, ...]
     paint_items: CompositeQuadricSectionPaintItems
@@ -391,6 +397,10 @@ class CompositeQuadricSectionCompositingFrame:
             raise CompositeQuadricSectionCompositingError(
                 "composite patch plane_id does not match the cutting plane"
             )
+        if not isfinite(self.max_screen_error) or self.max_screen_error <= 0.0:
+            raise CompositeQuadricSectionCompositingError(
+                "max_screen_error must be finite and positive"
+            )
         if len(self.child_frames) != 2 or not all(
             isinstance(item, QuadricSectionCompositingFrame)
             for item in self.child_frames
@@ -407,6 +417,41 @@ class CompositeQuadricSectionCompositingFrame:
             raise CompositeQuadricSectionCompositingError(
                 "local child frames must share the exact plane and display patch"
             )
+        if not isinstance(self.patch_projection, PlanePatchProjectionEvidence):
+            raise TypeError(
+                "patch_projection must be a PlanePatchProjectionEvidence"
+            )
+        child_projection_kinds = tuple(
+            item.projection_kind for item in self.child_frames
+        )
+        if len(set(child_projection_kinds)) != 1:
+            raise CompositeQuadricSectionCompositingError(
+                "local child frames must share one projection topology"
+            )
+        if child_projection_kinds[0] is not self.patch_projection.kind:
+            raise CompositeQuadricSectionCompositingError(
+                "composite patch projection disagrees with its child frames"
+            )
+        if self.projection_kind is PlanePatchProjectionKind.LINE:
+            certified_projection = _certify_matching_line_projection_evidence(
+                self.child_frames,
+                max(
+                    np.finfo(float).eps * 8192.0,
+                    self.max_screen_error * 1.0e-9,
+                ),
+            )
+            if self.patch_projection != certified_projection:
+                raise CompositeQuadricSectionCompositingError(
+                    "composite LINE projection evidence is not the canonical "
+                    "child evidence"
+                )
+        elif any(
+            item.patch_projection != self.patch_projection
+            for item in self.child_frames
+        ):
+            raise CompositeQuadricSectionCompositingError(
+                "AREA child frames must share exact patch-projection evidence"
+            )
         fragment_ids = tuple(item.fragment_id for item in self.plane_fragments)
         if fragment_ids != tuple(sorted(fragment_ids)) or len(set(fragment_ids)) != len(
             fragment_ids
@@ -421,21 +466,39 @@ class CompositeQuadricSectionCompositingFrame:
             raise CompositeQuadricSectionCompositingError(
                 "composite plane-outline fragments must have unique sorted identities"
             )
-        for edge_index in range(4):
-            edge = tuple(
-                item
-                for item in self.plane_outline_fragments
-                if item.edge_index == edge_index
-            )
-            try:
-                assert_exact_partition(
-                    ParameterInterval(0.0, 1.0),
-                    (item.interval for item in edge),
-                )
-            except ValueError as exc:
+        if self.projection_kind is PlanePatchProjectionKind.LINE:
+            if self.plane_fragments:
                 raise CompositeQuadricSectionCompositingError(
-                    "composite outline fragments must cover every patch edge"
-                ) from exc
+                    "LINE composite plane projection cannot contain fill fragments"
+                )
+            _certify_line_outline_chain(
+                self.patch_projection,
+                self.plane_outline_fragments,
+                max(
+                    np.finfo(float).eps * 8192.0,
+                    self.max_screen_error * 1.0e-9,
+                ),
+            )
+        else:
+            if not self.plane_fragments:
+                raise CompositeQuadricSectionCompositingError(
+                    "AREA composite plane projection requires fill fragments"
+                )
+            for edge_index in range(4):
+                edge = tuple(
+                    item
+                    for item in self.plane_outline_fragments
+                    if item.edge_index == edge_index
+                )
+                try:
+                    assert_exact_partition(
+                        ParameterInterval(0.0, 1.0),
+                        (item.interval for item in edge),
+                    )
+                except ValueError as exc:
+                    raise CompositeQuadricSectionCompositingError(
+                        "composite outline fragments must cover every patch edge"
+                    ) from exc
         lineage_keys = tuple(item.physical_curve_id for item in self.branch_lineage)
         if lineage_keys != tuple(sorted(lineage_keys)) or len(set(lineage_keys)) != len(
             lineage_keys
@@ -464,17 +527,24 @@ class CompositeQuadricSectionCompositingFrame:
             raise CompositeQuadricSectionCompositingError(
                 "composite painter relations must be sorted"
             )
-        if not isfinite(self.max_screen_error) or self.max_screen_error <= 0.0:
-            raise CompositeQuadricSectionCompositingError(
-                "max_screen_error must be finite and positive"
-            )
-
     @property
     def fragments_by_role(self) -> dict[PlaneDepthRole, tuple[QuadricPlaneFragment, ...]]:
         return {
             role: tuple(item for item in self.plane_fragments if item.role is role)
             for role in PlaneDepthRole
         }
+
+    @property
+    def projection_kind(self) -> PlanePatchProjectionKind:
+        """Explicit AREA/LINE topology shared by both child frames."""
+
+        return self.patch_projection.kind
+
+    @property
+    def has_plane_fill(self) -> bool:
+        """Whether this composite frame owns two-dimensional plane fill."""
+
+        return self.projection_kind is PlanePatchProjectionKind.AREA
 
     @property
     def outline_fragments_by_role(
@@ -514,6 +584,9 @@ class CompositeQuadricSectionCompositingFrame:
                 "centerCoordinates": list(self.patch.center_coordinates),
             },
             "childFrames": [item.to_dict() for item in self.child_frames],
+            "patchProjection": self.patch_projection.to_dict(),
+            "projectionKind": self.projection_kind.value,
+            "hasPlaneFill": self.has_plane_fill,
             "planeFragments": [item.to_dict() for item in self.plane_fragments],
             "planeOutlineFragments": [
                 item.to_dict() for item in self.plane_outline_fragments
@@ -890,6 +963,327 @@ def _combined_role(
     return active[0] if active else PlaneDepthRole.OUTSIDE_PROJECTION
 
 
+def _certify_matching_line_projection_evidence(
+    frames: Sequence[QuadricSectionCompositingFrame],
+    tolerance: float,
+) -> PlanePatchProjectionEvidence:
+    """Require both local LINE frames to describe exactly one finite segment."""
+
+    if len(frames) != 2 or any(
+        item.projection_kind is not PlanePatchProjectionKind.LINE
+        for item in frames
+    ):
+        raise CompositeQuadricSectionCompositingError(
+            "LINE composite coordination requires two LINE child frames"
+        )
+    first = frames[0].patch_projection
+    first_endpoints = np.asarray(
+        (first.line_screen_start, first.line_screen_end),
+        dtype=float,
+    )
+    scale = max(
+        1.0,
+        float(np.max(np.abs(first_endpoints))),
+        *first.singular_values,
+    )
+    epsilon = max(
+        float(tolerance),
+        np.finfo(float).eps * 8192.0 * scale,
+    )
+    for frame in frames[1:]:
+        evidence = frame.patch_projection
+        endpoints = np.asarray(
+            (evidence.line_screen_start, evidence.line_screen_end),
+            dtype=float,
+        )
+        if (
+            not np.allclose(
+                np.asarray(evidence.singular_values, dtype=float),
+                np.asarray(first.singular_values, dtype=float),
+                rtol=np.finfo(float).eps * 8192.0,
+                atol=epsilon,
+            )
+            or abs(evidence.rank_ratio - first.rank_ratio)
+            > np.finfo(float).eps * 8192.0
+            or evidence.rank_ratio_threshold != first.rank_ratio_threshold
+        ):
+            raise CompositeQuadricSectionCompositingError(
+                "LINE child frames disagree on rank-one projection evidence"
+            )
+        if not np.allclose(
+            endpoints,
+            first_endpoints,
+            rtol=np.finfo(float).eps * 8192.0,
+            atol=epsilon,
+        ):
+            raise CompositeQuadricSectionCompositingError(
+                "LINE child frames disagree on finite projection endpoints"
+            )
+    return first
+
+
+def _line_projection_axis(
+    evidence: PlanePatchProjectionEvidence,
+    tolerance: float,
+) -> tuple[np.ndarray, np.ndarray, float, float]:
+    start = np.asarray(evidence.line_screen_start, dtype=float)
+    end = np.asarray(evidence.line_screen_end, dtype=float)
+    direction = end - start
+    length = float(np.linalg.norm(direction))
+    line_tolerance = max(
+        float(tolerance),
+        np.finfo(float).eps * 8192.0 * max(1.0, length),
+    )
+    if length <= line_tolerance:
+        raise CompositeQuadricSectionCompositingError(
+            "LINE composite projection has no finite extent"
+        )
+    return start, direction / length, length, line_tolerance
+
+
+@dataclass(frozen=True, slots=True)
+class _LineOutlineRecord:
+    fragment: QuadricPlaneOutlineFragment
+    scalar_start: float
+    scalar_end: float
+    lower: float
+    upper: float
+
+
+def _certify_line_outline_chain(
+    evidence: PlanePatchProjectionEvidence,
+    fragments: Sequence[QuadricPlaneOutlineFragment],
+    tolerance: float,
+) -> tuple[_LineOutlineRecord, ...]:
+    """Certify one finite, gap-free, non-overlapping rank-one outline chain."""
+
+    start, axis, length, line_tolerance = _line_projection_axis(
+        evidence,
+        tolerance,
+    )
+    normal = np.asarray((-axis[1], axis[0]), dtype=float)
+    records: list[_LineOutlineRecord] = []
+    for fragment in fragments:
+        if not isinstance(fragment, QuadricPlaneOutlineFragment):
+            raise TypeError(
+                "plane_outline_fragments must contain "
+                "QuadricPlaneOutlineFragment"
+            )
+        screen_start = np.asarray(fragment.screen_start, dtype=float)
+        screen_end = np.asarray(fragment.screen_end, dtype=float)
+        if max(
+            abs(float(np.dot(screen_start - start, normal))),
+            abs(float(np.dot(screen_end - start, normal))),
+        ) > line_tolerance:
+            raise CompositeQuadricSectionCompositingError(
+                "LINE composite outline fragments must share one screen line"
+            )
+        scalar_start = float(np.dot(screen_start - start, axis))
+        scalar_end = float(np.dot(screen_end - start, axis))
+        lower, upper = sorted((scalar_start, scalar_end))
+        if (
+            upper - lower <= line_tolerance
+            or lower < -line_tolerance
+            or upper > length + line_tolerance
+        ):
+            raise CompositeQuadricSectionCompositingError(
+                "LINE composite outline fragment has invalid finite extent"
+            )
+        records.append(
+            _LineOutlineRecord(
+                fragment,
+                scalar_start,
+                scalar_end,
+                max(0.0, lower),
+                min(length, upper),
+            )
+        )
+    if not records:
+        raise CompositeQuadricSectionCompositingError(
+            "LINE composite projection requires a finite outline chain"
+        )
+    records.sort(
+        key=lambda item: (
+            item.lower,
+            item.upper,
+            item.fragment.fragment_id,
+        )
+    )
+    cursor = 0.0
+    for record in records:
+        if record.lower > cursor + line_tolerance:
+            raise CompositeQuadricSectionCompositingError(
+                "LINE composite outline chain has a finite gap"
+            )
+        if record.lower < cursor - line_tolerance:
+            raise CompositeQuadricSectionCompositingError(
+                "LINE composite outline chain contains positive-length "
+                "duplicate drawing"
+            )
+        cursor = max(cursor, record.upper)
+    if cursor < length - line_tolerance:
+        raise CompositeQuadricSectionCompositingError(
+            "LINE composite outline chain does not reach its finite endpoint"
+        )
+    return tuple(records)
+
+
+def _record_at_scalar(
+    records: Sequence[_LineOutlineRecord],
+    scalar: float,
+) -> _LineOutlineRecord:
+    matches = tuple(
+        item for item in records if item.lower < scalar < item.upper
+    )
+    if len(matches) != 1:
+        raise CompositeQuadricSectionCompositingError(
+            "LINE child outline has no unique interval at a scalar midpoint"
+        )
+    return matches[0]
+
+
+def _sample_line_record(
+    record: _LineOutlineRecord,
+    scalar: float,
+    tolerance: float,
+) -> tuple[float, np.ndarray, np.ndarray]:
+    denominator = record.scalar_end - record.scalar_start
+    if abs(denominator) <= tolerance:
+        raise CompositeQuadricSectionCompositingError(
+            "LINE outline interval cannot be lifted back to its finite edge"
+        )
+    parameter = (float(scalar) - record.scalar_start) / denominator
+    if parameter < -tolerance or parameter > 1.0 + tolerance:
+        raise CompositeQuadricSectionCompositingError(
+            "LINE outline scalar lies outside its certified source interval"
+        )
+    parameter = min(1.0, max(0.0, parameter))
+    fragment = record.fragment
+    world_start = np.asarray(fragment.world_start, dtype=float)
+    world_end = np.asarray(fragment.world_end, dtype=float)
+    screen_start = np.asarray(fragment.screen_start, dtype=float)
+    screen_end = np.asarray(fragment.screen_end, dtype=float)
+    world = world_start + parameter * (world_end - world_start)
+    screen = screen_start + parameter * (screen_end - screen_start)
+    edge_parameter = fragment.interval.start + parameter * fragment.interval.length
+    return edge_parameter, world, screen
+
+
+def _combined_line_outline_fragments(
+    frames: tuple[QuadricSectionCompositingFrame, ...],
+    epsilon: float,
+) -> tuple[QuadricPlaneOutlineFragment, ...]:
+    """Merge two child near-envelope chains as one scalar line partition."""
+
+    evidence = _certify_matching_line_projection_evidence(frames, epsilon)
+    line_tolerance = max(
+        epsilon * 64.0,
+        max(item.max_screen_error for item in frames) * 1.0e-9,
+    )
+    records_by_child = tuple(
+        _certify_line_outline_chain(
+            frame.patch_projection,
+            frame.plane_outline_fragments,
+            line_tolerance,
+        )
+        for frame in frames
+    )
+    _start, _axis, length, line_tolerance = _line_projection_axis(
+        evidence,
+        line_tolerance,
+    )
+    raw_breaks = [
+        0.0,
+        length,
+        *(
+            value
+            for records in records_by_child
+            for record in records
+            for value in (record.lower, record.upper)
+        ),
+    ]
+    breaks: list[float] = []
+    for value in sorted(min(length, max(0.0, float(item))) for item in raw_breaks):
+        if not breaks or value - breaks[-1] > line_tolerance:
+            breaks.append(value)
+        else:
+            breaks[-1] = 0.5 * (breaks[-1] + value)
+    if breaks:
+        breaks[0] = 0.0
+        breaks[-1] = length
+
+    plane = frames[0].plane
+    world_tolerance = max(
+        epsilon * 64.0,
+        np.finfo(float).eps
+        * 8192.0
+        * max(
+            1.0,
+            *(abs(value) for value in plane.point),
+            *(frames[0].patch.half_width, frames[0].patch.half_height),
+        ),
+    )
+    result: list[QuadricPlaneOutlineFragment] = []
+    for scalar_start, scalar_end in zip(breaks, breaks[1:]):
+        if scalar_end - scalar_start <= line_tolerance:
+            continue
+        midpoint = 0.5 * (scalar_start + scalar_end)
+        first_record = _record_at_scalar(records_by_child[0], midpoint)
+        second_record = _record_at_scalar(records_by_child[1], midpoint)
+        role = _combined_role(
+            first_record.fragment.role,
+            second_record.fragment.role,
+            label=(
+                "the rank-one cutting-plane interval "
+                f"[{scalar_start:.9g}, {scalar_end:.9g}]"
+            ),
+        )
+        if first_record.fragment.edge_index != second_record.fragment.edge_index:
+            raise CompositeQuadricSectionCompositingError(
+                "LINE child outline chains select different finite patch edges"
+            )
+        first_samples = (
+            _sample_line_record(first_record, scalar_start, line_tolerance),
+            _sample_line_record(first_record, scalar_end, line_tolerance),
+        )
+        second_samples = (
+            _sample_line_record(second_record, scalar_start, line_tolerance),
+            _sample_line_record(second_record, scalar_end, line_tolerance),
+        )
+        if any(
+            float(np.linalg.norm(first_value[1] - second_value[1]))
+            > world_tolerance
+            for first_value, second_value in zip(first_samples, second_samples)
+        ):
+            raise CompositeQuadricSectionCompositingError(
+                "LINE child outline chains disagree in finite world geometry"
+            )
+        first_parameter, first_world, first_screen = first_samples[0]
+        second_parameter, second_world, second_screen = first_samples[1]
+        if first_parameter > second_parameter:
+            first_parameter, second_parameter = second_parameter, first_parameter
+            first_world, second_world = second_world, first_world
+            first_screen, second_screen = second_screen, first_screen
+        result.append(
+            QuadricPlaneOutlineFragment(
+                fragment_id=(
+                    f"composite-plane:{plane.plane_id}:line:"
+                    f"span:{len(result):04d}:{role.value}"
+                ),
+                role=role,
+                edge_index=first_record.fragment.edge_index,
+                interval=ParameterInterval(first_parameter, second_parameter),
+                world_start=tuple(float(item) for item in first_world),
+                world_end=tuple(float(item) for item in second_world),
+                screen_start=tuple(float(item) for item in first_screen),
+                screen_end=tuple(float(item) for item in second_screen),
+            )
+        )
+    result_tuple = tuple(sorted(result, key=lambda item: item.fragment_id))
+    _certify_line_outline_chain(evidence, result_tuple, line_tolerance)
+    return result_tuple
+
+
 def _combined_outline_fragments(
     frames: tuple[QuadricSectionCompositingFrame, ...],
     projection: np.ndarray,
@@ -952,6 +1346,180 @@ def _combined_outline_fragments(
     return tuple(sorted(result, key=lambda item: item.fragment_id))
 
 
+def _combined_area_plane_geometry(
+    frames: tuple[QuadricSectionCompositingFrame, ...],
+    proxies: tuple[tuple[np.ndarray, ...], ...],
+    projection: np.ndarray,
+    epsilon: float,
+    area_tolerance: float,
+    max_plane_fragments: int,
+) -> tuple[
+    tuple[QuadricPlaneFragment, ...],
+    tuple[QuadricPlaneOutlineFragment, ...],
+]:
+    """Preserve the v2 positive-area partition path byte-for-byte in intent."""
+
+    polygon_records: list[
+        tuple[PlaneDepthRole, str, int, tuple[np.ndarray, ...]]
+    ] = []
+    first, second = frames
+    for fragment in first.plane_fragments:
+        polygon = _canonical_polygon(fragment.screen_vertices, epsilon)
+        if not polygon:
+            continue
+        if fragment.role is PlaneDepthRole.OUTSIDE_PROJECTION:
+            pieces = _subtract_convex(polygon, proxies[1], epsilon)
+            polygon_records.extend(
+                (
+                    fragment.role,
+                    f"{fragment.fragment_id}:minus-second:{index:04d}",
+                    fragment.subdivision_depth,
+                    piece,
+                )
+                for index, piece in enumerate(pieces)
+            )
+        else:
+            intersection = _convex_intersection(
+                polygon,
+                proxies[1],
+                epsilon,
+            )
+            if (
+                intersection
+                and abs(_signed_area(intersection)) > area_tolerance
+            ):
+                raise CompositeQuadricSectionCompositingError(
+                    "positive-area nappe role overlap survived proxy certification"
+                )
+            polygon_records.append(
+                (
+                    fragment.role,
+                    fragment.fragment_id,
+                    fragment.subdivision_depth,
+                    polygon,
+                )
+            )
+    polygon_records.extend(
+        (
+            fragment.role,
+            fragment.fragment_id,
+            fragment.subdivision_depth,
+            _canonical_polygon(fragment.screen_vertices, epsilon),
+        )
+        for fragment in second.plane_fragments
+        if fragment.role is not PlaneDepthRole.OUTSIDE_PROJECTION
+    )
+    polygon_records = [item for item in polygon_records if item[3]]
+    polygon_records.sort(
+        key=lambda item: (
+            item[0].value,
+            item[1],
+            tuple(
+                (
+                    round(float(point[0]) / epsilon),
+                    round(float(point[1]) / epsilon),
+                )
+                for point in item[3]
+            ),
+        )
+    )
+
+    plane = frames[0].plane
+    patch = frames[0].patch
+    plane_u, plane_v, _normal = plane.basis
+    plane_axes = np.column_stack((plane_u, plane_v))
+    screen_origin = projection[:2] @ np.asarray(plane.point, dtype=float)
+    screen_basis = projection[:2] @ plane_axes
+    determinant = float(np.linalg.det(screen_basis))
+    basis_scale = max(
+        float(np.linalg.norm(screen_basis, ord=2)),
+        np.finfo(float).tiny,
+    )
+    if abs(determinant) <= 1.0e-12 * basis_scale * basis_scale:
+        raise CompositeQuadricSectionCompositingError(
+            "cutting plane projects edge-on and has no sortable display area"
+        )
+    inverse = np.linalg.inv(screen_basis)
+
+    fragments: list[QuadricPlaneFragment] = []
+    triangle_index = 0
+    for role, token, depth, polygon in polygon_records:
+        del token
+        for index in range(1, len(polygon) - 1):
+            screen_triangle = (polygon[0], polygon[index], polygon[index + 1])
+            if abs(_signed_area(screen_triangle)) <= area_tolerance:
+                continue
+            world_triangle = tuple(
+                np.asarray(plane.point, dtype=float)
+                + plane_axes @ (inverse @ (point - screen_origin))
+                for point in screen_triangle
+            )
+            fragments.append(
+                QuadricPlaneFragment(
+                    fragment_id=(
+                        f"composite-plane:{plane.plane_id}:cell:"
+                        f"{triangle_index:06d}:{role.value}"
+                    ),
+                    role=role,
+                    world_vertices=tuple(
+                        tuple(float(value) for value in point)
+                        for point in world_triangle
+                    ),  # type: ignore[arg-type]
+                    screen_vertices=tuple(
+                        tuple(float(value) for value in point)
+                        for point in screen_triangle
+                    ),  # type: ignore[arg-type]
+                    subdivision_depth=depth,
+                )
+            )
+            triangle_index += 1
+    fragments.sort(key=lambda item: item.fragment_id)
+    if not fragments:
+        raise CompositeQuadricSectionCompositingError(
+            "composite plane partition has no positive-area fragments"
+        )
+    if len(fragments) > max_plane_fragments:
+        raise CompositeQuadricSectionCompositingError(
+            f"composite plane fragment count {len(fragments)} exceeds "
+            f"capacity {max_plane_fragments}"
+        )
+
+    projected_patch = _canonical_polygon(
+        tuple(
+            projection[:2] @ np.asarray(point, dtype=float)
+            for point in patch.corners(plane)
+        ),
+        epsilon,
+    )
+    expected_patch_area = abs(_signed_area(projected_patch))
+    fragment_area = sum(
+        abs(
+            _signed_area(
+                tuple(
+                    np.asarray(point, dtype=float)
+                    for point in fragment.screen_vertices
+                )
+            )
+        )
+        for fragment in fragments
+    )
+    partition_tolerance = max(
+        area_tolerance * max(16, 4 * len(fragments)),
+        expected_patch_area * 5.0e-9,
+    )
+    if (
+        expected_patch_area <= area_tolerance
+        or abs(fragment_area - expected_patch_area) > partition_tolerance
+    ):
+        raise CompositeQuadricSectionCompositingError(
+            "composite plane partition does not conserve the projected patch area"
+        )
+    return (
+        tuple(fragments),
+        _combined_outline_fragments(frames, projection, epsilon),
+    )
+
+
 def _dedupe_relations(
     values: Sequence[QuadricPaintRelation],
 ) -> tuple[QuadricPaintRelation, ...]:
@@ -1007,6 +1575,12 @@ def compute_composite_quadric_section_compositing(
         raise CompositeQuadricSectionCompositingError(
             "both local frames must use one identical plane and display patch"
         )
+    projection_kinds = tuple(item.projection_kind for item in frames)
+    if len(set(projection_kinds)) != 1:
+        raise CompositeQuadricSectionCompositingError(
+            "both local frames must share one projection topology"
+        )
+    projection_kind = projection_kinds[0]
     projection = np.asarray(
         frames[0].base_frame.visibility.projection_matrix,
         dtype=float,
@@ -1032,6 +1606,12 @@ def compute_composite_quadric_section_compositing(
         epsilon * epsilon,
         1.0e-12 * patch.half_width * patch.half_height,
     )
+    patch_projection = frames[0].patch_projection
+    if projection_kind is PlanePatchProjectionKind.LINE:
+        patch_projection = _certify_matching_line_projection_evidence(
+            frames,
+            epsilon,
+        )
 
     proxies = tuple(
         _canonical_polygon(item.surface_proxy.boundary_points, epsilon)
@@ -1099,149 +1679,18 @@ def compute_composite_quadric_section_compositing(
         boundary_tolerance=apex_tolerance,
     )
 
-    polygon_records: list[
-        tuple[PlaneDepthRole, str, int, tuple[np.ndarray, ...]]
-    ] = []
-    first, second = frames
-    for fragment in first.plane_fragments:
-        polygon = _canonical_polygon(fragment.screen_vertices, epsilon)
-        if not polygon:
-            continue
-        if fragment.role is PlaneDepthRole.OUTSIDE_PROJECTION:
-            pieces = _subtract_convex(polygon, proxies[1], epsilon)
-            polygon_records.extend(
-                (fragment.role, f"{fragment.fragment_id}:minus-second:{index:04d}", fragment.subdivision_depth, piece)
-                for index, piece in enumerate(pieces)
-            )
-        else:
-            intersection = _convex_intersection(
-                polygon,
-                proxies[1],
-                epsilon,
-            )
-            if (
-                intersection
-                and abs(_signed_area(intersection)) > area_tolerance
-            ):
-                raise CompositeQuadricSectionCompositingError(
-                    "positive-area nappe role overlap survived proxy certification"
-                )
-            polygon_records.append(
-                (fragment.role, fragment.fragment_id, fragment.subdivision_depth, polygon)
-            )
-    polygon_records.extend(
-        (
-            fragment.role,
-            fragment.fragment_id,
-            fragment.subdivision_depth,
-            _canonical_polygon(fragment.screen_vertices, epsilon),
+    if projection_kind is PlanePatchProjectionKind.LINE:
+        fragments: tuple[QuadricPlaneFragment, ...] = ()
+        outline = _combined_line_outline_fragments(frames, epsilon)
+    else:
+        fragments, outline = _combined_area_plane_geometry(
+            frames,
+            proxies,
+            projection,
+            epsilon,
+            area_tolerance,
+            max_plane_fragments,
         )
-        for fragment in second.plane_fragments
-        if fragment.role is not PlaneDepthRole.OUTSIDE_PROJECTION
-    )
-    polygon_records = [item for item in polygon_records if item[3]]
-    polygon_records.sort(
-        key=lambda item: (
-            item[0].value,
-            item[1],
-            tuple(
-                (round(float(point[0]) / epsilon), round(float(point[1]) / epsilon))
-                for point in item[3]
-            ),
-        )
-    )
-
-    plane_u, plane_v, _normal = plane.basis
-    plane_axes = np.column_stack((plane_u, plane_v))
-    screen_origin = projection[:2] @ np.asarray(plane.point, dtype=float)
-    screen_basis = projection[:2] @ plane_axes
-    determinant = float(np.linalg.det(screen_basis))
-    basis_scale = max(float(np.linalg.norm(screen_basis, ord=2)), np.finfo(float).tiny)
-    if abs(determinant) <= 1.0e-12 * basis_scale * basis_scale:
-        raise CompositeQuadricSectionCompositingError(
-            "cutting plane projects edge-on and has no sortable display area"
-        )
-    inverse = np.linalg.inv(screen_basis)
-
-    fragments: list[QuadricPlaneFragment] = []
-    triangle_index = 0
-    for role, token, depth, polygon in polygon_records:
-        del token
-        for index in range(1, len(polygon) - 1):
-            screen_triangle = (polygon[0], polygon[index], polygon[index + 1])
-            if abs(_signed_area(screen_triangle)) <= area_tolerance:
-                continue
-            world_triangle = tuple(
-                np.asarray(plane.point, dtype=float)
-                + plane_axes @ (inverse @ (point - screen_origin))
-                for point in screen_triangle
-            )
-            fragments.append(
-                QuadricPlaneFragment(
-                    fragment_id=(
-                        f"composite-plane:{plane.plane_id}:cell:"
-                        f"{triangle_index:06d}:{role.value}"
-                    ),
-                    role=role,
-                    world_vertices=tuple(
-                        tuple(float(value) for value in point)
-                        for point in world_triangle
-                    ),  # type: ignore[arg-type]
-                    screen_vertices=tuple(
-                        tuple(float(value) for value in point)
-                        for point in screen_triangle
-                    ),  # type: ignore[arg-type]
-                    subdivision_depth=depth,
-                )
-            )
-            triangle_index += 1
-    fragments.sort(key=lambda item: item.fragment_id)
-    if not fragments:
-        raise CompositeQuadricSectionCompositingError(
-            "composite plane partition has no positive-area fragments"
-        )
-    if len(fragments) > max_plane_fragments:
-        raise CompositeQuadricSectionCompositingError(
-            f"composite plane fragment count {len(fragments)} exceeds "
-            f"capacity {max_plane_fragments}"
-        )
-
-    # The coordinator is allowed to replace two local outside partitions with
-    # one shared partition, but it may neither lose nor double-paint any
-    # positive-area part of the authored plane patch.  Certify that invariant
-    # before the frame can reach a renderer.
-    projected_patch = _canonical_polygon(
-        tuple(
-            projection[:2] @ np.asarray(point, dtype=float)
-            for point in patch.corners(plane)
-        ),
-        epsilon,
-    )
-    expected_patch_area = abs(_signed_area(projected_patch))
-    fragment_area = sum(
-        abs(
-            _signed_area(
-                tuple(
-                    np.asarray(point, dtype=float)
-                    for point in fragment.screen_vertices
-                )
-            )
-        )
-        for fragment in fragments
-    )
-    partition_tolerance = max(
-        area_tolerance * max(16, 4 * len(fragments)),
-        expected_patch_area * 5.0e-9,
-    )
-    if (
-        expected_patch_area <= area_tolerance
-        or abs(fragment_area - expected_patch_area) > partition_tolerance
-    ):
-        raise CompositeQuadricSectionCompositingError(
-            "composite plane partition does not conserve the projected patch area"
-        )
-
-    outline = _combined_outline_fragments(frames, projection, epsilon)
     local_items = frames[0].paint_items
     surface_sheets = tuple(
         CompositeSurfaceSheetItems(
@@ -1323,6 +1772,7 @@ def compute_composite_quadric_section_compositing(
         plane=plane,
         patch=patch,
         child_frames=frames,
+        patch_projection=patch_projection,
         plane_fragments=tuple(fragments),
         plane_outline_fragments=outline,
         paint_items=paint_items,

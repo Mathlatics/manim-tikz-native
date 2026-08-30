@@ -8,14 +8,11 @@ import unittest
 from unittest.mock import patch
 
 import numpy as np
-from manim import Scene, tempconfig
 
 from polyhedron_visibility.parallel_solver import ParallelView
-from polyhedron_visibility.quadrics.composite_authoring import (
-    CompositeQuadricSection3D,
-    CompositeQuadricSectionAuthoringError,
-)
+from polyhedron_visibility.visibility import VisibilityKind
 from polyhedron_visibility.quadrics.composite_section import (
+    COMPOSITE_QUADRIC_SECTION_COMPOSITING_SCHEMA,
     CompositeQuadricSectionCompositingError,
     CompositeSectionBranchLineage,
     canonical_composite_quadric_section_compositing_json,
@@ -30,14 +27,10 @@ from polyhedron_visibility.quadrics.contract import (
 from polyhedron_visibility.quadrics.global_occlusion import (
     compute_global_quadric_frame,
 )
-from polyhedron_visibility.quadrics.manim import (
-    QuadricManimCapacityError,
-    QuadricManimLimits,
-    QuadricManimStyle,
-)
 from polyhedron_visibility.quadrics.plane_patch import fit_plane_display_patch
 from polyhedron_visibility.quadrics.section_compositing import (
     PlaneDepthRole,
+    PlanePatchProjectionKind,
     QuadricSectionCompositingError,
     compute_quadric_section_compositing,
     merge_quadric_plane_fragment_contours,
@@ -45,6 +38,25 @@ from polyhedron_visibility.quadrics.section_compositing import (
 from polyhedron_visibility.quadrics.sections import (
     compute_quadric_section_boundary_curves,
 )
+
+try:
+    from manim import Scene, tempconfig
+
+    from polyhedron_visibility.quadrics.composite_authoring import (
+        CompositeQuadricSection3D,
+        CompositeQuadricSectionAuthoringError,
+    )
+    from polyhedron_visibility.quadrics.manim import (
+        QuadricManimCapacityError,
+        QuadricManimLimits,
+        QuadricManimStyle,
+    )
+except ModuleNotFoundError as exc:
+    if exc.name != "manim":
+        raise
+    MANIM_AVAILABLE = False
+else:
+    MANIM_AVAILABLE = True
 
 
 SIDE_VIEW = ParallelView.from_matrix(
@@ -61,6 +73,21 @@ AXIAL_VIEW = ParallelView.from_matrix(
         (0.0, 0.0, 1.0),
     )
 )
+
+
+def _edge_on_side_plane_view(angle: float = 0.0) -> ParallelView:
+    """Look along one in-plane direction while keeping plane normal horizontal."""
+
+    return ParallelView.from_matrix(
+        (
+            (0.0, 1.0, 0.0),
+            (-sin(angle), 0.0, cos(angle)),
+            (cos(angle), 0.0, sin(angle)),
+        )
+    )
+
+
+EDGE_ON_VIEW = _edge_on_side_plane_view()
 
 
 def _double(surface_id: str = "double") -> ConeSpec:
@@ -213,11 +240,47 @@ def _frame_with_proxy_vertices(
     return replace(frame, surface_proxy=proxy)
 
 
+def _line_outline_scalar_intervals(frame) -> tuple[tuple[float, float], ...]:
+    start = np.asarray(frame.patch_projection.line_screen_start, dtype=float)
+    end = np.asarray(frame.patch_projection.line_screen_end, dtype=float)
+    direction = end - start
+    length = float(np.linalg.norm(direction))
+    axis = direction / length
+    result = []
+    for fragment in frame.plane_outline_fragments:
+        values = tuple(
+            float(np.dot(np.asarray(point, dtype=float) - start, axis))
+            for point in (fragment.screen_start, fragment.screen_end)
+        )
+        result.append(tuple(sorted(values)))
+    return tuple(sorted(result))
+
+
 class CompositeRendererNeutralTests(unittest.TestCase):
+    def _assert_finite_non_overlapping_line_chain(self, frame) -> None:
+        self.assertIs(frame.projection_kind, PlanePatchProjectionKind.LINE)
+        self.assertFalse(frame.has_plane_fill)
+        self.assertEqual(frame.plane_fragments, ())
+        intervals = _line_outline_scalar_intervals(frame)
+        self.assertTrue(intervals)
+        start = np.asarray(frame.patch_projection.line_screen_start, dtype=float)
+        end = np.asarray(frame.patch_projection.line_screen_end, dtype=float)
+        length = float(np.linalg.norm(end - start))
+        tolerance = max(1.0e-10, frame.max_screen_error * 1.0e-9)
+        cursor = 0.0
+        for lower, upper in intervals:
+            self.assertLessEqual(lower, cursor + tolerance)
+            self.assertGreaterEqual(lower, cursor - tolerance)
+            self.assertGreater(upper, lower)
+            cursor = upper
+        self.assertAlmostEqual(cursor, length, delta=tolerance)
+
     def test_two_local_frames_merge_into_one_area_conserving_plane_partition(
         self,
     ) -> None:
         frame = _renderer_neutral_frame(_double(), _side_plane())
+        self.assertIs(frame.projection_kind, PlanePatchProjectionKind.AREA)
+        self.assertTrue(frame.has_plane_fill)
         self.assertEqual(
             tuple(item.surface_id for item in frame.child_frames),
             ("double:nappe:negative", "double:nappe:positive"),
@@ -272,6 +335,157 @@ class CompositeRendererNeutralTests(unittest.TestCase):
         self.assertEqual(shared_apex["contactExtent"], 0.0)
         self.assertEqual(shared_apex["maxContactDistanceFromApex"], 0.0)
         self.assertEqual(shared_apex["contactPoints"], [[0.0, 0.0]])
+
+    def test_apex_plane_merges_two_line_children_without_plane_fill(self) -> None:
+        frame = _renderer_neutral_frame(
+            _double("apex-line-double"),
+            _side_plane(0.0),
+            EDGE_ON_VIEW,
+        )
+
+        self._assert_finite_non_overlapping_line_chain(frame)
+        self.assertEqual(len(frame.branch_lineage), 4)
+        self.assertEqual(frame.shared_apex.contact_dimension, 0)
+        self.assertEqual(frame.shared_apex.contact_extent, 0.0)
+        self.assertEqual(
+            {item.role for item in frame.plane_outline_fragments},
+            {
+                PlaneDepthRole.OUTSIDE_PROJECTION,
+                PlaneDepthRole.IN_FRONT_OF_SURFACE,
+            },
+        )
+        first = canonical_composite_quadric_section_compositing_json(frame)
+        second = canonical_composite_quadric_section_compositing_json(frame)
+        self.assertEqual(first, second)
+        payload = json.loads(first)
+        self.assertEqual(
+            payload["schema"],
+            COMPOSITE_QUADRIC_SECTION_COMPOSITING_SCHEMA,
+        )
+        self.assertEqual(
+            payload["schema"],
+            "manim-composite-quadric-section-compositing/v3",
+        )
+        self.assertEqual(payload["patchProjection"]["kind"], "line")
+        self.assertEqual(payload["projectionKind"], "line")
+        self.assertFalse(payload["hasPlaneFill"])
+        self.assertEqual(payload["planeFragments"], [])
+
+    def test_offset_hyperbola_plane_retains_two_physical_line_branches(self) -> None:
+        frame = _renderer_neutral_frame(
+            _double("offset-line-double"),
+            _side_plane(0.5),
+            EDGE_ON_VIEW,
+        )
+
+        self._assert_finite_non_overlapping_line_chain(frame)
+        self.assertEqual(len(frame.branch_lineage), 2)
+        self.assertEqual(
+            {item.nappe_role for item in frame.branch_lineage},
+            {"negative", "positive"},
+        )
+        self.assertTrue(
+            any(
+                item.role is PlaneDepthRole.OUTSIDE_PROJECTION
+                for item in frame.plane_outline_fragments
+            )
+        )
+        self.assertTrue(
+            any(
+                item.role is PlaneDepthRole.IN_FRONT_OF_SURFACE
+                for item in frame.plane_outline_fragments
+            )
+        )
+
+    def test_oblique_in_plane_view_merges_adjacent_near_patch_edges(self) -> None:
+        frame = _renderer_neutral_frame(
+            _double("oblique-line-double"),
+            _side_plane(0.0),
+            _edge_on_side_plane_view(0.2),
+        )
+
+        self._assert_finite_non_overlapping_line_chain(frame)
+        self.assertEqual(
+            {item.edge_index for item in frame.plane_outline_fragments},
+            {0, 1},
+        )
+        start = np.asarray(frame.patch_projection.line_screen_start, dtype=float)
+        end = np.asarray(frame.patch_projection.line_screen_end, dtype=float)
+        direction = end - start
+        axis = direction / np.linalg.norm(direction)
+        normal = np.asarray((-axis[1], axis[0]), dtype=float)
+        self.assertLessEqual(
+            max(
+                abs(
+                    float(
+                        np.dot(
+                            np.asarray(point, dtype=float) - start,
+                            normal,
+                        )
+                    )
+                )
+                for fragment in frame.plane_outline_fragments
+                for point in (fragment.screen_start, fragment.screen_end)
+            ),
+            1.0e-10,
+        )
+
+    def test_line_path_still_rejects_nonzero_shared_proxy_segment(self) -> None:
+        cone = _double("line-contact-double")
+        ordinary = _renderer_neutral_frame(
+            cone,
+            _side_plane(0.0),
+            EDGE_ON_VIEW,
+        )
+        frames = (
+            _frame_with_proxy_vertices(
+                ordinary.child_frames[0],
+                ((0.0, 0.0), (1.0, 0.0), (0.0, 1.0)),
+            ),
+            _frame_with_proxy_vertices(
+                ordinary.child_frames[1],
+                ((0.0, 0.0), (0.0, -1.0), (1.0, 0.0)),
+            ),
+        )
+
+        with self.assertRaisesRegex(
+            CompositeQuadricSectionCompositingError,
+            "nonzero-length contact segment",
+        ):
+            compute_composite_quadric_section_compositing(
+                cone,
+                "line-contact-section",
+                frames,
+            )
+
+    def test_line_children_must_share_canonical_endpoint_evidence(self) -> None:
+        cone = _double("line-endpoint-double")
+        ordinary = _renderer_neutral_frame(
+            cone,
+            _side_plane(0.0),
+            EDGE_ON_VIEW,
+        )
+        second = ordinary.child_frames[1]
+        evidence = second.patch_projection
+        reversed_evidence = replace(
+            evidence,
+            line_screen_start=evidence.line_screen_end,
+            line_screen_end=evidence.line_screen_start,
+        )
+        reversed_second = replace(
+            second,
+            patch_projection=reversed_evidence,
+        )
+
+        with self.assertRaisesRegex(
+            CompositeQuadricSectionCompositingError,
+            "disagree on finite projection endpoints",
+        ):
+            compute_composite_quadric_section_compositing(
+                cone,
+                "line-endpoint-section",
+                (ordinary.child_frames[0], reversed_second),
+            )
 
     def test_shared_mathematical_generator_lineage_keeps_separate_physical_ids(
         self,
@@ -465,7 +679,33 @@ class CompositeRendererNeutralTests(unittest.TestCase):
             )
 
 
+@unittest.skipUnless(MANIM_AVAILABLE, "manim is not installed")
 class CompositeManimBindingTests(unittest.TestCase):
+    def test_hidden_plane_outline_spans_name_the_actual_child_occluder(
+        self,
+    ) -> None:
+        frame = _renderer_neutral_frame(
+            _double("outline-occluder-double"),
+            _side_plane(),
+            _view_at_axis_angle(0.8),
+        )
+        spans = CompositeQuadricSection3D._plane_outline_visibility(frame)
+        hidden = tuple(
+            span
+            for values in spans.values()
+            for span in values
+            if span.kind is VisibilityKind.HIDDEN
+        )
+        child_ids = {item.surface_id for item in frame.child_frames}
+        self.assertTrue(hidden)
+        self.assertTrue(
+            all(
+                len(span.occluder_surface_ids) == 1
+                and set(span.occluder_surface_ids) <= child_ids
+                for span in hidden
+            )
+        )
+
     def test_attach_update_and_restore_keep_two_fixed_slot_groups(self) -> None:
         state = {"offset": 0.5}
 

@@ -41,7 +41,9 @@ projection may be `AREA` or certified `LINE`, and parallel projection. A separat
 `CompositeQuadricSection3D` coordinator may apply that same local solver to the
 two canonical nappes of one `OPEN_DOUBLE`, then merge their disjoint projected
 interiors around the certified shared apex and paint the common plane once.
-That composite coordinator still requires an `AREA` patch projection.
+The composite coordinator accepts either an `AREA` patch or a certified
+edge-on `LINE`; the latter has no plane fill and retains one finite near-side
+outline assembled from the two child frames.
 Certification retains point, segment, and area intersections instead of
 discarding degenerate contact: only a zero-dimensional contact set contained
 inside the shared-apex tolerance succeeds.
@@ -463,9 +465,12 @@ Line-valued circle, ellipse, parabola, and hyperbola members retain their exact
 visibility intervals, with hidden strokes painted before visible strokes;
 point-valued cap chords retain source identity but paint nothing. Only that
 certified family and its owning surface outline use the rank-one overlap rule.
-External curves and other surfaces keep the ordinary crossing solver and fail
-closed when their overlap cannot be certified. This paragraph covers the
-ordinary one-surface compositor; the open-double coordinator remains `AREA`-only.
+For an open double shell, the two child families remain separate rank-one
+groups: hidden-before-visible relations are added only inside one certified
+group, while sibling-nappe and external crossings still require analytic
+intersection and depth evidence. The common finite plane line is merged once,
+with no fill and no duplicate child outline. External curves and other surfaces
+fail closed when their overlap cannot be certified.
 Multiple intersecting quadrics remain a separate unsupported problem and fail
 closed.
 

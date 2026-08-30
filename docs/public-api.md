@@ -651,6 +651,14 @@ the maximum distance from the apex, and the retained contact points. A remote
 point, nonzero coincident segment, or positive-area overlap fails
 transactionally instead of guessing an interleaved order.
 
+The composite frame exposes the same explicit `projection_kind` and
+`patch_projection` evidence as one local frame. In an exact side view both
+children must certify the same finite `LINE` endpoints. The coordinator then
+omits every plane fill, merges their one-dimensional depth partitions into one
+complete near-side outline, and gives each nappe its own authenticated section
+source group. `AREA -> LINE -> AREA` reuses the original plane, surface, and
+curve slots; a failed critical frame leaves the previous display untouched.
+
 A plane callback may move a section only while its lateral conic topology and
 curve identities stay fixed. Cap chords may activate or disappear because all
 authored cap identities are reserved independently. An empty/non-empty change,

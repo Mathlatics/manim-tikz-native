@@ -33,7 +33,7 @@ case.
 | Finite cone frustum: section, clipping, ordinary occlusion | Supported | Uniform styling, automatic boundary visibility, and up to two real cap chords are supported |
 | Frustum: component-aware lateral and two-terminal-cap shading | Supported | Both terminal disks remain separate depth components; exact edge-on zero-area cap fills are omitted without inventing area |
 | Finite open double shell: display and general occlusion | Supported with constraints | It expands once into two stable open single-nappe components |
-| Finite open double shell: unified cutting-plane compositing | Supported with constraints | `CompositeQuadricSection3D` currently requires an `AREA` plane projection and coordinates the two canonical nappes only when their complete projected contact set is one zero-dimensional point inside the shared-apex tolerance; edge-on plane patches, remote points, nonzero segments, area overlap, and topology-family changes fail explicitly |
+| Finite open double shell: unified cutting-plane compositing | Supported with constraints | `CompositeQuadricSection3D` coordinates the two canonical nappes for both `AREA` and certified edge-on `LINE` plane projections when their complete projected contact set is one zero-dimensional point inside the shared-apex tolerance; remote points, nonzero segments, area overlap, and topology-family changes fail explicitly |
 | One finite convex quadric and one cutting plane | Supported | This is the complete local section-compositor scope |
 | Multiple intersecting quadrics and one cutting plane | Unsupported; explicit failure | No local multi-surface plane arrangement is guessed |
 | Parallel projection | Supported | Orthographic and general affine-free parallel views use `ParallelView` |
@@ -41,7 +41,7 @@ case.
 | Manim Cairo | Supported | The fixed-capacity production binding and pixel regressions target Cairo |
 | Manim OpenGL | Unsupported; explicit failure | `QuadricOcclusion3D.attach()` rejects a non-Cairo renderer before Scene ownership changes |
 | Cutting plane with a two-dimensional screen projection | Supported | The plane display patch must retain certifiable display area |
-| One-surface finite cutting-plane patch projected completely edge-on | Supported with constraints | The ordinary one-surface compositor emits a certified zero-area `LINE`: fill is omitted, one finite near-side outline chain is retained without duplicate strokes, and the line does not occlude other boundaries as an area; the open-double coordinator remains `AREA`-only in this expansion |
+| Finite cutting-plane patch projected completely edge-on | Supported with constraints | The ordinary one-surface compositor and the dedicated open-double coordinator emit a certified zero-area `LINE`: fill is omitted, one finite near-side outline chain is retained without duplicate strokes, and the line does not occlude other boundaries as an area; each open-double nappe keeps separate section evidence and painter ordering |
 
 “Multiple intersecting quadrics + one cutting plane” is a local section-plane
 limitation. It does not remove the separate ability to place multiple strictly
@@ -50,9 +50,12 @@ disjoint quadrics in one global occlusion graph.
 The open-double row is a narrow coordination exception, not a general
 multi-surface arrangement. Each nappe is still solved by the ordinary
 one-surface compositor. The coordinator certifies their projected interiors,
-retains both local rear/front sheet pairs, replaces the two local outside
-partitions with one area-conserving common plane partition, and publishes one
-draw order. Degenerate polygon intersection is not discarded during this
+retains both local rear/front sheet pairs, and publishes one draw order. In an
+`AREA` view it replaces the two local outside partitions with one
+area-conserving common plane partition. In a `LINE` view it removes all fill,
+merges the two independently certified one-dimensional child partitions, and
+draws one complete finite near-side chain. Degenerate polygon intersection is
+not discarded during this
 certificate: the evidence records `contact_dimension`, `contact_extent`, the
 maximum distance from the apex, and all retained contact points. Only
 dimension zero inside the apex tolerance succeeds. A nonzero contact segment,
@@ -70,10 +73,11 @@ The section boundary is resolved in the same rank-one frame. Membership in the
 current surface/plane section is certified from the full analytic curve and
 finite-surface equations, never from an ID prefix. Circle, ellipse, parabola,
 and hyperbola members which retain a line place painted hidden intervals before
-painted visible intervals. A cap chord which projects to one point retains its
-semantic source and preallocated slot but emits no zero-length stroke. These
-rules do not suppress intersections with external curves, another surface, or
-an uncertified coincident curve.
+painted visible intervals. In an open double shell, each nappe owns a separate
+rank-one source group; a local certificate cannot silently suppress a crossing
+from the sibling nappe or an external curve. A cap chord which projects to one
+point retains its semantic source and preallocated slot but emits no zero-length
+stroke.
 
 ## Layer ownership
 

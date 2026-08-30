@@ -226,6 +226,37 @@ class QuadricRankOneSectionSourceGroup:
         }
 
 
+def _rank_one_group_sort_key(
+    group: QuadricRankOneSectionSourceGroup,
+) -> tuple[object, ...]:
+    return (group.surface_id, group.plane_id, group.source_ids)
+
+
+def _canonical_rank_one_groups(
+    groups: Sequence[QuadricRankOneSectionSourceGroup],
+) -> tuple[QuadricRankOneSectionSourceGroup, ...]:
+    values = tuple(groups)
+    if not all(isinstance(item, QuadricRankOneSectionSourceGroup) for item in values):
+        raise TypeError(
+            "rank_one_section_source_groups must contain "
+            "QuadricRankOneSectionSourceGroup"
+        )
+    ordered = tuple(sorted(values, key=_rank_one_group_sort_key))
+    seen: set[str] = set()
+    repeated: set[str] = set()
+    for group in ordered:
+        for source_id in group.source_ids:
+            if source_id in seen:
+                repeated.add(source_id)
+            seen.add(source_id)
+    if repeated:
+        raise QuadricBoundaryCompositingError(
+            "rank-one section groups cannot share boundary sources: "
+            + ", ".join(sorted(repeated))
+        )
+    return ordered
+
+
 _DEPTH_ROLES = {
     "outside_projection",
     "behind_surface",
@@ -603,6 +634,9 @@ class QuadricBoundaryCompositingFrame:
     order_relations: tuple[QuadricPaintRelation, ...]
     draw_order: tuple[str, ...]
     rank_one_section_source_group: QuadricRankOneSectionSourceGroup | None = None
+    rank_one_section_source_groups: tuple[
+        QuadricRankOneSectionSourceGroup, ...
+    ] = ()
     crossings: tuple[ProjectedCurveCrossing, ...] = ()
     schema: str = QUADRIC_BOUNDARY_COMPOSITING_SCHEMA
 
@@ -611,14 +645,34 @@ class QuadricBoundaryCompositingFrame:
             raise QuadricBoundaryCompositingError(
                 "invalid quadric boundary compositing schema"
             )
-        group = self.rank_one_section_source_group
-        if group is not None and not isinstance(
-            group, QuadricRankOneSectionSourceGroup
+        singular_group = self.rank_one_section_source_group
+        if singular_group is not None and not isinstance(
+            singular_group, QuadricRankOneSectionSourceGroup
         ):
             raise TypeError(
                 "rank_one_section_source_group must be a "
                 "QuadricRankOneSectionSourceGroup"
             )
+        plural_groups = _canonical_rank_one_groups(
+            self.rank_one_section_source_groups
+        )
+        if singular_group is not None and plural_groups:
+            raise QuadricBoundaryCompositingError(
+                "frame singular/plural rank-one section evidence is mutually "
+                "exclusive"
+            )
+        groups = (
+            (singular_group,)
+            if singular_group is not None
+            else plural_groups
+        )
+        groups = _canonical_rank_one_groups(groups)
+        object.__setattr__(self, "rank_one_section_source_groups", groups)
+        object.__setattr__(
+            self,
+            "rank_one_section_source_group",
+            groups[0] if len(groups) == 1 else None,
+        )
         source_ids = tuple(item.source_id for item in self.sources)
         if (
             source_ids != tuple(sorted(source_ids))
@@ -627,8 +681,13 @@ class QuadricBoundaryCompositingFrame:
             raise QuadricBoundaryCompositingError(
                 "boundary sources must have unique sorted identities"
             )
-        if group is not None:
-            unknown = sorted(set(group.source_ids) - set(source_ids))
+        if groups:
+            grouped_source_ids = {
+                source_id
+                for group in groups
+                for source_id in group.source_ids
+            }
+            unknown = sorted(grouped_source_ids - set(source_ids))
             if unknown:
                 raise QuadricBoundaryCompositingError(
                     "rank-one section group references unknown boundary sources: "
@@ -637,6 +696,7 @@ class QuadricBoundaryCompositingFrame:
             source_map = {item.source_id: item for item in self.sources}
             invalid = tuple(
                 source_id
+                for group in groups
                 for source_id in group.source_ids
                 if (
                     source_map[source_id].source_kind
@@ -655,13 +715,18 @@ class QuadricBoundaryCompositingFrame:
                     "matching section provenance: " + ", ".join(invalid)
                 )
         fragment_ids = tuple(item.item_id for item in self.fragments)
-        if group is not None:
+        if groups:
+            point_source_ids = {
+                source_id
+                for group in groups
+                for source_id in group.point_source_ids
+            }
             point_sources_with_fragments = tuple(
                 sorted(
                     {
                         item.source_id
                         for item in self.fragments
-                        if item.source_id in group.point_source_ids
+                        if item.source_id in point_source_ids
                     }
                 )
             )
@@ -721,7 +786,7 @@ class QuadricBoundaryCompositingFrame:
         return tuple(item for item in self.fragments if item.painted)
 
     def to_dict(self) -> dict[str, object]:
-        return {
+        result: dict[str, object] = {
             "schema": self.schema,
             "sources": [item.to_dict() for item in self.sources],
             "fragments": [item.to_dict() for item in self.fragments],
@@ -735,6 +800,12 @@ class QuadricBoundaryCompositingFrame:
             ),
             "crossings": [item.to_dict() for item in self.crossings],
         }
+        if len(self.rank_one_section_source_groups) > 1:
+            result["rankOneSectionSourceGroups"] = [
+                item.to_dict()
+                for item in self.rank_one_section_source_groups
+            ]
+        return result
 
 
 def _selected_surfaces(
@@ -1093,6 +1164,9 @@ def compute_quadric_boundary_compositing(
     section_anchors_by_surface: Mapping[str, BoundarySectionAnchors] | None = None,
     section_spans_by_source: Mapping[str, Sequence[object]] | None = None,
     rank_one_section_source_group: QuadricRankOneSectionSourceGroup | None = None,
+    rank_one_section_source_groups: Sequence[
+        QuadricRankOneSectionSourceGroup
+    ] | None = None,
     parameter_tolerance: float = 1.0e-12,
 ) -> QuadricBoundaryCompositingFrame:
     """Build one fragment-level painter graph for all semantic boundaries."""
@@ -1113,8 +1187,14 @@ def compute_quadric_boundary_compositing(
             "boundary source identities must be unique"
         )
     source_map = {item.source_id: item for item in source_items}
-    rank_one_line_source_ids: frozenset[str] | None = None
-    rank_one_point_source_ids: frozenset[str] = frozenset()
+    if (
+        rank_one_section_source_group is not None
+        and rank_one_section_source_groups is not None
+    ):
+        raise QuadricBoundaryCompositingError(
+            "rank_one_section_source_group and "
+            "rank_one_section_source_groups are mutually exclusive"
+        )
     if rank_one_section_source_group is not None:
         if not isinstance(
             rank_one_section_source_group, QuadricRankOneSectionSourceGroup
@@ -1123,8 +1203,27 @@ def compute_quadric_boundary_compositing(
                 "rank_one_section_source_group must be a "
                 "QuadricRankOneSectionSourceGroup"
             )
+        rank_one_groups = (rank_one_section_source_group,)
+    elif rank_one_section_source_groups is None:
+        rank_one_groups = ()
+    else:
+        rank_one_groups = _canonical_rank_one_groups(
+            rank_one_section_source_groups
+        )
+    rank_one_groups = _canonical_rank_one_groups(rank_one_groups)
+    rank_one_source_ids = {
+        source_id
+        for group in rank_one_groups
+        for source_id in group.source_ids
+    }
+    rank_one_point_source_ids = frozenset(
+        source_id
+        for group in rank_one_groups
+        for source_id in group.point_source_ids
+    )
+    if rank_one_groups:
         unknown_rank_one_sources = sorted(
-            set(rank_one_section_source_group.source_ids) - set(source_ids)
+            rank_one_source_ids - set(source_ids)
         )
         if unknown_rank_one_sources:
             raise QuadricBoundaryCompositingError(
@@ -1133,7 +1232,8 @@ def compute_quadric_boundary_compositing(
             )
         invalid_rank_one_sources = tuple(
             source_id
-            for source_id in rank_one_section_source_group.source_ids
+            for group in rank_one_groups
+            for source_id in group.source_ids
             if (
                 source_map[source_id].source_kind
                 not in {
@@ -1141,9 +1241,9 @@ def compute_quadric_boundary_compositing(
                     BoundarySourceKind.SECTION_CAP_CHORD,
                 }
                 or source_map[source_id].section_surface_id
-                != rank_one_section_source_group.surface_id
+                != group.surface_id
                 or source_map[source_id].section_plane_id
-                != rank_one_section_source_group.plane_id
+                != group.plane_id
             )
         )
         if invalid_rank_one_sources:
@@ -1151,12 +1251,6 @@ def compute_quadric_boundary_compositing(
                 "rank-one section group contains sources without matching "
                 "section provenance: " + ", ".join(invalid_rank_one_sources)
             )
-        rank_one_line_source_ids = frozenset(
-            rank_one_section_source_group.line_source_ids
-        )
-        rank_one_point_source_ids = frozenset(
-            rank_one_section_source_group.point_source_ids
-        )
     if section_anchors is not None and section_anchors_by_surface is not None:
         raise QuadricBoundaryCompositingError(
             "section_anchors and section_anchors_by_surface are mutually exclusive"
@@ -1682,11 +1776,15 @@ def compute_quadric_boundary_compositing(
                 for item_id in sorted(occluder_items)
             )
 
-    if rank_one_line_source_ids is not None:
+    for rank_one_group in rank_one_groups:
         # When an edge-on section collapses onto one screen line, dashed back
         # intervals and solid front intervals can occupy the same pixels.  The
-        # explicit certified group is the only authority for this extra order:
-        # ordinary boundary graphs retain their historical painter relations.
+        # current explicit certified group is the only authority for this
+        # extra order.  Distinct child/nappes remain independent even when
+        # their line images happen to be collinear.
+        rank_one_line_source_ids = frozenset(
+            rank_one_group.line_source_ids
+        )
         hidden_rank_one = tuple(
             item
             for item in fragments
@@ -1705,7 +1803,7 @@ def compute_quadric_boundary_compositing(
             item.item_id: _rank_one_scalar_bounds(
                 source_map[item.source_id].curve,
                 item.interval,
-                rank_one_section_source_group.screen_axis_world,
+                rank_one_group.screen_axis_world,
             )
             for item in (*hidden_rank_one, *visible_rank_one)
         }
@@ -1720,7 +1818,7 @@ def compute_quadric_boundary_compositing(
             if _rank_one_scalar_ranges_overlap(
                 scalar_bounds[hidden.item_id],
                 scalar_bounds[visible.item_id],
-                rank_one_section_source_group.screen_tolerance,
+                rank_one_group.screen_tolerance,
             )
         )
 
@@ -1850,7 +1948,7 @@ def compute_quadric_boundary_compositing(
         parent_item_ids=parent_ids,
         order_relations=normalized,
         draw_order=draw_order,
-        rank_one_section_source_group=rank_one_section_source_group,
+        rank_one_section_source_groups=rank_one_groups,
         crossings=crossings_tuple,
     )
 

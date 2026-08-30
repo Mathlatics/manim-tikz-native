@@ -13,11 +13,11 @@
     },
     "quadric_visibility": {
       "contract_revision": "tikz-native-contract:quadric_visibility/v2",
-      "render_revision": "source-sha256:830f007408fce6425e31fa26776e2371982579c3c4f7615b51bcd19edb0270e7"
+      "render_revision": "source-sha256:8d4aab96c05b1fef95032925484f233e2f79ec3862e02c9c021fd0de751f4b03"
     },
     "quadric_manim": {
       "contract_revision": "tikz-native-contract:quadric_manim/v1",
-      "render_revision": "source-sha256:244dc77362df01bd8c6fc32a033f1e0ad315db778d0939288af0a24990cf838b"
+      "render_revision": "source-sha256:a2ff9805feaeb2898f0ac4265e88435436df84247c401d0d6b41076876b45668"
     }
   },
   "build_artifacts": {
@@ -228,6 +228,26 @@
       "layer": "manim",
       "outcome": "pass",
       "test": "tests.test_quadric_rank_one_conic_camera.QuadricRankOneConicCameraTests.test_four_conics_commit_area_line_area_with_fixed_slots"
+    },
+    "open_double_edge_on_geometry": {
+      "layer": "renderer_neutral",
+      "outcome": "pass",
+      "test": "tests.test_composite_quadric_section.CompositeRendererNeutralTests.test_offset_hyperbola_plane_retains_two_physical_line_branches"
+    },
+    "open_double_edge_on_binding": {
+      "layer": "manim",
+      "outcome": "pass",
+      "test": "tests.test_composite_quadric_section_line_manim.CompositeQuadricSectionLineManimTests.test_area_line_area_keeps_fixed_slots_and_matches_cold_frames"
+    },
+    "open_double_edge_on_cairo_pixels": {
+      "layer": "cairo",
+      "outcome": "pass",
+      "test": "tests.test_composite_quadric_section_line_manim.CompositeQuadricSectionLineCairoTests.test_line_frame_has_both_nappes_apex_finite_outline_and_no_double_draw"
+    },
+    "open_double_edge_on_rollback": {
+      "layer": "manim",
+      "outcome": "pass",
+      "test": "tests.test_composite_quadric_section_line_manim.CompositeQuadricSectionLineManimTests.test_positive_area_nappe_overlap_rolls_back_then_line_recovers"
     }
   },
   "projections": {
@@ -319,7 +339,11 @@
         "open_double_composite_binding",
         "open_double_composite_cairo",
         "open_double_composite_overlap_failure",
-        "open_double_single_facade_failure"
+        "open_double_single_facade_failure",
+        "open_double_edge_on_geometry",
+        "open_double_edge_on_binding",
+        "open_double_edge_on_cairo_pixels",
+        "open_double_edge_on_rollback"
       ]
     },
     {

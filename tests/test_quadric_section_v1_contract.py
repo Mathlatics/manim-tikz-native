@@ -112,7 +112,20 @@ class QuadricSectionV1ContractTests(unittest.TestCase):
                         "edge_on_section_family_certification",
                         "edge_on_four_conic_fixed_slots",
                     ],
-                }
+                },
+                {
+                    "id": "open_double_edge_on_plane_line",
+                    "capability_ids": [
+                        "open_double_unified_section_plane_compositing",
+                        "edge_on_cutting_plane",
+                    ],
+                    "evidence_ids": [
+                        "open_double_edge_on_geometry",
+                        "open_double_edge_on_binding",
+                        "open_double_edge_on_cairo_pixels",
+                        "open_double_edge_on_rollback",
+                    ],
+                },
             ],
         )
         self.assertNotIn("baseline_main_commit", self.contract)
