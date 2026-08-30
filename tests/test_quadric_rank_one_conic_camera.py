@@ -36,6 +36,8 @@ from polyhedron_visibility.quadrics.sections import (
 from polyhedron_visibility.visibility import VisibilityKind
 from tikz_native.camera_3d import MultiProjectionCamera
 from tikz_native.parallel_camera import ParallelCameraState
+from tikz_native.parallel_shots import ParallelCameraShot
+from tikz_native.parallel_shots_manim import play_parallel_camera_shot
 
 
 @dataclass(frozen=True, slots=True)
@@ -125,6 +127,20 @@ def _limits() -> QuadricManimLimits:
     )
 
 
+def _playback_limits() -> QuadricManimLimits:
+    return QuadricManimLimits(
+        max_surfaces=1,
+        max_curves=8,
+        max_fragments_per_curve=12,
+        max_segments_per_fragment=96,
+        max_surface_segments=192,
+        max_dashes_per_fragment=64,
+        max_projected_length=20.0,
+        max_total_mobjects=8000,
+        max_boundary_sources=32,
+    )
+
+
 def _camera_states(
     scenario: _ConicScenario,
 ) -> tuple[ParallelCameraState, ParallelCameraState, ParallelCameraState]:
@@ -162,6 +178,7 @@ def _build(
     *,
     include_surface_boundaries: bool,
     paint_policy: QuadricPaintPolicy,
+    limits: QuadricManimLimits | None = None,
 ) -> QuadricSection3D:
     return QuadricSection3D(
         scene,
@@ -172,7 +189,7 @@ def _build(
         draw_section_boundary=True,
         include_surface_boundaries=include_surface_boundaries,
         paint_policy=paint_policy,
-        limits=_limits(),
+        limits=_limits() if limits is None else limits,
         max_chord_error=0.025,
         section_max_screen_error=0.16,
     ).attach()
@@ -248,9 +265,13 @@ class QuadricRankOneConicCameraTests(unittest.TestCase):
         self.config = tempconfig(
             {
                 "renderer": "cairo",
-                "frame_rate": 8,
-                "pixel_width": 320,
-                "pixel_height": 180,
+                "frame_rate": 4,
+                "pixel_width": 160,
+                "pixel_height": 90,
+                "write_to_movie": False,
+                "save_last_frame": False,
+                "disable_caching": True,
+                "progress_bar": "none",
             }
         )
         self.config.__enter__()
@@ -578,6 +599,126 @@ class QuadricRankOneConicCameraTests(unittest.TestCase):
                             cold.restore()
                         if facade is not None:
                             facade.restore()
+
+    def test_real_camera_shots_keep_rank_one_slots_and_scene_ownership(self) -> None:
+        scenario = _scenario("ellipse")
+        initial, line, final = _camera_states(scenario)
+        scene = _ParallelCameraScene()
+        camera = scene.camera
+        self.assertIsInstance(camera, MultiProjectionCamera)
+        camera.set_parallel_state(initial)
+        facade: QuadricSection3D | None = None
+        controller: QuadricOcclusion3D | None = None
+        owned_ids: set[int] = set()
+        fixed_ids: set[int] = set()
+        try:
+            facade = _build(
+                scene,
+                scenario,
+                lambda active_scene: active_scene.camera.snapshot_parallel_state(),
+                include_surface_boundaries=False,
+                paint_policy=QuadricPaintPolicy.DIAGRAMMATIC,
+                limits=_playback_limits(),
+            )
+            controller = facade.controller
+            identities = facade.slot_identities()
+            root_family = tuple(controller.root.get_family())
+            root_family_ids = {id(item) for item in root_family}
+            driver_family_ids = {
+                id(item) for item in controller._update_driver.get_family()
+            }
+            owned_ids = root_family_ids | driver_family_ids
+            update_count = 0
+
+            def assert_owned_state() -> None:
+                self.assertEqual(facade.slot_identities(), identities)
+                self.assertEqual(scene.mobjects.count(controller.root), 1)
+                self.assertEqual(
+                    scene.mobjects.count(controller._update_driver),
+                    1,
+                )
+                top_level_ids = {id(item) for item in scene.mobjects}
+                self.assertEqual(
+                    top_level_ids & root_family_ids,
+                    {id(controller.root)},
+                )
+                current_fixed = {
+                    id(item) for item in camera.fixed_in_frame_mobjects
+                }
+                self.assertTrue(root_family_ids.issubset(current_fixed))
+
+            original_update = controller.update
+
+            def audited_update(dt: float = 0.0) -> QuadricOcclusion3D:
+                nonlocal update_count
+                result = original_update(dt)
+                update_count += 1
+                assert_owned_state()
+                return result
+
+            line_shot = ParallelCameraShot(
+                "rank-one-exact-side-view",
+                line,
+                duration=0.5,
+                transition="orbit",
+                arc_height=0.65,
+            )
+            area_shot = ParallelCameraShot(
+                "rank-one-return-area-view",
+                final,
+                duration=0.5,
+                transition="orbit",
+                arc_height=0.65,
+            )
+            with patch.object(controller, "update", side_effect=audited_update):
+                first_endpoint = play_parallel_camera_shot(scene, line_shot)
+                facade.update()
+                self.assertIs(first_endpoint, line)
+                self._assert_line_frame(
+                    facade,
+                    scenario,
+                    paint_policy=QuadricPaintPolicy.DIAGRAMMATIC,
+                )
+                assert_owned_state()
+
+                second_endpoint = play_parallel_camera_shot(scene, area_shot)
+                facade.update()
+                self.assertIs(second_endpoint, final)
+                final_section = facade.last_section_frame
+                self.assertIsNotNone(final_section)
+                assert final_section is not None
+                self.assertIs(
+                    final_section.projection_kind,
+                    PlanePatchProjectionKind.AREA,
+                )
+                assert_owned_state()
+
+            self.assertGreaterEqual(update_count, 6)
+            final_state = camera.snapshot_parallel_state()
+            np.testing.assert_array_equal(final_state.matrix, final.matrix)
+            np.testing.assert_array_equal(final_state.target, final.target)
+            np.testing.assert_array_equal(
+                final_state.screen_anchor,
+                final.screen_anchor,
+            )
+            self.assertEqual(final_state.zoom, final.zoom)
+            fixed_ids = {id(item) for item in camera.fixed_in_frame_mobjects}
+            self.assertTrue(root_family_ids.issubset(fixed_ids))
+        finally:
+            if facade is not None:
+                facade.restore()
+            if controller is not None:
+                self.assertTrue(
+                    all(
+                        id(item) not in owned_ids
+                        for container in controller._scene_containers()
+                        for item in container
+                    )
+                )
+                remaining_fixed_ids = {
+                    id(item) for item in camera.fixed_in_frame_mobjects
+                }
+                self.assertTrue(fixed_ids.isdisjoint(remaining_fixed_ids))
 
 
 if __name__ == "__main__":
