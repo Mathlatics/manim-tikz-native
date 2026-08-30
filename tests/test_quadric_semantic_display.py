@@ -140,6 +140,22 @@ class QuadricSemanticDisplayTests(unittest.TestCase):
         self.assertEqual(banks, {"ellipse", "parabola", "hyperbola"})
         self.assertEqual(handle.handle_id, "lesson-section:display:section-curve")
 
+        frame = compile_section_display(
+            catalog,
+            SectionDisplayInstruction.for_mode("painted"),
+        )
+        compiled_banks = {
+            slot.topology_bank
+            for slot in frame.slots
+            if slot.role is SectionDisplayRole.SECTION_CURVE
+        }
+        self.assertEqual(compiled_banks, banks)
+        self.assertEqual(frame.catalog_digest, catalog.digest)
+        self.assertEqual(
+            json.loads(frame.to_json())["catalogDigest"],
+            catalog.digest,
+        )
+
     def test_boundary_handles_support_kind_and_exact_source(self) -> None:
         catalog = _catalog()
         all_generators = catalog.boundary("generator")

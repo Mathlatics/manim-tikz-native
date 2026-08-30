@@ -76,6 +76,17 @@ def _canonical_json(value: object) -> str:
         ) from exc
 
 
+def _sha256_digest(value: object, label: str) -> str:
+    digest = _identity(value, label)
+    prefix = "sha256:"
+    payload = digest[len(prefix) :] if digest.startswith(prefix) else ""
+    if len(payload) != 64 or any(item not in "0123456789abcdef" for item in payload):
+        raise SectionSemanticDisplayError(
+            f"{label} must be a lowercase sha256 digest"
+        )
+    return digest
+
+
 def _strict_json_object(value: str, label: str) -> Mapping[str, object]:
     if not isinstance(value, str):
         raise TypeError(f"{label} must be a string")
@@ -417,6 +428,10 @@ class SectionDisplayCatalog:
     def to_json(self) -> str:
         return _canonical_json(self.to_dict())
 
+    @property
+    def digest(self) -> str:
+        return "sha256:" + hashlib.sha256(self.to_json().encode("utf-8")).hexdigest()
+
     @classmethod
     def from_dict(cls, value: object) -> "SectionDisplayCatalog":
         raw = _strict_keys(
@@ -577,6 +592,7 @@ class SectionDisplaySlotState:
     slot_id: str
     role: SectionDisplayRole
     source_id: str | None
+    topology_bank: str | None
     opacity_multiplier: float
     emphasized: bool
 
@@ -594,6 +610,19 @@ class SectionDisplaySlotState:
                 self,
                 "source_id",
                 _identity(self.source_id, "source_id"),
+            )
+        if self.topology_bank is not None:
+            object.__setattr__(
+                self,
+                "topology_bank",
+                _identity(self.topology_bank, "topology_bank"),
+            )
+        if (
+            self.topology_bank is not None
+            and role is not SectionDisplayRole.SECTION_CURVE
+        ):
+            raise SectionSemanticDisplayError(
+                "topology_bank is valid only for section-curve slots"
             )
         if isinstance(self.opacity_multiplier, bool):
             raise SectionSemanticDisplayError(
@@ -622,6 +651,8 @@ class SectionDisplaySlotState:
         }
         if self.source_id is not None:
             result["sourceId"] = self.source_id
+        if self.topology_bank is not None:
+            result["topologyBank"] = self.topology_bank
         return result
 
 
@@ -630,6 +661,7 @@ class SectionDisplayFrame:
     """Canonical renderer-neutral result ready for transactional commit."""
 
     section_id: str
+    catalog_digest: str
     mode: SectionDisplayMode
     slots: tuple[SectionDisplaySlotState, ...]
     emphasized_handles: tuple[str, ...]
@@ -639,6 +671,11 @@ class SectionDisplayFrame:
             self,
             "section_id",
             _identity(self.section_id, "section_id"),
+        )
+        object.__setattr__(
+            self,
+            "catalog_digest",
+            _sha256_digest(self.catalog_digest, "catalog_digest"),
         )
         try:
             mode = SectionDisplayMode(self.mode)
@@ -670,6 +707,7 @@ class SectionDisplayFrame:
         return {
             "schema": SECTION_DISPLAY_FRAME_SCHEMA,
             "sectionId": self.section_id,
+            "catalogDigest": self.catalog_digest,
             "mode": self.mode.value,
             "emphasizedHandles": list(self.emphasized_handles),
             "slots": [item.to_dict() for item in self.slots],
@@ -715,12 +753,14 @@ def compile_section_display(
                 slot.slot_id,
                 slot.role,
                 slot.source_id,
+                slot.topology_bank,
                 opacity,
                 emphasized,
             )
         )
     return SectionDisplayFrame(
         catalog.section_id,
+        catalog.digest,
         instruction.policy.mode,
         tuple(states),
         instruction.emphasized_handles,
