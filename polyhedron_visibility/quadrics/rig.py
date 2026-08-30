@@ -449,6 +449,32 @@ def _animation_tree_contains(root: object, target: object) -> bool:
     return False
 
 
+def _animation_tree_reverses_target(root: object, target: object) -> bool:
+    """Return whether ``target`` inherits a reversed animation-tree path."""
+
+    pending: list[tuple[object, bool]] = [(root, False)]
+    seen: set[tuple[int, bool]] = set()
+    while pending:
+        value, inherited_reverse = pending.pop()
+        reversed_path = inherited_reverse or bool(
+            getattr(value, "reverse_rate_function", False)
+        )
+        if value is target:
+            return reversed_path
+        key = (id(value), reversed_path)
+        if key in seen:
+            continue
+        seen.add(key)
+        children = (
+            value
+            if isinstance(value, (tuple, list))
+            else getattr(value, "animations", ())
+        )
+        if isinstance(children, (tuple, list)):
+            pending.extend((child, reversed_path) for child in children)
+    return False
+
+
 def _translation_critical_levels(
     surface: QuadricSurfaceSpec,
     normal: np.ndarray,
@@ -690,6 +716,15 @@ class QuadricSectionAction(Animation):
         return self._compiled.target_state
 
     def _validate_rate_func_contract(self) -> None:
+        scene_animations = getattr(self.rig.scene, "animations", None)
+        if self.reverse_rate_function or (
+            scene_animations is not None
+            and _animation_tree_reverses_target(scene_animations, self)
+        ):
+            raise QuadricSectionRigError(
+                "reverse_rate_function=True is unsupported by "
+                "QuadricSectionAction"
+            )
         try:
             start = _finite(self.rate_func(0.0), "rate_func(0)")
             finish = _finite(self.rate_func(1.0), "rate_func(1)")

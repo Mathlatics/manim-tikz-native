@@ -946,6 +946,117 @@ class QuadricSectionRigTests(unittest.TestCase):
         finally:
             rig.restore()
 
+    def test_reversed_play_kwargs_are_rejected_but_bounded_backtracking_is_allowed(
+        self,
+    ) -> None:
+        scene = Scene()
+        initial = _sphere_plane(0.0, plane_id="rate-plane")
+        rig = QuadricSectionRig(
+            scene,
+            surface=SphereSpec("rate-sphere", (0.0, 0.0, 0.0), 1.0),
+            plane=initial,
+            section_id="rate-section",
+            **_band_only_options(),
+        ).attach()
+        try:
+            owned = _scene_ownership_snapshot(scene)
+            bands = scene_painter_band_allocations(scene)
+
+            reversed_at_construction = rig.animate_plane_shift(
+                0.2,
+                rate_func=linear,
+                reverse_rate_function=True,
+            )
+            with self.assertRaisesRegex(
+                QuadricSectionRigError,
+                "reverse_rate_function=True is unsupported",
+            ):
+                reversed_at_construction.begin()
+            self.assertEqual(rig.state, SectionState(plane=initial))
+            self.assertEqual(rig.frame_state, rig.state)
+            self.assertEqual(_scene_ownership_snapshot(scene), owned)
+            self.assertEqual(scene_painter_band_allocations(scene), bands)
+
+            reversed_by_play = rig.animate_plane_shift(0.2, rate_func=linear)
+
+            def compile_and_begin(
+                current_scene: Scene,
+                *animations: object,
+                **play_kwargs: object,
+            ) -> None:
+                current_scene.compile_animation_data(
+                    *animations,  # type: ignore[arg-type]
+                    **play_kwargs,
+                )
+                current_scene.begin_animations()
+
+            with (
+                patch.object(
+                    scene.renderer,
+                    "play",
+                    side_effect=compile_and_begin,
+                ),
+                self.assertRaisesRegex(
+                    QuadricSectionRigError,
+                    "reverse_rate_function=True is unsupported",
+                ),
+            ):
+                scene.play(reversed_by_play, reverse_rate_function=True)
+            self.assertTrue(reversed_by_play.reverse_rate_function)
+            self.assertEqual(rig.state, SectionState(plane=initial))
+            self.assertEqual(rig.frame_state, rig.state)
+            self.assertEqual(_scene_ownership_snapshot(scene), owned)
+            self.assertEqual(scene_painter_band_allocations(scene), bands)
+
+            grouped_action = rig.animate_plane_shift(0.2, rate_func=linear)
+            grouped = AnimationGroup(grouped_action)
+            with (
+                patch.object(
+                    scene.renderer,
+                    "play",
+                    side_effect=compile_and_begin,
+                ),
+                self.assertRaisesRegex(
+                    QuadricSectionRigError,
+                    "reverse_rate_function=True is unsupported",
+                ),
+            ):
+                scene.play(grouped, reverse_rate_function=True)
+            self.assertTrue(grouped.reverse_rate_function)
+            self.assertFalse(grouped_action.reverse_rate_function)
+            self.assertEqual(rig.state, SectionState(plane=initial))
+            self.assertEqual(rig.frame_state, rig.state)
+            self.assertEqual(_scene_ownership_snapshot(scene), owned)
+            self.assertEqual(scene_painter_band_allocations(scene), bands)
+
+            def bounded_backtracking(alpha: float) -> float:
+                if alpha <= 0.25:
+                    return 2.4 * alpha
+                if alpha <= 0.5:
+                    return 0.7 - 0.4 * alpha
+                return alpha
+
+            backtracking = rig.animate_plane_shift(
+                0.2,
+                rate_func=bounded_backtracking,
+            )
+            backtracking.begin()
+            backtracking.interpolate_mobject(0.25)
+            rig.update()
+            forward_height = rig.plane.point[2]
+            backtracking.interpolate_mobject(0.5)
+            rig.update()
+            backward_height = rig.plane.point[2]
+            self.assertGreater(forward_height, backward_height)
+            backtracking.interpolate_mobject(1.0)
+            rig.update()
+            backtracking.finish()
+            self.assertEqual(rig.state, backtracking.target_state)
+            self.assertEqual(_scene_ownership_snapshot(scene), owned)
+            self.assertEqual(scene_painter_band_allocations(scene), bands)
+        finally:
+            rig.restore()
+
     def test_exact_plane_to_endpoint_and_stale_play_recovery(self) -> None:
         scene = Scene()
         start = _sphere_plane(-0.4, plane_id="endpoint-plane")

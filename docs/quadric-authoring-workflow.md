@@ -57,6 +57,13 @@ this narrower Phase 1 Rig does not animate through that rank handoff. Set both
 options to `False` only when no rank-sensitive plane or section ink should be
 displayed.
 
+`reverse_rate_function=True` is not supported by these actions and is rejected
+when playback begins, including when supplied through `Scene.play(...)`.
+An ordinary non-monotone `rate_func` is allowed when it still maps the two
+endpoints to `0` and `1`: moving backward within the already certified path is
+safe. Every progress actually returned during playback must remain finite and
+inside `[0, 1]`.
+
 This first layer deliberately fails before `Scene.play` when a path enters an
 empty or degenerate section, changes conic family, branch count, or component
 count. `animate_plane_to()` currently accepts only a target with the same

@@ -698,6 +698,10 @@ certified edge-on LINE frames; this narrower Rig phase does not animate through
 that display-rank handoff. Only setting both `show_plane=False` and
 `draw_section_boundary=False` opts out because no rank-sensitive section ink is
 then displayed.
+`reverse_rate_function=True` is explicitly unsupported, whether supplied to
+the action or through `Scene.play`. Endpoint-preserving non-monotone rate
+functions are allowed because the whole progress interval is certified; each
+evaluated value must still be finite and remain in `[0, 1]`.
 
 `render_profile="preview"` and `"final"` expand to the matching style,
 approximation, and fixed-capacity defaults inside this facade. Explicit
