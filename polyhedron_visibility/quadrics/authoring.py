@@ -27,6 +27,7 @@ from .compositing import (
     SurfaceConstraintInput,
 )
 from .contract import ConeModel, ConeSpec, CylinderSpec, SectionPlane, SphereSpec
+from .curves import ParametricConicBranch, SegmentCurve
 from .global_occlusion import GlobalQuadricFrame
 from .manim import (
     QUADRIC_MANIM_LIMITS,
@@ -51,8 +52,9 @@ from .section_compositing import (
 )
 from .sections import (
     FiniteSectionBoundaryCurve,
+    QuadricSectionBoundary,
     QuadricSurfaceSpec,
-    compute_quadric_section_boundary_curves,
+    compute_quadric_section_boundary,
     section_cap_chord_curve_ids,
 )
 from .surface_boundaries import GeneratorBoundarySpec
@@ -152,6 +154,7 @@ class QuadricSection3D:
         allocated_boundary_ids: Sequence[str] | None = None,
         geometry_prototype: QuadricGeometryPrototype | None = None,
         display_offset: Sequence[float] = (0.0, 0.0),
+        _curve_binding: object | None = None,
     ) -> None:
         selected_profile = resolve_quadric_render_profile(render_profile)
         resolved_style = QuadricManimStyle() if style is None else style
@@ -206,6 +209,16 @@ class QuadricSection3D:
         self._initial_plane: SectionPlane | None = None
         self._initial_curves: tuple[FiniteSectionBoundaryCurve, ...] | None = None
         self._transition: QuadricSectionTransition3D | None = None
+        if _curve_binding is not None:
+            for method_name in (
+                "_quadric_section_allocated_curve_ids",
+                "_bind_quadric_section_curves",
+            ):
+                if not callable(getattr(_curve_binding, method_name, None)):
+                    raise TypeError(
+                        f"curve binding must provide {method_name}()"
+                    )
+        self._curve_binding = _curve_binding
 
         common = {
             "projection": projection,
@@ -228,6 +241,10 @@ class QuadricSection3D:
         }
 
         if scheduled is not None:
+            if _curve_binding is not None:
+                raise QuadricSectionAuthoringError(
+                    "curve binding is available only in static mode"
+                )
             if not isinstance(scheduled, ScheduledSectionAnimation):
                 raise TypeError("scheduled must be a ScheduledSectionAnimation")
             supplied_static = tuple(
@@ -301,17 +318,23 @@ class QuadricSection3D:
         self._expected_plane_id = initial_plane.plane_id
 
         if draw_section_boundary:
-            initial_curves = self._compute_boundary(initial_plane)
+            initial_boundary = self._compute_boundary(initial_plane)
+            initial_curves = self._bind_boundary_curves(initial_boundary)
             self._initial_plane = initial_plane
             self._initial_curves = initial_curves
-            allocated_curve_ids = tuple(
-                sorted(
-                    {
-                        *(item.curve_id for item in initial_curves),
-                        *section_cap_chord_curve_ids(self.section_id, surface),
-                    }
+            if self._curve_binding is None:
+                allocated_curve_ids = tuple(
+                    sorted(
+                        {
+                            *(item.curve_id for item in initial_curves),
+                            *section_cap_chord_curve_ids(self.section_id, surface),
+                        }
+                    )
                 )
-            )
+            else:
+                allocated_curve_ids = tuple(
+                    self._curve_binding._quadric_section_allocated_curve_ids()
+                )
             curve_input = self._active_curves
         else:
             allocated_curve_ids = ()
@@ -352,14 +375,32 @@ class QuadricSection3D:
     def _compute_boundary(
         self,
         plane: SectionPlane,
-    ) -> tuple[FiniteSectionBoundaryCurve, ...]:
-        return compute_quadric_section_boundary_curves(
+    ) -> QuadricSectionBoundary:
+        return compute_quadric_section_boundary(
             self.section_id,
             self.surface,
             plane,
             context=self.context,
             coefficient_tolerance=self.coefficient_tolerance,
         )
+
+    def _bind_boundary_curves(
+        self,
+        boundary: QuadricSectionBoundary,
+    ) -> tuple[FiniteSectionBoundaryCurve, ...]:
+        if self._curve_binding is None:
+            return boundary.curves
+        curves = tuple(
+            self._curve_binding._bind_quadric_section_curves(boundary)
+        )
+        if not all(
+            isinstance(item, (ParametricConicBranch, SegmentCurve))
+            for item in curves
+        ):
+            raise TypeError(
+                "curve binding must return finite section boundary curves"
+            )
+        return curves
 
     def _active_curves(self) -> tuple[FiniteSectionBoundaryCurve, ...]:
         if self._initial_curves is not None:
@@ -371,7 +412,7 @@ class QuadricSection3D:
             self._pending_plane = plane
             return curves
         plane = self._resolve_plane_source()
-        curves = self._compute_boundary(plane)
+        curves = self._bind_boundary_curves(self._compute_boundary(plane))
         self._pending_plane = plane
         return curves
 

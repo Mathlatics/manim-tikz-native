@@ -636,7 +636,9 @@ points are:
   `track_scheduled_plane_section()`, and `track_moving_section_point()`;
 - `build_section_transition_plan()` and
   `QuadricSectionTransition3D`;
-- `QuadricSection3D`, the preferred finite-section authoring facade;
+- `QuadricSection3D`, the low-level finite-section authoring facade;
+- `QuadricSectionRig`, `SectionState`, and `QuadricSectionAction`, the natural
+  fixed-topology mathematical-action layer;
 - `QUADRIC_PREVIEW_PROFILE`, `QUADRIC_FINAL_PROFILE`,
   and `QuadricCapacityPlanner`;
 - `QuadricOcclusion3D`, `QuadricManimStyle`, `QuadricBoundaryStyle`, and
@@ -674,6 +676,32 @@ ink. This ordinary facade still rejects `OPEN_DOUBLE` and direct
 `ANALYTIC_DOUBLE` rendering at construction rather than after Manim slot
 allocation. Use the dedicated composite facade for the former. Neither mode
 creates a second renderer or a second rollback path.
+
+When the scene should read as a mathematical storyboard, construct
+`QuadricSectionRig` with the same `surface`, `section_id`, and initial `plane`,
+enter `session()`, then pass `animate_plane_shift()`,
+`animate_plane_rotation()`, or an unambiguous parallel `animate_plane_to()` to
+`Scene.play`. The rig compiles exact critical positions before returning the
+animation, maps incidental raw conic labels to stable tracked slots, and joins
+its immutable state to the controller's frame transaction. Numeric painter
+bands are allocated automatically per Scene; an exact explicit override is
+still available. A path needing topology-transition banks fails before
+playback rather than relying on finite samples. Phase 1 resolves and freezes
+one complete non-callable parallel projection when the rig is constructed,
+including a semantic state's target, screen anchor, and zoom; projection
+callbacks remain unsupported. Whenever either the plane or its section boundary
+is visible, it analytically certifies the complete
+axis-angle path as an AREA projection and rejects an unsafe action before
+playback without changing existing Scene ownership or its painter-band
+reservation. The lower-level facade and semantic-camera APIs still support
+certified edge-on LINE frames; this narrower Rig phase does not animate through
+that display-rank handoff. Only setting both `show_plane=False` and
+`draw_section_boundary=False` opts out because no rank-sensitive section ink is
+then displayed.
+`reverse_rate_function=True` is explicitly unsupported, whether supplied to
+the action or through `Scene.play`. Endpoint-preserving non-monotone rate
+functions are allowed because the whole progress interval is certified; each
+evaluated value must still be finite and remain in `[0, 1]`.
 
 `render_profile="preview"` and `"final"` expand to the matching style,
 approximation, and fixed-capacity defaults inside this facade. Explicit
@@ -782,7 +810,9 @@ creates nor removes Manim objects, and sampling the same progress gives the
 same result in forward or reverse playback. Filled end-cap chords do not need a
 topology bank: each cap role has one stable slot, is recomputed from the actual
 current plane, and remains a certified part of the complete finite boundary
-while the lateral conics cross-fade.
+while the lateral conics cross-fade. The first fixed-topology Rig slice still
+rejects cap-chord activation changes; they remain authored through this
+scheduled transition layer.
 
 Its cutting plane is shown and unified by default. `show_plane=False` means
 more than hiding the rectangle: it removes the plane fill, outline, depth

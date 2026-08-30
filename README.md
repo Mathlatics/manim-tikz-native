@@ -47,44 +47,44 @@ to SVG. Unsupported syntax is reported explicitly.
 
 ## Cone-section quick start
 
-One high-level controller derives the complete moving section, hidden dashes,
-surface/plane order, and fixed-capacity slots. Ordinary authors do not need to
-manage curve IDs, cap-chord IDs, fragments, or painter bands.
+One high-level rig derives the complete moving section, hidden dashes,
+surface/plane order, and fixed-capacity slots. Ordinary authors describe a
+mathematical plane action instead of wiring a tracker or painter band.
 
 ```python
 from math import pi
-from manim import Scene, ValueTracker, linear
+from manim import Scene
 from polyhedron_visibility.quadrics import (
-    ConeSpec, QuadricManimStyle, QuadricSection3D, SectionPlane,
+    ConeSpec, QuadricSectionRig, SectionPlane,
 )
 
-class ConeSectionQuickStart(Scene):
+class ConeSectionRigQuickStart(Scene):
     def construct(self):
-        progress = ValueTracker(0)
         cone = ConeSpec("cone", (0, 0, -1.5), (0, 0, 1), pi / 6, (0, 4))
-        def plane():
-            return SectionPlane(
-                "cut", (0, 0, -1 + 2.7 * progress.get_value()),
-                (0.65, 0, 1), u_axis=(0, 1, 0),
-            )
-        QuadricSection3D(
+        plane = SectionPlane(
+            "cut", (0, 0, -0.4), (0.45, 0, 1), u_axis=(0, 1, 0),
+        )
+        with QuadricSectionRig(
             self, surface=cone, section_id="cone-section", plane=plane,
-            paint_policy="depth_aware_diagrammatic", render_profile="preview",
-            style=QuadricManimStyle(surface_fill_opacity=.62),
-        ).attach()
-        self.play(progress.animate.set_value(1), run_time=4, rate_func=linear)
+            paint_policy="depth_aware_diagrammatic",
+        ).session() as section:
+            self.play(section.animate_plane_shift(0.6), run_time=2)
+            self.play(section.animate_plane_rotation(
+                axis=(0, 0, 1), angle=pi / 3, pivot=cone.apex,
+            ), run_time=2)
 ```
 
-Render the [checked-in scene](examples/quadrics/quadric_section_quick_start.py)
+Render the [checked-in scene](examples/quadrics/quadric_section_rig_quick_start.py)
 at the matching Preview output size:
 
 ```bash
 manim -r 480,270 --fps 15 \
-  examples/quadrics/quadric_section_quick_start.py ConeSectionQuickStart
+  examples/quadrics/quadric_section_rig_quick_start.py \
+  ConeSectionRigQuickStart
 ```
 
-Change `render_profile` to `"final"` and render at 960x540, 30 fps for the
-classroom master. The separate
+Pass `render_profile="preview"` for composition work or `"final"` and render
+at 960x540, 30 fps for the classroom master. The separate
 [Preview / Final / Release-Evidence workflow](docs/quadric-authoring-workflow.md)
 also gives the one-call capacity-planning path.
 
@@ -130,6 +130,13 @@ also gives the one-call capacity-planning path.
   envelope instead of refitting the visible rectangle at every frame;
   `show_plane=False` deliberately disables the complete plane compositor, not
   only the visible patch;
+- a `QuadricSectionRig` mathematical-action layer above `QuadricSection3D`:
+  immutable plane states, exact pre-play critical-path certification, stable
+  tracked curve slots, atomic author/display rollback, and automatic
+  non-overlapping Scene painter bands support shift, axis-angle rotation, and
+  unambiguous parallel `plane_to` actions without updater allocation; this
+  first slice rejects cap-chord activation changes and all other paths needing
+  topology-transition banks before playback;
 - explicit `QUADRIC_PREVIEW_PROFILE` and `QUADRIC_FINAL_PROFILE` recipes keep
   480x270 composition work separate from 960x540 Cairo acceptance, while
   `QuadricCapacityPlanner` scans the declared animation frames and analytic

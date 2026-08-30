@@ -9,9 +9,9 @@ section contract promises.
 The ordinary `CI` workflow keeps the existing required check names
 `test (3.11)` and `test (3.12)`.  Those jobs run the complete renderer-neutral
 suite, deterministic parameter sweeps, Manim binding contracts, and the
-320x180/480x270 Cairo pixel regressions.  A separate Python 3.12 smoke job
-renders four fixed small animations, including the high-level section facade
-and ellipse/parabola/hyperbola handoff.
+320x180/480x270 Cairo pixel regressions. A separate Python 3.12 smoke job
+renders a fixed small animation sample, including the high-level section
+facade, mathematical-action Rig, and ellipse/parabola/hyperbola handoff.
 
 The workflow runs once for each pull-request revision and once after the
 accepted revision reaches `main`.  Pushes to a feature branch do not start a

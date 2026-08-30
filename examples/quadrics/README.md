@@ -19,6 +19,10 @@ manim -pql examples/quadrics/quadric_occlusion_demo.py \
 manim -r 480,270 --fps 15 \
   examples/quadrics/quadric_section_quick_start.py ConeSectionQuickStart
 
+manim -r 480,270 --fps 15 \
+  examples/quadrics/quadric_section_rig_quick_start.py \
+  ConeSectionRigQuickStart
+
 manim -pql examples/quadrics/unified_boundary_visibility_demo.py \
   UnifiedBoundaryVisibilityComparison
 
@@ -50,6 +54,10 @@ manim -ql --fps 8 \
   front/hidden spans on every frame.
 - `ConeSectionQuickStart` is the short product example: one cone, one live
   plane callback, one named render profile, and no manual curve/cap/slot IDs.
+- `ConeSectionRigQuickStart` is the natural-action version. It shifts and
+  rotates the mathematical plane without a `ValueTracker`, callback wiring, or
+  numeric painter band. Every action is continuously preflighted before
+  `Scene.play`; a path needing topology-transition banks fails before playback.
 - `ObliqueCylinderSectionDemo` rotates an infinite mathematical plane while
   keeping a stable finite ellipse branch.
 - `ConeSectionFamiliesDemo` shows finite ellipse, parabola, and hyperbola

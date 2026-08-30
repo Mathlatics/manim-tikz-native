@@ -21,6 +21,7 @@ from ..geometry import GeometryContext, ResolvedGeometryContext
 from .animation import (
     SectionAnimationError,
     SectionTopologySignature,
+    _materialize_tracked_section_curves,
     match_tracked_section_frame,
 )
 from .compositing import QuadricPaintPolicy, SurfaceConstraintInput
@@ -371,34 +372,22 @@ class QuadricSectionTransition3D:
                     "live section no longer matches its analytic topology schedule"
                 ) from exc
             signatures.append(signature)
-            for branch_mapping in tracked.branches:
-                component = trace.component_map[
-                    branch_mapping.source_component_id
-                ]
-                branch = trace.branch_map[branch_mapping.source_branch_id]
-                if len(component.parameter_intervals) > MAX_TRANSITION_INTERVAL_SLOTS:
-                    raise QuadricManimCapacityError(
-                        "one section component exceeds the two-interval transition "
-                        "capacity"
-                    )
-                for interval_slot, interval in enumerate(
-                    component.parameter_intervals
-                ):
-                    curve_id = _curve_slot_id(
+            try:
+                tracked_curves = _materialize_tracked_section_curves(
+                    tracked,
+                    lambda branch_mapping, interval_slot: _curve_slot_id(
                         self.plan.section_id,
                         layer.bank_index,
                         branch_mapping.capacity_slot,
                         interval_slot,
-                    )
-                    curves.append(
-                        ParametricConicBranch(
-                            curve_id,
-                            branch.parameterization,
-                            branch.plane_embedding,
-                            interval,
-                        )
-                    )
-                    opacities[curve_id] = layer.opacity
+                    ),
+                    max_intervals_per_component=MAX_TRANSITION_INTERVAL_SLOTS,
+                )
+            except SectionAnimationError as exc:
+                raise QuadricManimCapacityError(str(exc)) from exc
+            curves.extend(tracked_curves)
+            for curve in tracked_curves:
+                opacities[curve.curve_id] = layer.opacity
 
         if self.draw_section_boundary:
             if current_cap_chords is None:

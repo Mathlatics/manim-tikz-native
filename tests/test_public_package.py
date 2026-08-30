@@ -17,9 +17,13 @@ from polyhedron_visibility.quadrics import (
     QUADRIC_PREVIEW_PROFILE,
     QuadricCapacityPlanner,
     QuadricRenderProfile,
+    QuadricSectionAction,
     QuadricSectionBoundary,
     QuadricSection3D,
+    QuadricSectionRig,
+    QuadricSectionRigError,
     QuadricSectionTransition3D,
+    SectionState,
     SectionPlane,
     SectionTransitionPlan,
     SphereSpec,
@@ -74,6 +78,10 @@ class PublicPackageTests(unittest.TestCase):
         self.assertEqual(SectionTransitionPlan.__name__, "SectionTransitionPlan")
         self.assertEqual(QuadricSectionBoundary.__name__, "QuadricSectionBoundary")
         self.assertEqual(QuadricSection3D.__name__, "QuadricSection3D")
+        self.assertEqual(QuadricSectionRig.__name__, "QuadricSectionRig")
+        self.assertEqual(QuadricSectionAction.__name__, "QuadricSectionAction")
+        self.assertEqual(QuadricSectionRigError.__name__, "QuadricSectionRigError")
+        self.assertEqual(SectionState.__name__, "SectionState")
         self.assertEqual(QuadricCapacityPlanner.__name__, "QuadricCapacityPlanner")
         self.assertIsInstance(QUADRIC_PREVIEW_PROFILE, QuadricRenderProfile)
         self.assertIsInstance(QUADRIC_FINAL_PROFILE, QuadricRenderProfile)

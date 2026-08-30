@@ -360,6 +360,11 @@ hyperbola transition through Manim's normal render lifecycle.
 
 ## Public workflow
 
+For natural fixed-topology plane actions, use `QuadricSectionRig`; its short
+example and exact preflight boundaries are documented in the
+[authoring workflow](quadric-authoring-workflow.md). The lower-level callback
+form below remains public for manual controllers and equivalence tests.
+
 The shortest static section workflow is:
 
 ```python

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Hashable
 from dataclasses import dataclass
 from typing import Mapping, Sequence
 
@@ -14,6 +15,226 @@ from .binding import OcclusionBindingError
 
 class ManagedPainterBandError(OcclusionBindingError):
     """Raised before a managed far-to-near z band is mutated."""
+
+
+class ScenePainterBandError(ManagedPainterBandError):
+    """Raised before a Scene-level painter-band reservation is mutated."""
+
+
+@dataclass(frozen=True, slots=True, eq=False)
+class ScenePainterBandReservation:
+    """One identity-bearing request for a Scene-level painter z band.
+
+    ``owner_key`` is the stable logical identity of the owner inside one
+    Scene.  Reservation identity is deliberately *object identity*, not value
+    equality: reserving the same instance twice is idempotent, while a second
+    instance with the same owner key is diagnosed as a duplicate owner.
+
+    When ``exact`` is false, allocation starts at ``preferred_z_band`` and
+    moves upward to the first non-overlapping slot.  When it is true, the
+    preferred band is the only acceptable slot.
+    """
+
+    owner_key: Hashable
+    preferred_z_band: tuple[float, float]
+    exact: bool = False
+
+    def __post_init__(self) -> None:
+        try:
+            hash(self.owner_key)
+        except (TypeError, ValueError) as exc:
+            raise ScenePainterBandError(
+                "scene painter-band owner_key must be hashable"
+            ) from exc
+        object.__setattr__(
+            self,
+            "preferred_z_band",
+            _validate_scene_painter_band(self.preferred_z_band),
+        )
+        if not isinstance(self.exact, bool):
+            raise TypeError("scene painter-band exact must be a bool")
+
+
+@dataclass(frozen=True, slots=True)
+class ScenePainterBandAllocation:
+    """Read-only public description of one active Scene reservation."""
+
+    owner_key: Hashable
+    z_band: tuple[float, float]
+    exact: bool
+
+
+@dataclass(frozen=True, slots=True)
+class _ScenePainterBandEntry:
+    reservation: ScenePainterBandReservation
+    z_band: tuple[float, float]
+
+
+_SCENE_PAINTER_BAND_REGISTRY = (
+    "_polyhedron_visibility_scene_painter_band_reservations"
+)
+
+
+def _validate_scene_painter_band(value: object) -> tuple[float, float]:
+    if not isinstance(value, tuple) or len(value) != 2:
+        raise ScenePainterBandError(
+            "scene painter z band must be a two-value tuple"
+        )
+    low, high = (float(item) for item in value)
+    if (
+        not np.isfinite(low)
+        or not np.isfinite(high)
+        or low >= high
+        or not np.isfinite(high - low)
+    ):
+        raise ScenePainterBandError(
+            "scene painter z band must contain two finite increasing values "
+            "with a finite span"
+        )
+    return low, high
+
+
+def _read_scene_painter_band_registry(
+    scene: object,
+) -> dict[Hashable, _ScenePainterBandEntry] | None:
+    value = getattr(scene, _SCENE_PAINTER_BAND_REGISTRY, None)
+    if value is None:
+        return None
+    if not isinstance(value, dict) or any(
+        not isinstance(entry, _ScenePainterBandEntry)
+        for entry in value.values()
+    ):
+        raise ScenePainterBandError(
+            "Scene painter-band reservation registry is invalid"
+        )
+    return value
+
+
+def _scene_painter_bands_overlap(
+    first: tuple[float, float],
+    second: tuple[float, float],
+) -> bool:
+    # Endpoints are drawable z slots too, so touching closed bands conflict.
+    return not (first[1] < second[0] or second[1] < first[0])
+
+
+def reserve_scene_painter_band(
+    scene: object,
+    reservation: ScenePainterBandReservation,
+) -> tuple[float, float]:
+    """Reserve and return one non-overlapping z band for ``reservation``.
+
+    All validation and conflict detection happen before the Scene registry is
+    created or changed.  See :class:`ScenePainterBandReservation` for the
+    duplicate-owner and idempotency rules.
+    """
+
+    if not isinstance(reservation, ScenePainterBandReservation):
+        raise TypeError("reservation must be a ScenePainterBandReservation")
+    registry = _read_scene_painter_band_registry(scene)
+    existing = None if registry is None else registry.get(reservation.owner_key)
+    if existing is not None:
+        if existing.reservation is reservation:
+            return existing.z_band
+        raise ScenePainterBandError(
+            f"duplicate Scene painter-band owner {reservation.owner_key!r}"
+        )
+
+    preferred = reservation.preferred_z_band
+    occupied = () if registry is None else tuple(
+        entry.z_band for entry in registry.values()
+    )
+    if reservation.exact:
+        if any(
+            _scene_painter_bands_overlap(preferred, other)
+            for other in occupied
+        ):
+            raise ScenePainterBandError(
+                "exact Scene painter z band conflicts with an active reservation"
+            )
+        actual = preferred
+    else:
+        width = preferred[1] - preferred[0]
+        gap = max(1.0, width * 1.0e-6)
+        actual = preferred
+        while True:
+            conflicts = tuple(
+                other
+                for other in occupied
+                if _scene_painter_bands_overlap(actual, other)
+            )
+            if not conflicts:
+                break
+            blocking_high = max(other[1] for other in conflicts)
+            low = blocking_high + gap
+            high = low + width
+            if (
+                not np.isfinite(low)
+                or not np.isfinite(high)
+                or not blocking_high < low < high
+            ):
+                raise ScenePainterBandError(
+                    "automatic Scene painter z band overflowed or could not "
+                    "advance above active reservations"
+                )
+            actual = (low, high)
+
+    entry = _ScenePainterBandEntry(reservation, actual)
+    if registry is None:
+        registry = {}
+        setattr(scene, _SCENE_PAINTER_BAND_REGISTRY, registry)
+    registry[reservation.owner_key] = entry
+    return actual
+
+
+def release_scene_painter_band(
+    scene: object,
+    reservation: ScenePainterBandReservation,
+) -> bool:
+    """Release ``reservation`` and return whether an active entry was removed.
+
+    Releasing an already-released token is a no-op.  A different token cannot
+    release the band belonging to the same logical owner.
+    """
+
+    if not isinstance(reservation, ScenePainterBandReservation):
+        raise TypeError("reservation must be a ScenePainterBandReservation")
+    registry = _read_scene_painter_band_registry(scene)
+    if registry is None:
+        return False
+    existing = registry.get(reservation.owner_key)
+    if existing is None:
+        return False
+    if existing.reservation is not reservation:
+        raise ScenePainterBandError(
+            f"Scene painter-band owner {reservation.owner_key!r} belongs to "
+            "a different reservation token"
+        )
+    del registry[reservation.owner_key]
+    if not registry:
+        try:
+            delattr(scene, _SCENE_PAINTER_BAND_REGISTRY)
+        except AttributeError:
+            pass
+    return True
+
+
+def scene_painter_band_allocations(
+    scene: object,
+) -> tuple[ScenePainterBandAllocation, ...]:
+    """Return active Scene allocations in reservation order."""
+
+    registry = _read_scene_painter_band_registry(scene)
+    if registry is None:
+        return ()
+    return tuple(
+        ScenePainterBandAllocation(
+            owner_key=entry.reservation.owner_key,
+            z_band=entry.z_band,
+            exact=entry.reservation.exact,
+        )
+        for entry in registry.values()
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -271,4 +492,10 @@ __all__ = [
     "ManagedPainterBandError",
     "PreparedPainterBand",
     "PreparedPainterItem",
+    "ScenePainterBandAllocation",
+    "ScenePainterBandError",
+    "ScenePainterBandReservation",
+    "release_scene_painter_band",
+    "reserve_scene_painter_band",
+    "scene_painter_band_allocations",
 ]

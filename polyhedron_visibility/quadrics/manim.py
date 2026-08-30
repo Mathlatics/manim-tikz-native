@@ -529,6 +529,22 @@ class PreparedQuadricManimFrame:
         return self.numeric.boundary_frame
 
 
+@dataclass(frozen=True, slots=True)
+class _CommittedControllerState:
+    fragment_slot_maps: dict[str, dict[str, int]]
+    last_frame: QuadricCompositingFrame | None
+    last_global_frame: GlobalQuadricFrame | None
+    last_section_frame: QuadricSectionCompositingFrame | None
+    last_boundary_frame: QuadricBoundaryCompositingFrame | None
+    display_slot_state: dict[str, _CommittedDisplaySlot]
+    last_painter_band_signature: tuple[tuple[str, int, float], ...]
+    last_input_geometry_signature: bytes | None
+    last_input_draw_signature: bytes | None
+    last_input_opacity: float | None
+    last_prepared_frame: PreparedQuadricManimFrame | None
+    last_prepared_performance_counts: dict[str, int]
+
+
 def _surface_items(
     value: Sequence[QuadricSurfaceSpec],
 ) -> tuple[QuadricSurfaceSpec, ...]:
@@ -921,6 +937,57 @@ class QuadricOcclusion3D:
             z_band=painter_z_band,
             managed_roots=(self.root,),
         )
+        self._frame_transaction: object | None = None
+
+    def _set_frame_transaction(self, transaction: object) -> None:
+        """Bind one author-state participant before Scene ownership begins.
+
+        This package-private hook lets a high-level rig join the existing
+        display transaction without changing any renderer-neutral contract.
+        The participant must expose begin/commit/rollback/cancel methods.
+        A commit failure joins the display and committed-input-cache rollback;
+        finalize, rollback, and cancel themselves must not fail. Low-level/
+        manual controllers do not bind a participant and retain their
+        historical behavior.
+        """
+
+        if self._attached:
+            raise QuadricManimError(
+                "frame transaction must be bound before controller attachment"
+            )
+        for method_name in (
+            "_begin_quadric_frame",
+            "_commit_quadric_frame",
+            "_finalize_quadric_frame",
+            "_rollback_quadric_frame",
+            "_cancel_quadric_frame",
+        ):
+            if not callable(getattr(transaction, method_name, None)):
+                raise TypeError(
+                    f"frame transaction must provide {method_name}()"
+                )
+        self._frame_transaction = transaction
+
+    def _begin_bound_frame_transaction(self) -> object | None:
+        if self._frame_transaction is None:
+            return None
+        return self._frame_transaction._begin_quadric_frame()
+
+    def _commit_bound_frame_transaction(self, token: object | None) -> None:
+        if self._frame_transaction is not None:
+            self._frame_transaction._commit_quadric_frame(token)
+
+    def _finalize_bound_frame_transaction(self, token: object | None) -> None:
+        if self._frame_transaction is not None:
+            self._frame_transaction._finalize_quadric_frame(token)
+
+    def _rollback_bound_frame_transaction(self, token: object | None) -> None:
+        if self._frame_transaction is not None:
+            self._frame_transaction._rollback_quadric_frame(token)
+
+    def _cancel_bound_frame_transaction(self) -> None:
+        if self._frame_transaction is not None:
+            self._frame_transaction._cancel_quadric_frame()
 
     def _resolve_surfaces(self) -> tuple[QuadricSurfaceSpec, ...]:
         value = (
@@ -2880,56 +2947,64 @@ class QuadricOcclusion3D:
                 )
         return tuple(actions)
 
-    def apply(self, prepared: PreparedQuadricManimFrame) -> None:
-        """Commit one already validated frame, rolling back on any exception."""
+    def apply(
+        self,
+        prepared: PreparedQuadricManimFrame,
+        *,
+        _commit_frame: Callable[[], None] | None = None,
+        _finalize_frame: Callable[[], None] | None = None,
+    ) -> None:
+        """Commit one validated frame and its optional author continuation."""
 
         if not self._attached:
             raise QuadricManimError("quadric occlusion controller is not attached")
         if not isinstance(prepared, PreparedQuadricManimFrame):
             raise TypeError("prepared must be a PreparedQuadricManimFrame")
 
-        def capture_controller_state() -> tuple[
-            dict[str, dict[str, int]],
-            QuadricCompositingFrame | None,
-            GlobalQuadricFrame | None,
-            QuadricSectionCompositingFrame | None,
-            QuadricBoundaryCompositingFrame | None,
-            dict[str, _CommittedDisplaySlot],
-            tuple[tuple[str, int, float], ...],
-        ]:
-            return (
-                {
+        def capture_controller_state() -> _CommittedControllerState:
+            return _CommittedControllerState(
+                fragment_slot_maps={
                     curve_id: dict(values)
                     for curve_id, values in self._fragment_slot_maps.items()
                 },
-                self._last_frame,
-                self._last_global_frame,
-                self._last_section_frame,
-                self._last_boundary_frame,
-                dict(self._display_slot_state),
-                self._last_painter_band_signature,
+                last_frame=self._last_frame,
+                last_global_frame=self._last_global_frame,
+                last_section_frame=self._last_section_frame,
+                last_boundary_frame=self._last_boundary_frame,
+                display_slot_state=dict(self._display_slot_state),
+                last_painter_band_signature=self._last_painter_band_signature,
+                last_input_geometry_signature=(
+                    self._last_input_geometry_signature
+                ),
+                last_input_draw_signature=self._last_input_draw_signature,
+                last_input_opacity=self._last_input_opacity,
+                last_prepared_frame=self._last_prepared_frame,
+                last_prepared_performance_counts=dict(
+                    self._last_prepared_performance_counts
+                ),
             )
 
         def restore_controller_state(
-            state: tuple[
-                dict[str, dict[str, int]],
-                QuadricCompositingFrame | None,
-                GlobalQuadricFrame | None,
-                QuadricSectionCompositingFrame | None,
-                QuadricBoundaryCompositingFrame | None,
-                dict[str, _CommittedDisplaySlot],
-                tuple[tuple[str, int, float], ...],
-            ],
+            state: _CommittedControllerState,
         ) -> None:
-            (
-                self._fragment_slot_maps,
-                self._last_frame,
-                self._last_global_frame,
-                self._last_section_frame,
-                self._last_boundary_frame,
-                self._display_slot_state,
-                self._last_painter_band_signature,
-            ) = state
+            self._fragment_slot_maps = state.fragment_slot_maps
+            self._last_frame = state.last_frame
+            self._last_global_frame = state.last_global_frame
+            self._last_section_frame = state.last_section_frame
+            self._last_boundary_frame = state.last_boundary_frame
+            self._display_slot_state = state.display_slot_state
+            self._last_painter_band_signature = (
+                state.last_painter_band_signature
+            )
+            self._last_input_geometry_signature = (
+                state.last_input_geometry_signature
+            )
+            self._last_input_draw_signature = state.last_input_draw_signature
+            self._last_input_opacity = state.last_input_opacity
+            self._last_prepared_frame = state.last_prepared_frame
+            self._last_prepared_performance_counts = (
+                state.last_prepared_performance_counts
+            )
 
         attempt = prepared._performance_attempt
         if attempt is None or attempt.finished:
@@ -2995,6 +3070,10 @@ class QuadricOcclusion3D:
                     self._last_boundary_frame = prepared.boundary_frame
                     self._display_slot_state = dict(delta.next_state)
                     self._last_painter_band_signature = painter_signature
+                if _commit_frame is not None:
+                    _commit_frame()
+                if _finalize_frame is not None:
+                    _finalize_frame()
         except Exception as exc:
             self._finish_performance_attempt(
                 attempt,
@@ -3076,11 +3155,13 @@ class QuadricOcclusion3D:
         # changes.  Painter-band validation temporarily needs the persistent
         # non-rendering driver in the Scene and is fully rolled back on error.
         attempt = self._new_performance_attempt()
+        frame_token = self._begin_bound_frame_transaction()
         try:
             with _performance_stage(attempt, "resolve_inputs"):
                 resolved = self._resolve_frame_inputs()
             numeric = self._prepare_numeric(attempt, resolved)
         except Exception as exc:
+            self._rollback_bound_frame_transaction(frame_token)
             self._finish_performance_attempt(
                 attempt,
                 status="failed",
@@ -3109,11 +3190,21 @@ class QuadricOcclusion3D:
             self._register_fixed_frame()
             prepared = self._prepare_painter(numeric, attempt)
             self._attached = True
-            self.apply(prepared)
-            self._commit_input_cache(
-                resolved,
-                self.root.opacity_multiplier,
+
+            def commit_attached_frame() -> None:
+                self._commit_input_cache(
+                    resolved,
+                    self.root.opacity_multiplier,
+                    prepared,
+                )
+                self._commit_bound_frame_transaction(frame_token)
+
+            self.apply(
                 prepared,
+                _commit_frame=commit_attached_frame,
+                _finalize_frame=lambda: self._finalize_bound_frame_transaction(
+                    frame_token
+                ),
             )
         except Exception as exc:
             self._attached = False
@@ -3128,6 +3219,7 @@ class QuadricOcclusion3D:
             self._remove_owned_identities()
             self._band.restore()
             self._invalidate_cairo_static_image()
+            self._rollback_bound_frame_transaction(frame_token)
             self._finish_performance_attempt(
                 attempt,
                 status="failed",
@@ -3142,6 +3234,7 @@ class QuadricOcclusion3D:
         if not self._attached:
             raise QuadricManimError("quadric occlusion controller is not attached")
         attempt = self._new_performance_attempt()
+        frame_token = self._begin_bound_frame_transaction()
         try:
             with _performance_stage(attempt, "resolve_inputs"):
                 resolved = self._resolve_frame_inputs()
@@ -3199,18 +3292,30 @@ class QuadricOcclusion3D:
                                 "transaction_snapshot_mobject_count", 0
                             )
                             attempt.set_count("modified_mobject_count", 0)
+                    self._commit_bound_frame_transaction(frame_token)
+                    self._finalize_bound_frame_transaction(frame_token)
                     self._finish_performance_attempt(
                         attempt,
                         status="committed",
                     )
                     return self
-            self.apply(prepared)
-            self._commit_input_cache(
-                resolved,
-                opacity,
+            def commit_updated_frame() -> None:
+                self._commit_input_cache(
+                    resolved,
+                    opacity,
+                    prepared,
+                )
+                self._commit_bound_frame_transaction(frame_token)
+
+            self.apply(
                 prepared,
+                _commit_frame=commit_updated_frame,
+                _finalize_frame=lambda: self._finalize_bound_frame_transaction(
+                    frame_token
+                ),
             )
         except Exception as exc:
+            self._rollback_bound_frame_transaction(frame_token)
             self._finish_performance_attempt(
                 attempt,
                 status="failed",
@@ -3236,6 +3341,7 @@ class QuadricOcclusion3D:
         _invalidate_cairo_static_image(self.scene)
 
     def restore(self) -> "QuadricOcclusion3D":
+        self._cancel_bound_frame_transaction()
         self._attached = False
         self._remove_fixed_frame()
         self._remove_owned_identities()

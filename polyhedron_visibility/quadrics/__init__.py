@@ -588,6 +588,10 @@ _EXPORTS: Final[dict[str, tuple[str, str]]] = {
         ".authoring",
         "QuadricSectionAuthoringError",
     ),
+    "QuadricSectionAction": (".rig", "QuadricSectionAction"),
+    "QuadricSectionRig": (".rig", "QuadricSectionRig"),
+    "QuadricSectionRigError": (".rig", "QuadricSectionRigError"),
+    "SectionState": (".rig", "SectionState"),
     "MAX_TRANSITION_INTERVAL_SLOTS": (
         ".transition_manim",
         "MAX_TRANSITION_INTERVAL_SLOTS",
