@@ -40,6 +40,7 @@ from polyhedron_visibility.quadrics.profiles import (
     QUADRIC_PREVIEW_PROFILE,
 )
 from polyhedron_visibility.quadrics.section_compositing import (
+    PlanePatchProjectionKind,
     canonical_quadric_section_compositing_json,
 )
 from polyhedron_visibility.quadrics.sections import (
@@ -476,7 +477,7 @@ class QuadricSectionAuthoringTests(unittest.TestCase):
         finally:
             controller.restore()
 
-    def test_failure_rolls_back_the_complete_facade_frame(self) -> None:
+    def test_facade_commits_exact_edge_on_line_without_reallocating(self) -> None:
         state = {"edge_on": False}
 
         def plane() -> SectionPlane:
@@ -504,17 +505,24 @@ class QuadricSectionAuthoringTests(unittest.TestCase):
             limits=replace(_limits(), max_total_mobjects=60000),
             max_chord_error=0.01,
         ).attach()
-        snapshot = controller.slot_snapshot()
         identities = controller.slot_identities()
-        frame = controller.last_boundary_frame
-        z_indices = controller.active_painter_z_indices
         state["edge_on"] = True
-        with self.assertRaisesRegex(QuadricManimError, "projects edge-on"):
+        with patch.object(
+            Mobject,
+            "__init__",
+            side_effect=AssertionError("edge-on facade update allocated a Mobject"),
+        ):
             controller.update()
-        self.assertEqual(controller.slot_snapshot(), snapshot)
         self.assertEqual(controller.slot_identities(), identities)
-        self.assertIs(controller.last_boundary_frame, frame)
-        self.assertEqual(controller.active_painter_z_indices, z_indices)
+        section_frame = controller.last_section_frame
+        assert section_frame is not None
+        self.assertIs(
+            section_frame.projection_kind,
+            PlanePatchProjectionKind.LINE,
+        )
+        self.assertEqual(section_frame.plane_fragments, ())
+        self.assertTrue(section_frame.plane_outline_fragments)
+        self.assertIsNotNone(controller.last_boundary_frame)
         controller.restore()
 
     def test_static_and_scheduled_authorities_cannot_be_mixed(self) -> None:

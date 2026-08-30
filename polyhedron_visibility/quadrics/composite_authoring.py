@@ -78,7 +78,6 @@ from .manim import (
     QuadricManimError,
     QuadricManimLimits,
     QuadricManimStyle,
-    _display_offset,
 )
 from .manim_runtime import (
     _CommittedDisplaySlot,
@@ -101,6 +100,7 @@ from .manim_runtime import (
     _coerce_projection_frame,
     _curve_slots_family_capacity,
     _display_digest,
+    _display_offset,
     _hide_vmobject,
     _invalidate_cairo_static_image,
     _prepare_boundary_fragments,

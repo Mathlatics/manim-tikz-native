@@ -84,7 +84,7 @@ from .sections import QuadricSectionError, compute_quadric_section
 from .trace import section_trace_curves
 
 
-QUADRIC_SECTION_COMPOSITING_SCHEMA = "manim-quadric-section-compositing/v1"
+QUADRIC_SECTION_COMPOSITING_SCHEMA = "manim-quadric-section-compositing/v2"
 
 # The public error is a display-space upper bound, not a request to refine the
 # analytic section down to floating-point jitter.  These conservative divisors
@@ -94,6 +94,7 @@ _SECTION_BOUNDARY_CHORD_DIVISOR = 2048.0
 _NEAR_TANGENT_SECTION_BOUNDARY_CHORD_DIVISOR = 8192.0
 _OPEN_SHELL_TRIM_BOUNDARY_CHORD_DIVISOR = 16.0
 _OPEN_SHELL_TRIM_MAX_RANK_ONE_RATIO = 0.125
+PLANE_PATCH_RANK_RATIO_THRESHOLD = 1.0e-12
 
 
 QuadricSurfaceSpec = SphereSpec | CylinderSpec | ConeSpec
@@ -111,6 +112,110 @@ class PlaneDepthRole(str, Enum):
     BEHIND_SURFACE = "behind_surface"
     BETWEEN_SURFACE_SHEETS = "between_surface_sheets"
     IN_FRONT_OF_SURFACE = "in_front_of_surface"
+
+
+class PlanePatchProjectionKind(str, Enum):
+    """Topological dimension retained by one finite display patch."""
+
+    AREA = "area"
+    LINE = "line"
+
+
+@dataclass(frozen=True, slots=True)
+class PlanePatchProjectionEvidence:
+    """SVD certificate for the screen image of a finite plane patch.
+
+    ``singular_values`` belong to the screen map after the plane axes are
+    scaled by the patch half-width and half-height. ``rank_ratio`` is the
+    smaller value divided by the larger one, so extreme but intentional patch
+    aspect ratios are judged by their actual finite screen extent. A LINE
+    projection additionally records the two finite screen endpoints of the
+    projected rectangle. Those endpoints bound the single near-side outline
+    chain emitted by the compositor.
+    """
+
+    kind: PlanePatchProjectionKind
+    singular_values: tuple[float, float]
+    rank_ratio: float
+    rank_ratio_threshold: float = PLANE_PATCH_RANK_RATIO_THRESHOLD
+    line_screen_start: tuple[float, float] | None = None
+    line_screen_end: tuple[float, float] | None = None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.kind, PlanePatchProjectionKind):
+            raise TypeError("plane patch projection kind must be explicit")
+        values = np.asarray(self.singular_values, dtype=float)
+        if (
+            values.shape != (2,)
+            or not np.all(np.isfinite(values))
+            or values[0] <= 0.0
+            or values[1] < 0.0
+            or values[0] < values[1]
+        ):
+            raise QuadricSectionCompositingError(
+                "plane patch singular values must be finite, ordered, and non-negative"
+            )
+        if (
+            not isfinite(self.rank_ratio)
+            or self.rank_ratio < 0.0
+            or not isfinite(self.rank_ratio_threshold)
+            or not 0.0 < self.rank_ratio_threshold < 1.0
+        ):
+            raise QuadricSectionCompositingError(
+                "plane patch rank evidence must contain a finite positive threshold"
+            )
+        expected_ratio = float(values[1] / values[0])
+        if abs(self.rank_ratio - expected_ratio) > max(
+            np.finfo(float).eps * 16.0,
+            np.finfo(float).eps * 16.0 * expected_ratio,
+        ):
+            raise QuadricSectionCompositingError(
+                "plane patch rank ratio disagrees with its singular values"
+            )
+        if self.kind is PlanePatchProjectionKind.AREA:
+            if self.rank_ratio <= self.rank_ratio_threshold:
+                raise QuadricSectionCompositingError(
+                    "AREA plane patch projection requires a certified second axis"
+                )
+            if self.line_screen_start is not None or self.line_screen_end is not None:
+                raise QuadricSectionCompositingError(
+                    "AREA plane patch projection cannot carry line endpoints"
+                )
+            return
+        if self.rank_ratio > self.rank_ratio_threshold:
+            raise QuadricSectionCompositingError(
+                "LINE plane patch projection requires a rank-one SVD certificate"
+            )
+        endpoints = np.asarray(
+            (self.line_screen_start, self.line_screen_end), dtype=float
+        )
+        if endpoints.shape != (2, 2) or not np.all(np.isfinite(endpoints)):
+            raise QuadricSectionCompositingError(
+                "LINE plane patch projection requires two finite screen endpoints"
+            )
+        if float(np.linalg.norm(endpoints[1] - endpoints[0])) <= 0.0:
+            raise QuadricSectionCompositingError(
+                "LINE plane patch projection must retain finite screen length"
+            )
+
+    def to_dict(self) -> dict[str, object]:
+        endpoints = None
+        if self.line_screen_start is not None:
+            if self.line_screen_end is None:  # pragma: no cover - guarded above
+                raise QuadricSectionCompositingError(
+                    "LINE plane patch projection lost its finite endpoint"
+                )
+            endpoints = [
+                list(self.line_screen_start),
+                list(self.line_screen_end),
+            ]
+        return {
+            "kind": self.kind.value,
+            "singularValues": list(self.singular_values),
+            "rankRatio": self.rank_ratio,
+            "rankRatioThreshold": self.rank_ratio_threshold,
+            "lineScreenEndpoints": endpoints,
+        }
 
 
 @dataclass(frozen=True, slots=True)
@@ -350,6 +455,7 @@ class QuadricSectionCompositingFrame:
     surface_id: str
     plane: SectionPlane
     patch: PlaneDisplayPatchSpec
+    patch_projection: PlanePatchProjectionEvidence
     surface_proxy: OpaqueProjectionProxy
     plane_fragments: tuple[QuadricPlaneFragment, ...]
     plane_outline_fragments: tuple[QuadricPlaneOutlineFragment, ...]
@@ -374,6 +480,10 @@ class QuadricSectionCompositingFrame:
         if self.patch.plane_id != self.plane.plane_id:
             raise QuadricSectionCompositingError(
                 "display patch does not belong to the supplied plane"
+            )
+        if not isinstance(self.patch_projection, PlanePatchProjectionEvidence):
+            raise TypeError(
+                "patch_projection must be a PlanePatchProjectionEvidence"
             )
         if not isinstance(self.surface_proxy, OpaqueProjectionProxy):
             raise TypeError("surface_proxy must be an OpaqueProjectionProxy")
@@ -406,7 +516,20 @@ class QuadricSectionCompositingFrame:
             raise QuadricSectionCompositingError(
                 "plane outline fragments must have unique sorted identities"
             )
-        for edge_index in range(4):
+        outline_edge_indices = range(4)
+        if self.patch_projection.kind is PlanePatchProjectionKind.LINE:
+            if self.plane_fragments:
+                raise QuadricSectionCompositingError(
+                    "LINE plane patch projection cannot contain plane fill fragments"
+                )
+            outline_edge_indices = tuple(
+                sorted({item.edge_index for item in self.plane_outline_fragments})
+            )
+            if not outline_edge_indices:
+                raise QuadricSectionCompositingError(
+                    "LINE plane patch projection requires a finite outline chain"
+                )
+        for edge_index in outline_edge_indices:
             edge = tuple(
                 sorted(
                     (
@@ -434,6 +557,8 @@ class QuadricSectionCompositingFrame:
                 raise QuadricSectionCompositingError(
                     "plane outline fragments must exactly cover every edge"
                 ) from exc
+        if self.patch_projection.kind is PlanePatchProjectionKind.LINE:
+            self._validate_line_outline_chain()
         item_ids = {
             *self.paint_items.ordered,
             *(
@@ -477,6 +602,64 @@ class QuadricSectionCompositingFrame:
         }
 
     @property
+    def projection_kind(self) -> PlanePatchProjectionKind:
+        """Explicit AREA/LINE topology of this finite patch in the view."""
+
+        return self.patch_projection.kind
+
+    @property
+    def has_plane_fill(self) -> bool:
+        """Whether this frame owns drawable two-dimensional plane fill."""
+
+        return self.projection_kind is PlanePatchProjectionKind.AREA
+
+    def _validate_line_outline_chain(self) -> None:
+        start = np.asarray(self.patch_projection.line_screen_start, dtype=float)
+        end = np.asarray(self.patch_projection.line_screen_end, dtype=float)
+        direction = end - start
+        length = float(np.linalg.norm(direction))
+        axis = direction / length
+        normal = np.asarray((-axis[1], axis[0]), dtype=float)
+        tolerance = max(
+            np.finfo(float).eps * 4096.0 * max(1.0, length),
+            self.max_screen_error * 1.0e-9,
+        )
+        intervals: list[tuple[float, float]] = []
+        for fragment in self.plane_outline_fragments:
+            fragment_start = np.asarray(fragment.screen_start, dtype=float)
+            fragment_end = np.asarray(fragment.screen_end, dtype=float)
+            if max(
+                abs(float(np.dot(fragment_start - start, normal))),
+                abs(float(np.dot(fragment_end - start, normal))),
+            ) > tolerance:
+                raise QuadricSectionCompositingError(
+                    "LINE plane outline fragments must share one screen line"
+                )
+            first = float(np.dot(fragment_start - start, axis))
+            second = float(np.dot(fragment_end - start, axis))
+            lower, upper = sorted((first, second))
+            if lower < -tolerance or upper > length + tolerance:
+                raise QuadricSectionCompositingError(
+                    "LINE plane outline fragment exceeds its certified finite extent"
+                )
+            intervals.append((max(0.0, lower), min(length, upper)))
+        cursor = 0.0
+        for lower, upper in sorted(intervals):
+            if lower > cursor + tolerance:
+                raise QuadricSectionCompositingError(
+                    "LINE plane outline chain does not cover its finite extent"
+                )
+            if lower < cursor - tolerance:
+                raise QuadricSectionCompositingError(
+                    "LINE plane outline chain contains duplicate projected strokes"
+                )
+            cursor = max(cursor, upper)
+        if cursor < length - tolerance:
+            raise QuadricSectionCompositingError(
+                "LINE plane outline chain does not reach its finite endpoint"
+            )
+
+    @property
     def outline_fragments_by_role(
         self,
     ) -> dict[PlaneDepthRole, tuple[QuadricPlaneOutlineFragment, ...]]:
@@ -505,6 +688,7 @@ class QuadricSectionCompositingFrame:
                 "halfHeight": self.patch.half_height,
                 "centerCoordinates": list(self.patch.center_coordinates),
             },
+            "patchProjection": self.patch_projection.to_dict(),
             "surfaceProxy": self.surface_proxy.to_dict(),
             "planeFragments": [item.to_dict() for item in self.plane_fragments],
             "planeOutlineFragments": [
@@ -780,8 +964,8 @@ class _CanonicalVertexRegistry:
                 "canonical vertex registry requires finite plane projection data"
             )
         if (
-            float(np.linalg.norm(plane_first)) <= epsilon
-            or float(np.linalg.norm(plane_second)) <= epsilon
+            float(np.linalg.norm(plane_first)) <= np.finfo(float).tiny
+            or float(np.linalg.norm(plane_second)) <= np.finfo(float).tiny
         ):
             raise QuadricSectionCompositingError(
                 "canonical vertex plane basis must be non-degenerate"
@@ -2625,6 +2809,163 @@ def _classify_outline_world_point(
     )
 
 
+def _canonical_screen_axis(value: np.ndarray) -> np.ndarray:
+    """Give an SVD line axis a deterministic sign."""
+
+    axis = np.asarray(value, dtype=float).copy()
+    for component in axis:
+        if abs(float(component)) <= np.finfo(float).eps * 16.0:
+            continue
+        if component < 0.0:
+            axis *= -1.0
+        break
+    return axis
+
+
+def _plane_patch_projection_evidence(
+    patch_screen_basis: np.ndarray,
+    patch_corners: np.ndarray,
+    view: ParallelView,
+) -> tuple[PlanePatchProjectionEvidence, np.ndarray]:
+    left, singular_values, _right = np.linalg.svd(
+        np.asarray(patch_screen_basis, dtype=float), full_matrices=False
+    )
+    if len(singular_values) != 2 or float(singular_values[0]) <= 0.0:
+        raise QuadricSectionCompositingError(
+            "cutting plane projection retains no finite screen direction"
+        )
+    first = float(singular_values[0])
+    second = float(singular_values[1])
+    ratio = second / first
+    values = (first, second)
+    if ratio > PLANE_PATCH_RANK_RATIO_THRESHOLD:
+        return (
+            PlanePatchProjectionEvidence(
+                PlanePatchProjectionKind.AREA,
+                values,
+                ratio,
+            ),
+            _canonical_screen_axis(left[:, 0]),
+        )
+
+    axis = _canonical_screen_axis(left[:, 0])
+    projected = np.asarray(patch_corners @ view.matrix[:2].T, dtype=float)
+    scalars = projected @ axis
+    minimum_index = min(
+        range(len(projected)),
+        key=lambda index: (
+            float(scalars[index]),
+            float(projected[index, 0]),
+            float(projected[index, 1]),
+            index,
+        ),
+    )
+    maximum_index = max(
+        range(len(projected)),
+        key=lambda index: (
+            float(scalars[index]),
+            -float(projected[index, 0]),
+            -float(projected[index, 1]),
+            -index,
+        ),
+    )
+    start = projected[minimum_index]
+    end = projected[maximum_index]
+    if float(np.linalg.norm(end - start)) <= 0.0:
+        raise QuadricSectionCompositingError(
+            "cutting plane projection retains no finite patch extent"
+        )
+    return (
+        PlanePatchProjectionEvidence(
+            PlanePatchProjectionKind.LINE,
+            values,
+            ratio,
+            line_screen_start=tuple(float(item) for item in start),
+            line_screen_end=tuple(float(item) for item in end),
+        ),
+        axis,
+    )
+
+
+def _rank_one_near_outline_edges(
+    patch_corners: np.ndarray,
+    view: ParallelView,
+    screen_axis: np.ndarray,
+    *,
+    screen_epsilon: float,
+    depth_epsilon: float,
+) -> tuple[int, ...]:
+    """Select the unique near envelope of a rank-one projected rectangle."""
+
+    projected = np.asarray(patch_corners @ view.matrix[:2].T, dtype=float)
+    scalars = projected @ np.asarray(screen_axis, dtype=float)
+    depths = patch_corners @ view.matrix[2]
+    scalar_scale = max(
+        float(np.max(scalars) - np.min(scalars)),
+        screen_epsilon,
+    )
+    scalar_tolerance = max(
+        screen_epsilon * 8.0,
+        scalar_scale * PLANE_PATCH_RANK_RATIO_THRESHOLD * 16.0,
+    )
+    depth_tolerance = max(depth_epsilon * 8.0, np.finfo(float).eps * 4096.0)
+
+    def candidate_depths(value: float) -> tuple[float, ...]:
+        result: list[float] = []
+        for edge_index in range(4):
+            next_index = (edge_index + 1) % 4
+            first_scalar = float(scalars[edge_index])
+            second_scalar = float(scalars[next_index])
+            delta = second_scalar - first_scalar
+            if abs(delta) <= scalar_tolerance:
+                if abs(value - first_scalar) <= scalar_tolerance:
+                    result.append(
+                        max(float(depths[edge_index]), float(depths[next_index]))
+                    )
+                continue
+            parameter = (value - first_scalar) / delta
+            if -scalar_tolerance <= parameter <= 1.0 + scalar_tolerance:
+                parameter = min(1.0, max(0.0, parameter))
+                result.append(
+                    (1.0 - parameter) * float(depths[edge_index])
+                    + parameter * float(depths[next_index])
+                )
+        return tuple(result)
+
+    selected: list[int] = []
+    for edge_index in range(4):
+        next_index = (edge_index + 1) % 4
+        first_scalar = float(scalars[edge_index])
+        second_scalar = float(scalars[next_index])
+        if abs(second_scalar - first_scalar) <= scalar_tolerance:
+            continue
+        midpoint_scalar = 0.5 * (first_scalar + second_scalar)
+        midpoint_depth = 0.5 * (
+            float(depths[edge_index]) + float(depths[next_index])
+        )
+        candidates = candidate_depths(midpoint_scalar)
+        if not candidates:
+            raise QuadricSectionCompositingError(
+                "rank-one plane outline has no finite depth envelope"
+            )
+        if max(candidates) - midpoint_depth <= depth_tolerance:
+            selected.append(edge_index)
+    if not selected:
+        raise QuadricSectionCompositingError(
+            "rank-one plane outline has no certified near-side chain"
+        )
+    return tuple(
+        sorted(
+            selected,
+            key=lambda index: (
+                min(float(scalars[index]), float(scalars[(index + 1) % 4])),
+                max(float(scalars[index]), float(scalars[(index + 1) % 4])),
+                index,
+            ),
+        )
+    )
+
+
 def _compute_outline_fragments(
     surface: QuadricSurfaceSpec,
     plane: SectionPlane,
@@ -2633,6 +2974,7 @@ def _compute_outline_fragments(
     *,
     context: ContextInput,
     limits: QuadricSectionCompositingLimits,
+    edge_indices: Sequence[int] = (0, 1, 2, 3),
 ) -> tuple[QuadricPlaneOutlineFragment, ...]:
     corners = np.asarray(patch.corners(plane), dtype=float)
     characteristic = tuple(surface.characteristic_points) + tuple(
@@ -2655,7 +2997,20 @@ def _compute_outline_fragments(
 
     result: list[QuadricPlaneOutlineFragment] = []
     ends = (*corners[1:], corners[0])
-    for edge_index, (start, end) in enumerate(zip(corners, ends)):
+    selected_edges = tuple(edge_indices)
+    if (
+        len(selected_edges) != len(set(selected_edges))
+        or any(
+            isinstance(index, bool) or not isinstance(index, int) or not 0 <= index < 4
+            for index in selected_edges
+        )
+    ):
+        raise QuadricSectionCompositingError(
+            "plane outline edge_indices must be unique values in [0, 3]"
+        )
+    for edge_index in selected_edges:
+        start = corners[edge_index]
+        end = ends[edge_index]
         curve = SegmentCurve(
             f"{plane.plane_id}:outline-edge:{edge_index}",
             tuple(float(value) for value in start),
@@ -2894,7 +3249,9 @@ def compute_quadric_section_compositing(
     The function supports one convex finite sphere, cylinder, or single-nappe
     cone/frustum.  Curve visibility remains owned by ``base_frame``.  This
     stage replaces its one whole-surface paint item by two smooth projection
-    sheets and inserts the locally classified plane regions between them.
+    sheets and inserts the locally classified plane regions between them.  An
+    SVD-certified rank-one patch emits no fill and exactly one finite near-side
+    outline chain instead of pretending that the plane still has screen area.
     """
 
     if not isinstance(base_frame, QuadricCompositingFrame):
@@ -2947,11 +3304,70 @@ def compute_quadric_section_compositing(
     screen_basis = np.column_stack(
         (view.matrix[:2] @ plane_u, view.matrix[:2] @ plane_v)
     )
-    determinant = float(np.linalg.det(screen_basis))
-    basis_scale = max(float(np.linalg.norm(screen_basis, ord=2)), 1.0e-300)
-    if abs(determinant) <= 1.0e-12 * basis_scale * basis_scale:
-        raise QuadricSectionCompositingError(
-            "cutting plane projects edge-on and has no sortable display area"
+    patch_screen_basis = screen_basis @ np.diag(
+        (patch.half_width, patch.half_height)
+    )
+    patch_projection, line_axis = _plane_patch_projection_evidence(
+        patch_screen_basis,
+        patch_corners,
+        view,
+    )
+    unit_singular_values = np.linalg.svd(screen_basis, compute_uv=False)
+    unit_rank_ratio = float(unit_singular_values[1] / unit_singular_values[0])
+    unit_is_line = unit_rank_ratio <= PLANE_PATCH_RANK_RATIO_THRESHOLD
+    patch_is_line = patch_projection.kind is PlanePatchProjectionKind.LINE
+    if unit_is_line != patch_is_line:
+        if unit_is_line:
+            detail = (
+                "finite patch retains display area only through an extreme "
+                "aspect ratio while the unit plane projection is numerically "
+                "rank-one; normalized extreme-aspect AREA compositing is not "
+                "certified"
+            )
+        else:
+            detail = (
+                "finite patch appears rank-one only through an extreme thin "
+                "aspect ratio while the unit plane projection retains area; "
+                "an authored thin AREA patch cannot use the edge-on LINE "
+                "contract"
+            )
+        raise QuadricSectionCompositingError(detail)
+    if patch_projection.kind is PlanePatchProjectionKind.LINE:
+        near_edges = _rank_one_near_outline_edges(
+            patch_corners,
+            view,
+            line_axis,
+            screen_epsilon=screen_epsilon,
+            depth_epsilon=resolved.epsilon(GeometryQuantity.DEPTH),
+        )
+        outline_fragments = _compute_outline_fragments(
+            surface,
+            plane,
+            patch,
+            view,
+            context=resolved,
+            limits=limits,
+            edge_indices=near_edges,
+        )
+        items, normalized, draw_order = _section_painter_parts(
+            base_frame,
+            surface.surface_id,
+            plane.plane_id,
+        )
+        return QuadricSectionCompositingFrame(
+            base_frame=base_frame,
+            surface_id=surface.surface_id,
+            plane=plane,
+            patch=patch,
+            patch_projection=patch_projection,
+            surface_proxy=proxy,
+            plane_fragments=(),
+            plane_outline_fragments=outline_fragments,
+            paint_items=items,
+            order_relations=normalized,
+            draw_order=draw_order,
+            max_screen_error=error,
+            ray_classification_count=0,
         )
     inverse_screen_basis = np.linalg.inv(screen_basis)
 
@@ -4706,6 +5122,7 @@ def compute_quadric_section_compositing(
         surface_id=surface.surface_id,
         plane=plane,
         patch=patch,
+        patch_projection=patch_projection,
         surface_proxy=proxy,
         plane_fragments=tuple(fragments),
         plane_outline_fragments=outline_fragments,
@@ -4732,7 +5149,10 @@ def canonical_quadric_section_compositing_json(
 
 
 __all__ = [
+    "PLANE_PATCH_RANK_RATIO_THRESHOLD",
     "PlaneDepthRole",
+    "PlanePatchProjectionEvidence",
+    "PlanePatchProjectionKind",
     "QUADRIC_SECTION_COMPOSITING_LIMITS",
     "QUADRIC_SECTION_COMPOSITING_SCHEMA",
     "QuadricPlaneFragment",

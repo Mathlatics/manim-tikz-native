@@ -155,9 +155,9 @@ also gives the one-call capacity-planning path.
 The frozen [finite-cone section v1 contract](docs/quadric-section-v1-contract.md)
 is the authority for release claims. In short, v1 supports closed finite single
 cones, open finite single shells, frustum sections with component-aware lateral
-and two-cap shading, rank-one trim rims in exact side views, parallel
-projection, one finite convex quadric with one non-edge-on cutting plane, and
-the constrained two-nappe coordination described above. The fixed-capacity
+and two-cap shading, rank-one trim rims and one-surface finite cutting-plane
+patches in exact side views, parallel projection, one finite convex quadric with one
+cutting plane, and the constrained two-nappe coordination described above. The fixed-capacity
 Manim production binding is Cairo-only.
 
 V1 explicitly rejects perspective projection and an OpenGL production binding,

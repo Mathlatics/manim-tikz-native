@@ -126,10 +126,12 @@ still consume only the resolved linear view; the affine target/anchor shift is
 applied at the fixed-frame Manim boundary and therefore cannot change depth
 evidence.
 
-This camera API deliberately does not change the quadric section compositor's
-support contract. A generic finite plane can visually collapse to a line, but
-an exact edge-on `QuadricSection3D` cutting plane still fails explicitly until
-its separate one-dimensional occlusion contract is implemented.
+For a finite `PlaneDisplayPatchSpec`, an exact edge-on view now has an explicit
+one-dimensional display contract. Its fill disappears, it no longer occludes
+other boundaries as an area, and the compositor retains one certified finite
+near-side outline chain without duplicate strokes. The existing fixed section
+slots are reused through `AREA -> LINE -> AREA`. Curve arrangements which are
+independently coincident or otherwise uncertifiable still fail explicitly.
 
 See the runnable
 [parallel-camera example](../examples/parallel_camera_views/README.md).

@@ -7,7 +7,13 @@ All notable changes to this project will be documented in this file.
 - add a renderer-neutral `ParallelCameraState` with arbitrary view direction,
   target, final-screen anchor, zoom, and semantic normal/relative/along-plane
   constructors; integrate it additively with `MultiProjectionCamera` through
-  safe invertible transitions while preserving legacy projection presets;
+  safe invertible transitions while preserving legacy projection presets, and
+  let the quadric Manim controllers consume that same complete animated state;
+- give one finite single-surface cutting-plane patch an explicit `AREA`/`LINE`
+  projection contract: exact side views omit fill and plane occlusion, retain
+  one certified finite near-side outline without duplicate strokes, reuse the
+  same fixed Cairo slots through `AREA -> LINE -> AREA`, and reactivate any
+  returning boundary containers before their children are redrawn;
 - let `QuadricSection3D` consume named Preview/Final render profiles directly;
   add a one-factory capacity scan with deterministic human-readable summaries,
   preserve the existing progress-scan and immutable limit APIs, and publish a

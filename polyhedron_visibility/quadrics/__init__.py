@@ -292,6 +292,18 @@ _EXPORTS: Final[dict[str, tuple[str, str]]] = {
         "compute_quadric_compositing",
     ),
     "PlaneDepthRole": (".section_compositing", "PlaneDepthRole"),
+    "PLANE_PATCH_RANK_RATIO_THRESHOLD": (
+        ".section_compositing",
+        "PLANE_PATCH_RANK_RATIO_THRESHOLD",
+    ),
+    "PlanePatchProjectionEvidence": (
+        ".section_compositing",
+        "PlanePatchProjectionEvidence",
+    ),
+    "PlanePatchProjectionKind": (
+        ".section_compositing",
+        "PlanePatchProjectionKind",
+    ),
     "QUADRIC_SECTION_COMPOSITING_LIMITS": (
         ".section_compositing",
         "QUADRIC_SECTION_COMPOSITING_LIMITS",

@@ -115,6 +115,52 @@ def _cylinder_section_case():
 
 
 class BoundarySectionPlacementTests(unittest.TestCase):
+    def test_rank_one_plane_has_no_boundary_placement_or_occlusion(self) -> None:
+        sphere = SphereSpec("line-sphere", (0.0, 0.0, 0.0), 1.0)
+        plane = SectionPlane(
+            "line-plane",
+            (0.0, 0.0, 0.0),
+            (1.0, 0.0, 0.0),
+            u_axis=(0.0, 0.0, 1.0),
+        )
+        patch = fit_plane_display_patch(
+            "line-patch",
+            plane,
+            (sphere,),
+        ).patch
+        proxy = build_opaque_projection_proxy(
+            sphere,
+            FRONT_VIEW,
+            max_chord_error=0.002,
+        )
+        base = compute_quadric_compositing(
+            compute_quadric_visibility((), (sphere,), FRONT_VIEW),
+            (proxy,),
+        )
+        section = compute_quadric_section_compositing(
+            base,
+            sphere,
+            plane,
+            patch,
+            FRONT_VIEW,
+        )
+        source = curve_boundary_source(
+            SegmentCurve(
+                "unrelated-boundary",
+                (-1.5, -0.5, 0.25),
+                (1.5, 0.5, 0.25),
+            )
+        )
+
+        self.assertEqual(
+            compute_boundary_section_spans(
+                (source,),
+                section,
+                FRONT_VIEW,
+            ),
+            {},
+        )
+
     def test_side_view_circle_keeps_screen_coincident_depth_events(self) -> None:
         sphere = SphereSpec("sphere", (0.0, 0.0, 0.0), 1.0)
         plane = SectionPlane(

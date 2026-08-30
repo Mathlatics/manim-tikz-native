@@ -9,15 +9,15 @@
   "components": {
     "quadric_geometry": {
       "contract_revision": "tikz-native-contract:quadric_geometry/v1",
-      "render_revision": "source-sha256:aa2cb1ad9c06bfba01ab9c168d5c2a74ac7fd89066bb8ca0770ab92ed5b9984b"
+      "render_revision": "source-sha256:b1f8f6ec4a5fcab7182cecf7a9871040589a5831c58592edc8531e7851074057"
     },
     "quadric_visibility": {
       "contract_revision": "tikz-native-contract:quadric_visibility/v2",
-      "render_revision": "source-sha256:8efa5d2f53b8441f0949f59f68c7cd7b6ba4f83dc8ed9208f71c9f9204954033"
+      "render_revision": "source-sha256:6a73a379d39bde44aa6805ded65a9b47fb0a7770d0f780ac6272b329eff78745"
     },
     "quadric_manim": {
       "contract_revision": "tikz-native-contract:quadric_manim/v1",
-      "render_revision": "source-sha256:ff5c7bb858376a29f462d7499f3ffb3bd27ad5cbb24487e6d53f6318f366cad9"
+      "render_revision": "source-sha256:284ee70aac44c76307d5856231f64f299497e22975400b2aadf96304bd00f90e"
     }
   },
   "build_artifacts": {
@@ -204,15 +204,20 @@
       "outcome": "explicit_failure",
       "test": "tests.test_quadric_section_v1_contract.QuadricSectionV1ContractTests.test_opengl_binding_fails_before_scene_mutation"
     },
-    "edge_on_plane_failure": {
+    "edge_on_plane_line_geometry": {
       "layer": "renderer_neutral",
-      "outcome": "explicit_failure",
-      "test": "tests.test_quadric_section_compositing.QuadricSectionCompositingTests.test_edge_on_plane_and_capacity_overflow_fail_closed"
+      "outcome": "pass",
+      "test": "tests.test_quadric_section_compositing.QuadricSectionCompositingTests.test_edge_on_plane_becomes_one_finite_near_outline_chain"
     },
-    "edge_on_animation_rollback": {
+    "edge_on_line_binding": {
       "layer": "manim",
-      "outcome": "explicit_failure",
-      "test": "tests.test_quadric_section_manim.QuadricSectionManimTests.test_dynamic_plane_preserves_slots_and_rolls_back_edge_on_failure"
+      "outcome": "pass",
+      "test": "tests.test_quadric_section_manim.QuadricSectionManimTests.test_dynamic_plane_preserves_slots_through_exact_edge_on_line"
+    },
+    "edge_on_line_cairo_pixels": {
+      "layer": "cairo",
+      "outcome": "pass",
+      "test": "tests.test_quadric_plane_line_cairo.QuadricFinitePlaneLineCairoTests.test_warm_edge_on_frame_matches_cold_finite_line_pixels"
     }
   },
   "projections": {

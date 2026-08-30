@@ -43,7 +43,7 @@ from .section_compositing import (
 
 
 COMPOSITE_QUADRIC_SECTION_COMPOSITING_SCHEMA = (
-    "manim-composite-quadric-section-compositing/v1"
+    "manim-composite-quadric-section-compositing/v2"
 )
 
 

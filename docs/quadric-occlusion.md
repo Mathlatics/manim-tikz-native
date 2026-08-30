@@ -35,12 +35,13 @@ stroke style.
 Perspective projection, general free-form surfaces, reflective or refractive
 materials, and physically accurate transparency are outside this contract.
 
-The local cutting-plane compositor has a narrower v1 release boundary: one
-finite convex surface, one cutting plane whose screen projection has
-two-dimensional area, and parallel projection. A separate
+The ordinary local cutting-plane compositor has a narrower v1 release boundary:
+one finite convex surface, one finite cutting-plane patch whose screen
+projection may be `AREA` or certified `LINE`, and parallel projection. A separate
 `CompositeQuadricSection3D` coordinator may apply that same local solver to the
 two canonical nappes of one `OPEN_DOUBLE`, then merge their disjoint projected
 interiors around the certified shared apex and paint the common plane once.
+That composite coordinator still requires an `AREA` patch projection.
 Certification retains point, segment, and area intersections instead of
 discarding degenerate contact: only a zero-dimensional contact set contained
 inside the shared-apex tolerance succeeds.
@@ -452,10 +453,14 @@ near-tangent feature detection, but the finite-surface ray solver is the final
 role authority.  A small section close to tangency therefore still causes
 refinement.  Its curved boundary may be approximated within
 `section_max_screen_error`, but emitted fragments are cut along that
-approximation and may not span both sides.  The mode currently supports exactly
+approximation and may not span both sides. The mode currently supports exactly
 one finite convex sphere, capped cylinder, or single-nappe cone/frustum and one
-non-edge-on cutting plane.  Multiple intersecting quadrics remain a separate
-unsupported problem and fail closed.
+finite cutting-plane display patch. An exact edge-on patch is a zero-area
+`LINE` frame: plane fills are empty, one near-side finite outline chain remains,
+and the line does not act as a two-dimensional occluder. This paragraph covers
+the ordinary one-surface compositor; the open-double coordinator remains
+`AREA`-only. Multiple intersecting quadrics remain a separate unsupported
+problem and fail closed.
 
 For a fixed-topology moving plane, pass a callable as `curves`; it may build a
 fresh immutable section trace from the current `ValueTracker` value.  Surface

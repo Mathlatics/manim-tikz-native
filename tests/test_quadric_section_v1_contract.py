@@ -97,6 +97,22 @@ class QuadricSectionV1ContractTests(unittest.TestCase):
             "manim-quadric-section-support-contract/v1",
         )
         self.assertEqual(self.contract["contract_id"], "quadric-section-v1")
+        self.assertEqual(self.contract["frozen_on"], "2026-08-27")
+        self.assertEqual(self.contract["last_expanded_on"], "2026-08-30")
+        self.assertEqual(
+            self.contract["expansions"],
+            [
+                {
+                    "id": "single_surface_edge_on_plane_line",
+                    "capability_ids": ["edge_on_cutting_plane"],
+                    "evidence_ids": [
+                        "edge_on_plane_line_geometry",
+                        "edge_on_line_binding",
+                        "edge_on_line_cairo_pixels",
+                    ],
+                }
+            ],
+        )
         self.assertNotIn("baseline_main_commit", self.contract)
         self.assertTrue(
             all(
@@ -124,7 +140,7 @@ class QuadricSectionV1ContractTests(unittest.TestCase):
             "manim_cairo": "supported",
             "manim_opengl": "unsupported_explicit_failure",
             "cutting_plane_with_two_dimensional_projection": "supported",
-            "edge_on_cutting_plane": "unsupported_explicit_failure",
+            "edge_on_cutting_plane": "supported_with_constraints",
         }
         actual = {
             item["id"]: item["status"]

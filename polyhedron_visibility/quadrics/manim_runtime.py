@@ -68,6 +68,20 @@ def _non_negative(value: object, label: str) -> float:
     return result
 
 
+def _display_offset(value: Sequence[float]) -> tuple[float, float]:
+    """Validate one final two-dimensional display-only translation."""
+
+    try:
+        result = np.asarray(value, dtype=float)
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise QuadricManimError(
+            "display_offset must contain two finite values"
+        ) from exc
+    if result.shape != (2,) or not np.all(np.isfinite(result)):
+        raise QuadricManimError("display_offset must contain two finite values")
+    return float(result[0]), float(result[1])
+
+
 @dataclass(frozen=True, slots=True)
 class QuadricBoundaryStyle:
     """One immutable visible/hidden stroke pair in the boundary registry."""
@@ -585,11 +599,30 @@ def _hide_mobject_family(root: Mobject) -> None:
             _hide_vmobject(member)
 
 
+def _reactivate_display_root(root: Mobject) -> None:
+    """Restore a previously hidden fixed container before rewriting it.
+
+    A display action may disappear for several frames and later reuse the same
+    fixed root. Hiding walks the whole family, including a point-free VGroup
+    container, while fragment writers usually restyle only its drawable
+    children. Reset the container itself without propagating to children; the
+    action remains the sole authority for every drawable opacity.
+    """
+
+    if not isinstance(root, VMobject):
+        return
+    root.set_fill(opacity=1.0, family=False)
+    root.set_stroke(opacity=1.0, family=False)
+    root.set_stroke(opacity=1.0, background=True, family=False)
+
+
 def _apply_display_delta(delta: _PreparedDisplayDelta) -> None:
     for record in delta.hidden:
         for root in record.roots:
             _hide_mobject_family(root)
     for action in delta.changed:
+        for root in action.roots:
+            _reactivate_display_root(root)
         action.apply()
 
 

@@ -48,6 +48,7 @@ from .roots import (
 )
 from .section_compositing import (
     PlaneDepthRole,
+    PlanePatchProjectionKind,
     QuadricSectionCompositingFrame,
     QuadricSectionCompositingError,
     quadric_plane_fragment_contours,
@@ -1152,6 +1153,12 @@ def compute_boundary_section_spans(
     if not isinstance(visibility_spans, Mapping):
         raise TypeError("visibility_spans_by_source must be a mapping")
     source_items = tuple(sorted(sources, key=lambda item: item.source_id))
+    if section_frame.projection_kind is PlanePatchProjectionKind.LINE:
+        # A rank-one finite patch has no sortable display area.  Its certified
+        # near-side outline remains drawable, but it must not place or occlude
+        # unrelated semantic boundaries as though a two-dimensional plane fill
+        # still existed.
+        return {}
     plane = section_frame.plane
     patch = section_frame.patch
     resolved = _resolve_context(source_items, plane, patch, context)
