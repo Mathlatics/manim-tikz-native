@@ -6,6 +6,13 @@ compiles the camera, cutting plane, topology handoff, semantic display state,
 fixed bank capacity, cap-chord activation, painter order, and renderer affine
 terms into one immutable sequence before a Scene is mutated.
 
+Camera state, semantic shots, preflight, and frame transactions have their own
+`parallel_camera_core` component identity.  The core has no TikZ compiler or
+quadric dependency; the renderer-neutral quadric sequence depends on it, while
+`MultiProjectionCamera` remains in the separate Manim-facing 3D motion
+component.  This keeps cache invalidation aligned with the actual dependency
+direction.
+
 ## Why the sequence has a render grid
 
 Analytic section timelines contain exact key times, but a topology crossfade
@@ -137,3 +144,97 @@ Compilation rejects, rather than guesses, when:
 
 This contract remains parallel-projection-only.  Perspective cameras require
 per-point view rays and are intentionally outside this sequence.
+
+## One-controller Cairo binding
+
+`compile_parallel_section_rig_from_shots()` performs a two-pass compile without
+mutating the Scene.  The first pass fixes every non-painter input.  A single
+unattached `QuadricOcclusion3D` then prepares its real numeric painter order for
+each frame; the second pass binds that evidence into the final preflight report.
+Only the final sequence can be attached and played.
+
+Here `scene` must use `MultiProjectionCamera`.  Keep its inherited zoom at
+`1`, inherited frame center at `(0, 0, 0)`, and the controller display offset
+at `(0, 0)`; author target, final screen anchor, and semantic zoom in
+`ParallelCameraState` so preflight and live rendering consume one affine state.
+
+```python
+catalog = build_parallel_section_rig_display_catalog(
+    timeline,
+    ("section-bank-a", "section-bank-b"),
+    include_plane=True,
+)
+display = compile_section_display(
+    catalog,
+    SectionDisplayInstruction.for_mode("painted"),
+)
+
+binding = compile_parallel_section_rig_from_shots(
+    scene,
+    timeline,
+    camera_shots,
+    initial_camera,
+    tuple(display for _ in timeline.samples),
+    limits=preflight_limits,
+    semantic_bank_ids=("section-bank-a", "section-bank-b"),
+    frame_rate=30,
+    plane_patch_margin=0.08,
+)
+
+binding.attach()
+coordinator = binding.build_coordinator(scene.camera)
+try:
+    play_parallel_section_sequence(
+        scene,
+        binding.sequence,
+        camera_shots,
+        coordinator,
+    )
+finally:
+    binding.restore()
+```
+
+Both topology banks use the same surface slots and the same managed painter
+band.  A branch slot reserves two physical interval identities, so a periodic
+seam can split without allocating a new Mobject.  A cap chord receives a
+separate semantic identity in each bank.  Its live opacity is the product of
+the bank handoff opacity and the semantic display opacity.
+
+This first adapter excludes intrinsic surface silhouettes and cap rims from
+the unified boundary solver.  Its `SURFACE_OUTLINE` role therefore uses the
+controller's explicit `legacy_surface_stroke_fallback`: one static,
+unoccluded teaching outline.  The controller default remains off, so existing
+`include_surface_boundaries=False` callers do not acquire a new stroke.  A
+future adapter that needs certified silhouette/cap-rim visibility must reserve
+those semantic roles instead of treating this fallback as occlusion evidence.
+
+The display participant is the only participant that calls
+`QuadricOcclusion3D.update()`.  It verifies the committed z-order against the
+preflight painter order.  Its transaction snapshot covers the complete Mobject
+family, painter band, fragment maps, committed frames, last-input signatures,
+and Cairo static image.  Pure geometry memoization may retain an exact-keyed
+failed-frame entry, but it is not committed evidence and cannot change pixels.
+A later participant failure therefore restores the whole last accepted frame
+rather than only the visible points.
+
+One attached binding owns one cached coordinator.  Repeated
+`build_coordinator()` calls return that same object, so a stale second baseline
+cannot roll back a newer committed frame.  Its participant set seals on the
+first update and stays fixed across restored/re-attached playback sessions;
+add any custom finalizer before the first frame.  `binding.restore()` first
+restores an active coordinator, then releases the controller's Scene objects.
+
+The initial binding deliberately fails before Scene ownership when:
+
+- any frame activates an isolated `SECTION_POINT`; a true fixed point Mobject
+  slot is required and a short line is not an acceptable substitute;
+- a renderer-level `ParallelScreenTransform` is non-identity;
+- surface or plane fill/outline opacity changes between frames (one constant
+  multiplier per role is supported and is multiplied into the caller's
+  `QuadricManimStyle`);
+- generator, contour, or cap-rim semantic slots are requested.
+
+These boundaries are explicit adapter limits, not limits of the
+renderer-neutral sequence.  Ordinary finite conic branches, topology-bank
+crossfades, cap chords, moving semantic cameras, finite plane patches, and an
+exact rank-one side view are all handled by the one-controller binding.

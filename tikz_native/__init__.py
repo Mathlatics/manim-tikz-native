@@ -109,6 +109,12 @@ from .quadric_section_parallel_manim import (
     ParallelSectionPlaybackError,
     play_parallel_section_sequence,
 )
+from .quadric_section_parallel_rig import (
+    ParallelSectionRigBinding,
+    ParallelSectionRigBindingError,
+    build_parallel_section_rig_display_catalog,
+    compile_parallel_section_rig_from_shots,
+)
 from .polyhedron_visibility_3d_adapter import (
     TikzNativeVisibility3DAdapterError,
     TikzNativeVisibility3DAdapterResult,
@@ -139,6 +145,7 @@ from .version import (
     COMPONENT_NATIVE_MANIM_SOURCE_3D_V2,
     COMPONENT_NATIVE_MANIM_SOURCE_3D_V3,
     COMPONENT_NATIVE_RIG_2D,
+    COMPONENT_PARALLEL_CAMERA_CORE,
     COMPONENT_OPEN_FACE_VISIBILITY,
     COMPONENT_OPEN_FACE_UNIFIED_COMPOSITING,
     COMPONENT_POLYHEDRON_VISIBILITY,
@@ -168,6 +175,7 @@ __all__ = [
     "COMPONENT_NATIVE_MANIM_SOURCE_3D_V2",
     "COMPONENT_NATIVE_MANIM_SOURCE_3D_V3",
     "COMPONENT_NATIVE_RIG_2D",
+    "COMPONENT_PARALLEL_CAMERA_CORE",
     "COMPONENT_OPEN_FACE_VISIBILITY",
     "COMPONENT_OPEN_FACE_UNIFIED_COMPOSITING",
     "COMPONENT_POLYHEDRON_VISIBILITY",
@@ -218,6 +226,8 @@ __all__ = [
     "ParallelSectionSequence",
     "ParallelSectionSequenceError",
     "ParallelSectionPlaybackError",
+    "ParallelSectionRigBinding",
+    "ParallelSectionRigBindingError",
     "PainterOrderEvidence",
     "PictureSpec",
     "Projection3DSpec",
@@ -266,6 +276,8 @@ __all__ = [
     "parallel_section_render_times",
     "compile_parallel_section_sequence",
     "compile_parallel_section_sequence_from_shots",
+    "build_parallel_section_rig_display_catalog",
+    "compile_parallel_section_rig_from_shots",
     "SectionBankRenderFrame",
     "SectionBankRenderLayer",
     "SECTION_PLANE_PATCH_CHANNEL",

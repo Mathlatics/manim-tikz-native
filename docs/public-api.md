@@ -203,6 +203,16 @@ See the runnable
 [parallel-camera view example](../examples/parallel_camera_views/README.md) and
 the three
 [semantic shot acceptance scenes](../examples/parallel_camera_shots/README.md).
+For one source-authoritative sequence that coordinates the camera, moving
+section, topology banks, finite plane patch, semantic display, and real
+`QuadricOcclusion3D` painter order, see the
+[parallel camera/section sequence contract](parallel-camera-section-sequence.md)
+and its three
+[Cairo acceptance scenes](../examples/parallel_camera_section_rig_demo.py).
+That first binding opts into `legacy_surface_stroke_fallback=True` only for a
+static teaching outline while certified intrinsic surface boundaries are
+excluded.  The fallback is not occlusion evidence and remains disabled by
+default for ordinary `QuadricOcclusion3D` callers.
 
 ## Source-authoritative project builds
 

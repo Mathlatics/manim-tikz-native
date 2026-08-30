@@ -132,6 +132,7 @@ from .manim_runtime import (
     _CurveSlots,
     _DirtyFrameKind,
     _ManagedQuadricDisplayGroup,
+    _MobjectState,
     _PreparedBoundaryFragment,
     _PreparedConeFill,
     _PreparedDash,
@@ -545,6 +546,80 @@ class _CommittedControllerState:
     last_prepared_performance_counts: dict[str, int]
 
 
+@dataclass(frozen=True, slots=True, eq=False)
+class QuadricOcclusionTransactionSnapshot:
+    """Opaque, controller-bound snapshot of one attached display frame.
+
+    Instances are created by :meth:`QuadricOcclusion3D.snapshot_transaction_state`.
+    They deliberately retain the fixed Mobject identities owned by that
+    controller, so a snapshot cannot be applied to another controller even
+    when both controllers were authored from equivalent geometry.
+    """
+
+    _owner_token: object = field(repr=False)
+    _root_state: tuple[_MobjectState, ...] = field(repr=False)
+    _painter_band_state: Mapping[str, float] = field(repr=False)
+    _fragment_slot_maps: dict[str, dict[str, int]] = field(repr=False)
+    _last_frame: QuadricCompositingFrame | None = field(repr=False)
+    _last_global_frame: GlobalQuadricFrame | None = field(repr=False)
+    _last_section_frame: QuadricSectionCompositingFrame | None = field(
+        repr=False
+    )
+    _last_boundary_frame: QuadricBoundaryCompositingFrame | None = field(
+        repr=False
+    )
+    _display_slot_state: dict[str, _CommittedDisplaySlot] = field(repr=False)
+    _last_painter_band_signature: tuple[tuple[str, int, float], ...] = field(
+        repr=False
+    )
+    _last_input_geometry_signature: bytes | None = field(repr=False)
+    _last_input_draw_signature: bytes | None = field(repr=False)
+    _last_input_opacity: float | None = field(repr=False)
+    _last_prepared_frame: PreparedQuadricManimFrame | None = field(repr=False)
+    _last_prepared_performance_counts: dict[str, int] = field(repr=False)
+    _performance_frame_index: int = field(repr=False)
+    _last_performance_snapshot: QuadricPerformanceSnapshot | None = field(
+        repr=False
+    )
+
+
+_TRANSACTION_NUMERIC_STYLE_ATTRIBUTES = frozenset(
+    {
+        "fill_rgbas",
+        "stroke_rgbas",
+        "background_stroke_rgbas",
+        "fill_opacity",
+        "stroke_opacity",
+        "background_stroke_opacity",
+        "stroke_width",
+        "background_stroke_width",
+        "sheen_direction",
+        "sheen_factor",
+    }
+)
+_TRANSACTION_ENUM_STYLE_ATTRIBUTES = frozenset({"cap_style", "joint_type"})
+
+
+def _capture_transaction_root(root: Mobject) -> tuple[_MobjectState, ...]:
+    """Capture every Cairo-visible style field in addition to base state."""
+
+    states = _capture_root(root)
+    for state in states:
+        for name in (
+            "stroke_width",
+            "background_stroke_width",
+            "cap_style",
+            "joint_type",
+        ):
+            if not hasattr(state.mobject, name):
+                continue
+            value = getattr(state.mobject, name)
+            state.attributes[name] = (
+                value.copy() if isinstance(value, np.ndarray) else value
+            )
+    return states
+
+
 def _surface_items(
     value: Sequence[QuadricSurfaceSpec],
 ) -> tuple[QuadricSurfaceSpec, ...]:
@@ -590,7 +665,12 @@ class QuadricOcclusion3D:
     ``curve_opacities`` then supplies the opacity for every active identity.
     ``surface_order_mode='automatic'`` recomputes and consumes one complete
     global painter frame on every update.  ``'explicit'`` keeps the legacy
-    caller-supplied surface-order path.
+    caller-supplied surface-order path.  ``automatic_updates=False`` retains
+    the time-aware Cairo driver that keeps the display out of the static
+    background, but leaves every update to an external frame coordinator.
+    ``legacy_surface_stroke_fallback=True`` is a narrow opt-in for one
+    unoccluded teaching outline when unified intrinsic surface boundaries are
+    explicitly excluded; the default remains off.
     """
 
     def __init__(
@@ -629,6 +709,8 @@ class QuadricOcclusion3D:
         allocated_boundary_ids: Sequence[str] | None = None,
         geometry_prototype: QuadricGeometryPrototype | None = None,
         display_offset: Sequence[float] = (0.0, 0.0),
+        automatic_updates: bool = True,
+        legacy_surface_stroke_fallback: bool = False,
     ) -> None:
         if not isinstance(style, QuadricManimStyle):
             raise TypeError("style must be a QuadricManimStyle")
@@ -659,6 +741,17 @@ class QuadricOcclusion3D:
             )
         if not isinstance(include_surface_boundaries, bool):
             raise TypeError("include_surface_boundaries must be a bool")
+        if not isinstance(automatic_updates, bool):
+            raise TypeError("automatic_updates must be a bool")
+        if not isinstance(legacy_surface_stroke_fallback, bool):
+            raise TypeError("legacy_surface_stroke_fallback must be a bool")
+        if legacy_surface_stroke_fallback and (
+            boundary_visibility_mode != "unified" or include_surface_boundaries
+        ):
+            raise QuadricManimError(
+                "legacy_surface_stroke_fallback requires unified boundary "
+                "visibility with surface boundaries excluded"
+            )
         generators = tuple(generator_boundaries)
         if not all(isinstance(item, GeneratorBoundarySpec) for item in generators):
             raise TypeError(
@@ -697,6 +790,8 @@ class QuadricOcclusion3D:
         self.scene = scene
         self.geometry_prototype = geometry_prototype
         self.display_offset = display_offset
+        self._automatic_updates = automatic_updates
+        self._legacy_surface_stroke_fallback = legacy_surface_stroke_fallback
         self._surface_input = surfaces
         self._curve_input = curves
         self._projection_input = (
@@ -764,6 +859,7 @@ class QuadricOcclusion3D:
         self._last_input_opacity: float | None = None
         self._last_prepared_frame: PreparedQuadricManimFrame | None = None
         self._last_prepared_performance_counts: dict[str, int] = {}
+        self._transaction_snapshot_owner_token = object()
         self._owns_surface_view_cache = geometry_prototype is None
         self._surface_view_cache = (
             _SurfaceViewCache()
@@ -929,7 +1025,7 @@ class QuadricOcclusion3D:
         # Manim recognizes time-aware updaters by the literal ``dt`` name.
         def update_display(mobject: Mobject, dt: float) -> None:
             del mobject
-            if self._attached:
+            if self._attached and self.automatic_updates:
                 self.update(dt)
 
         self._update_driver.add_updater(update_display)
@@ -1204,8 +1300,11 @@ class QuadricOcclusion3D:
             self.style,
             self.boundary_visibility_mode,
             self.include_surface_boundaries,
+            self.legacy_surface_stroke_fallback,
             self._generator_boundaries,
             self.boundary_styles,
+            self.section_id,
+            self.section_coefficient_tolerance,
             self.max_chord_error,
             self.section_max_screen_error,
             self.section_compositing_limits,
@@ -1239,6 +1338,29 @@ class QuadricOcclusion3D:
     @display_offset.setter
     def display_offset(self, value: Sequence[float]) -> None:
         self._display_offset = _display_offset(value)
+
+    @property
+    def automatic_updates(self) -> bool:
+        """Whether the time-aware driver owns frame updates.
+
+        The mode is immutable after construction.  Coordinated bindings use a
+        no-op time-aware driver so Cairo still treats the display as dynamic
+        while exactly one external transaction commits each output frame.
+        """
+
+        return self._automatic_updates
+
+    @property
+    def legacy_surface_stroke_fallback(self) -> bool:
+        """Whether unified rendering draws one uncertified legacy outline.
+
+        The opt-in exists for adapters that deliberately exclude intrinsic
+        surface boundaries but still need a static teaching-outline style.
+        It is immutable after construction and defaults to ``False`` so
+        ``include_surface_boundaries=False`` keeps its historical meaning.
+        """
+
+        return self._legacy_surface_stroke_fallback
 
     def _validate_fixed_topology(
         self,
@@ -2838,6 +2960,9 @@ class QuadricOcclusion3D:
 
         actions: list[_PreparedDisplayAction] = []
         unified = prepared.numeric.boundary_frame is not None
+        draw_legacy_surface_stroke = (
+            not unified or self.legacy_surface_stroke_fallback
+        )
         for surface in prepared.numeric.surfaces:
             slot = self._surface_paint_slots[surface.slot_index]
             actions.append(
@@ -2850,13 +2975,13 @@ class QuadricOcclusion3D:
                         surface.cone_fill,
                         self.style,
                         opacity,
-                        not unified,
+                        draw_legacy_surface_stroke,
                     ),
                     partial(
                         self._apply_surface,
                         surface,
                         opacity,
-                        draw_stroke=not unified,
+                        draw_stroke=draw_legacy_surface_stroke,
                     ),
                 )
             )
@@ -2880,14 +3005,14 @@ class QuadricOcclusion3D:
                         section.frame.paint_items.ordered,
                         self.style,
                         opacity,
-                        not unified,
+                        draw_legacy_surface_stroke,
                         draw_plane_outline,
                     ),
                     partial(
                         self._apply_section_layers,
                         section,
                         opacity,
-                        draw_legacy_strokes=not unified,
+                        draw_legacy_strokes=draw_legacy_surface_stroke,
                         draw_plane_outline=draw_plane_outline,
                     ),
                 )
@@ -3083,6 +3208,356 @@ class QuadricOcclusion3D:
             )
             raise
         self._finish_performance_attempt(attempt, status="committed")
+
+    def snapshot_transaction_state(
+        self,
+    ) -> QuadricOcclusionTransactionSnapshot:
+        """Capture the complete committed state of one attached Cairo frame.
+
+        The returned value is intentionally opaque and controller-bound.  It
+        is suitable for a higher-level coordinator that must atomically roll
+        back several already-attached quadric controllers after one of them
+        fails to commit.
+        """
+
+        if not self._attached:
+            raise QuadricManimError(
+                "quadric transaction state requires an attached controller"
+            )
+        return QuadricOcclusionTransactionSnapshot(
+            _owner_token=self._transaction_snapshot_owner_token,
+            _root_state=_capture_transaction_root(self.root),
+            _painter_band_state=self._band.capture_active_state(),
+            _fragment_slot_maps={
+                source_id: dict(values)
+                for source_id, values in self._fragment_slot_maps.items()
+            },
+            _last_frame=self._last_frame,
+            _last_global_frame=self._last_global_frame,
+            _last_section_frame=self._last_section_frame,
+            _last_boundary_frame=self._last_boundary_frame,
+            _display_slot_state=dict(self._display_slot_state),
+            _last_painter_band_signature=self._last_painter_band_signature,
+            _last_input_geometry_signature=self._last_input_geometry_signature,
+            _last_input_draw_signature=self._last_input_draw_signature,
+            _last_input_opacity=self._last_input_opacity,
+            _last_prepared_frame=self._last_prepared_frame,
+            _last_prepared_performance_counts=dict(
+                self._last_prepared_performance_counts
+            ),
+            _performance_frame_index=self._performance_frame_index,
+            _last_performance_snapshot=self._last_performance_snapshot,
+        )
+
+    def _validate_transaction_snapshot(
+        self,
+        snapshot: QuadricOcclusionTransactionSnapshot,
+    ) -> None:
+        if snapshot._owner_token is not self._transaction_snapshot_owner_token:
+            raise QuadricManimError(
+                "quadric transaction snapshot belongs to another controller"
+            )
+
+        family = tuple(self.root.get_family())
+        family_ids = {id(member) for member in family}
+        if len(snapshot._root_state) != len(family) or any(
+            state.mobject is not member
+            for state, member in zip(snapshot._root_state, family)
+        ):
+            raise QuadricManimError(
+                "quadric transaction snapshot has incompatible display slots"
+            )
+        allowed_attributes = (
+            _TRANSACTION_NUMERIC_STYLE_ATTRIBUTES
+            | _TRANSACTION_ENUM_STYLE_ATTRIBUTES
+        )
+        for state in snapshot._root_state:
+            if not isinstance(state, _MobjectState):
+                raise QuadricManimError(
+                    "quadric transaction snapshot has invalid display state"
+                )
+            if state.points is not None and (
+                not isinstance(state.points, np.ndarray)
+                or not np.all(np.isfinite(state.points))
+            ):
+                raise QuadricManimError(
+                    "quadric transaction snapshot has invalid display points"
+                )
+            if state.z_index is not None and not np.isfinite(state.z_index):
+                raise QuadricManimError(
+                    "quadric transaction snapshot has invalid display z-index"
+                )
+            if not isinstance(state.attributes, dict) or not set(
+                state.attributes
+            ).issubset(allowed_attributes):
+                raise QuadricManimError(
+                    "quadric transaction snapshot has invalid display styles"
+                )
+            for name, value in state.attributes.items():
+                if name in _TRANSACTION_ENUM_STYLE_ATTRIBUTES:
+                    current = getattr(state.mobject, name, None)
+                    if current is None or not isinstance(value, type(current)):
+                        raise QuadricManimError(
+                            "quadric transaction snapshot has invalid display styles"
+                        )
+                    continue
+                try:
+                    numeric = np.asarray(value, dtype=float)
+                except (TypeError, ValueError, OverflowError) as exc:
+                    raise QuadricManimError(
+                        "quadric transaction snapshot has invalid display styles"
+                    ) from exc
+                if not np.all(np.isfinite(numeric)):
+                    raise QuadricManimError(
+                        "quadric transaction snapshot has invalid display styles"
+                    )
+
+        band_state = snapshot._painter_band_state
+        if not isinstance(band_state, Mapping) or any(
+            not isinstance(item_id, str)
+            or not item_id
+            or not np.isfinite(float(value))
+            for item_id, value in band_state.items()
+        ):
+            raise QuadricManimError(
+                "quadric transaction snapshot has invalid painter-band state"
+            )
+        band_mobject_ids = getattr(band_state, "mobject_ids", None)
+        if (
+            not isinstance(band_mobject_ids, dict)
+            or set(band_mobject_ids) != set(band_state)
+            or any(
+                isinstance(value, bool)
+                or not isinstance(value, int)
+                or value not in family_ids
+                for value in band_mobject_ids.values()
+            )
+        ):
+            raise QuadricManimError(
+                "quadric transaction snapshot has invalid painter-band identities"
+            )
+
+        signature = snapshot._last_painter_band_signature
+        if not isinstance(signature, tuple) or any(
+            not isinstance(item, tuple)
+            or len(item) != 3
+            or not isinstance(item[0], str)
+            or not item[0]
+            or isinstance(item[1], bool)
+            or not isinstance(item[1], int)
+            or item[1] not in family_ids
+            or not np.isfinite(float(item[2]))
+            for item in signature
+        ):
+            raise QuadricManimError(
+                "quadric transaction snapshot has invalid painter signature"
+            )
+        expected_band = {item_id: z_index for item_id, _root, z_index in signature}
+        expected_band_mobject_ids = {
+            item_id: root_id for item_id, root_id, _z_index in signature
+        }
+        if (
+            dict(band_state) != expected_band
+            or band_mobject_ids != expected_band_mobject_ids
+        ):
+            raise QuadricManimError(
+                "quadric transaction snapshot painter evidence is inconsistent"
+            )
+
+        slot_maps = snapshot._fragment_slot_maps
+        if not isinstance(slot_maps, dict) or set(slot_maps) != set(
+            self._slot_source_ids
+        ):
+            raise QuadricManimError(
+                "quadric transaction snapshot has invalid fragment-slot maps"
+            )
+        for source_id, mapping in slot_maps.items():
+            if not isinstance(source_id, str) or not isinstance(mapping, dict):
+                raise QuadricManimError(
+                    "quadric transaction snapshot has invalid fragment-slot maps"
+                )
+            if any(
+                not isinstance(fragment_id, str)
+                or not fragment_id
+                or isinstance(slot_index, bool)
+                or not isinstance(slot_index, int)
+                or not 0 <= slot_index < self.limits.max_fragments_per_curve
+                for fragment_id, slot_index in mapping.items()
+            ) or len(set(mapping.values())) != len(mapping):
+                raise QuadricManimError(
+                    "quadric transaction snapshot has invalid fragment-slot maps"
+                )
+
+        for name, value, expected_type in (
+            ("last frame", snapshot._last_frame, QuadricCompositingFrame),
+            ("last global frame", snapshot._last_global_frame, GlobalQuadricFrame),
+            (
+                "last section frame",
+                snapshot._last_section_frame,
+                QuadricSectionCompositingFrame,
+            ),
+            (
+                "last boundary frame",
+                snapshot._last_boundary_frame,
+                QuadricBoundaryCompositingFrame,
+            ),
+        ):
+            if value is not None and not isinstance(value, expected_type):
+                raise QuadricManimError(
+                    f"quadric transaction snapshot has invalid {name}"
+                )
+
+        display_state = snapshot._display_slot_state
+        if not isinstance(display_state, dict):
+            raise QuadricManimError(
+                "quadric transaction snapshot has invalid display-slot state"
+            )
+        for slot_id, state in display_state.items():
+            if (
+                not isinstance(slot_id, str)
+                or not slot_id
+                or not isinstance(state, _CommittedDisplaySlot)
+                or not isinstance(state.digest, bytes)
+                or any(id(root) not in family_ids for root in state.roots)
+            ):
+                raise QuadricManimError(
+                    "quadric transaction snapshot has invalid display-slot state"
+                )
+
+        for name, value in (
+            ("geometry", snapshot._last_input_geometry_signature),
+            ("draw", snapshot._last_input_draw_signature),
+        ):
+            if value is not None and not isinstance(value, bytes):
+                raise QuadricManimError(
+                    f"quadric transaction snapshot has invalid {name} signature"
+                )
+        if snapshot._last_input_opacity is not None and (
+            not np.isfinite(snapshot._last_input_opacity)
+            or snapshot._last_input_opacity < 0.0
+        ):
+            raise QuadricManimError(
+                "quadric transaction snapshot has invalid input opacity"
+            )
+        prepared = snapshot._last_prepared_frame
+        if prepared is not None and not isinstance(
+            prepared, PreparedQuadricManimFrame
+        ):
+            raise QuadricManimError(
+                "quadric transaction snapshot has invalid prepared frame"
+            )
+        if prepared is not None:
+            prepared_maps = {
+                source_id: dict(values)
+                for source_id, values in prepared.numeric.fragment_slot_maps.items()
+            }
+            if prepared_maps != slot_maps:
+                raise QuadricManimError(
+                    "quadric transaction snapshot fragment evidence is inconsistent"
+                )
+            if (
+                prepared.frame is not snapshot._last_frame
+                or prepared.global_frame is not snapshot._last_global_frame
+                or prepared.section_frame is not snapshot._last_section_frame
+                or prepared.boundary_frame is not snapshot._last_boundary_frame
+            ):
+                raise QuadricManimError(
+                    "quadric transaction snapshot frame evidence is inconsistent"
+                )
+        counts = snapshot._last_prepared_performance_counts
+        if not isinstance(counts, dict) or any(
+            not isinstance(key, str)
+            or not key
+            or isinstance(value, bool)
+            or not isinstance(value, int)
+            or value < 0
+            for key, value in counts.items()
+        ):
+            raise QuadricManimError(
+                "quadric transaction snapshot has invalid performance counts"
+            )
+        if (
+            isinstance(snapshot._performance_frame_index, bool)
+            or not isinstance(snapshot._performance_frame_index, int)
+            or snapshot._performance_frame_index < 0
+        ):
+            raise QuadricManimError(
+                "quadric transaction snapshot has invalid performance frame index"
+            )
+        if snapshot._last_performance_snapshot is not None and not isinstance(
+            snapshot._last_performance_snapshot,
+            QuadricPerformanceSnapshot,
+        ):
+            raise QuadricManimError(
+                "quadric transaction snapshot has invalid performance evidence"
+            )
+
+    def _restore_transaction_state_unchecked(
+        self,
+        snapshot: QuadricOcclusionTransactionSnapshot,
+    ) -> None:
+        _restore_root(snapshot._root_state)
+        self._band.restore_active_state(snapshot._painter_band_state)
+        self._fragment_slot_maps = {
+            source_id: dict(values)
+            for source_id, values in snapshot._fragment_slot_maps.items()
+        }
+        self._last_frame = snapshot._last_frame
+        self._last_global_frame = snapshot._last_global_frame
+        self._last_section_frame = snapshot._last_section_frame
+        self._last_boundary_frame = snapshot._last_boundary_frame
+        self._display_slot_state = dict(snapshot._display_slot_state)
+        self._last_painter_band_signature = (
+            snapshot._last_painter_band_signature
+        )
+        self._last_input_geometry_signature = (
+            snapshot._last_input_geometry_signature
+        )
+        self._last_input_draw_signature = snapshot._last_input_draw_signature
+        self._last_input_opacity = snapshot._last_input_opacity
+        self._last_prepared_frame = snapshot._last_prepared_frame
+        self._last_prepared_performance_counts = dict(
+            snapshot._last_prepared_performance_counts
+        )
+        self._performance_frame_index = snapshot._performance_frame_index
+        self._last_performance_snapshot = snapshot._last_performance_snapshot
+
+    def restore_transaction_state(
+        self,
+        snapshot: QuadricOcclusionTransactionSnapshot,
+    ) -> "QuadricOcclusion3D":
+        """Restore one attached frame without changing Scene ownership.
+
+        Validation completes before any Mobject is touched.  If an unexpected
+        restore error still occurs, the current frame is restored before the
+        error is reported, so invalid input cannot leave a half-applied frame.
+        """
+
+        if not self._attached:
+            raise QuadricManimError(
+                "quadric transaction restore requires an attached controller"
+            )
+        if not isinstance(snapshot, QuadricOcclusionTransactionSnapshot):
+            raise TypeError(
+                "snapshot must be a QuadricOcclusionTransactionSnapshot"
+            )
+        self._validate_transaction_snapshot(snapshot)
+        current = self.snapshot_transaction_state()
+        try:
+            self._restore_transaction_state_unchecked(snapshot)
+            self._invalidate_cairo_static_image()
+        except Exception as exc:
+            try:
+                self._restore_transaction_state_unchecked(current)
+                self._invalidate_cairo_static_image()
+            except Exception as rollback_exc:
+                raise QuadricManimError(
+                    "quadric transaction restore and rollback both failed"
+                ) from rollback_exc
+            raise QuadricManimError(
+                "quadric transaction snapshot could not be restored"
+            ) from exc
+        return self
 
     @property
     def attached(self) -> bool:
@@ -3412,5 +3887,6 @@ __all__ = [
     "QuadricManimLimits",
     "QuadricManimStyle",
     "QuadricOcclusion3D",
+    "QuadricOcclusionTransactionSnapshot",
     "estimate_quadric_mobject_count",
 ]

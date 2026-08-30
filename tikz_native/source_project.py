@@ -1014,6 +1014,9 @@ def _provider_revision_defaults() -> dict[str, str | int]:
             version.COMPONENT_NATIVE_MANIM_SOURCE_3D_V3,
         ),
         "embedded_motion_3d": version.COMPONENT_EMBEDDED_MOTION_3D,
+        "parallel_camera_core": getattr(
+            version, "COMPONENT_PARALLEL_CAMERA_CORE", "parallel_camera_core"
+        ),
         "open_face_unified_compositing": version.COMPONENT_OPEN_FACE_UNIFIED_COMPOSITING,
         "managed_painter_band": getattr(
             version, "COMPONENT_MANAGED_PAINTER_BAND", "managed_painter_band"
@@ -1042,11 +1045,13 @@ def _normalise_revisions(
     revisions: Mapping[str, str | int] | None,
 ) -> dict[str, str | int]:
     result = _provider_revision_defaults()
+    supplied_names: set[str] = set()
     if revisions is not None:
         for supplied_name, revision in revisions.items():
             if not isinstance(supplied_name, str) or not supplied_name:
                 raise SourceProjectError("component revision names must be non-empty strings")
             name = _REVISION_ALIASES.get(supplied_name, supplied_name)
+            supplied_names.add(name)
             if name not in result:
                 raise SourceProjectError(f"unknown Provider component revision {supplied_name!r}")
             if isinstance(revision, bool) or not isinstance(revision, (str, int)):
@@ -1062,6 +1067,15 @@ def _normalise_revisions(
                     f"component revision {supplied_name!r} must not be empty"
                 )
             result[name] = revision
+    # Before the parallel-camera core acquired its own component identity,
+    # callers injected ``embedded_motion_3d`` for camera-shot cache tests.  Keep
+    # that override fail-closed: unless the new identity is supplied explicitly,
+    # the legacy value invalidates both components.
+    if (
+        "embedded_motion_3d" in supplied_names
+        and "parallel_camera_core" not in supplied_names
+    ):
+        result["parallel_camera_core"] = result["embedded_motion_3d"]
     return dict(sorted(result.items()))
 
 
@@ -2261,7 +2275,7 @@ def _plan_nodes(
         )
         camera_shots_revision = {
             name: revisions[name]
-            for name in ("source_project_build", "embedded_motion_3d")
+            for name in ("source_project_build", "parallel_camera_core")
         }
         camera_shots_key = _build_key(
             {
@@ -2362,7 +2376,7 @@ def _plan_nodes(
             "generated_open_face_visibility_3d",
         ]
         if camera_shots_sequence is not None:
-            generated_revision_names.append("embedded_motion_3d")
+            generated_revision_names.append("parallel_camera_core")
         generated_revision = {
             name: revisions[name] for name in generated_revision_names
         }

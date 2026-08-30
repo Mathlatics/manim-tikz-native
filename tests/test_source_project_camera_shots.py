@@ -32,6 +32,7 @@ REAL_V3_SOURCE = ROOT / "examples/dihedral_fold_3d_demo/dihedral_fold.tex"
 TEST_ASSET_REVISION = "camera-shots-test-asset-v1"
 TEST_BRIDGE_REVISION = "camera-shots-test-bridge-v1"
 TEST_CAMERA_REVISION = "camera-shots-test-runtime-v1"
+TEST_CAMERA_CORE_REVISION = "camera-shots-test-core-v1"
 
 
 def _sequence(*, second_zoom: float = 0.85) -> ParallelCameraShotSequence:
@@ -159,6 +160,7 @@ class SourceProjectCameraShotsTests(unittest.TestCase):
             "asset_compiler": TEST_ASSET_REVISION,
             "generated_open_face_visibility_3d": TEST_BRIDGE_REVISION,
             "embedded_motion_3d": TEST_CAMERA_REVISION,
+            "parallel_camera_core": TEST_CAMERA_CORE_REVISION,
             **overrides,
         }
 
@@ -233,8 +235,8 @@ class SourceProjectCameraShotsTests(unittest.TestCase):
             "camera-shots.json",
         )
         self.assertEqual(
-            manifest["componentRevisions"]["embedded_motion_3d"],
-            TEST_CAMERA_REVISION,
+            manifest["componentRevisions"]["parallel_camera_core"],
+            TEST_CAMERA_CORE_REVISION,
         )
 
         generated = (output / "generated_scene.py").read_text(encoding="utf-8")
@@ -303,15 +305,35 @@ class SourceProjectCameraShotsTests(unittest.TestCase):
             ("shape", "compositing", "generated_source"),
         )
 
-    def test_camera_runtime_revision_invalidates_only_camera_dependents(self) -> None:
+    def test_camera_core_revision_invalidates_only_camera_dependents(self) -> None:
         project_path = self.write_project(hooks=True)
         self.build(project_path)
 
         changed = self.build(
             project_path,
             component_revisions=self.revisions(
-                embedded_motion_3d="camera-shots-test-runtime-v2"
+                parallel_camera_core="camera-shots-test-core-v2"
             ),
+        )
+
+        self.assertEqual(changed.reused, ("shape",))
+        self.assertEqual(
+            changed.built,
+            ("camera_shots", "compositing", "generated_source"),
+        )
+
+    def test_legacy_embedded_revision_override_still_invalidates_camera(self) -> None:
+        project_path = self.write_project(hooks=True)
+        legacy = self.revisions()
+        legacy.pop("parallel_camera_core")
+        self.build(project_path, component_revisions=legacy)
+
+        changed = self.build(
+            project_path,
+            component_revisions={
+                **legacy,
+                "embedded_motion_3d": "camera-shots-test-runtime-v2",
+            },
         )
 
         self.assertEqual(changed.reused, ("shape",))
@@ -399,6 +421,13 @@ class SourceProjectCameraShotsTests(unittest.TestCase):
         )
         Draft202012Validator(source_schema).validate(project_value)
         Draft202012Validator(build_schema).validate(build_value)
+
+        legacy_build_value = json.loads(json.dumps(build_value))
+        legacy_revisions = legacy_build_value["componentRevisions"]
+        legacy_revisions["embedded_motion_3d"] = legacy_revisions.pop(
+            "parallel_camera_core"
+        )
+        Draft202012Validator(build_schema).validate(legacy_build_value)
 
         project_value["motionJson"] = "motion.json"
         errors = list(Draft202012Validator(source_schema).iter_errors(project_value))

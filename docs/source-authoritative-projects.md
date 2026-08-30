@@ -182,9 +182,12 @@ nodes. As a result, a generated-source adapter change does not force an
 unrelated ShapeAsset rebuild, while an orchestrator contract change cannot
 silently reuse an output built under old rules.
 
-The optional `camera_shots` node also records the `embedded_motion_3d`
-component revision, because that component owns the strict
-`parallel-shot-sequence/v1` parser and immutable camera-state implementation.
+The optional `camera_shots` node records the independent
+`parallel_camera_core` component revision, because that component owns the
+strict `parallel-shot-sequence/v1` parser, immutable camera state, preflight,
+and frame-transaction contracts.  Older v1 manifests that record
+`embedded_motion_3d` remain valid; an old injected override also invalidates the
+new core unless its revision is supplied explicitly.
 A camera-only source edit rebuilds `camera_shots`, `compositing`, and (when a
 Bridge template is present) `generated_source`; it reuses `shape`.
 

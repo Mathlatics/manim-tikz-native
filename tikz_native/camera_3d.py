@@ -98,6 +98,73 @@ class ProjectionPreset:
         object.__setattr__(self, "principal_point", principal_point)
 
 
+@dataclass(frozen=True, slots=True, eq=False)
+class ParallelCameraTransactionSnapshot:
+    """Opaque, exact rollback state for one ``MultiProjectionCamera``.
+
+    Unlike :meth:`MultiProjectionCamera.snapshot`, this is not a portable
+    visual preset.  It retains the in-flight interpolation endpoints, semantic
+    parallel-camera sources, cached state, Manim trackers, and public mode
+    names so a coordinated frame can be rolled back without being converted
+    to ``__direct_projection__``.
+    """
+
+    source_matrix: np.ndarray
+    target_matrix: np.ndarray
+    control_matrix: np.ndarray
+    source_perspective: float
+    target_perspective: float
+    source_focal_distance: float
+    target_focal_distance: float
+    source_view_center: np.ndarray
+    target_view_center: np.ndarray
+    source_principal_point: np.ndarray
+    target_principal_point: np.ndarray
+    transition_style: str
+    parallel_state_active: bool
+    source_parallel_state: ParallelCameraState | None
+    target_parallel_state: ParallelCameraState | None
+    parallel_control_matrix: np.ndarray | None
+    parallel_state_cache_alpha: float | None
+    parallel_state_cache: ParallelCameraState | None
+    transition_progress: float
+    current_mode: str
+    target_mode: str
+    rotation_matrix: np.ndarray
+    frame_center: np.ndarray
+    phi: float
+    theta: float
+    manim_focal_distance: float
+    gamma: float
+    manim_zoom: float
+    _owner_token: object = field(repr=False)
+
+    def __post_init__(self) -> None:
+        array_fields = (
+            "source_matrix",
+            "target_matrix",
+            "control_matrix",
+            "source_view_center",
+            "target_view_center",
+            "source_principal_point",
+            "target_principal_point",
+            "rotation_matrix",
+            "frame_center",
+        )
+        for name in array_fields:
+            value = np.array(getattr(self, name), dtype=float, copy=True)
+            value.setflags(write=False)
+            object.__setattr__(self, name, value)
+        if self.parallel_control_matrix is not None:
+            control = np.array(
+                self.parallel_control_matrix,
+                dtype=float,
+                copy=True,
+            )
+            control.setflags(write=False)
+            object.__setattr__(self, "parallel_control_matrix", control)
+
+
 FRONT_MATRIX = np.array(
     ((0.0, 1.0, 0.0), (0.0, 0.0, 1.0), (1.0, 0.0, 0.0)),
     dtype=float,
@@ -267,6 +334,7 @@ class MultiProjectionCamera(ThreeDCamera):
     ) -> None:
         self.presets = dict(DEFAULT_PRESETS if presets is None else presets)
         self.parallel_states: dict[str, ParallelCameraState] = {}
+        self._parallel_transaction_owner_token = object()
         if initial_mode not in self.presets:
             raise KeyError(f"unknown projection mode: {initial_mode!r}")
         initial = self.presets[initial_mode]
@@ -474,6 +542,285 @@ class MultiProjectionCamera(ThreeDCamera):
             self.frame_center + self.get_view_center(),
             zoom * self.get_principal_point() - self.frame_center[:2],
         )
+
+    def snapshot_parallel_transaction(self) -> ParallelCameraTransactionSnapshot:
+        """Capture the complete mutable camera state used by one frame commit.
+
+        The frame coordinator discovers this method by capability.  Capturing
+        raw endpoints instead of a flattened visual preset is what preserves a
+        registered ``current_mode``/``target_mode`` and an in-flight semantic
+        orbit across either rollback or :meth:`ParallelFrameCoordinator.restore`.
+        """
+
+        return ParallelCameraTransactionSnapshot(
+            source_matrix=self._source_matrix,
+            target_matrix=self._target_matrix,
+            control_matrix=self._control_matrix,
+            source_perspective=self._source_perspective,
+            target_perspective=self._target_perspective,
+            source_focal_distance=self._source_focal_distance,
+            target_focal_distance=self._target_focal_distance,
+            source_view_center=self._source_view_center,
+            target_view_center=self._target_view_center,
+            source_principal_point=self._source_principal_point,
+            target_principal_point=self._target_principal_point,
+            transition_style=self._transition_style,
+            parallel_state_active=self._parallel_state_active,
+            source_parallel_state=self._source_parallel_state,
+            target_parallel_state=self._target_parallel_state,
+            parallel_control_matrix=self._parallel_control_matrix,
+            parallel_state_cache_alpha=self._parallel_state_cache_alpha,
+            parallel_state_cache=self._parallel_state_cache,
+            transition_progress=float(self.transition_tracker.get_value()),
+            current_mode=self.current_mode,
+            target_mode=self.target_mode,
+            rotation_matrix=self.rotation_matrix,
+            frame_center=self.frame_center,
+            phi=float(self.phi_tracker.get_value()),
+            theta=float(self.theta_tracker.get_value()),
+            manim_focal_distance=float(self.focal_distance_tracker.get_value()),
+            gamma=float(self.gamma_tracker.get_value()),
+            manim_zoom=float(self.zoom_tracker.get_value()),
+            _owner_token=self._parallel_transaction_owner_token,
+        )
+
+    def restore_parallel_transaction(self, snapshot: object) -> None:
+        """Restore an exact transaction snapshot without changing mode identity."""
+
+        self._validate_parallel_transaction_snapshot(snapshot)
+        assert isinstance(snapshot, ParallelCameraTransactionSnapshot)
+        previous = self.snapshot_parallel_transaction()
+        try:
+            self._apply_parallel_transaction_snapshot_unchecked(snapshot)
+        except BaseException as error:
+            try:
+                # Bypass an overridden/monkey-patched apply hook while
+                # repairing the receiver after a partial write.
+                MultiProjectionCamera._apply_parallel_transaction_snapshot_unchecked(
+                    self,
+                    previous,
+                )
+            except BaseException as rollback_error:
+                if hasattr(error, "add_note"):
+                    error.add_note(
+                        "parallel camera transaction rollback also failed: "
+                        f"{rollback_error!r}"
+                    )
+            raise
+
+    def _validate_parallel_transaction_snapshot(self, snapshot: object) -> None:
+        """Validate a transaction token completely without mutating the camera."""
+
+        if not isinstance(snapshot, ParallelCameraTransactionSnapshot):
+            raise TypeError("snapshot must be a ParallelCameraTransactionSnapshot")
+        if snapshot._owner_token is not self._parallel_transaction_owner_token:
+            raise ValueError("parallel camera transaction snapshot has a foreign owner")
+
+        def require_array(name: str, shape: tuple[int, ...]) -> None:
+            value = getattr(snapshot, name)
+            if not isinstance(value, np.ndarray):
+                raise TypeError(f"snapshot {name} must be a NumPy array")
+            if value.shape != shape or not np.all(np.isfinite(value)):
+                raise ValueError(
+                    f"snapshot {name} must be a finite array with shape {shape}"
+                )
+
+        def require_invertible_matrix(name: str) -> None:
+            require_array(name, (3, 3))
+            matrix = getattr(snapshot, name)
+            # Keep this certification identical to ProjectionPreset: first
+            # remove authored row scales, then normalize row norms before the
+            # determinant check.  Valid very-small/very-large screen units are
+            # accepted, while a directionally singular camera still fails.
+            row_scales = np.max(np.abs(matrix), axis=1)
+            if np.any(row_scales == 0.0) or not np.all(np.isfinite(row_scales)):
+                raise ValueError(f"snapshot {name} must be invertible")
+            normalized = matrix / row_scales[:, np.newaxis]
+            row_norms = np.linalg.norm(normalized, axis=1)
+            if np.any(row_norms == 0.0) or not np.all(np.isfinite(row_norms)):
+                raise ValueError(f"snapshot {name} must be invertible")
+            normalized /= row_norms[:, np.newaxis]
+            determinant = float(np.linalg.det(normalized))
+            if not np.isfinite(determinant) or abs(determinant) <= 1.0e-12:
+                raise ValueError(f"snapshot {name} must be invertible")
+
+        def finite_scalar(name: str) -> float:
+            value = getattr(snapshot, name)
+            if isinstance(value, (bool, np.bool_)):
+                raise ValueError(f"snapshot {name} must be finite")
+            try:
+                result = float(value)
+            except (TypeError, ValueError, OverflowError) as exc:
+                raise ValueError(f"snapshot {name} must be finite") from exc
+            if not np.isfinite(result):
+                raise ValueError(f"snapshot {name} must be finite")
+            return result
+
+        for name in (
+            "source_matrix",
+            "target_matrix",
+            "control_matrix",
+            "rotation_matrix",
+        ):
+            require_invertible_matrix(name)
+        for name in (
+            "source_view_center",
+            "target_view_center",
+            "frame_center",
+        ):
+            require_array(name, (3,))
+        for name in (
+            "source_principal_point",
+            "target_principal_point",
+        ):
+            require_array(name, (2,))
+        if snapshot.parallel_control_matrix is not None:
+            require_invertible_matrix("parallel_control_matrix")
+
+        for name in ("source_perspective", "target_perspective"):
+            value = finite_scalar(name)
+            if not 0.0 <= value <= 1.0:
+                raise ValueError(f"snapshot {name} must lie inside [0, 1]")
+        for name in (
+            "source_focal_distance",
+            "target_focal_distance",
+            "manim_focal_distance",
+            "manim_zoom",
+        ):
+            if finite_scalar(name) <= 0.0:
+                raise ValueError(f"snapshot {name} must be positive")
+        for name in ("transition_progress", "phi", "theta", "gamma"):
+            finite_scalar(name)
+        if snapshot.parallel_state_cache_alpha is not None:
+            cache_alpha = finite_scalar("parallel_state_cache_alpha")
+            if not 0.0 <= cache_alpha <= 1.0:
+                raise ValueError(
+                    "snapshot parallel_state_cache_alpha must lie inside [0, 1]"
+                )
+
+        if snapshot.transition_style not in ("linear", "orbit"):
+            raise ValueError(
+                "snapshot transition_style must be 'linear' or 'orbit'"
+            )
+        if not isinstance(snapshot.parallel_state_active, bool):
+            raise TypeError("snapshot parallel_state_active must be a bool")
+        for name in ("source_parallel_state", "target_parallel_state"):
+            value = getattr(snapshot, name)
+            if value is not None and not isinstance(value, ParallelCameraState):
+                raise TypeError(f"snapshot {name} must be ParallelCameraState or None")
+        if snapshot.parallel_state_active:
+            if not isinstance(snapshot.source_parallel_state, ParallelCameraState):
+                raise ValueError(
+                    "active semantic snapshot requires source_parallel_state"
+                )
+            if not isinstance(snapshot.target_parallel_state, ParallelCameraState):
+                raise ValueError(
+                    "active semantic snapshot requires target_parallel_state"
+                )
+        elif any(
+            value is not None
+            for value in (
+                snapshot.source_parallel_state,
+                snapshot.target_parallel_state,
+                snapshot.parallel_control_matrix,
+                snapshot.parallel_state_cache_alpha,
+                snapshot.parallel_state_cache,
+            )
+        ):
+            raise ValueError(
+                "inactive semantic snapshot cannot retain parallel state or cache"
+            )
+        cache_pair = (
+            snapshot.parallel_state_cache_alpha is not None,
+            snapshot.parallel_state_cache is not None,
+        )
+        if cache_pair[0] != cache_pair[1]:
+            raise ValueError(
+                "snapshot parallel state cache and cache alpha must be paired"
+            )
+        if snapshot.parallel_state_cache is not None and not isinstance(
+            snapshot.parallel_state_cache,
+            ParallelCameraState,
+        ):
+            raise TypeError(
+                "snapshot parallel_state_cache must be ParallelCameraState or None"
+            )
+        if snapshot.parallel_state_cache is not None:
+            assert snapshot.parallel_state_cache_alpha is not None
+            assert isinstance(snapshot.source_parallel_state, ParallelCameraState)
+            assert isinstance(snapshot.target_parallel_state, ParallelCameraState)
+            expected_cache = interpolate_parallel_camera_states(
+                snapshot.source_parallel_state,
+                snapshot.target_parallel_state,
+                float(snapshot.parallel_state_cache_alpha),
+                control_matrix=snapshot.parallel_control_matrix,
+            )
+            cached = snapshot.parallel_state_cache
+            if not (
+                np.array_equal(cached.matrix, expected_cache.matrix)
+                and np.array_equal(cached.target, expected_cache.target)
+                and np.array_equal(
+                    cached.screen_anchor,
+                    expected_cache.screen_anchor,
+                )
+                and cached.zoom == expected_cache.zoom
+            ):
+                raise ValueError(
+                    "snapshot parallel state cache does not match its sources"
+                )
+
+        registered_modes = set(self.presets) | set(self.parallel_states)
+        for name in ("current_mode", "target_mode"):
+            mode = getattr(snapshot, name)
+            if not isinstance(mode, str) or not mode.strip():
+                raise ValueError(f"snapshot {name} must be a non-empty mode name")
+            if mode != self.DIRECT_MODE_NAME and mode not in registered_modes:
+                raise ValueError(
+                    f"snapshot {name} refers to unregistered camera mode {mode!r}"
+                )
+
+    def _apply_parallel_transaction_snapshot_unchecked(
+        self,
+        snapshot: ParallelCameraTransactionSnapshot,
+    ) -> None:
+        """Apply one already-validated snapshot; caller owns atomic rollback."""
+
+        self._source_matrix = snapshot.source_matrix.copy()
+        self._target_matrix = snapshot.target_matrix.copy()
+        self._control_matrix = snapshot.control_matrix.copy()
+        self._source_perspective = snapshot.source_perspective
+        self._target_perspective = snapshot.target_perspective
+        self._source_focal_distance = snapshot.source_focal_distance
+        self._target_focal_distance = snapshot.target_focal_distance
+        self._source_view_center = snapshot.source_view_center.copy()
+        self._target_view_center = snapshot.target_view_center.copy()
+        self._source_principal_point = snapshot.source_principal_point.copy()
+        self._target_principal_point = snapshot.target_principal_point.copy()
+        self._transition_style = snapshot.transition_style
+        self._parallel_state_active = snapshot.parallel_state_active
+        self._source_parallel_state = snapshot.source_parallel_state
+        self._target_parallel_state = snapshot.target_parallel_state
+        self._parallel_control_matrix = (
+            None
+            if snapshot.parallel_control_matrix is None
+            else snapshot.parallel_control_matrix.copy()
+        )
+        self._parallel_state_cache_alpha = snapshot.parallel_state_cache_alpha
+        self._parallel_state_cache = snapshot.parallel_state_cache
+        self.transition_tracker.set_value(snapshot.transition_progress)
+        self.current_mode = snapshot.current_mode
+        self.target_mode = snapshot.target_mode
+
+        # ``frame_center = value`` is implemented as a relative Mobject move
+        # and can retain round-off from the temporary state.  A transaction
+        # restore must reproduce the captured coordinate bit-for-bit.
+        self._frame_center.points = snapshot.frame_center[np.newaxis, :].copy()
+        self.phi_tracker.set_value(snapshot.phi)
+        self.theta_tracker.set_value(snapshot.theta)
+        self.focal_distance_tracker.set_value(snapshot.manim_focal_distance)
+        self.gamma_tracker.set_value(snapshot.gamma)
+        self.zoom_tracker.set_value(snapshot.manim_zoom)
+        self.rotation_matrix = snapshot.rotation_matrix.copy()
 
     def _parallel_state_from_preset(
         self, preset: ProjectionPreset
@@ -743,6 +1090,7 @@ __all__ = [
     "MultiProjectionCamera",
     "OBLIQUE_DIRECTION",
     "OBLIQUE_MATRIX",
+    "ParallelCameraTransactionSnapshot",
     "ParallelCameraState",
     "ProjectionPreset",
     "R",

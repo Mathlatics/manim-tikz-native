@@ -1,12 +1,24 @@
 from __future__ import annotations
 
+from dataclasses import replace
 import unittest
 
 import numpy as np
 from manim import Mobject
 
-from tikz_native.camera_3d import FRONT_MATRIX, MultiProjectionCamera
+from tikz_native.camera_3d import (
+    FRONT_MATRIX,
+    MultiProjectionCamera,
+    ParallelCameraTransactionSnapshot,
+)
 from tikz_native.parallel_camera import CameraPlane, ParallelCameraState, ProjectionRank
+from tikz_native.parallel_frame import (
+    ParallelFrameCoordinator,
+    ParallelFrameParticipant,
+    ParallelFramePhase,
+    ParallelFrameState,
+    parallel_camera_frame_participant,
+)
 
 
 class MultiProjectionParallelStateTests(unittest.TestCase):
@@ -16,6 +28,58 @@ class MultiProjectionParallelStateTests(unittest.TestCase):
             normal=np.array((1.0, 1.0, 1.0)),
             u_axis=np.array((1.0, -1.0, 0.0)),
         )
+
+    def assert_transaction_equal(
+        self,
+        actual: ParallelCameraTransactionSnapshot,
+        expected: ParallelCameraTransactionSnapshot,
+    ) -> None:
+        for name in (
+            "source_matrix",
+            "target_matrix",
+            "control_matrix",
+            "source_view_center",
+            "target_view_center",
+            "source_principal_point",
+            "target_principal_point",
+            "rotation_matrix",
+            "frame_center",
+        ):
+            np.testing.assert_array_equal(
+                getattr(actual, name),
+                getattr(expected, name),
+                err_msg=name,
+            )
+        if expected.parallel_control_matrix is None:
+            self.assertIsNone(actual.parallel_control_matrix)
+        else:
+            self.assertIsNotNone(actual.parallel_control_matrix)
+            np.testing.assert_array_equal(
+                actual.parallel_control_matrix,
+                expected.parallel_control_matrix,
+                err_msg="parallel_control_matrix",
+            )
+        for name in (
+            "source_perspective",
+            "target_perspective",
+            "source_focal_distance",
+            "target_focal_distance",
+            "transition_style",
+            "parallel_state_active",
+            "parallel_state_cache_alpha",
+            "transition_progress",
+            "current_mode",
+            "target_mode",
+            "phi",
+            "theta",
+            "manim_focal_distance",
+            "gamma",
+            "manim_zoom",
+        ):
+            self.assertEqual(getattr(actual, name), getattr(expected, name), name)
+        self.assertIs(actual.source_parallel_state, expected.source_parallel_state)
+        self.assertIs(actual.target_parallel_state, expected.target_parallel_state)
+        self.assertIs(actual.parallel_state_cache, expected.parallel_state_cache)
 
     def test_semantic_state_keeps_target_on_final_anchor_under_manim_zoom(self) -> None:
         camera = MultiProjectionCamera(initial_mode="front")
@@ -173,6 +237,290 @@ class MultiProjectionParallelStateTests(unittest.TestCase):
         np.testing.assert_allclose(camera.get_projection_matrix(), state.matrix)
         with self.assertRaisesRegex(KeyError, "already exists"):
             camera.register_parallel_state("front", state)
+
+    def test_full_transaction_restores_legacy_interpolation_and_manim_trackers(
+        self,
+    ) -> None:
+        camera = MultiProjectionCamera(initial_mode="front")
+        camera.frame_center = np.array((0.7, -0.3, 0.2))
+        camera.phi_tracker.set_value(0.25)
+        camera.theta_tracker.set_value(-0.8)
+        camera.focal_distance_tracker.set_value(11.5)
+        camera.gamma_tracker.set_value(-0.15)
+        camera.zoom_tracker.set_value(1.45)
+        camera.register_mode(
+            "perspective-target",
+            np.identity(3),
+            perspective_strength=0.6,
+            focal_distance=13.0,
+            view_center=(1.0, -0.5, 0.25),
+            principal_point=(-0.4, 0.3),
+        )
+        camera.animate_to("perspective-target")
+        camera.transition_tracker.set_value(0.37)
+        camera.rotation_matrix = np.array(
+            ((0.0, 1.0, 0.0), (0.0, 0.0, 1.0), (1.0, 0.0, 0.0))
+        )
+        expected = camera.snapshot_parallel_transaction()
+
+        camera.set_mode("top")
+        camera.frame_center = np.array((-2.0, 1.0, 4.0))
+        camera.phi_tracker.set_value(-1.0)
+        camera.theta_tracker.set_value(1.0)
+        camera.focal_distance_tracker.set_value(3.0)
+        camera.gamma_tracker.set_value(0.75)
+        camera.zoom_tracker.set_value(0.6)
+        camera.rotation_matrix = np.zeros((3, 3))
+        camera.restore_parallel_transaction(expected)
+
+        self.assert_transaction_equal(
+            camera.snapshot_parallel_transaction(),
+            expected,
+        )
+        self.assertEqual(camera.current_mode, "perspective-target")
+        self.assertEqual(camera.target_mode, "perspective-target")
+        self.assertNotEqual(camera.current_mode, camera.DIRECT_MODE_NAME)
+
+    def test_full_transaction_restores_semantic_orbit_control_and_cache(self) -> None:
+        camera = MultiProjectionCamera(initial_mode="front")
+        source = ParallelCameraState.normal_to_plane(
+            self.plane,
+            target=(0.5, -0.25, 1.0),
+            screen_anchor=(-1.5, 0.75),
+            zoom=0.9,
+        )
+        target = ParallelCameraState.relative_to_plane(
+            self.plane,
+            inclination_degrees=68.0,
+            azimuth_degrees=21.0,
+            target=(-0.25, 0.5, 0.75),
+            screen_anchor=(0.4, -0.2),
+            zoom=1.2,
+        )
+        camera.register_parallel_state("source-plane", source)
+        camera.register_parallel_state("target-plane", target)
+        camera.set_parallel_state("source-plane")
+        camera.animate_to_parallel_state(
+            "target-plane",
+            transition="orbit",
+            arc_height=0.55,
+        )
+        camera.transition_tracker.set_value(0.41)
+        camera.get_projection_matrix()
+        expected = camera.snapshot_parallel_transaction()
+        self.assertIsNotNone(expected.parallel_control_matrix)
+        self.assertIsNotNone(expected.parallel_state_cache)
+
+        camera.set_parallel_state(ParallelCameraState(np.identity(3)))
+        camera.restore_parallel_transaction(expected)
+
+        self.assert_transaction_equal(
+            camera.snapshot_parallel_transaction(),
+            expected,
+        )
+        self.assertEqual(camera.current_mode, "target-plane")
+        self.assertEqual(camera.target_mode, "target-plane")
+        self.assertNotEqual(camera.current_mode, camera.DIRECT_MODE_NAME)
+
+    def test_coordinator_failure_rolls_back_registered_camera_mode(self) -> None:
+        camera = MultiProjectionCamera(initial_mode="front")
+        source = ParallelCameraState.normal_to_plane(self.plane)
+        target = ParallelCameraState.along_plane(
+            self.plane,
+            azimuth_degrees=24.0,
+        )
+        camera.register_parallel_state("source-plane", source)
+        camera.set_parallel_state("source-plane")
+        expected = camera.snapshot_parallel_transaction()
+
+        def fail_commit(_prepared: object) -> None:
+            raise RuntimeError("injected finalize failure")
+
+        coordinator: ParallelFrameCoordinator[ParallelFrameState]
+        coordinator = ParallelFrameCoordinator()
+        coordinator.add(parallel_camera_frame_participant(camera))
+        coordinator.add(
+            ParallelFrameParticipant(
+                participant_id="failing-finalizer",
+                phase=ParallelFramePhase.FINALIZE,
+                prepare=lambda _frame: None,
+                snapshot=lambda: None,
+                commit=fail_commit,
+                rollback=lambda _snapshot: None,
+            )
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "injected finalize failure"):
+            coordinator.update(ParallelFrameState(target))
+
+        self.assert_transaction_equal(
+            camera.snapshot_parallel_transaction(),
+            expected,
+        )
+        self.assertEqual(camera.current_mode, "source-plane")
+        self.assertEqual(camera.target_mode, "source-plane")
+        self.assertNotEqual(camera.current_mode, camera.DIRECT_MODE_NAME)
+
+    def test_coordinator_restore_returns_to_registered_camera_mode(self) -> None:
+        camera = MultiProjectionCamera(initial_mode="front")
+        source = ParallelCameraState.normal_to_plane(self.plane)
+        target = ParallelCameraState.relative_to_plane(
+            self.plane,
+            inclination_degrees=55.0,
+            azimuth_degrees=-18.0,
+        )
+        camera.register_parallel_state("source-plane", source)
+        camera.set_parallel_state("source-plane")
+        expected = camera.snapshot_parallel_transaction()
+        coordinator: ParallelFrameCoordinator[ParallelFrameState]
+        coordinator = ParallelFrameCoordinator()
+        coordinator.add(parallel_camera_frame_participant(camera))
+
+        coordinator.update(ParallelFrameState(target))
+        self.assertEqual(camera.current_mode, camera.DIRECT_MODE_NAME)
+        self.assertEqual(camera.target_mode, camera.DIRECT_MODE_NAME)
+        coordinator.restore()
+
+        self.assert_transaction_equal(
+            camera.snapshot_parallel_transaction(),
+            expected,
+        )
+        self.assertEqual(camera.current_mode, "source-plane")
+        self.assertEqual(camera.target_mode, "source-plane")
+        self.assertNotEqual(camera.current_mode, camera.DIRECT_MODE_NAME)
+
+    def test_transaction_rejects_foreign_owner_before_any_write(self) -> None:
+        camera = MultiProjectionCamera(initial_mode="front")
+        state = ParallelCameraState.normal_to_plane(self.plane)
+        camera.register_parallel_state("owned-plane", state)
+        camera.set_parallel_state("owned-plane")
+        expected = camera.snapshot_parallel_transaction()
+        foreign = MultiProjectionCamera(
+            initial_mode="top"
+        ).snapshot_parallel_transaction()
+
+        with self.assertRaisesRegex(ValueError, "foreign owner"):
+            camera.restore_parallel_transaction(foreign)
+
+        self.assert_transaction_equal(
+            camera.snapshot_parallel_transaction(),
+            expected,
+        )
+
+    def test_malformed_transaction_snapshots_fail_before_any_write(self) -> None:
+        camera = MultiProjectionCamera(initial_mode="front")
+        state = ParallelCameraState.relative_to_plane(
+            self.plane,
+            inclination_degrees=38.0,
+            azimuth_degrees=17.0,
+        )
+        camera.register_parallel_state("owned-plane", state)
+        camera.set_parallel_state("owned-plane")
+        expected = camera.snapshot_parallel_transaction()
+        nan_rotation = expected.rotation_matrix.copy()
+        nan_rotation[1, 2] = np.nan
+        singular = np.diag((1.0, 1.0, 0.0))
+        wrong_cache = ParallelCameraState(
+            np.identity(3),
+            target=(99.0, -20.0, 7.0),
+        )
+
+        malformed = (
+            replace(expected, source_matrix=np.zeros((2, 2))),
+            replace(expected, rotation_matrix=nan_rotation),
+            replace(expected, source_matrix=singular),
+            replace(expected, target_matrix=singular),
+            replace(expected, control_matrix=singular),
+            replace(expected, rotation_matrix=singular),
+            replace(expected, parallel_control_matrix=np.zeros((2, 3))),
+            replace(expected, parallel_control_matrix=singular),
+            replace(expected, source_view_center=np.zeros(2)),
+            replace(expected, target_principal_point=np.array((0.0, np.inf))),
+            replace(expected, source_perspective=1.1),
+            replace(expected, target_focal_distance=0.0),
+            replace(expected, manim_focal_distance=np.inf),
+            replace(expected, manim_zoom=-1.0),
+            replace(expected, transition_progress=np.nan),
+            replace(expected, transition_style="unsafe"),
+            replace(expected, source_parallel_state=None),
+            replace(expected, parallel_state_cache=None),
+            replace(expected, parallel_state_cache_alpha=1.1),
+            replace(expected, parallel_state_cache=wrong_cache),
+            replace(expected, current_mode="unregistered-mode"),
+        )
+        for index, forged in enumerate(malformed):
+            with self.subTest(index=index):
+                with self.assertRaises((TypeError, ValueError)):
+                    camera.restore_parallel_transaction(forged)
+                self.assert_transaction_equal(
+                    camera.snapshot_parallel_transaction(),
+                    expected,
+                )
+
+    def test_valid_stale_cache_is_checked_at_its_own_alpha(self) -> None:
+        camera = MultiProjectionCamera(initial_mode="front")
+        source = ParallelCameraState.normal_to_plane(self.plane)
+        target = ParallelCameraState.relative_to_plane(
+            self.plane,
+            inclination_degrees=61.0,
+            azimuth_degrees=-27.0,
+            target=(0.5, -0.25, 1.0),
+            screen_anchor=(-0.4, 0.3),
+            zoom=1.15,
+        )
+        camera.register_parallel_state("source-plane", source)
+        camera.register_parallel_state("target-plane", target)
+        camera.set_parallel_state("source-plane")
+        camera.animate_to_parallel_state("target-plane", transition="orbit")
+        camera.transition_tracker.set_value(0.23)
+        camera.get_projection_matrix()
+        camera.transition_tracker.set_value(0.67)
+        stale = camera.snapshot_parallel_transaction()
+        self.assertEqual(stale.parallel_state_cache_alpha, 0.23)
+        self.assertEqual(stale.transition_progress, 0.67)
+
+        camera.set_mode("top")
+        camera.restore_parallel_transaction(stale)
+
+        self.assert_transaction_equal(
+            camera.snapshot_parallel_transaction(),
+            stale,
+        )
+
+    def test_unexpected_apply_failure_atomically_restores_previous_state(
+        self,
+    ) -> None:
+        class FailingApplyCamera(MultiProjectionCamera):
+            fail_next_apply = False
+
+            def _apply_parallel_transaction_snapshot_unchecked(
+                self,
+                snapshot: ParallelCameraTransactionSnapshot,
+            ) -> None:
+                super()._apply_parallel_transaction_snapshot_unchecked(snapshot)
+                if self.fail_next_apply:
+                    self.fail_next_apply = False
+                    raise RuntimeError("injected transaction apply failure")
+
+        camera = FailingApplyCamera(initial_mode="front")
+        state = ParallelCameraState.normal_to_plane(self.plane)
+        camera.register_parallel_state("owned-plane", state)
+        camera.set_parallel_state("owned-plane")
+        expected = camera.snapshot_parallel_transaction()
+        camera.set_mode("top")
+        target = camera.snapshot_parallel_transaction()
+        camera.restore_parallel_transaction(expected)
+
+        camera.fail_next_apply = True
+        with self.assertRaisesRegex(RuntimeError, "injected transaction apply failure"):
+            camera.restore_parallel_transaction(target)
+
+        self.assert_transaction_equal(
+            camera.snapshot_parallel_transaction(),
+            expected,
+        )
+        self.assertEqual(camera.current_mode, "owned-plane")
+        self.assertEqual(camera.target_mode, "owned-plane")
 
     def test_shortest_opposite_transition_fails_before_animation(self) -> None:
         camera = MultiProjectionCamera(initial_mode="top")

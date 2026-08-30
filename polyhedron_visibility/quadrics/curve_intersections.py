@@ -16,7 +16,19 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import json
-from math import acos, asinh, atanh, atan2, ceil, floor, isfinite, log, sqrt, tau
+from math import (
+    acos,
+    asinh,
+    atanh,
+    atan2,
+    ceil,
+    copysign,
+    floor,
+    isfinite,
+    log,
+    sqrt,
+    tau,
+)
 from typing import Mapping, Sequence
 
 import numpy as np
@@ -44,6 +56,7 @@ PROJECTED_CURVE_CROSSING_SCHEMA = "manim-projected-curve-crossing/v1"
 _FLOAT_EPSILON = float(np.finfo(float).eps)
 _STATIONARY_RESIDUAL_FACTOR = 256.0
 _DIRECT_TANGENCY_FACTOR = 32768.0
+_RANK_ONE_SINGULAR_FACTOR = 64.0
 
 
 class ProjectedCurveIntersectionError(ValueError):
@@ -215,16 +228,43 @@ def _world_branch_geometry(
     return origin, first, second
 
 
+def _scale_first_norm(value: np.ndarray) -> float:
+    """Return a Euclidean norm without squaring raw subnormal components."""
+
+    array = np.asarray(value, dtype=float)
+    scale = float(np.max(np.abs(array))) if array.size else 0.0
+    if not isfinite(scale) or scale <= 0.0:
+        return scale
+    return scale * float(np.linalg.norm(array / scale))
+
+
+def _scale_first_unit_vector(value: np.ndarray) -> np.ndarray | None:
+    """Return a stable unit vector, or ``None`` for zero/non-finite input."""
+
+    array = np.asarray(value, dtype=float)
+    scale = float(np.max(np.abs(array))) if array.size else 0.0
+    if not isfinite(scale) or scale <= 0.0:
+        return None
+    scaled = array / scale
+    norm = float(np.linalg.norm(scaled))
+    if not isfinite(norm) or norm <= 0.0:  # pragma: no cover - scaled is nonzero
+        return None
+    return scaled / norm
+
+
 def _projected_line(origin: np.ndarray, direction: np.ndarray, label: str) -> np.ndarray:
-    norm = float(np.linalg.norm(direction))
-    if norm <= 0.0:
+    unit_direction = _scale_first_unit_vector(direction)
+    if unit_direction is None:
         raise ProjectedCurveIntersectionError(
             f"curve {label!r} collapses to one screen point"
         )
     # Construct the normal from the known displacement.  Taking a homogeneous
     # cross product of ``origin`` and ``origin + direction`` loses the small
     # direction completely when a tiny segment is far from the screen origin.
-    normal = np.asarray((-direction[1], direction[0]), dtype=float) / norm
+    normal = np.asarray(
+        (-unit_direction[1], unit_direction[0]),
+        dtype=float,
+    )
     line = np.asarray(
         (normal[0], normal[1], -float(np.dot(normal, origin))),
         dtype=float,
@@ -242,13 +282,14 @@ def _conic_matrix(
     canonical: np.ndarray,
     label: str,
 ) -> np.ndarray:
-    linear = np.column_stack((first, second))
-    first_length = float(np.linalg.norm(first))
-    second_length = float(np.linalg.norm(second))
-    area_scale = first_length * second_length
-    if area_scale <= 0.0 or abs(float(np.linalg.det(linear))) <= (
-        1024.0 * _FLOAT_EPSILON * area_scale
-    ):
+    first_unit = _scale_first_unit_vector(first)
+    second_unit = _scale_first_unit_vector(second)
+    if first_unit is None or second_unit is None:
+        raise ProjectedCurveIntersectionError(
+            f"curve {label!r} has an edge-on or singular conic projection"
+        )
+    unit_linear = np.column_stack((first_unit, second_unit))
+    if abs(float(np.linalg.det(unit_linear))) <= 1024.0 * _FLOAT_EPSILON:
         raise ProjectedCurveIntersectionError(
             f"curve {label!r} has an edge-on or singular conic projection"
         )
@@ -258,11 +299,85 @@ def _conic_matrix(
     return 0.5 * (canonical + canonical.T)
 
 
+def _certified_rank_one_screen_axis(
+    curve: EllipseArcCurve | ParametricConicBranch,
+    first: np.ndarray,
+    second: np.ndarray,
+    screen_unit_rows: np.ndarray,
+) -> np.ndarray | None:
+    """Return one certified support axis, independent of coordinate units."""
+
+    if isinstance(curve, EllipseArcCurve):
+        world_first = np.asarray(curve.first_axis, dtype=float)
+        world_second = np.asarray(curve.second_axis, dtype=float)
+    else:
+        _world_origin, world_first, world_second = _world_branch_geometry(curve)
+    world_scales = np.asarray(
+        (
+            _scale_first_norm(world_first),
+            _scale_first_norm(world_second),
+        ),
+        dtype=float,
+    )
+    if not np.all(np.isfinite(world_scales)) or np.any(world_scales <= 0.0):
+        raise ProjectedCurveIntersectionError(
+            f"curve {curve.curve_id!r} has an invalid conic axis"
+        )
+    unit_rows = np.asarray(screen_unit_rows, dtype=float)
+    if unit_rows.shape != (2, 3) or not np.all(np.isfinite(unit_rows)):
+        raise ProjectedCurveIntersectionError(
+            "parallel projection screen rows must have finite unit directions"
+        )
+
+    # Project normalized world axes through scale-first unit screen rows.  No
+    # raw row norm is formed, so legal coordinate scales as small as 1e-300 do
+    # not square-underflow before rank certification.
+    normalized_world_axes = (
+        np.column_stack((world_first, world_second))
+        / world_scales[np.newaxis, :]
+    )
+    normalized_linear = unit_rows @ normalized_world_axes
+    if not np.all(np.isfinite(normalized_linear)):
+        raise ProjectedCurveIntersectionError(
+            f"curve {curve.curve_id!r} has a non-finite normalized projection"
+        )
+    _left, singular, _right = np.linalg.svd(
+        normalized_linear,
+        full_matrices=False,
+    )
+    amplitude = float(singular[0]) if len(singular) else 0.0
+    residual = float(singular[1]) if len(singular) > 1 else 0.0
+    if not isfinite(amplitude) or amplitude <= 0.0:
+        raise ProjectedCurveIntersectionError(
+            f"curve {curve.curve_id!r} collapses to one screen point"
+        )
+    singular_ratio = residual / amplitude
+    if (
+        not isfinite(singular_ratio)
+        or singular_ratio > _RANK_ONE_SINGULAR_FACTOR * _FLOAT_EPSILON
+    ):
+        return None
+    # Recover the support from the strongest raw projected column.  This keeps
+    # line equations in original screen coordinates without ever constructing
+    # an absolute row norm that may underflow.
+    strongest = max(
+        (np.asarray(first, dtype=float), np.asarray(second, dtype=float)),
+        key=lambda item: float(np.max(np.abs(item))),
+    )
+    screen_direction = _scale_first_unit_vector(strongest)
+    if screen_direction is None:
+        raise ProjectedCurveIntersectionError(
+            f"curve {curve.curve_id!r} collapses below screen representation"
+        )
+    return screen_direction
+
+
 def _rank_one_ellipse_model(
-    curve: AnalyticCurve3D,
+    curve: EllipseArcCurve | ParametricConicBranch,
     origin: np.ndarray,
     first: np.ndarray,
     second: np.ndarray,
+    screen_unit_rows: np.ndarray,
 ) -> _ProjectedModel | None:
     """Represent an edge-on ellipse by its finite line support.
 
@@ -272,20 +387,21 @@ def _rank_one_ellipse_model(
     the original trigonometric axes.
     """
 
-    linear = np.column_stack((first, second))
-    first_length = float(np.linalg.norm(first))
-    second_length = float(np.linalg.norm(second))
-    area_scale = first_length * second_length
-    determinant = abs(float(np.linalg.det(linear)))
-    if area_scale > 0.0 and determinant > 1024.0 * _FLOAT_EPSILON * area_scale:
+    unit_direction = _certified_rank_one_screen_axis(
+        curve,
+        first,
+        second,
+        screen_unit_rows,
+    )
+    if unit_direction is None:
         return None
-    left, singular, _right = np.linalg.svd(linear, full_matrices=False)
-    amplitude = float(singular[0]) if len(singular) else 0.0
-    if not isfinite(amplitude) or amplitude <= 0.0:
+    amplitude = float(
+        np.hypot(_scale_first_norm(first), _scale_first_norm(second))
+    )
+    if not isfinite(amplitude) or amplitude <= 0.0:  # pragma: no cover
         raise ProjectedCurveIntersectionError(
             f"curve {curve.curve_id!r} collapses to one screen point"
         )
-    unit_direction = np.asarray(left[:, 0], dtype=float)
     direction = unit_direction * amplitude
     coefficients = (
         float(np.dot(first, unit_direction)),
@@ -308,6 +424,7 @@ def _rank_one_unbounded_conic_model(
     origin: np.ndarray,
     first: np.ndarray,
     second: np.ndarray,
+    screen_unit_rows: np.ndarray,
     *,
     parameter_kind: str,
 ) -> _ProjectedModel | None:
@@ -323,20 +440,21 @@ def _rank_one_unbounded_conic_model(
     sampling.
     """
 
-    linear = np.column_stack((first, second))
-    first_length = float(np.linalg.norm(first))
-    second_length = float(np.linalg.norm(second))
-    area_scale = first_length * second_length
-    determinant = abs(float(np.linalg.det(linear)))
-    if area_scale > 0.0 and determinant > 1024.0 * _FLOAT_EPSILON * area_scale:
+    unit_direction = _certified_rank_one_screen_axis(
+        curve,
+        first,
+        second,
+        screen_unit_rows,
+    )
+    if unit_direction is None:
         return None
-    left, singular, _right = np.linalg.svd(linear, full_matrices=False)
-    amplitude = float(singular[0]) if len(singular) else 0.0
-    if not isfinite(amplitude) or amplitude <= 0.0:
+    amplitude = float(
+        np.hypot(_scale_first_norm(first), _scale_first_norm(second))
+    )
+    if not isfinite(amplitude) or amplitude <= 0.0:  # pragma: no cover
         raise ProjectedCurveIntersectionError(
             f"curve {curve.curve_id!r} collapses to one screen point"
         )
-    unit_direction = np.asarray(left[:, 0], dtype=float)
     direction = unit_direction * amplitude
     first_coefficient = float(np.dot(first, unit_direction))
     if parameter_kind == "hyperbola_rank_one":
@@ -376,25 +494,39 @@ def _rank_one_turn_is_certified(
             -first * float(np.sin(parameter)),
             second * float(np.cos(parameter)),
         )
+        # Measure a seam-adjacent derivative residual against the complete
+        # scalar ellipse amplitude.  Using only the two derivative terms makes
+        # the scale collapse together with the derivative and rejects a true
+        # turn when its phase differs from the canonical closed seam by a few
+        # floating-point ulps.
+        scale = max(float(np.hypot(first, second)), float(np.finfo(float).tiny))
     elif model.parameter_kind == "parabola_rank_one":
         terms = (first, 2.0 * second * parameter)
+        scale = max(
+            *(abs(item) for item in terms),
+            float(np.finfo(float).tiny),
+        )
     elif model.parameter_kind == "hyperbola_rank_one":
         terms = (
             first * float(np.sinh(parameter)),
             second * float(np.cosh(parameter)),
         )
+        scale = max(
+            *(abs(item) for item in terms),
+            float(np.finfo(float).tiny),
+        )
     else:
         return False
     derivative = sum(terms)
-    scale = max(
-        *(abs(item) for item in terms),
-        float(np.finfo(float).tiny),
-    )
     return abs(derivative) <= 256.0 * _FLOAT_EPSILON * scale
 
 
 def _projected_model(curve: AnalyticCurve3D, view: ParallelView) -> _ProjectedModel:
     screen = view.matrix[:2]
+    screen_unit_rows = np.asarray(
+        tuple(_scale_first_unit_vector(row) for row in screen),
+        dtype=float,
+    )
     if isinstance(curve, SegmentCurve):
         origin = screen @ np.asarray(curve.start, dtype=float)
         direction = screen @ np.asarray(curve.displacement, dtype=float)
@@ -412,7 +544,13 @@ def _projected_model(curve: AnalyticCurve3D, view: ParallelView) -> _ProjectedMo
         origin = screen @ np.asarray(curve.center, dtype=float)
         first = screen @ np.asarray(curve.first_axis, dtype=float)
         second = screen @ np.asarray(curve.second_axis, dtype=float)
-        rank_one = _rank_one_ellipse_model(curve, origin, first, second)
+        rank_one = _rank_one_ellipse_model(
+            curve,
+            origin,
+            first,
+            second,
+            screen_unit_rows,
+        )
         if rank_one is not None:
             return rank_one
         matrix = _conic_matrix(
@@ -436,7 +574,13 @@ def _projected_model(curve: AnalyticCurve3D, view: ParallelView) -> _ProjectedMo
     if kind in {ConicKind.CIRCLE, ConicKind.ELLIPSE}:
         canonical = np.diag((1.0, 1.0, -1.0))
         parameter_kind = "ellipse"
-        rank_one = _rank_one_ellipse_model(curve, origin, first, second)
+        rank_one = _rank_one_ellipse_model(
+            curve,
+            origin,
+            first,
+            second,
+            screen_unit_rows,
+        )
         if rank_one is not None:
             return rank_one
     elif kind is ConicKind.HYPERBOLA:
@@ -447,6 +591,7 @@ def _projected_model(curve: AnalyticCurve3D, view: ParallelView) -> _ProjectedMo
             origin,
             first,
             second,
+            screen_unit_rows,
             parameter_kind="hyperbola_rank_one",
         )
         if rank_one is not None:
@@ -462,6 +607,7 @@ def _projected_model(curve: AnalyticCurve3D, view: ParallelView) -> _ProjectedMo
             origin,
             first,
             second,
+            screen_unit_rows,
             parameter_kind="parabola_rank_one",
         )
         if rank_one is not None:
@@ -635,11 +781,9 @@ def _target_parameters(
             np.asarray(world_point, dtype=float) - _model_world_origin(model)
         )
     if model.parameter_kind == "ellipse_rank_one":
-        axis = np.asarray(model.screen_first, dtype=float)
-        axis_length = float(np.linalg.norm(axis))
-        if axis_length <= 0.0:  # pragma: no cover - construction rejects this
+        axis = _scale_first_unit_vector(model.screen_first)
+        if axis is None:  # pragma: no cover - construction rejects this
             return ()
-        axis /= axis_length
         if model.rank_one_coefficients is None:  # pragma: no cover
             return ()
         first_coefficient, second_coefficient = model.rank_one_coefficients
@@ -651,6 +795,13 @@ def _target_parameters(
         if ratio < -1.0 - coordinate_epsilon or ratio > 1.0 + coordinate_epsilon:
             return ()
         ratio = min(1.0, max(-1.0, ratio))
+        if abs(abs(ratio) - 1.0) <= coordinate_epsilon:
+            # A certified contact at a scalar extremum owns one angular root.
+            # Leaving a few-ULP ratio deficit for ``acos`` would manufacture
+            # two nearby parameters whose rank-one screen interval is exactly
+            # zero.  Only snap inside the caller's screen-distance enclosure;
+            # a resolvable near-extremum secant therefore keeps both roots.
+            ratio = copysign(1.0, ratio)
         phase = atan2(second_coefficient, first_coefficient)
         offset = acos(ratio)
         candidates = tuple(
@@ -664,11 +815,9 @@ def _target_parameters(
         "hyperbola_rank_one",
         "parabola_rank_one",
     }:
-        axis = np.asarray(model.screen_first, dtype=float)
-        axis_length = float(np.linalg.norm(axis))
-        if axis_length <= 0.0:  # pragma: no cover - construction rejects this
+        axis = _scale_first_unit_vector(model.screen_first)
+        if axis is None:  # pragma: no cover - construction rejects this
             return ()
-        axis /= axis_length
         scalar = float(np.dot(screen_delta, axis))
         candidates = _rank_one_unbounded_parameters(
             model,
@@ -791,7 +940,7 @@ def _resolve_context(
 
 def _model_screen_feature_scale(model: _ProjectedModel) -> float:
     if model.line is not None:
-        return float(np.linalg.norm(model.screen_first))
+        return _scale_first_norm(model.screen_first)
     if model.screen_second is None:
         return 0.0
     linear = np.column_stack((model.screen_first, model.screen_second))
@@ -1643,8 +1792,11 @@ def _same_line_support_parameters(
     # ``screen_first`` is stored inside a frozen model, but NumPy arrays are
     # still mutable.  Copy before normalization so one pair calculation cannot
     # silently change the model used by the later parameter recovery step.
-    axis = np.array(target.screen_first, dtype=float, copy=True)
-    axis /= float(np.linalg.norm(axis))
+    axis = _scale_first_unit_vector(target.screen_first)
+    if axis is None:  # pragma: no cover - construction rejects this
+        raise ProjectedCurveIntersectionError(
+            f"curve {target.curve.curve_id!r} has no screen support direction"
+        )
 
     target_curve = target.curve
     source_lower, source_upper, source_evidence = (
@@ -2192,6 +2344,27 @@ def _candidate_source_parameters(
             continue
         if parameter > source.domain.end + parameter_epsilon:
             continue
+        if source_model.parameter_kind == "ellipse_rank_one":
+            world_point = np.asarray(source.point(parameter), dtype=float)
+            recovered = _target_parameters(
+                source_model,
+                screen @ world_point,
+                parameter_epsilon=parameter_epsilon,
+                screen_epsilon=screen_epsilon,
+                world_point=world_point,
+                view=view,
+            )
+            if len(recovered) == 1 and _rank_one_turn_is_certified(
+                source_model,
+                recovered[0],
+            ):
+                # The source polynomial can perturb an exact scalar extremum
+                # into one nearby simple root.  Apply the same screen-distance
+                # enclosure used by target inversion, otherwise that root
+                # creates a nonzero parameter fragment with a zero screen
+                # image at a cap-rim/generator contact.
+                parameter = recovered[0]
+                tangential_certified = True
         parameter = _canonical_curve_parameter(
             source,
             parameter,

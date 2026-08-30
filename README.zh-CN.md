@@ -35,6 +35,10 @@ TikZ 图压成一张 SVG 或图片。转换后的直线、面、点、标签仍�
 同一帧更新；失败时自动拆除 updater、清除 Cairo 静态缓存并恢复镜头。三个可直接
 渲染的验收动画见
 [语义相机镜头示例](examples/parallel_camera_shots/README.md)。
+相机、移动截平面、拓扑双 bank、有限平面片和真实自动遮挡控制器的一体化契约，
+见[平行相机与截面序列](docs/parallel-camera-section-sequence.md)；三段完整 Cairo
+验收场景位于
+[parallel_camera_section_rig_demo.py](examples/parallel_camera_section_rig_demo.py)。
 
 ## 圆锥截口 Quick Start
 

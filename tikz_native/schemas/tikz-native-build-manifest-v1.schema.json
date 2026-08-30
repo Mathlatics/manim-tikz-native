@@ -234,7 +234,12 @@
       "then": {
         "properties": {
           "inputs": {"required": ["cameraShots"]},
-          "componentRevisions": {"required": ["embedded_motion_3d"]}
+          "componentRevisions": {
+            "anyOf": [
+              {"required": ["parallel_camera_core"]},
+              {"required": ["embedded_motion_3d"]}
+            ]
+          }
         }
       }
     },

@@ -550,6 +550,10 @@ _EXPORTS: Final[dict[str, tuple[str, str]]] = {
     "QuadricBoundaryStyle": (".manim", "QuadricBoundaryStyle"),
     "QuadricGeometryPrototype": (".manim", "QuadricGeometryPrototype"),
     "QuadricOcclusion3D": (".manim", "QuadricOcclusion3D"),
+    "QuadricOcclusionTransactionSnapshot": (
+        ".manim",
+        "QuadricOcclusionTransactionSnapshot",
+    ),
     "estimate_quadric_mobject_count": (
         ".manim",
         "estimate_quadric_mobject_count",

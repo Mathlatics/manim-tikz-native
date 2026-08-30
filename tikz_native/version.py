@@ -26,6 +26,7 @@ COMPONENT_GEOMETRY_RIG_3D = "geometry_rig_3d"
 COMPONENT_NATIVE_MANIM_SOURCE_3D = "native_manim_source_3d"
 COMPONENT_NATIVE_MANIM_SOURCE_3D_V2 = "native_manim_source_3d_v2"
 COMPONENT_NATIVE_MANIM_SOURCE_3D_V3 = "native_manim_source_3d_v3"
+COMPONENT_PARALLEL_CAMERA_CORE = "parallel_camera_core"
 COMPONENT_EMBEDDED_MOTION_3D = "embedded_motion_3d"
 COMPONENT_MOTION_PREVIEW_3D = "motion_preview_3d"
 COMPONENT_POLYHEDRON_VISIBILITY = "polyhedron_visibility"
@@ -75,8 +76,9 @@ _PUBLIC_0_1_COMPONENT_REVISIONS: Final[dict[str, str]] = {
     COMPONENT_NATIVE_MANIM_SOURCE_3D: "source-sha256:1ba17fb69e455e3694ae477ebd69de321043555af05c8e7712c3ee22d20307c1",
     COMPONENT_NATIVE_MANIM_SOURCE_3D_V2: "source-sha256:9fb59765ba981108a73a0a4a340de5a32ce4c03707d4925cdb729b9a7ecdcb9c",
     COMPONENT_NATIVE_MANIM_SOURCE_3D_V3: "source-sha256:513935788725e3c72b74905268695a90c443df208a4f321229f05efcdd3ef5aa",
-    COMPONENT_EMBEDDED_MOTION_3D: "source-sha256:5365474d68e36c8f0cac666d3c5befa0872247a6bfd8bfba90a009010b95df88",
-    COMPONENT_MOTION_PREVIEW_3D: "source-sha256:1b9383e7d289c7160dc41e1fa944e1b83ba2b2263e5fc674a41b896cce49baff",
+    COMPONENT_PARALLEL_CAMERA_CORE: "source-sha256:6ea0e6870ffafbad664676e0a7429c4240ed56d1f1fdc073a075c6800da276cc",
+    COMPONENT_EMBEDDED_MOTION_3D: "source-sha256:d289d7c39fed4b95b856d61736ed84ef3e607c657c94cd10682d692a2f6eff49",
+    COMPONENT_MOTION_PREVIEW_3D: "source-sha256:0d0a8bb97386aefd0f74ef9896dbe359e0827e1fe2a2ca13c141b8d0815822c7",
     COMPONENT_POLYHEDRON_VISIBILITY: "source-sha256:8fff612f011f5b67cecaa66dc251af3126fe091cfe6b753e7fd5e9301cfcc53f",
     COMPONENT_FACE_DEPTH_CUE_3D: "source-sha256:499495b399f1078f0532413690821764208bbb87695f1f40019ce396f2ac347a",
     COMPONENT_CONVEX_SECTION_3D: "source-sha256:a6c71249ce429884b0fcc3341eeea33dacf2d64e14d875d1e0f222c1530637bf",
@@ -91,10 +93,10 @@ _PUBLIC_0_1_COMPONENT_REVISIONS: Final[dict[str, str]] = {
     COMPONENT_TIKZ_OPEN_FACE_VISIBILITY_3D: "source-sha256:cdf237694a76c8c6c7869bfa9bf391cedbab410f56409d10c8808a21ecc8710d",
     COMPONENT_TIKZ_OPEN_FACE_STATIC_ASSET_3D: "source-sha256:5602140f9269ac819e0f84abebf12c133decce44927e4725c4e05ca5272d9d4c",
     COMPONENT_GENERATED_OPEN_FACE_VISIBILITY_3D: "source-sha256:1125fd1c8b9a6f63b14d421e50315c3e4ccf7f1830b00b310808cdf957c8e94f",
-    COMPONENT_SOURCE_PROJECT_BUILD: "source-sha256:c108980773c47c6dc8a070c01cec9fb4bc4c26620b9cba9de03f3efe12fbee70",
-    COMPONENT_QUADRIC_GEOMETRY: "source-sha256:289cfbecfc9ccd81244e16916840f04c7462b9e851370c634e914c6bd2643b2e",
-    COMPONENT_QUADRIC_VISIBILITY: "source-sha256:81f188d5933a66bdf86e12135bd469975a31d673355021f2295bb474d4cbc2f0",
-    COMPONENT_QUADRIC_MANIM: "source-sha256:c982fafdf8e3b8a245e5ea1ad4084620c3f1172f0a264196d4470005f6758805",
+    COMPONENT_SOURCE_PROJECT_BUILD: "source-sha256:a99aff62e9f6a80030a55ca72c48997431b5ae15dbbae88df7a4df11edbe8c06",
+    COMPONENT_QUADRIC_GEOMETRY: "source-sha256:37e2f79b974a4329f97bfb355378b6bb11383e1e7423a01a9cf62709eb633d4a",
+    COMPONENT_QUADRIC_VISIBILITY: "source-sha256:8d5a40e6f1b01d6d6e5285a1cae4218fec5892d6f6ced928ce9cad2431a03420",
+    COMPONENT_QUADRIC_MANIM: "source-sha256:761a98f07a3b8d2b400c44a4e615084db1ffe9c97f15376ac93744a948172b94",
 }
 
 
@@ -182,21 +184,29 @@ _COMPONENT_DEFINITIONS: Final[dict[str, dict[str, tuple[str, ...]]]] = {
             "schemas/geometry-rig-3d-source-v3-v1.schema.json",
         ),
     },
+    COMPONENT_PARALLEL_CAMERA_CORE: {
+        "dependencies": (),
+        "files": (
+            "parallel_camera.py",
+            "parallel_frame.py",
+            "parallel_preflight.py",
+            "parallel_shots.py",
+            "schemas/parallel-shot-sequence-v1.schema.json",
+        ),
+    },
     COMPONENT_EMBEDDED_MOTION_3D: {
         "dependencies": (
             COMPONENT_ASSET_COMPILER,
             COMPONENT_GEOMETRY_RIG_3D,
+            COMPONENT_PARALLEL_CAMERA_CORE,
         ),
         "files": (
             "camera_3d.py",
-            "parallel_camera.py",
-            "parallel_shots.py",
             "parallel_shots_manim.py",
             "dynamic_geometry.py",
             "manim_renderer_3d.py",
             "motion_3d.py",
             "motion_3d_runtime.py",
-            "schemas/parallel-shot-sequence-v1.schema.json",
             "schemas/motion-3d-v1.schema.json",
         ),
     },
@@ -384,18 +394,27 @@ _COMPONENT_DEFINITIONS: Final[dict[str, dict[str, tuple[str, ...]]]] = {
     # occlusion and painter ordering; the final component is the only layer
     # that imports Manim and mutates scene objects.
     COMPONENT_QUADRIC_GEOMETRY: {
-        "dependencies": (COMPONENT_POLYHEDRON_VISIBILITY,),
+        "dependencies": (
+            COMPONENT_PARALLEL_CAMERA_CORE,
+            COMPONENT_POLYHEDRON_VISIBILITY,
+        ),
         "files": (
+            "quadric_section_parallel.py",
+            "section_bank_render.py",
             "@tool/polyhedron_visibility/quadrics/__init__.py",
             "@tool/polyhedron_visibility/quadrics/algebra.py",
             "@tool/polyhedron_visibility/quadrics/animation.py",
             "@tool/polyhedron_visibility/quadrics/conics.py",
             "@tool/polyhedron_visibility/quadrics/contract.py",
             "@tool/polyhedron_visibility/quadrics/curves.py",
+            "@tool/polyhedron_visibility/quadrics/parallel_plane_motion.py",
             "@tool/polyhedron_visibility/quadrics/plane_motion.py",
             "@tool/polyhedron_visibility/quadrics/plane_patch.py",
             "@tool/polyhedron_visibility/quadrics/roots.py",
+            "@tool/polyhedron_visibility/quadrics/section_timeline.py",
+            "@tool/polyhedron_visibility/quadrics/section_timeline_transition.py",
             "@tool/polyhedron_visibility/quadrics/sections.py",
+            "@tool/polyhedron_visibility/quadrics/semantic_display.py",
             "@tool/polyhedron_visibility/quadrics/trace.py",
             "@tool/polyhedron_visibility/quadrics/transition.py",
         ),
@@ -427,6 +446,8 @@ _COMPONENT_DEFINITIONS: Final[dict[str, dict[str, tuple[str, ...]]]] = {
             COMPONENT_MANAGED_PAINTER_BAND,
         ),
         "files": (
+            "quadric_section_parallel_manim.py",
+            "quadric_section_parallel_rig.py",
             "@tool/polyhedron_visibility/quadrics/authoring.py",
             "@tool/polyhedron_visibility/quadrics/capacity.py",
             "@tool/polyhedron_visibility/quadrics/composite_authoring.py",
@@ -490,11 +511,14 @@ _DECLARED_IMPLEMENTATION_DIGESTS: Final[dict[str, str]] = {
     COMPONENT_NATIVE_MANIM_SOURCE_3D_V3: (
         "513935788725e3c72b74905268695a90c443df208a4f321229f05efcdd3ef5aa"
     ),
+    COMPONENT_PARALLEL_CAMERA_CORE: (
+        "6ea0e6870ffafbad664676e0a7429c4240ed56d1f1fdc073a075c6800da276cc"
+    ),
     COMPONENT_EMBEDDED_MOTION_3D: (
-        "5365474d68e36c8f0cac666d3c5befa0872247a6bfd8bfba90a009010b95df88"
+        "d289d7c39fed4b95b856d61736ed84ef3e607c657c94cd10682d692a2f6eff49"
     ),
     COMPONENT_MOTION_PREVIEW_3D: (
-        "1b9383e7d289c7160dc41e1fa944e1b83ba2b2263e5fc674a41b896cce49baff"
+        "0d0a8bb97386aefd0f74ef9896dbe359e0827e1fe2a2ca13c141b8d0815822c7"
     ),
     COMPONENT_POLYHEDRON_VISIBILITY: (
         "8fff612f011f5b67cecaa66dc251af3126fe091cfe6b753e7fd5e9301cfcc53f"
@@ -539,16 +563,16 @@ _DECLARED_IMPLEMENTATION_DIGESTS: Final[dict[str, str]] = {
         "1125fd1c8b9a6f63b14d421e50315c3e4ccf7f1830b00b310808cdf957c8e94f"
     ),
     COMPONENT_SOURCE_PROJECT_BUILD: (
-        "c108980773c47c6dc8a070c01cec9fb4bc4c26620b9cba9de03f3efe12fbee70"
+        "a99aff62e9f6a80030a55ca72c48997431b5ae15dbbae88df7a4df11edbe8c06"
     ),
     COMPONENT_QUADRIC_GEOMETRY: (
-        "289cfbecfc9ccd81244e16916840f04c7462b9e851370c634e914c6bd2643b2e"
+        "37e2f79b974a4329f97bfb355378b6bb11383e1e7423a01a9cf62709eb633d4a"
     ),
     COMPONENT_QUADRIC_VISIBILITY: (
-        "81f188d5933a66bdf86e12135bd469975a31d673355021f2295bb474d4cbc2f0"
+        "8d5a40e6f1b01d6d6e5285a1cae4218fec5892d6f6ced928ce9cad2431a03420"
     ),
     COMPONENT_QUADRIC_MANIM: (
-        "c982fafdf8e3b8a245e5ea1ad4084620c3f1172f0a264196d4470005f6758805"
+        "761a98f07a3b8d2b400c44a4e615084db1ffe9c97f15376ac93744a948172b94"
     ),
 }
 
@@ -754,6 +778,7 @@ __all__ = [
     "COMPONENT_NATIVE_MANIM_SOURCE_3D_V2",
     "COMPONENT_NATIVE_MANIM_SOURCE_3D_V3",
     "COMPONENT_NATIVE_RIG_2D",
+    "COMPONENT_PARALLEL_CAMERA_CORE",
     "COMPONENT_OPEN_FACE_VISIBILITY",
     "COMPONENT_OPEN_FACE_UNIFIED_COMPOSITING",
     "COMPONENT_MANAGED_PAINTER_BAND",

@@ -9,6 +9,11 @@ All notable changes to this project will be documented in this file.
   constructors; integrate it additively with `MultiProjectionCamera` through
   safe invertible transitions while preserving legacy projection presets, and
   let the quadric Manim controllers consume that same complete animated state;
+- publish camera state, semantic shots, preflight, and frame transactions under
+  an independent `parallel_camera_core` component identity, so ordinary TikZ
+  compiler changes do not invalidate the quadric geometry chain; retain the
+  older `embedded_motion_3d` source-project revision as a fail-closed cache
+  override during migration;
 - add the strict `parallel-shot-sequence/v1` authoring layer with semantic
   look-at/normal/relative/along-plane shots, fixed-envelope zoom fitting,
   transactional Manim playback, and an explicit zero-allocation dynamic-target
@@ -16,6 +21,18 @@ All notable changes to this project will be documented in this file.
   consumers so automatic occlusion samples the new target in the same frame,
   with transactional updater/cache cleanup; include three short Cairo
   acceptance scenes;
+- compile semantic camera shots and a source-authoritative `SectionTimeline`
+  onto one renderer frame grid with analytic critical times, two fixed topology
+  banks, finite plane patches, semantic display slots, painter evidence, safe
+  framing, and channel digests; commit the resulting frame atomically in a
+  fixed participant order and roll every participant back on failure;
+- bind that certified camera/section sequence to one real
+  `QuadricOcclusion3D` controller and one managed painter band: perform a
+  two-pass preflight against the controller's numeric painter order, keep both
+  topology banks and finite cap chords in fixed slots, support constant
+  surface/plane display multipliers, and reach an exact rank-one side view
+  without replacing Mobjects; make camera and controller transaction snapshots
+  owner-bound, fully validated, and atomic;
 - give one finite single-surface cutting-plane patch an explicit `AREA`/`LINE`
   projection contract: exact side views omit fill and plane occlusion, retain
   one certified finite near-side outline without duplicate strokes, reuse the
