@@ -428,8 +428,14 @@ existing policies remain unchanged.
 
 The omitted projection is the true orthographic isometric preset.  It is the
 quadric/conic classroom default: equal projected axis scales, no screen shear,
-and a vertical world-z cone axis.  Supply a `ParallelView` or a 3-by-3
-matrix only when the scene deliberately needs another parallel view.
+and a vertical world-z cone axis. Supply a `ParallelView` or a 3-by-3 matrix
+when the scene deliberately needs another raw parallel view. The Manim
+controllers also accept a complete semantic `ParallelCameraState`, or a
+per-frame callback such as `projection=lambda scene: scene.camera`. The latter
+keeps the quadric display and automatic occlusion synchronized with an animated
+`MultiProjectionCamera`, including its target, screen anchor, semantic zoom,
+inherited Manim zoom, and non-zero frame center. These affine display terms do
+not enter renderer-neutral depth evidence.
 
 With `section_plane=plane`, the finite display patch no longer sits at one
 manually chosen z-index.  The renderer-neutral section compositor replaces the

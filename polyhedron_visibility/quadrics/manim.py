@@ -16,7 +16,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
 from functools import partial
 from math import sqrt
-from typing import Callable, Iterator, Mapping, Sequence
+from typing import Callable, Iterator, Mapping, Protocol, Sequence
 
 import numpy as np
 from manim import (
@@ -129,6 +129,7 @@ from .manim_runtime import (
     _PreparedConeFill,
     _PreparedDash,
     _PreparedDisplayAction,
+    _ResolvedParallelCameraFrame,
     _SurfaceViewCache,
     _SurfacePaintSlot,
     _adaptive_project_curve,
@@ -138,7 +139,7 @@ from .manim_runtime import (
     _apply_surface_sheet_pair,
     _boundary_style_registry,
     _capture_root,
-    _coerce_view,
+    _coerce_projection_frame,
     _classify_dirty_frame,
     _curve_slots_family_capacity,
     _dash_polyline,
@@ -148,6 +149,7 @@ from .manim_runtime import (
     _non_negative,
     _polyline_lengths,
     _positive,
+    _projection_display_offset,
     _prepare_boundary_fragments,
     _prepare_display_delta,
     _prepared_cone_fill,
@@ -176,11 +178,25 @@ SectionPlaneInput = SectionPlane | Callable[[], SectionPlane] | None
 PlanePatchInput = (
     PlaneDisplayPatchSpec | Callable[[], PlaneDisplayPatchSpec] | None
 )
-ProjectionInput = (
+
+class _SemanticParallelProjection(Protocol):
+    matrix: object
+    target: object
+    screen_anchor: object
+    zoom: object
+
+
+class _ParallelCameraSnapshotSource(Protocol):
+    def snapshot_parallel_state(self) -> _SemanticParallelProjection: ...
+
+
+ProjectionValue = (
     ParallelView
     | Sequence[Sequence[float]]
-    | Callable[[object], ParallelView | Sequence[Sequence[float]]]
+    | _SemanticParallelProjection
+    | _ParallelCameraSnapshotSource
 )
+ProjectionInput = ProjectionValue | Callable[[object], ProjectionValue]
 BoundaryGeneratorInput = Sequence[GeneratorBoundarySpec]
 
 
@@ -475,6 +491,7 @@ class _ResolvedQuadricFrameInputs:
     curves: tuple[AnalyticCurve3D, ...]
     curve_opacities: Mapping[str, float]
     view: ParallelView
+    display_offset: tuple[float, float]
     section_plane: SectionPlane | None
     section_patch: PlaneDisplayPatchSpec | None
     surface_view_signature: bytes
@@ -957,13 +974,23 @@ class QuadricOcclusion3D:
             )
         return value
 
-    def _resolve_view(self) -> ParallelView:
+    def _resolve_projection_frame(self) -> _ResolvedParallelCameraFrame:
         value = (
             self._projection_input(self.scene)
             if callable(self._projection_input)
             else self._projection_input
         )
-        return _coerce_view(value)
+        return _coerce_projection_frame(value, scene=self.scene)
+
+    def _resolve_view(
+        self,
+        projection_frame: _ResolvedParallelCameraFrame | None = None,
+    ) -> ParallelView:
+        """Resolve the linear kernel view, preserving the legacy helper."""
+
+        if projection_frame is None:
+            projection_frame = self._resolve_projection_frame()
+        return projection_frame.view
 
     def _prepare_cone_fill_for_surface(
         self,
@@ -1064,7 +1091,13 @@ class QuadricOcclusion3D:
         self._validate_fixed_topology(surfaces, curves)
         active_curve_ids = tuple(item.curve_id for item in curves)
         curve_opacities = self._resolve_curve_opacities(active_curve_ids)
-        view = self._resolve_view()
+        projection_frame = self._resolve_projection_frame()
+        view = self._resolve_view(projection_frame)
+        display_offset = _projection_display_offset(
+            self.scene,
+            projection_frame,
+            self.display_offset,
+        )
         if self._section_enabled:
             section_plane = self._resolve_section_plane()
             section_patch = self._resolve_section_patch(
@@ -1100,7 +1133,7 @@ class QuadricOcclusion3D:
             self.section_compositing_limits,
             self.boundary_section_limits,
             self.limits,
-            self.display_offset,
+            display_offset,
         )
         draw_signature = _display_digest(
             "quadric-frame-draw-v1",
@@ -1111,6 +1144,7 @@ class QuadricOcclusion3D:
             curves,
             curve_opacities,
             view,
+            display_offset,
             section_plane,
             section_patch,
             surface_view_signature,
@@ -1817,12 +1851,13 @@ class QuadricOcclusion3D:
     def _translate_prepared_numeric(
         self,
         numeric: _PreparedNumericFrame,
+        display_offset: tuple[float, float],
     ) -> _PreparedNumericFrame:
         """Apply a display-only screen translation to prepared numeric paths."""
 
-        if self.display_offset == (0.0, 0.0):
+        if display_offset == (0.0, 0.0):
             return numeric
-        delta = np.asarray((*self.display_offset, 0.0), dtype=float)
+        delta = np.asarray((*display_offset, 0.0), dtype=float)
 
         def points(value: np.ndarray) -> np.ndarray:
             return np.asarray(value, dtype=float) + delta
@@ -1939,7 +1974,10 @@ class QuadricOcclusion3D:
                 resolved_inputs.surface_view_signature,
                 performance_attempt,
             )
-            return self._translate_prepared_numeric(numeric)
+            return self._translate_prepared_numeric(
+                numeric,
+                resolved_inputs.display_offset,
+            )
         component_fills = self._prepare_surface_component_fills(
             surfaces,
             view,
@@ -2271,7 +2309,10 @@ class QuadricOcclusion3D:
             section_layers=section_layers,
             projected_source_segment_counts=projected_source_segment_counts,
         )
-        return self._translate_prepared_numeric(numeric)
+        return self._translate_prepared_numeric(
+            numeric,
+            resolved_inputs.display_offset,
+        )
 
     def _prepare_painter(
         self,

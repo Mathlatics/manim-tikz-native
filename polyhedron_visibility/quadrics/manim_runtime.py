@@ -1016,6 +1016,141 @@ def _coerce_view(value: object) -> ParallelView:
         raise QuadricManimError(f"invalid parallel projection: {exc}") from exc
 
 
+@dataclass(frozen=True, slots=True)
+class _ResolvedParallelCameraFrame:
+    """One linear kernel view plus its final common screen translation."""
+
+    view: ParallelView
+    screen_offset: tuple[float, float] = (0.0, 0.0)
+    viewport_relative: bool = False
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.view, ParallelView):
+            raise TypeError("view must be a ParallelView")
+        offset = np.asarray(self.screen_offset, dtype=float)
+        if offset.shape != (2,) or not np.all(np.isfinite(offset)):
+            raise QuadricManimError(
+                "parallel camera screen offset must contain two finite values"
+            )
+        if not isinstance(self.viewport_relative, bool):
+            raise TypeError("viewport_relative must be a bool")
+        object.__setattr__(
+            self,
+            "screen_offset",
+            (float(offset[0]), float(offset[1])),
+        )
+
+
+def _coerce_projection_frame(
+    value: object,
+    *,
+    scene: object | None = None,
+) -> _ResolvedParallelCameraFrame:
+    """Resolve a matrix, ``ParallelView``, camera, or camera-state object.
+
+    A semantic camera state is accepted structurally to keep the renderer-
+    neutral quadrics package independent of ``tikz_native``.  Its target,
+    viewport anchor, and positive zoom are reduced exactly once to the affine
+    form consumed by fixed-frame Manim geometry.
+    """
+
+    if isinstance(value, _ResolvedParallelCameraFrame):
+        return value
+    if isinstance(value, ParallelView):
+        return _ResolvedParallelCameraFrame(value)
+
+    camera_source = value if isinstance(value, ThreeDCamera) else None
+    snapshotter = getattr(value, "snapshot_parallel_state", None)
+    if callable(snapshotter):
+        try:
+            value = snapshotter()
+        except (TypeError, ValueError, RuntimeError) as exc:
+            raise QuadricManimError(
+                f"invalid scene parallel camera state: {exc}"
+            ) from exc
+
+    has_semantic_fields = all(
+        hasattr(value, name)
+        for name in ("matrix", "target", "screen_anchor", "zoom")
+    )
+    if not has_semantic_fields:
+        return _ResolvedParallelCameraFrame(_coerce_view(value))
+
+    try:
+        matrix = np.asarray(getattr(value, "matrix"), dtype=float)
+        target = np.asarray(getattr(value, "target"), dtype=float)
+        anchor = np.asarray(getattr(value, "screen_anchor"), dtype=float)
+        zoom = float(getattr(value, "zoom"))
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise QuadricManimError(
+            "semantic parallel camera fields must be finite numeric values"
+        ) from exc
+    if matrix.shape != (3, 3) or not np.all(np.isfinite(matrix)):
+        raise QuadricManimError(
+            "semantic parallel camera matrix must be a finite 3x3 matrix"
+        )
+    if target.shape != (3,) or not np.all(np.isfinite(target)):
+        raise QuadricManimError(
+            "semantic parallel camera target must contain three finite values"
+        )
+    if anchor.shape != (2,) or not np.all(np.isfinite(anchor)):
+        raise QuadricManimError(
+            "semantic parallel camera screen_anchor must contain two finite values"
+        )
+    if not np.isfinite(zoom) or zoom <= 0.0:
+        raise QuadricManimError(
+            "semantic parallel camera zoom must be finite and positive"
+        )
+
+    inherited_zoom = 1.0
+    camera = camera_source or getattr(scene, "camera", None)
+    if isinstance(camera, ThreeDCamera):
+        inherited_zoom = float(ThreeDCamera.get_zoom(camera))
+        if not np.isfinite(inherited_zoom) or inherited_zoom <= 0.0:
+            raise QuadricManimError(
+                "scene camera zoom must be finite and positive"
+            )
+
+    effective = np.array(matrix, dtype=float, copy=True)
+    effective[:2] *= zoom * inherited_zoom
+    try:
+        view = ParallelView.from_matrix(effective)
+    except (SolverError, TypeError, ValueError) as exc:
+        raise QuadricManimError(f"invalid semantic parallel camera: {exc}") from exc
+    offset = anchor - effective[:2] @ target
+    return _ResolvedParallelCameraFrame(
+        view,
+        (float(offset[0]), float(offset[1])),
+        True,
+    )
+
+
+def _projection_display_offset(
+    scene: object,
+    frame: _ResolvedParallelCameraFrame,
+    authored_offset: Sequence[float] = (0.0, 0.0),
+) -> tuple[float, float]:
+    """Return raw fixed-frame coordinates for one viewport-relative frame."""
+
+    offset = np.asarray(frame.screen_offset, dtype=float)
+    authored = np.asarray(authored_offset, dtype=float)
+    if authored.shape != (2,) or not np.all(np.isfinite(authored)):
+        raise QuadricManimError(
+            "display_offset must contain two finite values"
+        )
+    offset = offset + authored
+    if frame.viewport_relative:
+        camera = getattr(scene, "camera", None)
+        if isinstance(camera, ThreeDCamera):
+            center = np.asarray(camera.frame_center, dtype=float)
+            if center.shape != (3,) or not np.all(np.isfinite(center)):
+                raise QuadricManimError(
+                    "scene camera frame_center must contain three finite values"
+                )
+            offset = offset + center[:2]
+    return float(offset[0]), float(offset[1])
+
+
 def _point_segment_distance(
     point: np.ndarray, start: np.ndarray, end: np.ndarray
 ) -> float:

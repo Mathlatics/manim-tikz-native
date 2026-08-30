@@ -102,6 +102,30 @@ Manim's inherited camera zoom composes multiplicatively with the state's
 when the inherited `frame_center` is non-zero. The semantic state's `target`
 remains an absolute world point.
 
+The Manim quadric controllers accept the same complete state through their
+existing `projection=` argument. Pass the camera itself from a callback when
+the view is animated, so direction, target, viewport anchor, and both zoom
+layers are sampled together exactly once per frame:
+
+```python
+section = QuadricOcclusion3D(
+    scene,
+    surfaces=(cone,),
+    curves=section_curves,
+    section_plane=cut_plane,
+    projection=lambda active_scene: active_scene.camera,
+)
+```
+
+Passing a static `ParallelCameraState` is also supported. Existing 3-by-3
+matrices and `ParallelView` values keep their original raw screen-coordinate
+semantics; they do not inherit target, anchor, frame-center, or Manim zoom.
+`display_offset=(x, y)` remains an extra final screen translation and composes
+with, rather than replaces, the semantic camera anchor. Geometry and occlusion
+still consume only the resolved linear view; the affine target/anchor shift is
+applied at the fixed-frame Manim boundary and therefore cannot change depth
+evidence.
+
 This camera API deliberately does not change the quadric section compositor's
 support contract. A generic finite plane can visually collapse to a line, but
 an exact edge-on `QuadricSection3D` cutting plane still fails explicitly until

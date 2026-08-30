@@ -78,6 +78,7 @@ from .manim import (
     QuadricManimError,
     QuadricManimLimits,
     QuadricManimStyle,
+    _display_offset,
 )
 from .manim_runtime import (
     _CommittedDisplaySlot,
@@ -86,7 +87,9 @@ from .manim_runtime import (
     _ManagedQuadricDisplayGroup,
     _PreparedBoundaryFragment,
     _PreparedConeFill,
+    _PreparedDash,
     _PreparedDisplayAction,
+    _ResolvedParallelCameraFrame,
     _SurfaceViewCache,
     _SurfacePaintSlot,
     _apply_display_delta,
@@ -95,7 +98,7 @@ from .manim_runtime import (
     _boundary_style_registry,
     _capture_root,
     _classify_dirty_frame,
-    _coerce_view,
+    _coerce_projection_frame,
     _curve_slots_family_capacity,
     _display_digest,
     _hide_vmobject,
@@ -111,6 +114,7 @@ from .manim_runtime import (
     _scene_containers,
     _set_closed_subpaths,
     _painter_band_signature,
+    _projection_display_offset,
 )
 from .plane_patch import PlanePatchFitError, fit_plane_display_patch
 from .projection import (
@@ -180,6 +184,7 @@ class _ResolvedCompositeFrameInputs:
     lineage: tuple[CompositeSectionBranchLineage, ...]
     owners: Mapping[str, ConeSpec]
     view: ParallelView
+    display_offset: tuple[float, float]
     patch: PlaneDisplayPatchSpec
     surface_view_signature: bytes
     geometry_signature: bytes
@@ -280,6 +285,7 @@ class CompositeQuadricSection3D:
         include_surface_boundaries: bool = True,
         generator_boundaries: Sequence[GeneratorBoundarySpec] = (),
         allocated_boundary_ids: Sequence[str] | None = None,
+        display_offset: Sequence[float] = (0.0, 0.0),
     ) -> None:
         if not isinstance(surface, ConeSpec):
             raise TypeError("surface must be a ConeSpec")
@@ -355,6 +361,7 @@ class CompositeQuadricSection3D:
         self.boundary_section_limits = boundary_section_limits
         self.include_surface_boundaries = include_surface_boundaries
         self._generator_boundaries = generators
+        self.display_offset = display_offset
         self.boundary_styles = _boundary_style_registry(
             style,
             boundary_styles,
@@ -563,13 +570,23 @@ class CompositeQuadricSection3D:
             )
         return value
 
-    def _resolve_view(self) -> ParallelView:
+    def _resolve_projection_frame(self) -> _ResolvedParallelCameraFrame:
         value = (
             self._projection_input(self.scene)
             if callable(self._projection_input)
             else self._projection_input
         )
-        return _coerce_view(value)
+        return _coerce_projection_frame(value, scene=self.scene)
+
+    def _resolve_view(
+        self,
+        projection_frame: _ResolvedParallelCameraFrame | None = None,
+    ) -> ParallelView:
+        """Resolve the linear kernel view, preserving the legacy helper."""
+
+        if projection_frame is None:
+            projection_frame = self._resolve_projection_frame()
+        return projection_frame.view
 
     def _section_curves(
         self,
@@ -628,7 +645,13 @@ class CompositeQuadricSection3D:
             plane = self._resolve_plane(expected_id=self._plane_id)
             curves, lineage, owner = self._section_curves(plane)
         self._validate_curve_topology(curves)
-        view = self._resolve_view()
+        projection_frame = self._resolve_projection_frame()
+        view = self._resolve_view(projection_frame)
+        display_offset = _projection_display_offset(
+            self.scene,
+            projection_frame,
+            self.display_offset,
+        )
         patch = self._fit_patch(plane)
         surface_view_signature = _display_digest(
             "composite-quadric-surface-view-v1",
@@ -660,6 +683,7 @@ class CompositeQuadricSection3D:
             self.boundary_section_limits,
             self.include_surface_boundaries,
             self._generator_boundaries,
+            display_offset,
         )
         return _ResolvedCompositeFrameInputs(
             plane,
@@ -667,11 +691,22 @@ class CompositeQuadricSection3D:
             lineage,
             dict(owner),
             view,
+            display_offset,
             patch,
             surface_view_signature,
             geometry_signature,
             _display_digest("composite-quadric-frame-draw-v1"),
         )
+
+    @property
+    def display_offset(self) -> tuple[float, float]:
+        """Return the validated display-only screen translation."""
+
+        return self._display_offset
+
+    @display_offset.setter
+    def display_offset(self, value: Sequence[float]) -> None:
+        self._display_offset = _display_offset(value)
 
     def _validate_curve_topology(
         self,
@@ -1284,7 +1319,7 @@ class CompositeQuadricSection3D:
                 "ray_classification_count",
                 sum(item.ray_classification_count for item in child_frames),
             )
-        return _PreparedCompositeNumeric(
+        numeric = _PreparedCompositeNumeric(
             frame,
             prepared_surfaces,
             plane_polygons,
@@ -1293,6 +1328,79 @@ class CompositeQuadricSection3D:
             boundary_batch.fragment_slot_maps,
             item_mobjects,
             boundary_frame.draw_order,
+        )
+        return self._translate_prepared_numeric(
+            numeric,
+            resolved_inputs.display_offset,
+        )
+
+    def _translate_prepared_numeric(
+        self,
+        numeric: _PreparedCompositeNumeric,
+        display_offset: tuple[float, float],
+    ) -> _PreparedCompositeNumeric:
+        """Apply the shared affine-camera translation to display paths only."""
+
+        if display_offset == (0.0, 0.0):
+            return numeric
+        delta = np.asarray((*display_offset, 0.0), dtype=float)
+
+        def points(value: np.ndarray) -> np.ndarray:
+            return np.asarray(value, dtype=float) + delta
+
+        def dashes(
+            values: tuple[_PreparedDash, ...],
+        ) -> tuple[_PreparedDash, ...]:
+            return tuple(replace(item, points=points(item.points)) for item in values)
+
+        def cone_fill(value: _PreparedConeFill | None) -> _PreparedConeFill | None:
+            if value is None:
+                return None
+            return replace(
+                value,
+                opaque_lateral_paths=tuple(
+                    points(item) for item in value.opaque_lateral_paths
+                ),
+                opaque_cap_paths=tuple(
+                    points(item) for item in value.opaque_cap_paths
+                ),
+                back_lateral_paths=tuple(
+                    points(item) for item in value.back_lateral_paths
+                ),
+                back_cap_paths=tuple(points(item) for item in value.back_cap_paths),
+                front_lateral_paths=tuple(
+                    points(item) for item in value.front_lateral_paths
+                ),
+                front_cap_paths=tuple(
+                    points(item) for item in value.front_cap_paths
+                ),
+            )
+
+        return replace(
+            numeric,
+            surfaces=tuple(
+                replace(
+                    item,
+                    surface_points=points(item.surface_points),
+                    cone_fill=cone_fill(item.cone_fill),
+                )
+                for item in numeric.surfaces
+            ),
+            plane_polygons={
+                role: tuple(points(item) for item in values)
+                for role, values in numeric.plane_polygons.items()
+            },
+            boundary_fragments={
+                source_id: tuple(
+                    replace(
+                        item,
+                        points=points(item.points),
+                        dashes=dashes(item.dashes),
+                    )
+                    for item in values
+                )
+                for source_id, values in numeric.boundary_fragments.items()
+            },
         )
 
     def _scene_containers(self) -> tuple[list[object], ...]:
