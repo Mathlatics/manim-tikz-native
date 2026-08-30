@@ -670,6 +670,7 @@ def preflight_parallel_frames(
     seen_frame_ids: set[str] = set()
     previous_time: float | None = None
     seen_event_ids: set[str] = set()
+    fixed_resource_limits: dict[str, int] | None = None
     for frame in authored:
         if frame.frame_id in seen_frame_ids:
             _issue(
@@ -764,6 +765,7 @@ def preflight_parallel_frames(
                 )
 
         seen_resources: set[str] = set()
+        resource_limits: dict[str, int] = {}
         for capacity in frame.capacities:
             if capacity.resource_id in seen_resources:
                 _issue(
@@ -774,6 +776,7 @@ def preflight_parallel_frames(
                     subject_id=capacity.resource_id,
                 )
             seen_resources.add(capacity.resource_id)
+            resource_limits.setdefault(capacity.resource_id, capacity.limit)
             if capacity.used < 0 or capacity.limit < 0:
                 _issue(
                     issues,
@@ -790,6 +793,40 @@ def preflight_parallel_frames(
                     frame=frame,
                     subject_id=capacity.resource_id,
                 )
+        for event in frame.topology_events:
+            if (
+                event.requires_slot_bank
+                and event.slot_bank_id is not None
+                and event.slot_bank_id not in seen_resources
+            ):
+                _issue(
+                    issues,
+                    "unknown-topology-slot-bank",
+                    "topology event references a slot bank without capacity evidence",
+                    frame=frame,
+                    subject_id=event.slot_bank_id,
+                )
+        if fixed_resource_limits is None:
+            fixed_resource_limits = resource_limits
+        else:
+            expected_resources = set(fixed_resource_limits)
+            current_resources = set(resource_limits)
+            if current_resources != expected_resources:
+                _issue(
+                    issues,
+                    "capacity-resource-set-changed",
+                    "fixed capacity resource ids changed across frames",
+                    frame=frame,
+                )
+            for resource_id in sorted(current_resources & expected_resources):
+                if resource_limits[resource_id] != fixed_resource_limits[resource_id]:
+                    _issue(
+                        issues,
+                        "capacity-limit-changed",
+                        "fixed capacity limit changed across frames",
+                        frame=frame,
+                        subject_id=resource_id,
+                    )
         _check_painter_order(frame, issues)
 
     input_value = {

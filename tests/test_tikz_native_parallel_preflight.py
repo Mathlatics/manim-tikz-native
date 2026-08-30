@@ -74,7 +74,7 @@ def _frame(
             ),
         ),
         "capacities": (
-            CapacityEvidence("curve-slots", 4, 8),
+            CapacityEvidence("conic-bank-1", 4, 8),
             CapacityEvidence("plane-slots", 10, 10),
         ),
         "painter_order": _painter(),
@@ -247,7 +247,7 @@ class TikzNativeParallelPreflightTests(unittest.TestCase):
             "parabola-to-hyperbola",
             True,
             requires_slot_bank=True,
-            slot_bank_id="section-bank-1",
+            slot_bank_id="conic-bank-1",
         )
         accepted_report = preflight_parallel_frames(
             (_frame(topology_events=(accepted,)),),
@@ -255,6 +255,35 @@ class TikzNativeParallelPreflightTests(unittest.TestCase):
         )
         self.assertTrue(accepted_report.accepted)
         self.assertEqual(accepted_report.topology_event_count, 1)
+
+    def test_topology_bank_and_fixed_capacity_are_linked_across_frames(self) -> None:
+        first = _frame()
+        second = _frame(
+            "frame-1",
+            1.0,
+            topology_events=(
+                TopologyEventEvidence(
+                    "event-1",
+                    "parabola-to-hyperbola",
+                    True,
+                    requires_slot_bank=True,
+                    slot_bank_id="missing-bank",
+                ),
+            ),
+            capacities=(
+                CapacityEvidence("conic-bank-1", 1, 4),
+                CapacityEvidence("new-resource", 1, 1),
+            ),
+        )
+        report = preflight_parallel_frames((first, second), _limits())
+        self.assertEqual(
+            _codes(report),
+            {
+                "unknown-topology-slot-bank",
+                "capacity-resource-set-changed",
+                "capacity-limit-changed",
+            },
+        )
 
     def test_capacity_overflow_negative_and_duplicate_resources_are_reported(
         self,
@@ -265,7 +294,7 @@ class TikzNativeParallelPreflightTests(unittest.TestCase):
             CapacityEvidence("dashes", -1, 4),
         )
         report = preflight_parallel_frames(
-            (_frame(capacities=capacities),),
+            (_frame(capacities=capacities, topology_events=()),),
             _limits(),
         )
 
