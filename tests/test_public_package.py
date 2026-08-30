@@ -18,7 +18,9 @@ from polyhedron_visibility.quadrics import (
     DandelinConstruction3D,
     DandelinConstructionError,
     DandelinDirectrix3D,
+    DandelinMeridianDiagram2D,
     DandelinPlaneSide,
+    DandelinSectionPlaneDiagram2D,
     DandelinSphere3D,
     Ellipse3DSpec,
     PlanarCurveScene3D,
@@ -41,8 +43,12 @@ from polyhedron_visibility.quadrics import (
     SectionTransitionPlan,
     SphereSpec,
     build_section_transition_plan,
+    build_dandelin_meridian_diagram,
+    build_dandelin_section_plane_diagram,
     compile_section_timeline,
     canonical_dandelin_construction_json,
+    canonical_dandelin_meridian_diagram_json,
+    canonical_dandelin_section_plane_diagram_json,
     compute_dandelin_construction,
     compute_quadric_section,
     compute_quadric_section_boundary,
@@ -108,9 +114,21 @@ class PublicPackageTests(unittest.TestCase):
         self.assertEqual(DandelinConstruction3D.__name__, "DandelinConstruction3D")
         self.assertEqual(DandelinSphere3D.__name__, "DandelinSphere3D")
         self.assertEqual(DandelinDirectrix3D.__name__, "DandelinDirectrix3D")
+        self.assertEqual(
+            DandelinMeridianDiagram2D.__name__,
+            "DandelinMeridianDiagram2D",
+        )
+        self.assertEqual(
+            DandelinSectionPlaneDiagram2D.__name__,
+            "DandelinSectionPlaneDiagram2D",
+        )
         self.assertTrue(issubclass(DandelinConstructionError, ValueError))
         self.assertTrue(callable(compute_dandelin_construction))
         self.assertTrue(callable(canonical_dandelin_construction_json))
+        self.assertTrue(callable(build_dandelin_meridian_diagram))
+        self.assertTrue(callable(build_dandelin_section_plane_diagram))
+        self.assertTrue(callable(canonical_dandelin_meridian_diagram_json))
+        self.assertTrue(callable(canonical_dandelin_section_plane_diagram_json))
         self.assertEqual(SectionPlane.__name__, "SectionPlane")
         self.assertEqual(SectionTransitionPlan.__name__, "SectionTransitionPlan")
         self.assertEqual(SectionTimeline.__name__, "SectionTimeline")
@@ -148,8 +166,13 @@ class PublicPackageTests(unittest.TestCase):
                     "PlanarPoint3D, PlanarCurveScene3D, "
                     "DandelinConicFamily, DandelinConstruction3D, "
                     "DandelinConstructionError, DandelinDirectrix3D, "
+                    "DandelinMeridianDiagram2D, DandelinSectionPlaneDiagram2D, "
                     "DandelinPlaneSide, DandelinSphere3D, "
+                    "build_dandelin_meridian_diagram, "
+                    "build_dandelin_section_plane_diagram, "
                     "canonical_dandelin_construction_json, "
+                    "canonical_dandelin_meridian_diagram_json, "
+                    "canonical_dandelin_section_plane_diagram_json, "
                     "compute_dandelin_construction, "
                     "QuadricSectionBoundary, compute_quadric_section_boundary, "
                     "compute_quadric_section_boundary_curves, "
@@ -164,9 +187,15 @@ class PublicPackageTests(unittest.TestCase):
                     "assert DandelinConstruction3D.__name__; "
                     "assert issubclass(DandelinConstructionError, ValueError); "
                     "assert DandelinDirectrix3D.__name__; "
+                    "assert DandelinMeridianDiagram2D.__name__; "
+                    "assert DandelinSectionPlaneDiagram2D.__name__; "
                     "assert DandelinPlaneSide.__name__; "
                     "assert DandelinSphere3D.__name__; "
                     "assert callable(canonical_dandelin_construction_json); "
+                    "assert callable(build_dandelin_meridian_diagram); "
+                    "assert callable(build_dandelin_section_plane_diagram); "
+                    "assert callable(canonical_dandelin_meridian_diagram_json); "
+                    "assert callable(canonical_dandelin_section_plane_diagram_json); "
                     "assert callable(compute_dandelin_construction); "
                     "assert QuadricSectionBoundary.__name__; "
                     "assert callable(compute_quadric_section_boundary); "

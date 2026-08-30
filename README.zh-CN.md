@@ -102,6 +102,8 @@ Preview、Final、Release/Evidence 三档的准确区别，以及一行容量扫
 [丹德林球 v1 契约](docs/dandelin-spheres-v1.md)；其中的球体图层是讲解用示意叠加，
 并不声称已经完成圆锥与相切球之间的真实多实体遮挡。可直接渲染的椭圆、抛物线、
 双曲线三幕示例见[丹德林球课堂场景](examples/classroom_dandelin_spheres/README.md)。
+同一份认证构造还能分别生成“轴截面真圆图”和“截面平面圆锥曲线图”；后者不会把
+焦点误画成球心，也不会伪造并不存在的球截面圆。
 
 ## 显式三维平面、圆和椭圆
 

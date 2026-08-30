@@ -601,6 +601,7 @@ print(json.dumps({
             "@tool/polyhedron_visibility/quadrics/planar_curves.py",
             "@tool/polyhedron_visibility/quadrics/dandelin.py",
             "@tool/polyhedron_visibility/quadrics/dandelin_overlay.py",
+            "@tool/polyhedron_visibility/quadrics/dandelin_views.py",
         ):
             with self.subTest(path=path):
                 mutated = self._probe_copy(path)

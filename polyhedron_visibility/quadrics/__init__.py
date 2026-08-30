@@ -82,6 +82,57 @@ _EXPORTS: Final[dict[str, tuple[str, str]]] = {
         ".dandelin",
         "compute_dandelin_construction",
     ),
+    "DANDELIN_MERIDIAN_DIAGRAM_2D_SCHEMA": (
+        ".dandelin_views",
+        "DANDELIN_MERIDIAN_DIAGRAM_2D_SCHEMA",
+    ),
+    "DANDELIN_SECTION_PLANE_DIAGRAM_2D_SCHEMA": (
+        ".dandelin_views",
+        "DANDELIN_SECTION_PLANE_DIAGRAM_2D_SCHEMA",
+    ),
+    "DandelinCircleLineTangency2D": (
+        ".dandelin_views",
+        "DandelinCircleLineTangency2D",
+    ),
+    "DandelinDiagramLine2D": (".dandelin_views", "DandelinDiagramLine2D"),
+    "DandelinDiagramPoint2D": (".dandelin_views", "DandelinDiagramPoint2D"),
+    "DandelinDiagramSegment2D": (
+        ".dandelin_views",
+        "DandelinDiagramSegment2D",
+    ),
+    "DandelinMeridianDiagram2D": (
+        ".dandelin_views",
+        "DandelinMeridianDiagram2D",
+    ),
+    "DandelinSectionPlaneDiagram2D": (
+        ".dandelin_views",
+        "DandelinSectionPlaneDiagram2D",
+    ),
+    "DandelinSphereCircleSection2D": (
+        ".dandelin_views",
+        "DandelinSphereCircleSection2D",
+    ),
+    "DandelinSpherePlaneTangency2D": (
+        ".dandelin_views",
+        "DandelinSpherePlaneTangency2D",
+    ),
+    "DandelinView2DError": (".dandelin_views", "DandelinView2DError"),
+    "build_dandelin_meridian_diagram": (
+        ".dandelin_views",
+        "build_dandelin_meridian_diagram",
+    ),
+    "build_dandelin_section_plane_diagram": (
+        ".dandelin_views",
+        "build_dandelin_section_plane_diagram",
+    ),
+    "canonical_dandelin_meridian_diagram_json": (
+        ".dandelin_views",
+        "canonical_dandelin_meridian_diagram_json",
+    ),
+    "canonical_dandelin_section_plane_diagram_json": (
+        ".dandelin_views",
+        "canonical_dandelin_section_plane_diagram_json",
+    ),
     "DANDELIN_TEACHING_OVERLAY_SCHEMA": (
         ".dandelin_overlay",
         "DANDELIN_TEACHING_OVERLAY_SCHEMA",

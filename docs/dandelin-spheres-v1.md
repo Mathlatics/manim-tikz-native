@@ -181,6 +181,40 @@ diagrammatic draw order. It accepts only `mode="diagrammatic"`; requests for
 `physical` or `depth_aware_diagrammatic` fail instead of making an unsupported
 visibility claim.
 
+## Certified two-dimensional views
+
+The same construction can be lowered into two mathematically different 2D
+contracts:
+
+```python
+from polyhedron_visibility.quadrics import (
+    build_dandelin_meridian_diagram,
+    build_dandelin_section_plane_diagram,
+)
+
+meridian = build_dandelin_meridian_diagram(construction)
+section_view = build_dandelin_section_plane_diagram(construction)
+```
+
+`DandelinMeridianDiagram2D` is the true plane through the cone axis and the
+projected section-plane normal. Its sphere circles are genuine great-circle
+sections, and every contact with the section line and finite cone generators
+is re-certified. `DandelinSectionPlaneDiagram2D` instead lives in the authored
+cutting plane: it contains the exact conic, foci, directrices, and sphere-plane
+contact evidence, but deliberately has no sphere-circle field. A circle drawn
+around a focus in that view would be invented geometry.
+
+Both views retain the authoritative `DandelinConstruction3D` and rederive all
+of their fields during validation. A view-local `pointId`, `lineId`, or
+`circleId` is unique to that diagram, while `sourceRef` points back to the same
+focus, sphere, contact circle, plane, cone, or directrix across views. This
+keeps multi-view teaching assets collision-free without losing semantic
+identity. The canonical JSON helpers are
+`canonical_dandelin_meridian_diagram_json()` and
+`canonical_dandelin_section_plane_diagram_json()`.
+`sourceRef` is a source relation rather than a unique object key: for example,
+both visible generator sides legitimately refer to the same authored cone.
+
 ## Static Manim teaching facade
 
 Inside a Cairo `Scene`, `DandelinSection3D` builds the supported cone section

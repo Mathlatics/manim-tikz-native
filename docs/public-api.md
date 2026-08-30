@@ -913,6 +913,16 @@ parabola authored on `OPEN_DOUBLE`, and any section with a real cap chord are
 rejected. `CLOSED_SINGLE` circle/ellipse works only when it remains a complete
 pure lateral section and both spheres fit before the real terminal cap.
 
+`build_dandelin_meridian_diagram(construction)` derives the genuine axial
+section: the sphere circles are true great-circle sections and their contacts
+with the finite cone generators and section line are certified.
+`build_dandelin_section_plane_diagram(construction)` derives the cutting-plane
+conic, foci, directrices, and sphere-plane tangencies. It intentionally
+contains no sphere-circle field because the sphere centres generally do not
+lie in the cutting plane. Both diagrams retain the authoritative construction,
+rederive all fields during validation, and use view-local object IDs plus a
+shared `sourceRef` for cross-view identity.
+
 `DandelinSection3D(scene, cone=..., plane=...,
 construction_id=...).attach()` is the matching static Cairo authoring facade.
 It retains the existing cone/section compositor, then draws the certified
