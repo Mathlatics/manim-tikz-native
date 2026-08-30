@@ -234,6 +234,8 @@ class QuadricSectionAuthoringTests(unittest.TestCase):
             surfaces=(cone,),
             curves=curves,
             allocated_curve_ids=allocated,
+            section_id=section_id,
+            section_coefficient_tolerance=None,
             section_plane=plane,
             projection=VIEW,
             paint_policy=QuadricPaintPolicy.DEPTH_AWARE_DIAGRAMMATIC,

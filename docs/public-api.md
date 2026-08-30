@@ -112,6 +112,7 @@ section = QuadricOcclusion3D(
     scene,
     surfaces=(cone,),
     curves=section_curves,
+    section_id=section_id,
     section_plane=cut_plane,
     projection=lambda active_scene: active_scene.camera,
 )
@@ -130,8 +131,19 @@ For a finite `PlaneDisplayPatchSpec`, an exact edge-on view now has an explicit
 one-dimensional display contract. Its fill disappears, it no longer occludes
 other boundaries as an area, and the compositor retains one certified finite
 near-side outline chain without duplicate strokes. The existing fixed section
-slots are reused through `AREA -> LINE -> AREA`. Curve arrangements which are
-independently coincident or otherwise uncertifiable still fail explicitly.
+slots are reused through `AREA -> LINE -> AREA`. Section sources are certified
+from their complete analytic geometry rather than their IDs. Circle, ellipse,
+parabola, and hyperbola section members which retain a line are repainted with
+hidden intervals before visible intervals; a finite cap chord which becomes one
+screen point keeps its source identity and fixed slot but emits no fake stroke.
+This exception is deliberately narrow: external curves, other surfaces, and
+independently coincident or otherwise uncertifiable arrangements still fail
+explicitly.
+
+The low-level controller only grants that section-family provenance when
+`section_id=` and `section_plane=` are both supplied. Passing a plane without a
+section ID remains backward compatible for ordinary free curves and the finite
+plane patch, but those curves are not silently reclassified as a section.
 
 See the runnable
 [parallel-camera example](../examples/parallel_camera_views/README.md).
@@ -784,6 +796,10 @@ The renderer-neutral boundary sidecar is exported from
   `QuadricBoundaryPaintFragment`, and `QuadricBoundaryCompositingFrame`;
 - `BoundarySourceKind`, `BoundarySemanticKind`, `BoundaryOcclusionScope`, and
   `BoundaryRenderIntent`;
+- `BoundaryScreenProjectionDimension`,
+  `QuadricBoundarySectionSourceProjection`,
+  `QuadricRankOneSectionSourceGroup`, and
+  `certify_rank_one_section_boundary_sources`;
 - `GeneratorBoundarySpec`, `build_surface_boundary_sources`,
   `compute_boundary_visibility`, and `compute_quadric_boundary_compositing`;
 - `BoundaryPlaneRelation`, `QuadricBoundarySectionSpan`,
@@ -791,8 +807,11 @@ The renderer-neutral boundary sidecar is exported from
   `compute_boundary_section_spans`.
 
 The boundary painter frame uses
-`manim-quadric-boundary-compositing/v2`. The short-lived v1 boundary frame is
-superseded rather than maintained as a second runtime path: generated boundary
+`manim-quadric-boundary-compositing/v3`. The v3 payload adds explicit
+surface/plane provenance on section sources and serializes the optional
+rank-one source-group certificate, including its finite line, projection
+dimension, screen covector, and tolerance. Earlier boundary frames are
+superseded rather than maintained as parallel runtime paths: generated boundary
 frames and caches must be rebuilt. Other quadric v1 surface, visibility, and
 section schemas remain unchanged. The Manim controller selects the unified path
 only when `boundary_visibility_mode="unified"` is supplied.

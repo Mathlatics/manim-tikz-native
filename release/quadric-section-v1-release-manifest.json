@@ -9,15 +9,15 @@
   "components": {
     "quadric_geometry": {
       "contract_revision": "tikz-native-contract:quadric_geometry/v1",
-      "render_revision": "source-sha256:b1f8f6ec4a5fcab7182cecf7a9871040589a5831c58592edc8531e7851074057"
+      "render_revision": "source-sha256:aabb9e54831a6c1ee326f310580dc9c18598cb32ab3c16e2353a7e7699157950"
     },
     "quadric_visibility": {
       "contract_revision": "tikz-native-contract:quadric_visibility/v2",
-      "render_revision": "source-sha256:6a73a379d39bde44aa6805ded65a9b47fb0a7770d0f780ac6272b329eff78745"
+      "render_revision": "source-sha256:830f007408fce6425e31fa26776e2371982579c3c4f7615b51bcd19edb0270e7"
     },
     "quadric_manim": {
       "contract_revision": "tikz-native-contract:quadric_manim/v1",
-      "render_revision": "source-sha256:284ee70aac44c76307d5856231f64f299497e22975400b2aadf96304bd00f90e"
+      "render_revision": "source-sha256:244dc77362df01bd8c6fc32a033f1e0ad315db778d0939288af0a24990cf838b"
     }
   },
   "build_artifacts": {
@@ -218,6 +218,16 @@
       "layer": "cairo",
       "outcome": "pass",
       "test": "tests.test_quadric_plane_line_cairo.QuadricFinitePlaneLineCairoTests.test_warm_edge_on_frame_matches_cold_finite_line_pixels"
+    },
+    "edge_on_section_family_certification": {
+      "layer": "renderer_neutral",
+      "outcome": "pass",
+      "test": "tests.test_quadric_boundary_section.BoundarySectionPlacementTests.test_rank_one_source_group_uses_geometry_and_certifies_line_or_point"
+    },
+    "edge_on_four_conic_fixed_slots": {
+      "layer": "manim",
+      "outcome": "pass",
+      "test": "tests.test_quadric_rank_one_conic_camera.QuadricRankOneConicCameraTests.test_four_conics_commit_area_line_area_with_fixed_slots"
     }
   },
   "projections": {

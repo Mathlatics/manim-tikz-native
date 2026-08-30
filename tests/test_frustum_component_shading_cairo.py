@@ -87,6 +87,7 @@ def _capture(
         scene,
         surfaces=(frustum,),
         curves=curves,
+        section_id="pixel-component-section",
         projection=VIEW,
         paint_policy="depth_aware_diagrammatic",
         section_plane=plane,

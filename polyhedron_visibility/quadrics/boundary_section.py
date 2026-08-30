@@ -25,10 +25,13 @@ from ..topology import (
 from ..visibility import VisibilityKind
 from .boundary_compositing import (
     BoundarySemanticKind,
+    BoundaryScreenProjectionDimension,
     BoundarySourceKind,
     QuadricBoundaryCompositingError,
+    QuadricBoundarySectionSourceProjection,
     QuadricBoundarySource,
     QuadricBoundaryVisibilitySpan,
+    QuadricRankOneSectionSourceGroup,
 )
 from .contract import (
     ConeSpec,
@@ -147,6 +150,32 @@ def _resolve_context(
     return resolve_geometry_context(context, positions=positions)
 
 
+def _resolve_rank_one_context(
+    surface: QuadricSurfaceSpec,
+    plane: SectionPlane,
+    patch: PlaneDisplayPatchSpec,
+    context: ContextInput,
+) -> ResolvedGeometryContext:
+    """Resolve LINE evidence from authored section geometry only.
+
+    Unrelated semantic boundaries can be arbitrarily remote.  Letting them
+    set the scale here would weaken the exact section-family certificate and
+    could make adding one free curve change which genuine section curves are
+    recognized.
+    """
+
+    if isinstance(context, ResolvedGeometryContext):
+        return resolve_geometry_context(context)
+    return resolve_geometry_context(
+        context,
+        positions=(
+            *surface.characteristic_points,
+            plane.point,
+            *patch.corners(plane),
+        ),
+    )
+
+
 def _plane_intersection_parameters(
     source: QuadricBoundarySource,
     plane: SectionPlane,
@@ -242,12 +271,6 @@ def _curve_lies_on_surface(
                 f"one end cap on surface {surface.surface_id!r}"
             )
         cap = matching_caps[0]
-        expected_suffix = f":cap:{cap.role}:chord"
-        if not source.source_id.endswith(expected_suffix):
-            raise QuadricBoundaryCompositingError(
-                f"section cap-chord {source.source_id!r} does not use its "
-                "owner cap's stable semantic identity"
-            )
         center = np.asarray(cap.center, dtype=float)
         normal = np.asarray(cap.normal, dtype=float)
         boundary_epsilon = context.epsilon(GeometryQuantity.BOUNDARY)
@@ -1122,6 +1145,216 @@ def _coalesce(
     return tuple(result)
 
 
+def _rank_one_source_projection_dimension(
+    source: QuadricBoundarySource,
+    view: ParallelView,
+) -> BoundaryScreenProjectionDimension:
+    """Certify whether an edge-on section curve retains a line or one point."""
+
+    chart = _curve_chart(source.curve)
+    denominator = chart.denominator
+    screen = np.asarray(view.matrix[:2], dtype=float)
+    reference_scale = (
+        chart.homogeneous_scale
+        * chart.homogeneous_scale
+        * max(float(np.max(np.abs(screen))), np.finfo(float).tiny)
+    )
+    for row in screen:
+        numerator = sum(
+            (
+                float(component) * polynomial
+                for component, polynomial in zip(row, chart.numerator)
+            ),
+            Polynomial((0.0,)),
+        )
+        derivative_numerator = (
+            numerator.deriv() * denominator
+            - numerator * denominator.deriv()
+        )
+        if not _polynomial_is_identically_zero(
+            derivative_numerator,
+            reference_scale,
+        ):
+            return BoundaryScreenProjectionDimension.LINE
+    return BoundaryScreenProjectionDimension.POINT
+
+
+def _certify_rank_one_frame_view(
+    section_frame: QuadricSectionCompositingFrame,
+    view: ParallelView,
+    context: ResolvedGeometryContext,
+) -> None:
+    """Reject a stale view paired with rank-one section-frame evidence."""
+
+    plane = section_frame.plane
+    patch = section_frame.patch
+    plane_u, plane_v, _normal = plane.basis
+    screen_basis = np.column_stack(
+        (view.matrix[:2] @ plane_u, view.matrix[:2] @ plane_v)
+    )
+    patch_basis = screen_basis @ np.diag(
+        (patch.half_width, patch.half_height)
+    )
+    singular_values = np.linalg.svd(patch_basis, compute_uv=False)
+    if len(singular_values) != 2 or float(singular_values[0]) <= 0.0:
+        raise QuadricBoundaryCompositingError(
+            "rank-one section view retains no finite screen direction"
+        )
+    first, second = (float(item) for item in singular_values)
+    ratio = second / first
+    evidence = section_frame.patch_projection
+    if ratio > evidence.rank_ratio_threshold:
+        raise QuadricBoundaryCompositingError(
+            "rank-one section frame is paired with an AREA projection view"
+        )
+
+    corners = np.asarray(patch.corners(plane), dtype=float)
+    projected = corners @ np.asarray(view.matrix[:2], dtype=float).T
+    endpoints = np.asarray(
+        (evidence.line_screen_start, evidence.line_screen_end),
+        dtype=float,
+    )
+    scale = max(
+        1.0,
+        first,
+        float(np.max(np.abs(projected))),
+        float(np.max(np.abs(endpoints))),
+    )
+    tolerance = max(
+        16.0 * context.epsilon(GeometryQuantity.SCREEN),
+        4096.0 * np.finfo(float).eps * scale,
+    )
+    if not np.allclose(
+        singular_values,
+        np.asarray(evidence.singular_values, dtype=float),
+        rtol=4096.0 * np.finfo(float).eps,
+        atol=tolerance,
+    ):
+        raise QuadricBoundaryCompositingError(
+            "rank-one section frame projection evidence belongs to a stale view"
+        )
+    line = endpoints[1] - endpoints[0]
+    line_length = float(np.linalg.norm(line))
+    if line_length <= tolerance:
+        raise QuadricBoundaryCompositingError(
+            "rank-one section frame lost its finite line extent"
+        )
+    axis = line / line_length
+    normal = np.asarray((-axis[1], axis[0]), dtype=float)
+    signed_distances = (projected - endpoints[0]) @ normal
+    scalars = (projected - endpoints[0]) @ axis
+    if (
+        float(np.max(np.abs(signed_distances))) > tolerance
+        or abs(float(np.min(scalars))) > tolerance
+        or abs(float(np.max(scalars)) - line_length) > tolerance
+    ):
+        raise QuadricBoundaryCompositingError(
+            "rank-one section frame line endpoints belong to a stale view"
+        )
+
+
+def certify_rank_one_section_boundary_sources(
+    sources: Sequence[QuadricBoundarySource],
+    section_frame: QuadricSectionCompositingFrame,
+    view: ParallelView,
+    *,
+    surface: QuadricSurfaceSpec,
+    context: ContextInput = None,
+) -> QuadricRankOneSectionSourceGroup:
+    """Certify complete source curves belonging to one edge-on surface section.
+
+    Membership is decided from the authored analytic curve equations, finite
+    surface bounds, and the current section plane.  Stable source names are not
+    evidence.  A certified source retains either a one-dimensional screen line
+    or exactly one screen point under the supplied parallel view.
+    """
+
+    if not isinstance(section_frame, QuadricSectionCompositingFrame):
+        raise TypeError("section_frame must be a QuadricSectionCompositingFrame")
+    if section_frame.projection_kind is not PlanePatchProjectionKind.LINE:
+        raise QuadricBoundaryCompositingError(
+            "rank-one section source certification requires a LINE section frame"
+        )
+    if not isinstance(view, ParallelView):
+        raise TypeError("view must be a ParallelView")
+    if not isinstance(surface, (SphereSpec, CylinderSpec, ConeSpec)):
+        raise TypeError("surface must be SphereSpec, CylinderSpec, or ConeSpec")
+    if surface.surface_id != section_frame.surface_id:
+        raise QuadricBoundaryCompositingError(
+            "rank-one section surface does not match the section frame"
+        )
+    raw_sources = tuple(sources)
+    if not all(isinstance(item, QuadricBoundarySource) for item in raw_sources):
+        raise TypeError("sources must contain QuadricBoundarySource")
+    source_items = tuple(sorted(raw_sources, key=lambda item: item.source_id))
+    source_ids = tuple(item.source_id for item in source_items)
+    if len(set(source_ids)) != len(source_ids):
+        raise QuadricBoundaryCompositingError(
+            "boundary source identities must be unique"
+        )
+    resolved = _resolve_rank_one_context(
+        surface,
+        section_frame.plane,
+        section_frame.patch,
+        context,
+    )
+    _certify_rank_one_frame_view(section_frame, view, resolved)
+
+    projections: list[QuadricBoundarySectionSourceProjection] = []
+    for source in source_items:
+        if source.source_kind not in {
+            BoundarySourceKind.SECTION_CURVE,
+            BoundarySourceKind.SECTION_CAP_CHORD,
+        }:
+            continue
+        if (
+            source.section_surface_id != surface.surface_id
+            or source.section_plane_id != section_frame.plane.plane_id
+        ):
+            continue
+        if not _curve_lies_on_section_surface(
+            source,
+            surface,
+            section_frame.plane,
+            resolved,
+        ):
+            raise QuadricBoundaryCompositingError(
+                f"explicit section source {source.source_id!r} no longer "
+                "matches its certified surface/plane geometry"
+            )
+        projections.append(
+            QuadricBoundarySectionSourceProjection(
+                source.source_id,
+                _rank_one_source_projection_dimension(source, view),
+            )
+        )
+    endpoints = np.asarray(
+        (
+            section_frame.patch_projection.line_screen_start,
+            section_frame.patch_projection.line_screen_end,
+        ),
+        dtype=float,
+    )
+    line = endpoints[1] - endpoints[0]
+    line_length = float(np.linalg.norm(line))
+    screen_axis = line / line_length
+    screen_axis_world = screen_axis @ np.asarray(view.matrix[:2], dtype=float)
+    screen_scale = max(1.0, float(np.max(np.abs(endpoints))), line_length)
+    screen_tolerance = max(
+        16.0 * resolved.epsilon(GeometryQuantity.SCREEN),
+        4096.0 * np.finfo(float).eps * screen_scale,
+    )
+    return QuadricRankOneSectionSourceGroup(
+        surface.surface_id,
+        section_frame.plane.plane_id,
+        tuple(projections),
+        tuple(float(item) for item in endpoints[0]),
+        tuple(float(item) for item in endpoints[1]),
+        tuple(float(item) for item in screen_axis_world),
+        screen_tolerance,
+    )
+
+
 def compute_boundary_section_spans(
     sources: Sequence[QuadricBoundarySource],
     section_frame: QuadricSectionCompositingFrame,
@@ -1152,12 +1385,30 @@ def compute_boundary_section_spans(
     )
     if not isinstance(visibility_spans, Mapping):
         raise TypeError("visibility_spans_by_source must be a mapping")
-    source_items = tuple(sorted(sources, key=lambda item: item.source_id))
+    raw_sources = tuple(sources)
+    if not all(isinstance(item, QuadricBoundarySource) for item in raw_sources):
+        raise TypeError("sources must contain QuadricBoundarySource")
+    source_items = tuple(sorted(raw_sources, key=lambda item: item.source_id))
+    source_ids = tuple(item.source_id for item in source_items)
+    if len(set(source_ids)) != len(source_ids):
+        raise QuadricBoundaryCompositingError(
+            "boundary source identities must be unique"
+        )
+    if not all(isinstance(item, ProjectedCurveCrossing) for item in crossings):
+        raise TypeError("crossings must contain ProjectedCurveCrossing")
     if section_frame.projection_kind is PlanePatchProjectionKind.LINE:
         # A rank-one finite patch has no sortable display area.  Its certified
         # near-side outline remains drawable, but it must not place or occlude
         # unrelated semantic boundaries as though a two-dimensional plane fill
         # still existed.
+        if surface is not None:
+            certify_rank_one_section_boundary_sources(
+                source_items,
+                section_frame,
+                view,
+                surface=surface,
+                context=context,
+            )
         return {}
     plane = section_frame.plane
     patch = section_frame.patch
@@ -1500,5 +1751,6 @@ __all__ = [
     "QUADRIC_BOUNDARY_SECTION_LIMITS",
     "QuadricBoundarySectionLimits",
     "QuadricBoundarySectionSpan",
+    "certify_rank_one_section_boundary_sources",
     "compute_boundary_section_spans",
 ]

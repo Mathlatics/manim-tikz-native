@@ -109,6 +109,8 @@ class QuadricSectionV1ContractTests(unittest.TestCase):
                         "edge_on_plane_line_geometry",
                         "edge_on_line_binding",
                         "edge_on_line_cairo_pixels",
+                        "edge_on_section_family_certification",
+                        "edge_on_four_conic_fixed_slots",
                     ],
                 }
             ],

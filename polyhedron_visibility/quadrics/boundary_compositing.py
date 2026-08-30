@@ -11,8 +11,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import Enum
 import json
-from math import isfinite
+from math import atan2, atanh, ceil, floor, isfinite, pi
 from typing import Mapping, Sequence
+
+import numpy as np
 
 from ..compositor import (
     CompositorCycleError,
@@ -31,12 +33,14 @@ from .compositing import (
     _paint_predecessors,
 )
 from .contract import ConeSpec, CylinderSpec, SphereSpec
+from .conics import ConicKind
 from .critical import AnalyticCurve3D
 from .curve_intersections import ProjectedCurveCrossing
+from .curves import EllipseArcCurve, ParametricConicBranch, SegmentCurve
 from .visibility import CurveVisibilityRecord, compute_curve_visibility
 
 
-QUADRIC_BOUNDARY_COMPOSITING_SCHEMA = "manim-quadric-boundary-compositing/v2"
+QUADRIC_BOUNDARY_COMPOSITING_SCHEMA = "manim-quadric-boundary-compositing/v3"
 QuadricSurfaceSpec = SphereSpec | CylinderSpec | ConeSpec
 ContextInput = GeometryContext | ResolvedGeometryContext | None
 
@@ -47,6 +51,7 @@ class QuadricBoundaryCompositingError(ValueError):
 
 class BoundarySourceKind(str, Enum):
     ANALYTIC_CURVE = "analytic_curve"
+    SECTION_CURVE = "section_curve"
     SECTION_CAP_CHORD = "section_cap_chord"
     PLANE_PATCH_EDGE = "plane_patch_edge"
     SURFACE_CAP_RIM = "surface_cap_rim"
@@ -78,6 +83,149 @@ class BoundaryRenderIntent(str, Enum):
     OMIT = "omit"
 
 
+class BoundaryScreenProjectionDimension(str, Enum):
+    """Certified screen dimension of one rank-one section source."""
+
+    LINE = "line"
+    POINT = "point"
+
+
+@dataclass(frozen=True, slots=True)
+class QuadricBoundarySectionSourceProjection:
+    """Renderer-neutral rank-one projection evidence for one source curve."""
+
+    source_id: str
+    dimension: BoundaryScreenProjectionDimension
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "source_id",
+            _identity(self.source_id, "rank-one section source_id"),
+        )
+        if not isinstance(self.dimension, BoundaryScreenProjectionDimension):
+            raise TypeError(
+                "rank-one section source dimension must be a "
+                "BoundaryScreenProjectionDimension"
+            )
+
+    def to_dict(self) -> dict[str, str]:
+        return {
+            "sourceId": self.source_id,
+            "dimension": self.dimension.value,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class QuadricRankOneSectionSourceGroup:
+    """Explicitly certified sources belonging to one edge-on section family."""
+
+    surface_id: str
+    plane_id: str
+    source_projections: tuple[QuadricBoundarySectionSourceProjection, ...]
+    line_screen_start: tuple[float, float]
+    line_screen_end: tuple[float, float]
+    screen_axis_world: tuple[float, float, float]
+    screen_tolerance: float
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "surface_id",
+            _identity(self.surface_id, "rank-one section surface_id"),
+        )
+        object.__setattr__(
+            self,
+            "plane_id",
+            _identity(self.plane_id, "rank-one section plane_id"),
+        )
+        projections = tuple(self.source_projections)
+        if not all(
+            isinstance(item, QuadricBoundarySectionSourceProjection)
+            for item in projections
+        ):
+            raise TypeError(
+                "source_projections must contain "
+                "QuadricBoundarySectionSourceProjection"
+            )
+        source_ids = tuple(item.source_id for item in projections)
+        if source_ids != tuple(sorted(source_ids)) or len(set(source_ids)) != len(
+            source_ids
+        ):
+            raise QuadricBoundaryCompositingError(
+                "rank-one section source projections must have unique sorted "
+                "identities"
+            )
+        object.__setattr__(self, "source_projections", projections)
+        start = _finite_tuple(
+            self.line_screen_start,
+            2,
+            "rank-one section line_screen_start",
+        )
+        end = _finite_tuple(
+            self.line_screen_end,
+            2,
+            "rank-one section line_screen_end",
+        )
+        axis = _finite_tuple(
+            self.screen_axis_world,
+            3,
+            "rank-one section screen_axis_world",
+        )
+        tolerance = float(self.screen_tolerance)
+        if not isfinite(tolerance) or tolerance < 0.0:
+            raise QuadricBoundaryCompositingError(
+                "rank-one section screen_tolerance must be finite and "
+                "non-negative"
+            )
+        line_length = sum(
+            (second - first) * (second - first)
+            for first, second in zip(start, end)
+        ) ** 0.5
+        axis_length = sum(component * component for component in axis) ** 0.5
+        if line_length <= tolerance or axis_length <= 0.0:
+            raise QuadricBoundaryCompositingError(
+                "rank-one section evidence must retain one finite screen axis"
+            )
+        object.__setattr__(self, "line_screen_start", start)
+        object.__setattr__(self, "line_screen_end", end)
+        object.__setattr__(self, "screen_axis_world", axis)
+        object.__setattr__(self, "screen_tolerance", tolerance)
+
+    @property
+    def source_ids(self) -> tuple[str, ...]:
+        return tuple(item.source_id for item in self.source_projections)
+
+    @property
+    def line_source_ids(self) -> tuple[str, ...]:
+        return tuple(
+            item.source_id
+            for item in self.source_projections
+            if item.dimension is BoundaryScreenProjectionDimension.LINE
+        )
+
+    @property
+    def point_source_ids(self) -> tuple[str, ...]:
+        return tuple(
+            item.source_id
+            for item in self.source_projections
+            if item.dimension is BoundaryScreenProjectionDimension.POINT
+        )
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "surfaceId": self.surface_id,
+            "planeId": self.plane_id,
+            "lineScreenStart": list(self.line_screen_start),
+            "lineScreenEnd": list(self.line_screen_end),
+            "screenAxisWorld": list(self.screen_axis_world),
+            "screenTolerance": self.screen_tolerance,
+            "sourceProjections": [
+                item.to_dict() for item in self.source_projections
+            ],
+        }
+
+
 _DEPTH_ROLES = {
     "outside_projection",
     "behind_surface",
@@ -92,6 +240,28 @@ def _identity(value: object, label: str) -> str:
     return value.strip()
 
 
+def _finite_tuple(value: object, length: int, label: str) -> tuple[float, ...]:
+    if (
+        not isinstance(value, Sequence)
+        or isinstance(value, (str, bytes))
+        or len(value) != length
+    ):
+        raise QuadricBoundaryCompositingError(
+            f"{label} must contain {length} finite numbers"
+        )
+    try:
+        result = tuple(float(item) for item in value)
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise QuadricBoundaryCompositingError(
+            f"{label} must contain {length} finite numbers"
+        ) from exc
+    if not all(isfinite(item) for item in result):
+        raise QuadricBoundaryCompositingError(
+            f"{label} must contain {length} finite numbers"
+        )
+    return result
+
+
 @dataclass(frozen=True, slots=True)
 class QuadricBoundarySource:
     """One cross-frame semantic stroke source with exact world geometry."""
@@ -103,6 +273,8 @@ class QuadricBoundarySource:
     occlusion_scope: BoundaryOcclusionScope
     owner_id: str
     owner_surface_id: str | None = None
+    section_surface_id: str | None = None
+    section_plane_id: str | None = None
     style_id: str | None = None
     stable_sort_key: tuple[str, ...] = ()
 
@@ -124,6 +296,37 @@ class QuadricBoundarySource:
             if self.owner_surface_id is None
             else _identity(self.owner_surface_id, "boundary owner_surface_id")
         )
+        section_surface = (
+            None
+            if self.section_surface_id is None
+            else _identity(
+                self.section_surface_id,
+                "boundary section_surface_id",
+            )
+        )
+        section_plane = (
+            None
+            if self.section_plane_id is None
+            else _identity(self.section_plane_id, "boundary section_plane_id")
+        )
+        section_kinds = {
+            BoundarySourceKind.SECTION_CURVE,
+            BoundarySourceKind.SECTION_CAP_CHORD,
+        }
+        if (section_surface is None) != (section_plane is None):
+            raise QuadricBoundaryCompositingError(
+                "section boundary provenance requires both surface and plane"
+            )
+        if self.source_kind in section_kinds:
+            if section_surface is None:
+                raise QuadricBoundaryCompositingError(
+                    "section boundary kinds require explicit surface/plane "
+                    "provenance"
+                )
+        elif section_surface is not None:
+            raise QuadricBoundaryCompositingError(
+                "only section boundary kinds may carry section provenance"
+            )
         if self.occlusion_scope in {
             BoundaryOcclusionScope.OWNER_AND_EXTERNAL,
             BoundaryOcclusionScope.EXTERNAL_ONLY,
@@ -143,6 +346,8 @@ class QuadricBoundarySource:
         object.__setattr__(self, "source_id", source_id)
         object.__setattr__(self, "owner_id", owner)
         object.__setattr__(self, "owner_surface_id", owner_surface)
+        object.__setattr__(self, "section_surface_id", section_surface)
+        object.__setattr__(self, "section_plane_id", section_plane)
         object.__setattr__(self, "style_id", style_id)
         object.__setattr__(self, "stable_sort_key", sort_key)
 
@@ -154,6 +359,8 @@ class QuadricBoundarySource:
             "occlusionScope": self.occlusion_scope.value,
             "ownerId": self.owner_id,
             "ownerSurfaceId": self.owner_surface_id,
+            "sectionSurfaceId": self.section_surface_id,
+            "sectionPlaneId": self.section_plane_id,
             "styleId": self.style_id,
             "stableSortKey": list(self.stable_sort_key),
             "curve": self.curve.to_dict(),
@@ -395,6 +602,7 @@ class QuadricBoundaryCompositingFrame:
     parent_item_ids: tuple[str, ...]
     order_relations: tuple[QuadricPaintRelation, ...]
     draw_order: tuple[str, ...]
+    rank_one_section_source_group: QuadricRankOneSectionSourceGroup | None = None
     crossings: tuple[ProjectedCurveCrossing, ...] = ()
     schema: str = QUADRIC_BOUNDARY_COMPOSITING_SCHEMA
 
@@ -402,6 +610,14 @@ class QuadricBoundaryCompositingFrame:
         if self.schema != QUADRIC_BOUNDARY_COMPOSITING_SCHEMA:
             raise QuadricBoundaryCompositingError(
                 "invalid quadric boundary compositing schema"
+            )
+        group = self.rank_one_section_source_group
+        if group is not None and not isinstance(
+            group, QuadricRankOneSectionSourceGroup
+        ):
+            raise TypeError(
+                "rank_one_section_source_group must be a "
+                "QuadricRankOneSectionSourceGroup"
             )
         source_ids = tuple(item.source_id for item in self.sources)
         if (
@@ -411,7 +627,49 @@ class QuadricBoundaryCompositingFrame:
             raise QuadricBoundaryCompositingError(
                 "boundary sources must have unique sorted identities"
             )
+        if group is not None:
+            unknown = sorted(set(group.source_ids) - set(source_ids))
+            if unknown:
+                raise QuadricBoundaryCompositingError(
+                    "rank-one section group references unknown boundary sources: "
+                    + ", ".join(unknown)
+                )
+            source_map = {item.source_id: item for item in self.sources}
+            invalid = tuple(
+                source_id
+                for source_id in group.source_ids
+                if (
+                    source_map[source_id].source_kind
+                    not in {
+                        BoundarySourceKind.SECTION_CURVE,
+                        BoundarySourceKind.SECTION_CAP_CHORD,
+                    }
+                    or source_map[source_id].section_surface_id
+                    != group.surface_id
+                    or source_map[source_id].section_plane_id != group.plane_id
+                )
+            )
+            if invalid:
+                raise QuadricBoundaryCompositingError(
+                    "rank-one section frame group contains sources without "
+                    "matching section provenance: " + ", ".join(invalid)
+                )
         fragment_ids = tuple(item.item_id for item in self.fragments)
+        if group is not None:
+            point_sources_with_fragments = tuple(
+                sorted(
+                    {
+                        item.source_id
+                        for item in self.fragments
+                        if item.source_id in group.point_source_ids
+                    }
+                )
+            )
+            if point_sources_with_fragments:
+                raise QuadricBoundaryCompositingError(
+                    "rank-one POINT sources cannot own boundary fragments: "
+                    + ", ".join(point_sources_with_fragments)
+                )
         if (
             fragment_ids != tuple(sorted(fragment_ids))
             or len(set(fragment_ids)) != len(fragment_ids)
@@ -470,6 +728,11 @@ class QuadricBoundaryCompositingFrame:
             "parentItemIds": list(self.parent_item_ids),
             "orderRelations": [item.to_dict() for item in self.order_relations],
             "drawOrder": list(self.draw_order),
+            "rankOneSectionSourceGroup": (
+                None
+                if self.rank_one_section_source_group is None
+                else self.rank_one_section_source_group.to_dict()
+            ),
             "crossings": [item.to_dict() for item in self.crossings],
         }
 
@@ -582,6 +845,143 @@ def _split_interval(
     )
 
 
+def _angular_stationary_parameters(
+    first_coefficient: float,
+    second_coefficient: float,
+    interval: ParameterInterval,
+) -> tuple[float, ...]:
+    """Return every exact stationary parameter of ``a*cos(t)+b*sin(t)``."""
+
+    if first_coefficient == 0.0 and second_coefficient == 0.0:
+        return ()
+    base = atan2(second_coefficient, first_coefficient)
+    lower = int(ceil((interval.start - base) / pi))
+    upper = int(floor((interval.end - base) / pi))
+    return tuple(
+        base + index * pi
+        for index in range(lower, upper + 1)
+        if interval.start <= base + index * pi <= interval.end
+    )
+
+
+def _dot3(first: Sequence[float], second: Sequence[float]) -> float:
+    return sum(float(left) * float(right) for left, right in zip(first, second))
+
+
+def _parametric_world_axes(
+    curve: ParametricConicBranch,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    branch = curve.parameterization
+    embedding = np.asarray(curve.plane_embedding, dtype=float)
+    linear = embedding[:3, :2]
+    origin = embedding[:3, 2] + linear @ np.asarray(branch.origin, dtype=float)
+    first = linear @ np.asarray(branch.first_axis, dtype=float)
+    second = linear @ np.asarray(branch.second_axis, dtype=float)
+    return origin, first, second
+
+
+def _rank_one_scalar_bounds(
+    curve: AnalyticCurve3D,
+    interval: ParameterInterval,
+    screen_axis_world: Sequence[float],
+) -> tuple[float, float]:
+    """Return the exact finite scalar image of one analytic curve interval.
+
+    The common rank-one screen axis is represented by a world-space
+    covector.  Extrema are isolated from each supported analytic
+    parameterization; no render samples participate in painter ordering.
+    """
+
+    if (
+        interval.start < curve.domain.start
+        or interval.end > curve.domain.end
+    ):
+        raise QuadricBoundaryCompositingError(
+            f"rank-one fragment on {curve.curve_id!r} lies outside its curve "
+            "domain"
+        )
+    candidates = [interval.start, interval.end]
+    axis = tuple(float(item) for item in screen_axis_world)
+    if isinstance(curve, SegmentCurve):
+        pass
+    elif isinstance(curve, EllipseArcCurve):
+        candidates.extend(
+            _angular_stationary_parameters(
+                _dot3(axis, curve.first_axis),
+                _dot3(axis, curve.second_axis),
+                interval,
+            )
+        )
+    elif isinstance(curve, ParametricConicBranch):
+        _origin, first, second = _parametric_world_axes(curve)
+        first_coefficient = _dot3(axis, first)
+        second_coefficient = _dot3(axis, second)
+        kind = curve.parameterization.kind
+        if kind in {ConicKind.CIRCLE, ConicKind.ELLIPSE}:
+            candidates.extend(
+                _angular_stationary_parameters(
+                    first_coefficient,
+                    second_coefficient,
+                    interval,
+                )
+            )
+        elif kind is ConicKind.PARABOLA:
+            if second_coefficient != 0.0:
+                stationary = -first_coefficient / (2.0 * second_coefficient)
+                if interval.start <= stationary <= interval.end:
+                    candidates.append(stationary)
+        elif kind is ConicKind.HYPERBOLA:
+            denominator = (
+                curve.parameterization.branch_sign * first_coefficient
+            )
+            if denominator != 0.0:
+                ratio = -second_coefficient / denominator
+                if abs(ratio) < 1.0:
+                    stationary = atanh(ratio)
+                    if interval.start <= stationary <= interval.end:
+                        candidates.append(stationary)
+        elif kind not in {
+            ConicKind.INTERSECTING_LINES,
+            ConicKind.PARALLEL_LINES,
+            ConicKind.COINCIDENT_LINE,
+        }:
+            raise QuadricBoundaryCompositingError(
+                f"rank-one scalar bounds do not support {kind.value!r}"
+            )
+    else:  # pragma: no cover - AnalyticCurve3D currently has three families
+        raise QuadricBoundaryCompositingError(
+            f"rank-one scalar bounds do not support {type(curve).__name__}"
+        )
+    values = tuple(
+        _dot3(axis, curve.point(parameter))
+        for parameter in candidates
+    )
+    if not values or not all(isfinite(item) for item in values):
+        raise QuadricBoundaryCompositingError(
+            f"rank-one fragment on {curve.curve_id!r} has no finite screen "
+            "extent"
+        )
+    return min(values), max(values)
+
+
+def _rank_one_scalar_ranges_overlap(
+    first: tuple[float, float],
+    second: tuple[float, float],
+    screen_tolerance: float,
+) -> bool:
+    lower = max(first[0], second[0])
+    upper = min(first[1], second[1])
+    scale = max(
+        1.0,
+        *(abs(item) for item in (*first, *second)),
+    )
+    tolerance = max(
+        screen_tolerance,
+        4096.0 * float(np.finfo(float).eps) * scale,
+    )
+    return upper - lower > tolerance
+
+
 def _fragments_at_parameter(
     fragments: Sequence[QuadricBoundaryPaintFragment],
     source_id: str,
@@ -692,6 +1092,7 @@ def compute_quadric_boundary_compositing(
     section_anchors: BoundarySectionAnchors | None = None,
     section_anchors_by_surface: Mapping[str, BoundarySectionAnchors] | None = None,
     section_spans_by_source: Mapping[str, Sequence[object]] | None = None,
+    rank_one_section_source_group: QuadricRankOneSectionSourceGroup | None = None,
     parameter_tolerance: float = 1.0e-12,
 ) -> QuadricBoundaryCompositingFrame:
     """Build one fragment-level painter graph for all semantic boundaries."""
@@ -710,6 +1111,51 @@ def compute_quadric_boundary_compositing(
     if len(set(source_ids)) != len(source_ids):
         raise QuadricBoundaryCompositingError(
             "boundary source identities must be unique"
+        )
+    source_map = {item.source_id: item for item in source_items}
+    rank_one_line_source_ids: frozenset[str] | None = None
+    rank_one_point_source_ids: frozenset[str] = frozenset()
+    if rank_one_section_source_group is not None:
+        if not isinstance(
+            rank_one_section_source_group, QuadricRankOneSectionSourceGroup
+        ):
+            raise TypeError(
+                "rank_one_section_source_group must be a "
+                "QuadricRankOneSectionSourceGroup"
+            )
+        unknown_rank_one_sources = sorted(
+            set(rank_one_section_source_group.source_ids) - set(source_ids)
+        )
+        if unknown_rank_one_sources:
+            raise QuadricBoundaryCompositingError(
+                "rank-one section group references unknown boundary sources: "
+                + ", ".join(unknown_rank_one_sources)
+            )
+        invalid_rank_one_sources = tuple(
+            source_id
+            for source_id in rank_one_section_source_group.source_ids
+            if (
+                source_map[source_id].source_kind
+                not in {
+                    BoundarySourceKind.SECTION_CURVE,
+                    BoundarySourceKind.SECTION_CAP_CHORD,
+                }
+                or source_map[source_id].section_surface_id
+                != rank_one_section_source_group.surface_id
+                or source_map[source_id].section_plane_id
+                != rank_one_section_source_group.plane_id
+            )
+        )
+        if invalid_rank_one_sources:
+            raise QuadricBoundaryCompositingError(
+                "rank-one section group contains sources without matching "
+                "section provenance: " + ", ".join(invalid_rank_one_sources)
+            )
+        rank_one_line_source_ids = frozenset(
+            rank_one_section_source_group.line_source_ids
+        )
+        rank_one_point_source_ids = frozenset(
+            rank_one_section_source_group.point_source_ids
         )
     if section_anchors is not None and section_anchors_by_surface is not None:
         raise QuadricBoundaryCompositingError(
@@ -795,11 +1241,18 @@ def compute_quadric_boundary_compositing(
     fragments: list[QuadricBoundaryPaintFragment] = []
     for source in source_items:
         spans = tuple(spans_by_source[source.source_id])
+        if not all(
+            isinstance(span, QuadricBoundaryVisibilitySpan) for span in spans
+        ):
+            raise TypeError(
+                "spans_by_source must contain QuadricBoundaryVisibilitySpan"
+            )
+        if source.source_id in rank_one_point_source_ids:
+            # A certified point image has no one-dimensional stroke interval.
+            # Keep the source in frame.sources so allocation/semantic identity
+            # stays stable, but do not manufacture a zero-length fragment.
+            continue
         for span_index, span in enumerate(spans):
-            if not isinstance(span, QuadricBoundaryVisibilitySpan):
-                raise TypeError(
-                    "spans_by_source must contain QuadricBoundaryVisibilitySpan"
-                )
             pieces = _split_interval(
                 span.interval,
                 split_values.get(source.source_id, ()),
@@ -1229,7 +1682,48 @@ def compute_quadric_boundary_compositing(
                 for item_id in sorted(occluder_items)
             )
 
-    source_map = {item.source_id: item for item in source_items}
+    if rank_one_line_source_ids is not None:
+        # When an edge-on section collapses onto one screen line, dashed back
+        # intervals and solid front intervals can occupy the same pixels.  The
+        # explicit certified group is the only authority for this extra order:
+        # ordinary boundary graphs retain their historical painter relations.
+        hidden_rank_one = tuple(
+            item
+            for item in fragments
+            if item.painted
+            and item.source_id in rank_one_line_source_ids
+            and item.effective_visibility_kind is VisibilityKind.HIDDEN
+        )
+        visible_rank_one = tuple(
+            item
+            for item in fragments
+            if item.painted
+            and item.source_id in rank_one_line_source_ids
+            and item.effective_visibility_kind is VisibilityKind.VISIBLE
+        )
+        scalar_bounds = {
+            item.item_id: _rank_one_scalar_bounds(
+                source_map[item.source_id].curve,
+                item.interval,
+                rank_one_section_source_group.screen_axis_world,
+            )
+            for item in (*hidden_rank_one, *visible_rank_one)
+        }
+        relations.extend(
+            QuadricPaintRelation(
+                hidden.item_id,
+                visible.item_id,
+                "rank_one_section_hidden_before_visible",
+            )
+            for hidden in hidden_rank_one
+            for visible in visible_rank_one
+            if _rank_one_scalar_ranges_overlap(
+                scalar_bounds[hidden.item_id],
+                scalar_bounds[visible.item_id],
+                rank_one_section_source_group.screen_tolerance,
+            )
+        )
+
     for crossing in crossings_tuple:
         if crossing.far_curve_id is None or crossing.near_curve_id is None:
             continue
@@ -1356,6 +1850,7 @@ def compute_quadric_boundary_compositing(
         parent_item_ids=parent_ids,
         order_relations=normalized,
         draw_order=draw_order,
+        rank_one_section_source_group=rank_one_section_source_group,
         crossings=crossings_tuple,
     )
 
@@ -1377,6 +1872,7 @@ def canonical_quadric_boundary_compositing_json(
 __all__ = [
     "BoundaryOcclusionScope",
     "BoundaryRenderIntent",
+    "BoundaryScreenProjectionDimension",
     "BoundarySectionAnchors",
     "BoundarySemanticKind",
     "BoundarySourceKind",
@@ -1386,6 +1882,8 @@ __all__ = [
     "QuadricBoundaryPaintFragment",
     "QuadricBoundarySource",
     "QuadricBoundaryVisibilitySpan",
+    "QuadricBoundarySectionSourceProjection",
+    "QuadricRankOneSectionSourceGroup",
     "canonical_quadric_boundary_compositing_json",
     "compute_boundary_visibility",
     "compute_quadric_boundary_compositing",

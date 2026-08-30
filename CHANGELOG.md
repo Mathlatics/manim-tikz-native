@@ -14,6 +14,14 @@ All notable changes to this project will be documented in this file.
   one certified finite near-side outline without duplicate strokes, reuse the
   same fixed Cairo slots through `AREA -> LINE -> AREA`, and reactivate any
   returning boundary containers before their children are redrawn;
+- authenticate edge-on circle, ellipse, parabola, and hyperbola sources from
+  explicit section provenance plus complete analytic geometry; retain line
+  visibility with only locally overlapping hidden strokes behind visible ones,
+  preserve point-valued cap-chord identities without fake segments, keep free
+  and other-surface curves on the strict crossing path, and publish the
+  auditable boundary painter evidence as
+  `manim-quadric-boundary-compositing/v3` while retaining the compatible
+  persisted `quadric_visibility/v2` author-data contract;
 - let `QuadricSection3D` consume named Preview/Final render profiles directly;
   add a one-factory capacity scan with deterministic human-readable summaries,
   preserve the existing progress-scan and immutable limit APIs, and publish a

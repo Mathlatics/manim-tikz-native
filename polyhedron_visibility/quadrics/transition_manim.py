@@ -282,6 +282,10 @@ class QuadricSectionTransition3D:
                 self._active_curve_opacities if draw_section_boundary else None
             ),
             allocated_curve_ids=self._allocated_curve_ids,
+            section_id=(self.plan.section_id if show_plane else None),
+            section_coefficient_tolerance=(
+                coefficient_tolerance if show_plane else None
+            ),
             projection=projection,
             paint_policy=paint_policy,
             style=style,

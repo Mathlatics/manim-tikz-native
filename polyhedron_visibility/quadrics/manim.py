@@ -55,6 +55,7 @@ from .boundary_compositing import (
     QuadricBoundaryCompositingError,
     QuadricBoundaryCompositingFrame,
     QuadricBoundaryPaintFragment,
+    QuadricRankOneSectionSourceGroup,
     QuadricBoundarySource,
     QuadricBoundaryVisibilitySpan,
     compute_boundary_visibility,
@@ -108,6 +109,7 @@ from .visibility import compute_quadric_visibility
 from .boundary_section import (
     QUADRIC_BOUNDARY_SECTION_LIMITS,
     QuadricBoundarySectionLimits,
+    certify_rank_one_section_boundary_sources,
     compute_boundary_section_spans,
 )
 from .surface_boundaries import (
@@ -117,6 +119,10 @@ from .surface_boundaries import (
     plane_outline_sources,
     section_curve_boundary_source,
     surface_boundary_source_ids,
+)
+from .sections import (
+    QuadricSectionError,
+    compute_quadric_section_boundary_curves,
 )
 from .manim_runtime import (
     QuadricBoundaryStyle,
@@ -589,6 +595,8 @@ class QuadricOcclusion3D:
         surface_order_mode: str = "automatic",
         allocated_curve_ids: Sequence[str] | None = None,
         curve_opacities: CurveOpacityInput = None,
+        section_id: str | None = None,
+        section_coefficient_tolerance: float | None = None,
         section_plane: SectionPlaneInput = None,
         section_patch: PlanePatchInput = None,
         section_patch_margin: float = 0.08,
@@ -648,6 +656,16 @@ class QuadricOcclusion3D:
             raise QuadricManimError(
                 "section_patch requires section_plane"
             )
+        if section_id is not None and (
+            not isinstance(section_id, str) or not section_id.strip()
+        ):
+            raise QuadricManimError("section_id must be a non-empty string")
+        if section_id is not None and section_plane is None:
+            raise QuadricManimError("section_id requires section_plane")
+        if section_coefficient_tolerance is not None and section_id is None:
+            raise QuadricManimError(
+                "section_coefficient_tolerance requires section_id"
+            )
         if not isinstance(
             section_compositing_limits, QuadricSectionCompositingLimits
         ):
@@ -699,6 +717,8 @@ class QuadricOcclusion3D:
         self._generator_boundaries = generators
         self._allocated_boundary_ids_input = allocated_boundary_ids
         self._curve_opacity_input = curve_opacities
+        self.section_id = None if section_id is None else section_id.strip()
+        self.section_coefficient_tolerance = section_coefficient_tolerance
         self._section_plane_input = section_plane
         self._section_patch_input = section_patch
         self.section_patch_margin = _non_negative(
@@ -1231,16 +1251,45 @@ class QuadricOcclusion3D:
         surface_sources: Sequence[QuadricBoundarySource] | None = None,
         include_plane_outline: bool = True,
     ) -> tuple[QuadricBoundarySource, ...]:
+        authoritative_section_curves: tuple[AnalyticCurve3D, ...] | None = None
+        if (
+            plane is not None
+            and len(surfaces) == 1
+            and self.section_id is not None
+        ):
+            try:
+                authoritative_section_curves = (
+                    compute_quadric_section_boundary_curves(
+                        self.section_id,
+                        surfaces[0],
+                        plane,
+                        context=self.context,
+                        coefficient_tolerance=(
+                            self.section_coefficient_tolerance
+                        ),
+                    )
+                )
+            except (QuadricSectionError, ValueError) as exc:
+                raise QuadricManimError(
+                    "authoritative section-boundary preparation failed: "
+                    f"{exc}"
+                ) from exc
         result = [
             (
                 section_curve_boundary_source(
                     curve,
                     surfaces[0],
                     plane,
+                    section_id=self.section_id,
+                    authoritative_curves=authoritative_section_curves,
                     context=self.context,
                     style_id="style:curve",
                 )
-                if plane is not None and len(surfaces) == 1
+                if (
+                    plane is not None
+                    and len(surfaces) == 1
+                    and self.section_id is not None
+                )
                 else curve_boundary_source(
                     curve,
                     style_id="style:curve",
@@ -1344,15 +1393,66 @@ class QuadricOcclusion3D:
         *,
         cached_source_ids: frozenset[str] = frozenset(),
         cached_crossings: Sequence[object] = (),
+        rank_one_section_source_group: (
+            QuadricRankOneSectionSourceGroup | None
+        ) = None,
     ) -> tuple[object, ...]:
         from itertools import combinations
 
         result = list(cached_crossings)
+        rank_one_source_ids = (
+            frozenset()
+            if rank_one_section_source_group is None
+            else rank_one_section_source_group.source_ids
+        )
+        rank_one_point_source_ids = (
+            frozenset()
+            if rank_one_section_source_group is None
+            else rank_one_section_source_group.point_source_ids
+        )
+
+        def pair_is_certified_rank_one_overlap(
+            first: QuadricBoundarySource,
+            second: QuadricBoundarySource,
+        ) -> bool:
+            if rank_one_section_source_group is None:
+                return False
+            if (
+                first.source_id in rank_one_point_source_ids
+                or second.source_id in rank_one_point_source_ids
+            ):
+                # A certified POINT member paints no stroke, so it cannot own a
+                # fragment-level crossing even when another projected curve
+                # happens to pass through the same screen coordinate.
+                return True
+            first_is_section = first.source_id in rank_one_source_ids
+            second_is_section = second.source_id in rank_one_source_ids
+            if first_is_section and second_is_section:
+                # Both world curves are analytically certified members of the
+                # same surface/plane section.  Their rank-one images overlap by
+                # construction; asking the generic 2D root finder to rediscover
+                # that fact produces duplicate roots and zero-length pieces.
+                return True
+            if not first_is_section and not second_is_section:
+                return False
+            other = second if first_is_section else first
+            return (
+                other.owner_surface_id
+                == rank_one_section_source_group.surface_id
+                and other.semantic_kind
+                in {
+                    BoundarySemanticKind.SURFACE_BOUNDARY,
+                    BoundarySemanticKind.TRUE_SILHOUETTE,
+                }
+            )
+
         for first, second in combinations(sources, 2):
             if (
                 first.source_id in cached_source_ids
                 and second.source_id in cached_source_ids
             ):
+                continue
+            if pair_is_certified_rank_one_overlap(first, second):
                 continue
             active_intervals = None
             if self.paint_policy is QuadricPaintPolicy.PHYSICAL:
@@ -1728,6 +1828,30 @@ class QuadricOcclusion3D:
                 and section_frame.projection_kind is PlanePatchProjectionKind.AREA
             ):
                 spans.update(self._plane_outline_visibility(section_frame))
+        rank_one_section_source_group: (
+            QuadricRankOneSectionSourceGroup | None
+        ) = None
+        if (
+            section_frame is not None
+            and section_frame.projection_kind is PlanePatchProjectionKind.LINE
+        ):
+            try:
+                with _performance_stage(
+                    performance_attempt, "rank_one_section_certification"
+                ):
+                    rank_one_section_source_group = (
+                        certify_rank_one_section_boundary_sources(
+                            sources,
+                            section_frame,
+                            view,
+                            surface=surfaces[0],
+                            context=self.context,
+                        )
+                    )
+            except QuadricBoundaryCompositingError as exc:
+                raise QuadricManimError(
+                    f"rank-one section boundary certification failed: {exc}"
+                ) from exc
         with _performance_stage(performance_attempt, "curve_crossings"):
             crossings = self._boundary_crossings(
                 sources,
@@ -1735,9 +1859,15 @@ class QuadricOcclusion3D:
                 view,
                 cached_source_ids=static_source_ids,
                 cached_crossings=static_crossings,
+                rank_one_section_source_group=rank_one_section_source_group,
             )
         with _performance_stage(performance_attempt, "boundary_section_spans"):
             if section_frame is None:
+                section_spans = {}
+            elif section_frame.projection_kind is PlanePatchProjectionKind.LINE:
+                # The rank-one certificate above replaces area placement.  A
+                # finite LINE patch has no fill that can occlude or bracket a
+                # boundary, so there are deliberately no section-plane spans.
                 section_spans = {}
             else:
                 if section_geometry_signature is None:
@@ -1801,6 +1931,9 @@ class QuadricOcclusion3D:
                         else self._section_anchors(section_frame)
                     ),
                     section_spans_by_source=section_spans,
+                    rank_one_section_source_group=(
+                        rank_one_section_source_group
+                    ),
                 )
         except QuadricBoundaryCompositingError as exc:
             raise QuadricManimError(

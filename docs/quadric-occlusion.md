@@ -457,10 +457,17 @@ approximation and may not span both sides. The mode currently supports exactly
 one finite convex sphere, capped cylinder, or single-nappe cone/frustum and one
 finite cutting-plane display patch. An exact edge-on patch is a zero-area
 `LINE` frame: plane fills are empty, one near-side finite outline chain remains,
-and the line does not act as a two-dimensional occluder. This paragraph covers
-the ordinary one-surface compositor; the open-double coordinator remains
-`AREA`-only. Multiple intersecting quadrics remain a separate unsupported
-problem and fail closed.
+and the line does not act as a two-dimensional occluder. The current
+surface/plane section family is then authenticated from its analytic equations.
+Line-valued circle, ellipse, parabola, and hyperbola members retain their exact
+visibility intervals, with hidden strokes painted before visible strokes;
+point-valued cap chords retain source identity but paint nothing. Only that
+certified family and its owning surface outline use the rank-one overlap rule.
+External curves and other surfaces keep the ordinary crossing solver and fail
+closed when their overlap cannot be certified. This paragraph covers the
+ordinary one-surface compositor; the open-double coordinator remains `AREA`-only.
+Multiple intersecting quadrics remain a separate unsupported problem and fail
+closed.
 
 For a fixed-topology moving plane, pass a callable as `curves`; it may build a
 fresh immutable section trace from the current `ValueTracker` value.  Surface
@@ -848,8 +855,10 @@ The unified sidecar preserves the existing v1 surface, visibility, and section
 frames while adding one deterministic painter frame for ordinary analytic
 curves, the four finite display-patch edges, cap rims, true silhouettes, and
 explicit teaching generators. That painter frame is the separately versioned
-`manim-quadric-boundary-compositing/v2` contract; it has one runtime path and
-does not generate the superseded boundary-compositing v1 payload.
+`manim-quadric-boundary-compositing/v3` contract; it has one runtime path and
+does not generate superseded boundary-compositing payloads. V3 records explicit
+section surface/plane provenance and the optional rank-one line/point evidence
+instead of asking consumers to infer that state from curve IDs.
 
 ```python
 from polyhedron_visibility.quadrics import (
@@ -862,6 +871,7 @@ controller = QuadricOcclusion3D(
     self,
     surfaces=(cone,),
     curves=section_curves,
+    section_id=section_id,
     section_plane=plane,
     paint_policy="depth_aware_diagrammatic",
     boundary_visibility_mode="unified",

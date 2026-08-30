@@ -66,6 +66,15 @@ observer-near boundary envelope is drawn, so coincident rectangle edges do not
 make the line darker or thicker. This is a display contract for the finite
 patch, not an invented thickness for the infinite mathematical plane.
 
+The section boundary is resolved in the same rank-one frame. Membership in the
+current surface/plane section is certified from the full analytic curve and
+finite-surface equations, never from an ID prefix. Circle, ellipse, parabola,
+and hyperbola members which retain a line place painted hidden intervals before
+painted visible intervals. A cap chord which projects to one point retains its
+semantic source and preallocated slot but emits no zero-length stroke. These
+rules do not suppress intersections with external curves, another surface, or
+an uncertified coincident curve.
+
 ## Layer ownership
 
 The renderer-neutral layer owns mathematical truth:

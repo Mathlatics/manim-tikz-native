@@ -839,11 +839,27 @@ class CompositeQuadricSection3D:
         *,
         surface_sources: Sequence[QuadricBoundarySource] | None = None,
     ) -> tuple[QuadricBoundarySource, ...]:
+        authoritative_by_surface = {
+            surface.surface_id: compute_quadric_section_boundary_curves(
+                self.section_id,
+                surface,
+                plane,
+                context=self.context,
+                coefficient_tolerance=self.coefficient_tolerance,
+            )
+            for surface in {
+                item.surface_id: item for item in owners.values()
+            }.values()
+        }
         result = [
             section_curve_boundary_source(
                 curve,
                 owners[curve.curve_id],
                 plane,
+                section_id=self.section_id,
+                authoritative_curves=authoritative_by_surface[
+                    owners[curve.curve_id].surface_id
+                ],
                 context=self.context,
                 style_id="style:curve",
             )

@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from math import acos, pi, sqrt
 import unittest
+from unittest.mock import patch as mock_patch
 
 import numpy as np
 
@@ -11,9 +13,11 @@ from polyhedron_visibility.quadrics.boundary_section import (
     BoundaryPlaneRelation,
     QuadricBoundarySectionLimits,
     _projected_segment_intersection_parameters,
+    certify_rank_one_section_boundary_sources,
     compute_boundary_section_spans,
 )
 from polyhedron_visibility.quadrics.boundary_compositing import (
+    BoundaryScreenProjectionDimension,
     BoundarySourceKind,
     QuadricBoundaryCompositingError,
     compute_boundary_visibility,
@@ -152,6 +156,22 @@ class BoundarySectionPlacementTests(unittest.TestCase):
             )
         )
 
+        group = certify_rank_one_section_boundary_sources(
+            (source,),
+            section,
+            FRONT_VIEW,
+            surface=sphere,
+        )
+        self.assertEqual(group.source_projections, ())
+        self.assertEqual(
+            compute_boundary_section_spans(
+                (source,),
+                section,
+                FRONT_VIEW,
+                surface=sphere,
+            ),
+            {},
+        )
         self.assertEqual(
             compute_boundary_section_spans(
                 (source,),
@@ -160,6 +180,180 @@ class BoundarySectionPlacementTests(unittest.TestCase):
             ),
             {},
         )
+
+    def test_rank_one_source_group_uses_geometry_and_certifies_line_or_point(
+        self,
+    ) -> None:
+        cylinder = CylinderSpec(
+            "rank-one-cylinder",
+            (0.0, 0.0, 0.0),
+            (0.0, 0.0, 1.0),
+            1.0,
+            (0.0, 2.0),
+            radial_axis=(1.0, 0.0, 0.0),
+        )
+        plane = SectionPlane(
+            "rank-one-cut",
+            (0.0, 0.0, 1.0),
+            (1.0, 0.0, 0.0),
+            u_axis=(0.0, 0.0, 1.0),
+        )
+        patch = PlaneDisplayPatchSpec(
+            "rank-one-patch",
+            plane.plane_id,
+            1.4,
+            1.4,
+        )
+        curves = compute_quadric_section_boundary_curves(
+            "rank-one-section",
+            cylinder,
+            plane,
+        )
+        sources = tuple(
+            section_curve_boundary_source(
+                curve,
+                cylinder,
+                plane,
+                section_id="rank-one-section",
+                authoritative_curves=curves,
+            )
+            for curve in curves
+        )
+        misleading = curve_boundary_source(
+            SegmentCurve(
+                "rank-one-section:component:parallel_lines:forged",
+                (-0.5, 0.25, 0.25),
+                (0.5, 0.25, 0.25),
+            )
+        )
+        same_geometry_external = curve_boundary_source(
+            replace(curves[0], curve_id="external-but-identical")
+        )
+        far_external = curve_boundary_source(
+            SegmentCurve(
+                "remote-unrelated-feature",
+                (1.0e12, 1.0e12, 1.0e12),
+                (1.0e12 + 1.0, 1.0e12, 1.0e12),
+            )
+        )
+        proxy = build_opaque_projection_proxy(
+            cylinder,
+            SIDE_VIEW,
+            max_chord_error=0.002,
+        )
+        base = compute_quadric_compositing(
+            compute_quadric_visibility(curves, (cylinder,), SIDE_VIEW),
+            (proxy,),
+        )
+        section = compute_quadric_section_compositing(
+            base,
+            cylinder,
+            plane,
+            patch,
+            SIDE_VIEW,
+            max_screen_error=0.03,
+        )
+
+        group = certify_rank_one_section_boundary_sources(
+            (*sources, misleading, same_geometry_external, far_external),
+            section,
+            SIDE_VIEW,
+            surface=cylinder,
+        )
+
+        self.assertEqual(group.surface_id, cylinder.surface_id)
+        self.assertEqual(group.plane_id, plane.plane_id)
+        self.assertNotIn(misleading.source_id, group.source_ids)
+        self.assertNotIn(same_geometry_external.source_id, group.source_ids)
+        self.assertNotIn(far_external.source_id, group.source_ids)
+        self.assertEqual(
+            group.line_source_ids,
+            tuple(
+                sorted(
+                    source.source_id
+                    for source in sources
+                    if source.source_kind is not BoundarySourceKind.SECTION_CAP_CHORD
+                )
+            ),
+        )
+        self.assertEqual(
+            group.point_source_ids,
+            tuple(
+                sorted(
+                    source.source_id
+                    for source in sources
+                    if source.source_kind is BoundarySourceKind.SECTION_CAP_CHORD
+                )
+            ),
+        )
+        self.assertEqual(
+            {item.dimension for item in group.source_projections},
+            {
+                BoundaryScreenProjectionDimension.LINE,
+                BoundaryScreenProjectionDimension.POINT,
+            },
+        )
+        self.assertTrue(
+            all(
+                source.source_kind
+                in {
+                    BoundarySourceKind.SECTION_CURVE,
+                    BoundarySourceKind.SECTION_CAP_CHORD,
+                }
+                and source.owner_surface_id is None
+                and source.section_surface_id == cylinder.surface_id
+                and source.section_plane_id == plane.plane_id
+                for source in sources
+            )
+        )
+
+    def test_rank_one_span_path_authenticates_matching_surface_before_empty(
+        self,
+    ) -> None:
+        sphere = SphereSpec("rank-one-sphere", (0.0, 0.0, 0.0), 1.0)
+        plane = SectionPlane(
+            "rank-one-plane",
+            (0.0, 0.0, 0.0),
+            (1.0, 0.0, 0.0),
+            u_axis=(0.0, 0.0, 1.0),
+        )
+        patch = fit_plane_display_patch(
+            "rank-one-patch",
+            plane,
+            (sphere,),
+        ).patch
+        proxy = build_opaque_projection_proxy(
+            sphere,
+            FRONT_VIEW,
+            max_chord_error=0.002,
+        )
+        base = compute_quadric_compositing(
+            compute_quadric_visibility((), (sphere,), FRONT_VIEW),
+            (proxy,),
+        )
+        section = compute_quadric_section_compositing(
+            base,
+            sphere,
+            plane,
+            patch,
+            FRONT_VIEW,
+        )
+        wrong_surface = SphereSpec(
+            "other-sphere",
+            (0.0, 0.0, 0.0),
+            1.0,
+        )
+
+        with self.assertRaisesRegex(
+            QuadricBoundaryCompositingError,
+            "does not match the section frame",
+        ):
+            compute_boundary_section_spans(
+                (),
+                section,
+                FRONT_VIEW,
+                surface=wrong_surface,
+            )
 
     def test_side_view_circle_keeps_screen_coincident_depth_events(self) -> None:
         sphere = SphereSpec("sphere", (0.0, 0.0, 0.0), 1.0)
@@ -393,7 +587,13 @@ class BoundarySectionPlacementTests(unittest.TestCase):
             plane,
         )
         sources = tuple(
-            section_curve_boundary_source(curve, cone, plane)
+            section_curve_boundary_source(
+                curve,
+                cone,
+                plane,
+                section_id="finite-section",
+                authoritative_curves=curves,
+            )
             for curve in curves
         )
         chord_source = next(
@@ -406,6 +606,32 @@ class BoundarySectionPlacementTests(unittest.TestCase):
             BoundarySourceKind.SECTION_CAP_CHORD,
         )
         self.assertEqual(chord_source.owner_id, cone.end_caps[0].cap_id)
+        self.assertIsNone(chord_source.owner_surface_id)
+        self.assertEqual(chord_source.section_surface_id, cone.surface_id)
+        self.assertEqual(chord_source.section_plane_id, plane.plane_id)
+
+        renamed_reversed = SegmentCurve(
+            "renamed-without-cap-suffix",
+            chord_source.curve.end,
+            chord_source.curve.start,
+        )
+        with mock_patch(
+            "polyhedron_visibility.quadrics.surface_boundaries."
+            "compute_quadric_section_boundary_curves",
+            side_effect=AssertionError("authoritative solve was repeated"),
+        ):
+            renamed_source = section_curve_boundary_source(
+                renamed_reversed,
+                cone,
+                plane,
+                section_id="finite-section",
+                authoritative_curves=curves,
+            )
+        self.assertIs(
+            renamed_source.source_kind,
+            BoundarySourceKind.SECTION_CAP_CHORD,
+        )
+        self.assertEqual(renamed_source.owner_id, cone.end_caps[0].cap_id)
 
         proxy = build_opaque_projection_proxy(
             cone,
@@ -457,6 +683,8 @@ class BoundarySectionPlacementTests(unittest.TestCase):
             ),
             source_kind=BoundarySourceKind.SECTION_CAP_CHORD,
             owner_id=cone.end_caps[0].cap_id,
+            section_surface_id=cone.surface_id,
+            section_plane_id=plane.plane_id,
         )
         forged_visibility = compute_boundary_visibility(
             (forged,),
@@ -495,11 +723,16 @@ class BoundarySectionPlacementTests(unittest.TestCase):
             (-0.25, -0.25, 0.5),
             (0.25, 0.25, 0.5),
         )
-        source = section_curve_boundary_source(ordinary, cone, plane)
+        source = section_curve_boundary_source(
+            ordinary,
+            cone,
+            plane,
+            section_id="collision-section",
+        )
         self.assertIs(source.source_kind, BoundarySourceKind.ANALYTIC_CURVE)
         self.assertEqual(source.owner_id, ordinary.curve_id)
 
-    def test_stale_cap_chord_is_not_downgraded_to_a_free_curve(self) -> None:
+    def test_unmatched_old_cap_chord_is_a_safe_free_curve(self) -> None:
         cone = ConeSpec(
             "stale-cone",
             (0.0, 0.0, 0.0),
@@ -508,7 +741,6 @@ class BoundarySectionPlacementTests(unittest.TestCase):
             (0.0, 2.0),
             radial_axis=(1.0, 0.0, 0.0),
         )
-        cap = cone.end_caps[0]
         previous_plane = SectionPlane(
             "previous-cut",
             (0.0, 0.0, 1.5),
@@ -520,17 +752,21 @@ class BoundarySectionPlacementTests(unittest.TestCase):
             cone,
             previous_plane,
         )[0]
-        unresolved_plane = SectionPlane(
-            "unresolved-cut",
-            cap.center,
-            (1.0e-15, 0.0, 1.0),
-            u_axis=(0.0, 1.0, 0.0),
+        current_plane = SectionPlane(
+            "current-cut",
+            (0.0, 0.0, 1.5),
+            (0.0, 0.5, 1.0),
+            u_axis=(1.0, 0.0, 0.0),
         )
-        with self.assertRaisesRegex(
-            QuadricSectionError,
-            "below the configured angular resolution",
-        ):
-            section_curve_boundary_source(stale, cone, unresolved_plane)
+        source = section_curve_boundary_source(
+            stale,
+            cone,
+            current_plane,
+            section_id="stale-section",
+        )
+        self.assertIs(source.source_kind, BoundarySourceKind.ANALYTIC_CURVE)
+        self.assertIsNone(source.section_surface_id)
+        self.assertIsNone(source.section_plane_id)
 
     def test_cap_source_reuses_complete_boundary_topology_check(self) -> None:
         cone = ConeSpec(
@@ -561,6 +797,7 @@ class BoundarySectionPlacementTests(unittest.TestCase):
                 standalone_chord,
                 cone,
                 tolerance_mismatch_plane,
+                section_id="topology-section",
             )
 
     def test_cap_rim_splits_at_every_plane_depth_role_boundary(self) -> None:
