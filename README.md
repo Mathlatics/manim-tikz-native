@@ -22,6 +22,15 @@ view directions, world-space targets, fixed screen anchors, zoom, and semantic
 views normal to, oblique to, or exactly along an authored plane. Safe state
 transitions keep every intermediate parallel camera invertible.
 
+`ParallelCameraShot` and `ParallelCameraShotSequence` add named timing, holds,
+cues, safe orbit transitions, and fixed-envelope zoom fitting on top of that
+state. After a static shot reaches its exact endpoint,
+`ParallelCameraTargetFollowController` can follow a moving world-space target
+without allocating Mobjects per frame. Already-earlier target producers remain
+before the follow driver, while explicitly marked quadric/composite consumers
+are kept after it, giving deterministic same-frame camera/occlusion updates.
+See the [semantic parallel-camera shots](examples/parallel_camera_shots/README.md).
+
 This project does **not** convert arbitrary TikZ and does not silently fall back
 to SVG. Unsupported syntax is reported explicitly.
 

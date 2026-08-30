@@ -31,7 +31,9 @@ TikZ 图压成一张 SVG 或图片。转换后的直线、面、点、标签仍�
 镜头；序列使用 `parallel-shot-sequence/v1` 契约。`ParallelCameraSafeFrame` 可以在
 不改变目标点及其画面锚点的前提下，为一组世界点自动求最大合适缩放。动态跟随则
 由 `ParallelCameraTargetFollowController` 在静态镜头准确到位后启用，只更新目标点，
-失败时自动拆除 updater 并恢复镜头。三个可直接渲染的验收动画见
+并按“已经位于跟随器之前的目标生产者 → 跟随器 → 二次曲面遮挡”的确定顺序在
+同一帧更新；失败时自动拆除 updater、清除 Cairo 静态缓存并恢复镜头。三个可直接
+渲染的验收动画见
 [语义相机镜头示例](examples/parallel_camera_shots/README.md)。
 
 ## 圆锥截口 Quick Start

@@ -12,7 +12,10 @@ All notable changes to this project will be documented in this file.
 - add the strict `parallel-shot-sequence/v1` authoring layer with semantic
   look-at/normal/relative/along-plane shots, fixed-envelope zoom fitting,
   transactional Manim playback, and an explicit zero-allocation dynamic-target
-  follow controller; include three short Cairo acceptance scenes;
+  follow controller; order that follow driver before marked quadric/composite
+  consumers so automatic occlusion samples the new target in the same frame,
+  with transactional updater/cache cleanup; include three short Cairo
+  acceptance scenes;
 - give one finite single-surface cutting-plane patch an explicit `AREA`/`LINE`
   projection contract: exact side views omit fill and plane occlusion, retain
   one certified finite near-side outline without duplicate strokes, reuse the

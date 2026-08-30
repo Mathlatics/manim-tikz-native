@@ -21,6 +21,10 @@ from .parallel_shots import ParallelCameraShot, ParallelCameraShotSequence
 
 ParallelCameraTargetProvider: TypeAlias = Callable[[], Sequence[float]]
 
+_PARALLEL_CAMERA_STATE_CONSUMER_MARKER = (
+    "_tikz_native_parallel_camera_state_consumer"
+)
+
 
 class ParallelCameraShotManimError(RuntimeError):
     """A shot cannot be played or followed safely in the supplied Scene."""
@@ -62,6 +66,65 @@ def _finite_target(value: object) -> np.ndarray:
     if target.shape != (3,) or not np.all(np.isfinite(target)):
         raise ValueError("target_provider must return three finite values")
     return target.copy()
+
+
+def _scene_mobjects(scene: object) -> list[Mobject]:
+    mobjects = getattr(scene, "mobjects", None)
+    if not isinstance(mobjects, list):
+        raise TypeError("scene must expose its mutable mobjects list")
+    return mobjects
+
+
+def _place_driver_before_camera_state_consumers(
+    scene: object,
+    driver: Mobject,
+) -> None:
+    """Order ``driver`` before marked consumers without moving other objects."""
+
+    mobjects = _scene_mobjects(scene)
+    driver_indices = [
+        index for index, mobject in enumerate(mobjects) if mobject is driver
+    ]
+    if len(driver_indices) != 1:
+        raise ParallelCameraShotManimError(
+            "target follow driver must be Scene-owned exactly once"
+        )
+    consumer_indices = [
+        index
+        for index, mobject in enumerate(mobjects)
+        if mobject is not driver
+        and bool(
+            getattr(mobject, _PARALLEL_CAMERA_STATE_CONSUMER_MARKER, False)
+        )
+    ]
+    if not consumer_indices:
+        return
+    driver_index = driver_indices[0]
+    first_consumer_index = min(consumer_indices)
+    if driver_index < first_consumer_index:
+        return
+    mobjects.pop(driver_index)
+    mobjects.insert(first_consumer_index, driver)
+
+
+def _remove_driver_identity_from_scene(scene: object, driver: Mobject) -> None:
+    """Best-effort identity cleanup after Scene.remove partially fails."""
+
+    for name in (
+        "mobjects",
+        "foreground_mobjects",
+        "moving_mobjects",
+        "static_mobjects",
+    ):
+        mobjects = getattr(scene, name, None)
+        if isinstance(mobjects, list):
+            mobjects[:] = [mobject for mobject in mobjects if mobject is not driver]
+
+
+def _invalidate_cairo_static_image(scene: object) -> None:
+    renderer = getattr(scene, "renderer", None)
+    if renderer is not None and hasattr(renderer, "static_image"):
+        renderer.static_image = None
 
 
 def _restore_camera_after_failure(
@@ -142,7 +205,10 @@ class ParallelCameraTargetFollowController:
     ``shot.state``.  This makes the lifecycle explicit: play the authored shot
     first, then enable target following.  Every updater frame derives from the
     immutable shot endpoint and changes only ``target``; matrix, screen anchor,
-    and zoom therefore cannot drift.
+    and zoom therefore cannot drift.  On start, the driver is placed after
+    already-earlier target-producer Mobjects and immediately before the first
+    marked quadric camera-state consumer, so both observe the new target in one
+    frame.
     """
 
     def __init__(
@@ -202,16 +268,36 @@ class ParallelCameraTargetFollowController:
         self._apply_target(_finite_target(self.target_provider()))
 
     def _remove_driver(self) -> None:
-        self._driver.remove_updater(self._updater)
+        removal_error: BaseException | None = None
+        try:
+            self._driver.remove_updater(self._updater)
+        except BaseException as exc:
+            removal_error = exc
         try:
             self._remove_from_scene(self._driver)
+        except BaseException as exc:
+            if removal_error is None:
+                removal_error = exc
+            else:
+                removal_error.add_note(
+                    f"Scene.remove cleanup also failed: {exc!r}"
+                )
         finally:
+            _remove_driver_identity_from_scene(self.scene, self._driver)
+            _invalidate_cairo_static_image(self.scene)
             self._active = False
+        if removal_error is not None:
+            raise removal_error
 
     def _fail_closed(self) -> None:
         endpoint = self._endpoint_state
         try:
-            self._remove_driver()
+            try:
+                self._remove_driver()
+            except BaseException:
+                # Cleanup already performed an identity-based fallback.  Do not
+                # hide the provider/playback exception which triggered rollback.
+                pass
         finally:
             if endpoint is not None:
                 _restore_camera_after_failure(self.camera, endpoint)
@@ -234,9 +320,14 @@ class ParallelCameraTargetFollowController:
         target = _finite_target(self.target_provider())
         self._endpoint_state = shot.state
         self._shot_id = shot.id
-        self._driver.add_updater(self._updater)
         try:
+            self._driver.add_updater(self._updater)
             self._add_to_scene(self._driver)
+            _place_driver_before_camera_state_consumers(
+                self.scene,
+                self._driver,
+            )
+            _invalidate_cairo_static_image(self.scene)
             self._active = True
             self._apply_target(target)
         except BaseException:
@@ -257,11 +348,23 @@ class ParallelCameraTargetFollowController:
         """Detach and restore the exact authored endpoint captured by start."""
 
         endpoint = self._endpoint_state
-        self.stop()
-        if endpoint is not None:
-            self.camera.set_parallel_state(endpoint)
-        self._endpoint_state = None
-        self._shot_id = None
+        cleanup_error: BaseException | None = None
+        try:
+            self.stop()
+        except BaseException as exc:
+            cleanup_error = exc
+        try:
+            if endpoint is not None:
+                self.camera.set_parallel_state(endpoint)
+        except BaseException as exc:
+            if cleanup_error is None:
+                cleanup_error = exc
+        finally:
+            _invalidate_cairo_static_image(self.scene)
+            self._endpoint_state = None
+            self._shot_id = None
+        if cleanup_error is not None:
+            raise cleanup_error
         return self
 
 

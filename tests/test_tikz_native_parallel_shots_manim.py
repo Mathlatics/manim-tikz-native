@@ -2,12 +2,26 @@
 
 from __future__ import annotations
 
+from math import pi
 import unittest
 from unittest.mock import patch
 
 import numpy as np
 from manim import Dot, Mobject, ThreeDScene, tempconfig
 
+from polyhedron_visibility.quadrics.composite_authoring import (
+    CompositeQuadricSection3D,
+)
+from polyhedron_visibility.quadrics.contract import (
+    ConeModel,
+    ConeSpec,
+    SectionPlane,
+    SphereSpec,
+)
+from polyhedron_visibility.quadrics.manim import (
+    QuadricManimLimits,
+    QuadricOcclusion3D,
+)
 from tikz_native.camera_3d import MultiProjectionCamera
 from tikz_native.parallel_camera import ParallelCameraState
 from tikz_native.parallel_shots import (
@@ -84,6 +98,20 @@ def _shot(
         hold=hold,
         transition=transition,
         arc_height=0.6,
+    )
+
+
+def _quadric_limits(*, max_surfaces: int) -> QuadricManimLimits:
+    return QuadricManimLimits(
+        max_surfaces=max_surfaces,
+        max_curves=8,
+        max_fragments_per_curve=24,
+        max_segments_per_fragment=192,
+        max_surface_segments=320,
+        max_dashes_per_fragment=64,
+        max_projected_length=24.0,
+        max_total_mobjects=30000,
+        max_boundary_sources=32,
     )
 
 
@@ -250,6 +278,125 @@ class ParallelCameraTargetFollowTests(unittest.TestCase):
     def tearDown(self) -> None:
         self.config.__exit__(None, None, None)
 
+    def _assert_same_frame_camera_sample(
+        self,
+        scene: _ParallelScene,
+        controller: object,
+        shot: ParallelCameraShot,
+    ) -> None:
+        scene.camera.set_parallel_state(shot.state)
+        dynamic_target = np.asarray((1.4, -0.8, 0.6), dtype=float)
+        next_target = np.asarray((-1.1, 0.7, 1.5), dtype=float)
+        unrelated = Mobject()
+
+        def produce_target(_mobject: Mobject, dt: float) -> None:
+            del dt
+            dynamic_target[:] = next_target
+
+        unrelated.add_updater(produce_target)
+        scene.add(unrelated)
+        controller.attach()
+
+        follow = ParallelCameraTargetFollowController(
+            scene,
+            lambda: dynamic_target,
+        )
+        follow.start(shot)
+        driver = follow.driver_mobject
+        consumer = controller._update_driver
+        self.assertLess(scene.mobjects.index(unrelated), scene.mobjects.index(driver))
+        self.assertLess(scene.mobjects.index(driver), scene.mobjects.index(consumer))
+        self.assertEqual(scene.mobjects.count(driver), 1)
+
+        sampled: list[ParallelCameraState] = []
+        original_update = controller.update
+
+        def capture_update(dt: float) -> None:
+            sampled.append(scene.camera.snapshot_parallel_state())
+            original_update(dt)
+
+        try:
+            with (
+                patch.object(controller, "update", side_effect=capture_update),
+                patch.object(
+                    Mobject,
+                    "__init__",
+                    side_effect=AssertionError("follow frame allocated a Mobject"),
+                ),
+            ):
+                scene.update_mobjects(1.0 / 12.0)
+            self.assertEqual(len(sampled), 1)
+            np.testing.assert_array_equal(dynamic_target, next_target)
+            np.testing.assert_array_equal(sampled[0].target, next_target)
+            np.testing.assert_array_equal(sampled[0].matrix, shot.state.matrix)
+            np.testing.assert_array_equal(
+                sampled[0].screen_anchor,
+                shot.state.screen_anchor,
+            )
+            self.assertEqual(sampled[0].zoom, shot.state.zoom)
+            self.assertIs(follow.driver_mobject, driver)
+        finally:
+            follow.restore()
+            controller.restore()
+
+    def test_single_quadric_samples_followed_target_in_the_same_frame(self) -> None:
+        scene = _ParallelScene()
+        shot = _shot(0, hold=0.0)
+        controller = QuadricOcclusion3D(
+            scene,
+            surfaces=(SphereSpec("follow-sphere", (0.0, 0.0, 0.0), 1.0),),
+            curves=(),
+            projection=lambda active_scene: active_scene.camera,
+            include_surface_boundaries=False,
+            limits=_quadric_limits(max_surfaces=1),
+        )
+        self._assert_same_frame_camera_sample(scene, controller, shot)
+
+    def test_composite_quadric_samples_followed_target_in_the_same_frame(
+        self,
+    ) -> None:
+        scene = _ParallelScene()
+        plane = SectionPlane(
+            "follow-double-plane",
+            (0.0, 0.48, 0.0),
+            (0.0, 1.0, 0.0),
+            u_axis=(1.0, 0.0, 0.0),
+        )
+        state = ParallelCameraState.relative_to_plane(
+            plane,
+            inclination_degrees=14.0,
+            azimuth_degrees=0.0,
+            target=plane.point,
+        )
+        shot = ParallelCameraShot(
+            "follow-double-shot",
+            state,
+            duration=0.1,
+            hold=0.0,
+        )
+        controller = CompositeQuadricSection3D(
+            scene,
+            surface=ConeSpec(
+                "follow-double",
+                (0.0, 0.0, 0.0),
+                (0.0, 0.0, 1.0),
+                pi / 4.0,
+                (-2.0, 2.0),
+                radial_axis=(1.0, 0.0, 0.0),
+                model=ConeModel.OPEN_DOUBLE,
+            ),
+            section_id="follow-double-section",
+            plane=plane,
+            projection=lambda active_scene: active_scene.camera,
+            draw_section_boundary=True,
+            include_surface_boundaries=False,
+            limits=_quadric_limits(max_surfaces=2),
+            max_chord_error=0.04,
+            section_max_screen_error=0.16,
+            plane_patch_margin=0.16,
+        )
+        self._assert_same_frame_camera_sample(scene, controller, shot)
+
     def test_follow_starts_only_at_endpoint_and_changes_only_target(self) -> None:
         scene = _ParallelScene()
         shot = _shot(1)
@@ -269,6 +416,18 @@ class ParallelCameraTargetFollowTests(unittest.TestCase):
         self.assertFalse(controller.driver_mobject.get_updaters())
 
         play_parallel_camera_shot(scene, shot)
+        unrelated_producer = Mobject()
+
+        def update_unrelated(_mobject: Mobject, dt: float) -> None:
+            del dt
+
+        unrelated_producer.add_updater(update_unrelated)
+        first_consumer = Mobject()
+        second_consumer = Mobject()
+        for consumer in (first_consumer, second_consumer):
+            consumer._tikz_native_parallel_camera_state_consumer = True
+        scene.add(unrelated_producer, first_consumer, second_consumer)
+        scene.renderer.static_image = np.ones((2, 2, 4), dtype=np.uint8)
         controller.start(shot)
         self.assertTrue(controller.active)
         self.assertIs(controller.endpoint_state, shot.state)
@@ -276,6 +435,19 @@ class ParallelCameraTargetFollowTests(unittest.TestCase):
         self.assertIn(controller.driver_mobject, scene.mobjects)
         self.assertTrue(controller.driver_mobject.get_updaters())
         self.assertEqual(id(controller.driver_mobject), driver_id)
+        self.assertLess(
+            scene.mobjects.index(unrelated_producer),
+            scene.mobjects.index(controller.driver_mobject),
+        )
+        self.assertLess(
+            scene.mobjects.index(controller.driver_mobject),
+            scene.mobjects.index(first_consumer),
+        )
+        self.assertLess(
+            scene.mobjects.index(first_consumer),
+            scene.mobjects.index(second_consumer),
+        )
+        self.assertIsNone(scene.renderer.static_image)
         followed = scene.camera.snapshot_parallel_state()
         np.testing.assert_array_equal(followed.target, dynamic_target)
         np.testing.assert_array_equal(followed.matrix, shot.state.matrix)
@@ -302,10 +474,12 @@ class ParallelCameraTargetFollowTests(unittest.TestCase):
         )
         self.assertEqual(followed.zoom, shot.state.zoom)
 
+        scene.renderer.static_image = np.ones((2, 2, 4), dtype=np.uint8)
         controller.stop()
         self.assertFalse(controller.active)
         self.assertNotIn(controller.driver_mobject, scene.mobjects)
         self.assertFalse(controller.driver_mobject.get_updaters())
+        self.assertIsNone(scene.renderer.static_image)
         stopped = scene.camera.snapshot_parallel_state()
         dynamic_target[:] = (2.0, 2.0, 2.0)
         controller.driver_mobject.update(1.0 / 12.0)
@@ -315,11 +489,13 @@ class ParallelCameraTargetFollowTests(unittest.TestCase):
             stopped,
         )
 
+        scene.renderer.static_image = np.ones((2, 2, 4), dtype=np.uint8)
         controller.restore()
         self.assertFalse(controller.active)
         self.assertIsNone(controller.endpoint_state)
         self.assertIsNone(controller.shot_id)
         self.assertIs(scene.camera.snapshot_parallel_state(), shot.state)
+        self.assertIsNone(scene.renderer.static_image)
 
         # Reusing the same preallocated driver must not allocate a new Mobject.
         with patch.object(
@@ -382,6 +558,111 @@ class ParallelCameraTargetFollowTests(unittest.TestCase):
         self.assertFalse(controller.active)
         self.assertFalse(controller.driver_mobject.get_updaters())
         self.assertNotIn(controller.driver_mobject, scene.mobjects)
+        self.assertIs(scene.camera.snapshot_parallel_state(), shot.state)
+
+    def test_partial_start_failure_cleans_all_scene_lists_and_static_cache(
+        self,
+    ) -> None:
+        scene = _ParallelScene()
+        shot = _shot(1)
+        scene.camera.set_parallel_state(shot.state)
+
+        def add_twice(driver: Mobject) -> None:
+            scene.mobjects.extend((driver, driver))
+            scene.foreground_mobjects.append(driver)
+            scene.moving_mobjects = [driver]
+            scene.static_mobjects = [driver]
+
+        with patch.object(scene, "add", side_effect=add_twice):
+            controller = ParallelCameraTargetFollowController(
+                scene,
+                lambda: (0.2, 0.3, 0.4),
+            )
+            scene.renderer.static_image = np.ones((2, 2, 4), dtype=np.uint8)
+            with self.assertRaisesRegex(
+                ParallelCameraShotManimError,
+                "Scene-owned exactly once",
+            ):
+                controller.start(shot)
+
+        self.assertFalse(controller.active)
+        self.assertFalse(controller.driver_mobject.get_updaters())
+        for name in (
+            "mobjects",
+            "foreground_mobjects",
+            "moving_mobjects",
+            "static_mobjects",
+        ):
+            self.assertNotIn(controller.driver_mobject, getattr(scene, name))
+        self.assertIsNone(scene.renderer.static_image)
+        self.assertIsNone(controller.endpoint_state)
+        self.assertIsNone(controller.shot_id)
+        self.assertIs(scene.camera.snapshot_parallel_state(), shot.state)
+
+    def test_restore_cleans_every_scene_list_when_scene_remove_raises(self) -> None:
+        scene = _ParallelScene()
+        shot = _shot(2)
+        scene.camera.set_parallel_state(shot.state)
+        with patch.object(
+            scene,
+            "remove",
+            side_effect=RuntimeError("synthetic remove failure"),
+        ):
+            controller = ParallelCameraTargetFollowController(
+                scene,
+                lambda: (0.9, -0.4, 1.2),
+            )
+            controller.start(shot)
+            driver = controller.driver_mobject
+            scene.foreground_mobjects.append(driver)
+            scene.moving_mobjects = [driver]
+            scene.static_mobjects = [driver]
+            scene.renderer.static_image = np.ones((2, 2, 4), dtype=np.uint8)
+            with self.assertRaisesRegex(RuntimeError, "synthetic remove failure"):
+                controller.restore()
+
+        self.assertFalse(controller.active)
+        self.assertFalse(driver.get_updaters())
+        for name in (
+            "mobjects",
+            "foreground_mobjects",
+            "moving_mobjects",
+            "static_mobjects",
+        ):
+            self.assertNotIn(driver, getattr(scene, name))
+        self.assertIsNone(scene.renderer.static_image)
+        self.assertIsNone(controller.endpoint_state)
+        self.assertIsNone(controller.shot_id)
+        self.assertIs(scene.camera.snapshot_parallel_state(), shot.state)
+
+    def test_restore_cleans_scene_when_remove_updater_raises(self) -> None:
+        scene = _ParallelScene()
+        shot = _shot(0)
+        scene.camera.set_parallel_state(shot.state)
+        controller = ParallelCameraTargetFollowController(
+            scene,
+            lambda: (0.6, -0.2, 0.8),
+        )
+        controller.start(shot)
+        driver = controller.driver_mobject
+        scene.renderer.static_image = np.ones((2, 2, 4), dtype=np.uint8)
+
+        with patch.object(
+            driver,
+            "remove_updater",
+            side_effect=RuntimeError("synthetic updater cleanup failure"),
+        ):
+            with self.assertRaisesRegex(
+                RuntimeError,
+                "synthetic updater cleanup failure",
+            ):
+                controller.restore()
+
+        self.assertFalse(controller.active)
+        self.assertNotIn(driver, scene.mobjects)
+        self.assertIsNone(scene.renderer.static_image)
+        self.assertIsNone(controller.endpoint_state)
+        self.assertIsNone(controller.shot_id)
         self.assertIs(scene.camera.snapshot_parallel_state(), shot.state)
 
 

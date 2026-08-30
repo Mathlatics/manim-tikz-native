@@ -522,6 +522,7 @@ class CompositeQuadricSection3D:
             opacity_sentinel=self._opacity_sentinel,
         )
         self._update_driver = Mobject()
+        self._update_driver._tikz_native_parallel_camera_state_consumer = True
 
         def update_display(mobject: Mobject, dt: float) -> None:
             del mobject

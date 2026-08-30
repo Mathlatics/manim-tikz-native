@@ -144,7 +144,12 @@ For a genuinely moving target, first play a static shot to its exact endpoint,
 then start `ParallelCameraTargetFollowController`. Its one preallocated updater
 changes only the target; `stop()` keeps the latest followed view and
 `restore()` returns to the authored endpoint. Playback or provider failure
-removes the updater and rolls the camera back.
+removes the updater and rolls the camera back. At startup the binding preserves
+already-earlier target producers, then places the follow driver immediately
+before explicitly marked quadric/composite camera-state consumers. This gives
+the deterministic same-frame order `producer -> follow -> occlusion`. A target
+provider that depends on a later, unmarked Mobject updater remains outside this
+contract and must be reordered by the author.
 
 Manim's inherited camera zoom composes multiplicatively with the state's
 `zoom`, while `screen_anchor` remains a final viewport-relative coordinate even
