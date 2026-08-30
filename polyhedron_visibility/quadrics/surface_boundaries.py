@@ -633,19 +633,22 @@ def build_surface_boundary_sources(
 ) -> tuple[QuadricBoundarySource, ...]:
     surface_items = tuple(sorted(surfaces, key=lambda item: item.surface_id))
     by_id = {item.surface_id: item for item in surface_items}
-    resolved = resolve_geometry_context(
-        context,
-        positions=tuple(
-            point
-            for surface in surface_items
-            for point in surface.characteristic_points
-        ),
-    )
+    resolved = None
+    if include_silhouettes:
+        resolved = resolve_geometry_context(
+            context,
+            positions=tuple(
+                point
+                for surface in surface_items
+                for point in surface.characteristic_points
+            ),
+        )
     result: list[QuadricBoundarySource] = []
     for surface in surface_items:
         if include_cap_rims:
             result.extend(_surface_rim_sources(surface))
         if include_silhouettes:
+            assert resolved is not None
             if isinstance(surface, SphereSpec):
                 result.append(_sphere_silhouette_source(surface, view, resolved))
             else:
