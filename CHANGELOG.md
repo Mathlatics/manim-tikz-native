@@ -4,6 +4,36 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+- add a renderer-neutral `ParallelCameraState` with arbitrary view direction,
+  target, final-screen anchor, zoom, and semantic normal/relative/along-plane
+  constructors; integrate it additively with `MultiProjectionCamera` through
+  safe invertible transitions while preserving legacy projection presets, and
+  let the quadric Manim controllers consume that same complete animated state;
+- add the strict `parallel-shot-sequence/v1` authoring layer with semantic
+  look-at/normal/relative/along-plane shots, fixed-envelope zoom fitting,
+  transactional Manim playback, and an explicit zero-allocation dynamic-target
+  follow controller; order that follow driver before marked quadric/composite
+  consumers so automatic occlusion samples the new target in the same frame,
+  with transactional updater/cache cleanup; include three short Cairo
+  acceptance scenes;
+- give one finite single-surface cutting-plane patch an explicit `AREA`/`LINE`
+  projection contract: exact side views omit fill and plane occlusion, retain
+  one certified finite near-side outline without duplicate strokes, reuse the
+  same fixed Cairo slots through `AREA -> LINE -> AREA`, and reactivate any
+  returning boundary containers before their children are redrawn;
+- authenticate edge-on circle, ellipse, parabola, and hyperbola sources from
+  explicit section provenance plus complete analytic geometry; retain line
+  visibility with only locally overlapping hidden strokes behind visible ones,
+  preserve point-valued cap-chord identities without fake segments, keep free
+  and other-surface curves on the strict crossing path, and publish the
+  auditable boundary painter evidence as
+  `manim-quadric-boundary-compositing/v3` while retaining the compatible
+  persisted `quadric_visibility/v2` author-data contract;
+- extend `CompositeQuadricSection3D` to certified exact side views: require
+  matching rank-one evidence from both canonical nappes, merge their finite
+  plane outline without fill, holes, or duplicate strokes, keep two independent
+  section-source groups for boundary order, and reuse the same fixed Cairo
+  slots transactionally through `AREA -> LINE -> AREA`;
 - let `QuadricSection3D` consume named Preview/Final render profiles directly;
   add a one-factory capacity scan with deterministic human-readable summaries,
   preserve the existing progress-scan and immutable limit APIs, and publish a

@@ -29,7 +29,12 @@ from .contract import (
     SectionPlane,
     SphereSpec,
 )
-from .curves import CircleArcCurve, SegmentCurve
+from .curves import (
+    CircleArcCurve,
+    EllipseArcCurve,
+    ParametricConicBranch,
+    SegmentCurve,
+)
 from .sections import compute_quadric_section_boundary_curves
 
 
@@ -80,6 +85,8 @@ def curve_boundary_source(
     occlusion_scope: BoundaryOcclusionScope = BoundaryOcclusionScope.ALL_SURFACES,
     owner_id: str | None = None,
     owner_surface_id: str | None = None,
+    section_surface_id: str | None = None,
+    section_plane_id: str | None = None,
     style_id: str | None = None,
 ) -> QuadricBoundarySource:
     source_id = curve.curve_id
@@ -91,9 +98,70 @@ def curve_boundary_source(
         occlusion_scope=occlusion_scope,
         owner_id=source_id if owner_id is None else owner_id,
         owner_surface_id=owner_surface_id,
+        section_surface_id=section_surface_id,
+        section_plane_id=section_plane_id,
         style_id=style_id,
         stable_sort_key=(source_kind.value, semantic_kind.value, source_id),
     )
+
+
+def _same_curve_geometry(first, second) -> bool:
+    """Compare authored analytic structure without consulting curve identity."""
+
+    if isinstance(first, SegmentCurve) and isinstance(second, SegmentCurve):
+        if first.domain != second.domain:
+            return False
+        return (
+            first.start == second.start and first.end == second.end
+        ) or (
+            first.start == second.end and first.end == second.start
+        )
+    if isinstance(first, EllipseArcCurve) and isinstance(
+        second, EllipseArcCurve
+    ):
+        return (
+            first.center == second.center
+            and first.first_axis == second.first_axis
+            and first.second_axis == second.second_axis
+            and first.domain == second.domain
+        )
+    if isinstance(first, ParametricConicBranch) and isinstance(
+        second, ParametricConicBranch
+    ):
+        return (
+            first.parameterization == second.parameterization
+            and first.plane_embedding == second.plane_embedding
+            and first.domain == second.domain
+        )
+    return False
+
+
+def _segment_cap_owners(
+    curve: SegmentCurve,
+    surface: QuadricSurfaceSpec,
+    context: ResolvedGeometryContext,
+):
+    """Return caps whose finite rim contains both segment endpoints."""
+
+    validation_epsilon = 8.0 * context.epsilon(GeometryQuantity.BOUNDARY)
+    matches = []
+    for cap in surface.end_caps:
+        center = np.asarray(cap.center, dtype=float)
+        normal = np.asarray(cap.normal, dtype=float)
+        valid = True
+        for endpoint in (curve.start, curve.end):
+            offset = np.asarray(endpoint, dtype=float) - center
+            axial = float(np.dot(offset, normal))
+            radial = offset - axial * normal
+            if max(
+                abs(axial),
+                abs(float(np.linalg.norm(radial)) - cap.radius),
+            ) > validation_epsilon:
+                valid = False
+                break
+        if valid:
+            matches.append(cap)
+    return tuple(matches)
 
 
 def section_curve_boundary_source(
@@ -101,97 +169,98 @@ def section_curve_boundary_source(
     surface: QuadricSurfaceSpec,
     plane: SectionPlane,
     *,
+    section_id: str,
+    authoritative_curves: Sequence[object] | None = None,
     context=None,
     style_id: str | None = "style:curve",
 ) -> QuadricBoundarySource:
-    """Wrap an explicit section curve with its finite-cap semantics.
+    """Authenticate one curve against a complete authoritative section.
 
-    Lateral conics keep the ordinary analytic-curve source kind and are
-    certified geometrically by the section compositor.  Cap chords use the
-    reserved semantic identity emitted by ``sections.py`` so the compositor
-    can certify them against the owning finite disk rather than the infinite
-    support quadric.
+    ``section_id`` selects the authoritative finite-boundary solve; it is not
+    inferred from ``curve_id``.  Geometry, including reversed cap-chord
+    orientation, is compared structurally.  An unrelated curve therefore
+    remains a free curve even if its name resembles an internal section name.
+    A frame which has already called
+    :func:`compute_quadric_section_boundary_curves` may pass that complete
+    tuple as ``authoritative_curves`` so every component reuses one solve.
     """
 
     if not isinstance(surface, (SphereSpec, CylinderSpec, ConeSpec)):
         raise TypeError("surface must be SphereSpec, CylinderSpec, or ConeSpec")
     if not isinstance(plane, SectionPlane):
         raise TypeError("plane must be a SectionPlane")
-    if isinstance(curve, SegmentCurve):
-        matches = tuple(
-            (cap, f":cap:{cap.role}:chord")
-            for cap in surface.end_caps
-            if curve.curve_id.endswith(f":cap:{cap.role}:chord")
+    if not isinstance(section_id, str) or not section_id.strip():
+        raise ValueError("section_id must be a non-empty string")
+    identity = section_id.strip()
+    resolved = (
+        resolve_geometry_context(context)
+        if isinstance(context, ResolvedGeometryContext)
+        else resolve_geometry_context(
+            context,
+            positions=(*surface.characteristic_points, plane.point),
         )
-        if len(matches) > 1:
+    )
+    if authoritative_curves is None:
+        expected_curves = compute_quadric_section_boundary_curves(
+            identity,
+            surface,
+            plane,
+            context=resolved,
+        )
+    else:
+        expected_curves = tuple(authoritative_curves)
+        if not all(
+            isinstance(
+                item,
+                (SegmentCurve, EllipseArcCurve, ParametricConicBranch),
+            )
+            for item in expected_curves
+        ):
+            raise TypeError(
+                "authoritative_curves must contain finite analytic curves"
+            )
+        expected_ids = tuple(item.curve_id for item in expected_curves)
+        if len(set(expected_ids)) != len(expected_ids):
             raise QuadricBoundaryCompositingError(
-                f"section cap-chord {curve.curve_id!r} has an ambiguous owner"
+                "authoritative section curves must have unique identities"
             )
-        if matches:
-            cap, suffix = matches[0]
-            section_id = curve.curve_id[: -len(suffix)]
-            resolved = (
-                resolve_geometry_context(context)
-                if isinstance(context, ResolvedGeometryContext)
-                else resolve_geometry_context(
-                    context,
-                    positions=(*surface.characteristic_points, plane.point),
+    matching = tuple(
+        item for item in expected_curves if _same_curve_geometry(curve, item)
+    )
+    if len(matching) > 1:
+        raise QuadricBoundaryCompositingError(
+            f"section curve {curve.curve_id!r} matches multiple authoritative "
+            "finite-boundary components"
+        )
+    if matching:
+        expected = matching[0]
+        if isinstance(expected, SegmentCurve):
+            caps = _segment_cap_owners(expected, surface, resolved)
+            if len(caps) != 1:
+                raise QuadricBoundaryCompositingError(
+                    f"authoritative section cap-chord {curve.curve_id!r} does "
+                    "not identify exactly one finite end cap"
                 )
-            )
-            center = np.asarray(cap.center, dtype=float)
-            normal = np.asarray(cap.normal, dtype=float)
-            validation_epsilon = 8.0 * resolved.epsilon(
-                GeometryQuantity.BOUNDARY
-            )
-            endpoints_on_rim = True
-            for endpoint in (curve.start, curve.end):
-                offset = np.asarray(endpoint, dtype=float) - center
-                plane_residual = abs(float(np.dot(offset, normal)))
-                radial = offset - float(np.dot(offset, normal)) * normal
-                rim_residual = abs(float(np.linalg.norm(radial)) - cap.radius)
-                if max(plane_residual, rim_residual) > validation_epsilon:
-                    endpoints_on_rim = False
-                    break
-            if not endpoints_on_rim:
-                return curve_boundary_source(curve, style_id=style_id)
-            # Once both endpoints claim the reserved cap-rim geometry, this
-            # is no longer an accidental text-suffix collision. Numerical
-            # uncertainty and stale geometry must fail explicitly instead of
-            # being downgraded to a free curve.
-            expected_curves = compute_quadric_section_boundary_curves(
-                section_id,
-                surface,
-                plane,
-                context=resolved,
-            )
-            expected = next(
-                (
-                    item
-                    for item in expected_curves
-                    if isinstance(item, SegmentCurve)
-                    and item.curve_id == curve.curve_id
-                ),
-                None,
-            )
-            same_orientation = expected is not None and (
-                curve.start == expected.start and curve.end == expected.end
-            )
-            reverse_orientation = expected is not None and (
-                curve.start == expected.end and curve.end == expected.start
-            )
-            if same_orientation or reverse_orientation:
-                return curve_boundary_source(
-                    curve,
-                    source_kind=BoundarySourceKind.SECTION_CAP_CHORD,
-                    semantic_kind=BoundarySemanticKind.FREE_CURVE,
-                    occlusion_scope=BoundaryOcclusionScope.ALL_SURFACES,
-                    owner_id=cap.cap_id,
-                    style_id=style_id,
-                )
-            raise QuadricBoundaryCompositingError(
-                f"reserved section cap-chord {curve.curve_id!r} does not "
-                "match the authoritative chord for the current section plane"
-            )
+            source_kind = BoundarySourceKind.SECTION_CAP_CHORD
+            owner_id = caps[0].cap_id
+        else:
+            source_kind = BoundarySourceKind.SECTION_CURVE
+            owner_id = identity
+        return curve_boundary_source(
+            curve,
+            source_kind=source_kind,
+            semantic_kind=BoundarySemanticKind.FREE_CURVE,
+            occlusion_scope=BoundaryOcclusionScope.ALL_SURFACES,
+            owner_id=owner_id,
+            # Section provenance is deliberately separate from painter
+            # ownership.  AREA frames therefore retain their existing
+            # free-curve ordering while LINE frames can authenticate family
+            # membership.
+            section_surface_id=surface.surface_id,
+            section_plane_id=plane.plane_id,
+            style_id=style_id,
+        )
+
     return curve_boundary_source(curve, style_id=style_id)
 
 

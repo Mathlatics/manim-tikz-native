@@ -322,6 +322,10 @@ class QuadricSection3D:
             surfaces=(surface,),
             curves=curve_input,
             allocated_curve_ids=allocated_curve_ids,
+            section_id=(self.section_id if show_plane else None),
+            section_coefficient_tolerance=(
+                coefficient_tolerance if show_plane else None
+            ),
             section_plane=(self._active_plane if show_plane else None),
             section_patch_margin=plane_patch_margin,
             surface_order_mode="automatic",

@@ -1,0 +1,92 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mathlatics.dev/schemas/parallel-shot-sequence-v1.schema.json",
+  "title": "TikZ Native parallel camera shot sequence v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "shots"],
+  "properties": {
+    "schema": {
+      "const": "parallel-shot-sequence/v1"
+    },
+    "shots": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/shot"
+      }
+    }
+  },
+  "$defs": {
+    "vector2": {
+      "type": "array",
+      "prefixItems": [
+        {"type": "number"},
+        {"type": "number"}
+      ],
+      "items": false,
+      "minItems": 2,
+      "maxItems": 2
+    },
+    "vector3": {
+      "type": "array",
+      "prefixItems": [
+        {"type": "number"},
+        {"type": "number"},
+        {"type": "number"}
+      ],
+      "items": false,
+      "minItems": 3,
+      "maxItems": 3
+    },
+    "matrix3": {
+      "type": "array",
+      "prefixItems": [
+        {"$ref": "#/$defs/vector3"},
+        {"$ref": "#/$defs/vector3"},
+        {"$ref": "#/$defs/vector3"}
+      ],
+      "items": false,
+      "minItems": 3,
+      "maxItems": 3
+    },
+    "state": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["matrix", "target", "screenAnchor", "zoom"],
+      "properties": {
+        "matrix": {"$ref": "#/$defs/matrix3"},
+        "target": {"$ref": "#/$defs/vector3"},
+        "screenAnchor": {"$ref": "#/$defs/vector2"},
+        "zoom": {"type": "number", "exclusiveMinimum": 0}
+      }
+    },
+    "shot": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "state",
+        "duration",
+        "hold",
+        "transition",
+        "arcHeight",
+        "cue"
+      ],
+      "properties": {
+        "id": {"type": "string", "minLength": 1},
+        "state": {"$ref": "#/$defs/state"},
+        "duration": {"type": "number", "exclusiveMinimum": 0},
+        "hold": {"type": "number", "minimum": 0},
+        "transition": {"enum": ["orbit", "shortest"]},
+        "arcHeight": {"type": "number"},
+        "cue": {
+          "oneOf": [
+            {"type": "string", "minLength": 1},
+            {"type": "null"}
+          ]
+        }
+      }
+    }
+  }
+}

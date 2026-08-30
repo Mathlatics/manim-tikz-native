@@ -75,8 +75,8 @@ _PUBLIC_0_1_COMPONENT_REVISIONS: Final[dict[str, str]] = {
     COMPONENT_NATIVE_MANIM_SOURCE_3D: "source-sha256:1ba17fb69e455e3694ae477ebd69de321043555af05c8e7712c3ee22d20307c1",
     COMPONENT_NATIVE_MANIM_SOURCE_3D_V2: "source-sha256:9fb59765ba981108a73a0a4a340de5a32ce4c03707d4925cdb729b9a7ecdcb9c",
     COMPONENT_NATIVE_MANIM_SOURCE_3D_V3: "source-sha256:513935788725e3c72b74905268695a90c443df208a4f321229f05efcdd3ef5aa",
-    COMPONENT_EMBEDDED_MOTION_3D: "source-sha256:731320aa99d0c61ad55e6f456cf1781c657a0adeada14e0a8cd27ed9055b904a",
-    COMPONENT_MOTION_PREVIEW_3D: "source-sha256:1111ec6e635702b225d3c1b0a9c47b7a30861bafeabee762e2312318f03ecab2",
+    COMPONENT_EMBEDDED_MOTION_3D: "source-sha256:5365474d68e36c8f0cac666d3c5befa0872247a6bfd8bfba90a009010b95df88",
+    COMPONENT_MOTION_PREVIEW_3D: "source-sha256:1b9383e7d289c7160dc41e1fa944e1b83ba2b2263e5fc674a41b896cce49baff",
     COMPONENT_POLYHEDRON_VISIBILITY: "source-sha256:8fff612f011f5b67cecaa66dc251af3126fe091cfe6b753e7fd5e9301cfcc53f",
     COMPONENT_FACE_DEPTH_CUE_3D: "source-sha256:499495b399f1078f0532413690821764208bbb87695f1f40019ce396f2ac347a",
     COMPONENT_CONVEX_SECTION_3D: "source-sha256:a6c71249ce429884b0fcc3341eeea33dacf2d64e14d875d1e0f222c1530637bf",
@@ -92,9 +92,9 @@ _PUBLIC_0_1_COMPONENT_REVISIONS: Final[dict[str, str]] = {
     COMPONENT_TIKZ_OPEN_FACE_STATIC_ASSET_3D: "source-sha256:5602140f9269ac819e0f84abebf12c133decce44927e4725c4e05ca5272d9d4c",
     COMPONENT_GENERATED_OPEN_FACE_VISIBILITY_3D: "source-sha256:612dac37f6851e70c1ec8175455166111412f33ad9c65a43f98ffdce8c87c603",
     COMPONENT_SOURCE_PROJECT_BUILD: "source-sha256:c108980773c47c6dc8a070c01cec9fb4bc4c26620b9cba9de03f3efe12fbee70",
-    COMPONENT_QUADRIC_GEOMETRY: "source-sha256:aa2cb1ad9c06bfba01ab9c168d5c2a74ac7fd89066bb8ca0770ab92ed5b9984b",
-    COMPONENT_QUADRIC_VISIBILITY: "source-sha256:8efa5d2f53b8441f0949f59f68c7cd7b6ba4f83dc8ed9208f71c9f9204954033",
-    COMPONENT_QUADRIC_MANIM: "source-sha256:ff5c7bb858376a29f462d7499f3ffb3bd27ad5cbb24487e6d53f6318f366cad9",
+    COMPONENT_QUADRIC_GEOMETRY: "source-sha256:aabb9e54831a6c1ee326f310580dc9c18598cb32ab3c16e2353a7e7699157950",
+    COMPONENT_QUADRIC_VISIBILITY: "source-sha256:8d4aab96c05b1fef95032925484f233e2f79ec3862e02c9c021fd0de751f4b03",
+    COMPONENT_QUADRIC_MANIM: "source-sha256:d67e127651db8429e56d07b2d95a1ae52bcadc766efd3fec9746d8731ee539d1",
 }
 
 
@@ -189,10 +189,14 @@ _COMPONENT_DEFINITIONS: Final[dict[str, dict[str, tuple[str, ...]]]] = {
         ),
         "files": (
             "camera_3d.py",
+            "parallel_camera.py",
+            "parallel_shots.py",
+            "parallel_shots_manim.py",
             "dynamic_geometry.py",
             "manim_renderer_3d.py",
             "motion_3d.py",
             "motion_3d_runtime.py",
+            "schemas/parallel-shot-sequence-v1.schema.json",
             "schemas/motion-3d-v1.schema.json",
         ),
     },
@@ -486,10 +490,10 @@ _DECLARED_IMPLEMENTATION_DIGESTS: Final[dict[str, str]] = {
         "513935788725e3c72b74905268695a90c443df208a4f321229f05efcdd3ef5aa"
     ),
     COMPONENT_EMBEDDED_MOTION_3D: (
-        "731320aa99d0c61ad55e6f456cf1781c657a0adeada14e0a8cd27ed9055b904a"
+        "5365474d68e36c8f0cac666d3c5befa0872247a6bfd8bfba90a009010b95df88"
     ),
     COMPONENT_MOTION_PREVIEW_3D: (
-        "1111ec6e635702b225d3c1b0a9c47b7a30861bafeabee762e2312318f03ecab2"
+        "1b9383e7d289c7160dc41e1fa944e1b83ba2b2263e5fc674a41b896cce49baff"
     ),
     COMPONENT_POLYHEDRON_VISIBILITY: (
         "8fff612f011f5b67cecaa66dc251af3126fe091cfe6b753e7fd5e9301cfcc53f"
@@ -537,13 +541,13 @@ _DECLARED_IMPLEMENTATION_DIGESTS: Final[dict[str, str]] = {
         "c108980773c47c6dc8a070c01cec9fb4bc4c26620b9cba9de03f3efe12fbee70"
     ),
     COMPONENT_QUADRIC_GEOMETRY: (
-        "aa2cb1ad9c06bfba01ab9c168d5c2a74ac7fd89066bb8ca0770ab92ed5b9984b"
+        "aabb9e54831a6c1ee326f310580dc9c18598cb32ab3c16e2353a7e7699157950"
     ),
     COMPONENT_QUADRIC_VISIBILITY: (
-        "8efa5d2f53b8441f0949f59f68c7cd7b6ba4f83dc8ed9208f71c9f9204954033"
+        "8d4aab96c05b1fef95032925484f233e2f79ec3862e02c9c021fd0de751f4b03"
     ),
     COMPONENT_QUADRIC_MANIM: (
-        "ff5c7bb858376a29f462d7499f3ffb3bd27ad5cbb24487e6d53f6318f366cad9"
+        "d67e127651db8429e56d07b2d95a1ae52bcadc766efd3fec9746d8731ee539d1"
     ),
 }
 

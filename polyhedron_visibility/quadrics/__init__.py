@@ -212,6 +212,10 @@ _EXPORTS: Final[dict[str, tuple[str, str]]] = {
     "QuadricPaintPolicy": (".compositing", "QuadricPaintPolicy"),
     "BoundaryOcclusionScope": (".boundary_compositing", "BoundaryOcclusionScope"),
     "BoundaryRenderIntent": (".boundary_compositing", "BoundaryRenderIntent"),
+    "BoundaryScreenProjectionDimension": (
+        ".boundary_compositing",
+        "BoundaryScreenProjectionDimension",
+    ),
     "BoundarySectionAnchors": (".boundary_compositing", "BoundarySectionAnchors"),
     "BoundaryPlaneRelation": (".boundary_section", "BoundaryPlaneRelation"),
     "QUADRIC_BOUNDARY_SECTION_LIMITS": (
@@ -225,6 +229,10 @@ _EXPORTS: Final[dict[str, tuple[str, str]]] = {
     "QuadricBoundarySectionSpan": (
         ".boundary_section",
         "QuadricBoundarySectionSpan",
+    ),
+    "certify_rank_one_section_boundary_sources": (
+        ".boundary_section",
+        "certify_rank_one_section_boundary_sources",
     ),
     "compute_boundary_section_spans": (
         ".boundary_section",
@@ -249,9 +257,17 @@ _EXPORTS: Final[dict[str, tuple[str, str]]] = {
         "QuadricBoundaryPaintFragment",
     ),
     "QuadricBoundarySource": (".boundary_compositing", "QuadricBoundarySource"),
+    "QuadricBoundarySectionSourceProjection": (
+        ".boundary_compositing",
+        "QuadricBoundarySectionSourceProjection",
+    ),
     "QuadricBoundaryVisibilitySpan": (
         ".boundary_compositing",
         "QuadricBoundaryVisibilitySpan",
+    ),
+    "QuadricRankOneSectionSourceGroup": (
+        ".boundary_compositing",
+        "QuadricRankOneSectionSourceGroup",
     ),
     "canonical_quadric_boundary_compositing_json": (
         ".boundary_compositing",
@@ -292,6 +308,18 @@ _EXPORTS: Final[dict[str, tuple[str, str]]] = {
         "compute_quadric_compositing",
     ),
     "PlaneDepthRole": (".section_compositing", "PlaneDepthRole"),
+    "PLANE_PATCH_RANK_RATIO_THRESHOLD": (
+        ".section_compositing",
+        "PLANE_PATCH_RANK_RATIO_THRESHOLD",
+    ),
+    "PlanePatchProjectionEvidence": (
+        ".section_compositing",
+        "PlanePatchProjectionEvidence",
+    ),
+    "PlanePatchProjectionKind": (
+        ".section_compositing",
+        "PlanePatchProjectionKind",
+    ),
     "QUADRIC_SECTION_COMPOSITING_LIMITS": (
         ".section_compositing",
         "QUADRIC_SECTION_COMPOSITING_LIMITS",

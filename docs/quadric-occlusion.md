@@ -35,12 +35,15 @@ stroke style.
 Perspective projection, general free-form surfaces, reflective or refractive
 materials, and physically accurate transparency are outside this contract.
 
-The local cutting-plane compositor has a narrower v1 release boundary: one
-finite convex surface, one cutting plane whose screen projection has
-two-dimensional area, and parallel projection. A separate
+The ordinary local cutting-plane compositor has a narrower v1 release boundary:
+one finite convex surface, one finite cutting-plane patch whose screen
+projection may be `AREA` or certified `LINE`, and parallel projection. A separate
 `CompositeQuadricSection3D` coordinator may apply that same local solver to the
 two canonical nappes of one `OPEN_DOUBLE`, then merge their disjoint projected
 interiors around the certified shared apex and paint the common plane once.
+The composite coordinator accepts either an `AREA` patch or a certified
+edge-on `LINE`; the latter has no plane fill and retains one finite near-side
+outline assembled from the two child frames.
 Certification retains point, segment, and area intersections instead of
 discarding degenerate contact: only a zero-dimensional contact set contained
 inside the shared-apex tolerance succeeds.
@@ -428,8 +431,14 @@ existing policies remain unchanged.
 
 The omitted projection is the true orthographic isometric preset.  It is the
 quadric/conic classroom default: equal projected axis scales, no screen shear,
-and a vertical world-z cone axis.  Supply a `ParallelView` or a 3-by-3
-matrix only when the scene deliberately needs another parallel view.
+and a vertical world-z cone axis. Supply a `ParallelView` or a 3-by-3 matrix
+when the scene deliberately needs another raw parallel view. The Manim
+controllers also accept a complete semantic `ParallelCameraState`, or a
+per-frame callback such as `projection=lambda scene: scene.camera`. The latter
+keeps the quadric display and automatic occlusion synchronized with an animated
+`MultiProjectionCamera`, including its target, screen anchor, semantic zoom,
+inherited Manim zoom, and non-zero frame center. These affine display terms do
+not enter renderer-neutral depth evidence.
 
 With `section_plane=plane`, the finite display patch no longer sits at one
 manually chosen z-index.  The renderer-neutral section compositor replaces the
@@ -446,10 +455,24 @@ near-tangent feature detection, but the finite-surface ray solver is the final
 role authority.  A small section close to tangency therefore still causes
 refinement.  Its curved boundary may be approximated within
 `section_max_screen_error`, but emitted fragments are cut along that
-approximation and may not span both sides.  The mode currently supports exactly
+approximation and may not span both sides. The mode currently supports exactly
 one finite convex sphere, capped cylinder, or single-nappe cone/frustum and one
-non-edge-on cutting plane.  Multiple intersecting quadrics remain a separate
-unsupported problem and fail closed.
+finite cutting-plane display patch. An exact edge-on patch is a zero-area
+`LINE` frame: plane fills are empty, one near-side finite outline chain remains,
+and the line does not act as a two-dimensional occluder. The current
+surface/plane section family is then authenticated from its analytic equations.
+Line-valued circle, ellipse, parabola, and hyperbola members retain their exact
+visibility intervals, with hidden strokes painted before visible strokes;
+point-valued cap chords retain source identity but paint nothing. Only that
+certified family and its owning surface outline use the rank-one overlap rule.
+For an open double shell, the two child families remain separate rank-one
+groups: hidden-before-visible relations are added only inside one certified
+group, while sibling-nappe and external crossings still require analytic
+intersection and depth evidence. The common finite plane line is merged once,
+with no fill and no duplicate child outline. External curves and other surfaces
+fail closed when their overlap cannot be certified.
+Multiple intersecting quadrics remain a separate unsupported problem and fail
+closed.
 
 For a fixed-topology moving plane, pass a callable as `curves`; it may build a
 fresh immutable section trace from the current `ValueTracker` value.  Surface
@@ -837,8 +860,10 @@ The unified sidecar preserves the existing v1 surface, visibility, and section
 frames while adding one deterministic painter frame for ordinary analytic
 curves, the four finite display-patch edges, cap rims, true silhouettes, and
 explicit teaching generators. That painter frame is the separately versioned
-`manim-quadric-boundary-compositing/v2` contract; it has one runtime path and
-does not generate the superseded boundary-compositing v1 payload.
+`manim-quadric-boundary-compositing/v3` contract; it has one runtime path and
+does not generate superseded boundary-compositing payloads. V3 records explicit
+section surface/plane provenance and the optional rank-one line/point evidence
+instead of asking consumers to infer that state from curve IDs.
 
 ```python
 from polyhedron_visibility.quadrics import (
@@ -851,6 +876,7 @@ controller = QuadricOcclusion3D(
     self,
     surfaces=(cone,),
     curves=section_curves,
+    section_id=section_id,
     section_plane=plane,
     paint_policy="depth_aware_diagrammatic",
     boundary_visibility_mode="unified",

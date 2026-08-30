@@ -16,7 +16,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
 from functools import partial
 from math import sqrt
-from typing import Callable, Iterator, Mapping, Sequence
+from typing import Callable, Iterator, Mapping, Protocol, Sequence
 
 import numpy as np
 from manim import (
@@ -55,6 +55,7 @@ from .boundary_compositing import (
     QuadricBoundaryCompositingError,
     QuadricBoundaryCompositingFrame,
     QuadricBoundaryPaintFragment,
+    QuadricRankOneSectionSourceGroup,
     QuadricBoundarySource,
     QuadricBoundaryVisibilitySpan,
     compute_boundary_visibility,
@@ -95,6 +96,7 @@ from .performance import (
 from .plane_patch import PlanePatchFitError, fit_plane_display_patch
 from .section_compositing import (
     PlaneDepthRole,
+    PlanePatchProjectionKind,
     QUADRIC_SECTION_COMPOSITING_LIMITS,
     QuadricSectionCompositingError,
     QuadricSectionCompositingFrame,
@@ -107,6 +109,7 @@ from .visibility import compute_quadric_visibility
 from .boundary_section import (
     QUADRIC_BOUNDARY_SECTION_LIMITS,
     QuadricBoundarySectionLimits,
+    certify_rank_one_section_boundary_sources,
     compute_boundary_section_spans,
 )
 from .surface_boundaries import (
@@ -116,6 +119,10 @@ from .surface_boundaries import (
     plane_outline_sources,
     section_curve_boundary_source,
     surface_boundary_source_ids,
+)
+from .sections import (
+    QuadricSectionError,
+    compute_quadric_section_boundary_curves,
 )
 from .manim_runtime import (
     QuadricBoundaryStyle,
@@ -129,6 +136,7 @@ from .manim_runtime import (
     _PreparedConeFill,
     _PreparedDash,
     _PreparedDisplayAction,
+    _ResolvedParallelCameraFrame,
     _SurfaceViewCache,
     _SurfacePaintSlot,
     _adaptive_project_curve,
@@ -138,7 +146,7 @@ from .manim_runtime import (
     _apply_surface_sheet_pair,
     _boundary_style_registry,
     _capture_root,
-    _coerce_view,
+    _coerce_projection_frame,
     _classify_dirty_frame,
     _curve_slots_family_capacity,
     _dash_polyline,
@@ -148,6 +156,7 @@ from .manim_runtime import (
     _non_negative,
     _polyline_lengths,
     _positive,
+    _projection_display_offset,
     _prepare_boundary_fragments,
     _prepare_display_delta,
     _prepared_cone_fill,
@@ -162,6 +171,7 @@ from .manim_runtime import (
     _slice_projected_curve_samples,
     _apply_display_delta,
     _display_digest,
+    _display_offset,
     _painter_band_signature,
 )
 
@@ -176,11 +186,25 @@ SectionPlaneInput = SectionPlane | Callable[[], SectionPlane] | None
 PlanePatchInput = (
     PlaneDisplayPatchSpec | Callable[[], PlaneDisplayPatchSpec] | None
 )
-ProjectionInput = (
+
+class _SemanticParallelProjection(Protocol):
+    matrix: object
+    target: object
+    screen_anchor: object
+    zoom: object
+
+
+class _ParallelCameraSnapshotSource(Protocol):
+    def snapshot_parallel_state(self) -> _SemanticParallelProjection: ...
+
+
+ProjectionValue = (
     ParallelView
     | Sequence[Sequence[float]]
-    | Callable[[object], ParallelView | Sequence[Sequence[float]]]
+    | _SemanticParallelProjection
+    | _ParallelCameraSnapshotSource
 )
+ProjectionInput = ProjectionValue | Callable[[object], ProjectionValue]
 BoundaryGeneratorInput = Sequence[GeneratorBoundarySpec]
 
 
@@ -410,18 +434,6 @@ class QuadricGeometryPrototype:
         self._cache.clear()
 
 
-def _display_offset(value: Sequence[float]) -> tuple[float, float]:
-    try:
-        result = np.asarray(value, dtype=float)
-    except (TypeError, ValueError, OverflowError) as exc:
-        raise QuadricManimError(
-            "display_offset must contain two finite values"
-        ) from exc
-    if result.shape != (2,) or not np.all(np.isfinite(result)):
-        raise QuadricManimError("display_offset must contain two finite values")
-    return float(result[0]), float(result[1])
-
-
 @dataclass(frozen=True, slots=True)
 class _PreparedCurveFragment:
     fragment: QuadricCurvePaintFragment
@@ -475,6 +487,7 @@ class _ResolvedQuadricFrameInputs:
     curves: tuple[AnalyticCurve3D, ...]
     curve_opacities: Mapping[str, float]
     view: ParallelView
+    display_offset: tuple[float, float]
     section_plane: SectionPlane | None
     section_patch: PlaneDisplayPatchSpec | None
     surface_view_signature: bytes
@@ -582,6 +595,8 @@ class QuadricOcclusion3D:
         surface_order_mode: str = "automatic",
         allocated_curve_ids: Sequence[str] | None = None,
         curve_opacities: CurveOpacityInput = None,
+        section_id: str | None = None,
+        section_coefficient_tolerance: float | None = None,
         section_plane: SectionPlaneInput = None,
         section_patch: PlanePatchInput = None,
         section_patch_margin: float = 0.08,
@@ -641,6 +656,16 @@ class QuadricOcclusion3D:
             raise QuadricManimError(
                 "section_patch requires section_plane"
             )
+        if section_id is not None and (
+            not isinstance(section_id, str) or not section_id.strip()
+        ):
+            raise QuadricManimError("section_id must be a non-empty string")
+        if section_id is not None and section_plane is None:
+            raise QuadricManimError("section_id requires section_plane")
+        if section_coefficient_tolerance is not None and section_id is None:
+            raise QuadricManimError(
+                "section_coefficient_tolerance requires section_id"
+            )
         if not isinstance(
             section_compositing_limits, QuadricSectionCompositingLimits
         ):
@@ -692,6 +717,8 @@ class QuadricOcclusion3D:
         self._generator_boundaries = generators
         self._allocated_boundary_ids_input = allocated_boundary_ids
         self._curve_opacity_input = curve_opacities
+        self.section_id = None if section_id is None else section_id.strip()
+        self.section_coefficient_tolerance = section_coefficient_tolerance
         self._section_plane_input = section_plane
         self._section_patch_input = section_patch
         self.section_patch_margin = _non_negative(
@@ -881,6 +908,7 @@ class QuadricOcclusion3D:
             opacity_sentinel=self._opacity_sentinel,
         )
         self._update_driver = Mobject()
+        self._update_driver._tikz_native_parallel_camera_state_consumer = True
 
         # Manim recognizes time-aware updaters by the literal ``dt`` name.
         def update_display(mobject: Mobject, dt: float) -> None:
@@ -957,13 +985,23 @@ class QuadricOcclusion3D:
             )
         return value
 
-    def _resolve_view(self) -> ParallelView:
+    def _resolve_projection_frame(self) -> _ResolvedParallelCameraFrame:
         value = (
             self._projection_input(self.scene)
             if callable(self._projection_input)
             else self._projection_input
         )
-        return _coerce_view(value)
+        return _coerce_projection_frame(value, scene=self.scene)
+
+    def _resolve_view(
+        self,
+        projection_frame: _ResolvedParallelCameraFrame | None = None,
+    ) -> ParallelView:
+        """Resolve the linear kernel view, preserving the legacy helper."""
+
+        if projection_frame is None:
+            projection_frame = self._resolve_projection_frame()
+        return projection_frame.view
 
     def _prepare_cone_fill_for_surface(
         self,
@@ -1064,7 +1102,13 @@ class QuadricOcclusion3D:
         self._validate_fixed_topology(surfaces, curves)
         active_curve_ids = tuple(item.curve_id for item in curves)
         curve_opacities = self._resolve_curve_opacities(active_curve_ids)
-        view = self._resolve_view()
+        projection_frame = self._resolve_projection_frame()
+        view = self._resolve_view(projection_frame)
+        display_offset = _projection_display_offset(
+            self.scene,
+            projection_frame,
+            self.display_offset,
+        )
         if self._section_enabled:
             section_plane = self._resolve_section_plane()
             section_patch = self._resolve_section_patch(
@@ -1100,7 +1144,7 @@ class QuadricOcclusion3D:
             self.section_compositing_limits,
             self.boundary_section_limits,
             self.limits,
-            self.display_offset,
+            display_offset,
         )
         draw_signature = _display_digest(
             "quadric-frame-draw-v1",
@@ -1111,6 +1155,7 @@ class QuadricOcclusion3D:
             curves,
             curve_opacities,
             view,
+            display_offset,
             section_plane,
             section_patch,
             surface_view_signature,
@@ -1205,17 +1250,47 @@ class QuadricOcclusion3D:
         patch: PlaneDisplayPatchSpec | None,
         *,
         surface_sources: Sequence[QuadricBoundarySource] | None = None,
+        include_plane_outline: bool = True,
     ) -> tuple[QuadricBoundarySource, ...]:
+        authoritative_section_curves: tuple[AnalyticCurve3D, ...] | None = None
+        if (
+            plane is not None
+            and len(surfaces) == 1
+            and self.section_id is not None
+        ):
+            try:
+                authoritative_section_curves = (
+                    compute_quadric_section_boundary_curves(
+                        self.section_id,
+                        surfaces[0],
+                        plane,
+                        context=self.context,
+                        coefficient_tolerance=(
+                            self.section_coefficient_tolerance
+                        ),
+                    )
+                )
+            except (QuadricSectionError, ValueError) as exc:
+                raise QuadricManimError(
+                    "authoritative section-boundary preparation failed: "
+                    f"{exc}"
+                ) from exc
         result = [
             (
                 section_curve_boundary_source(
                     curve,
                     surfaces[0],
                     plane,
+                    section_id=self.section_id,
+                    authoritative_curves=authoritative_section_curves,
                     context=self.context,
                     style_id="style:curve",
                 )
-                if plane is not None and len(surfaces) == 1
+                if (
+                    plane is not None
+                    and len(surfaces) == 1
+                    and self.section_id is not None
+                )
                 else curve_boundary_source(
                     curve,
                     style_id="style:curve",
@@ -1226,7 +1301,7 @@ class QuadricOcclusion3D:
         if surface_sources is None:
             surface_sources = self._surface_boundary_sources(surfaces, view)
         result.extend(surface_sources)
-        if plane is not None and patch is not None:
+        if include_plane_outline and plane is not None and patch is not None:
             result.extend(plane_outline_sources(plane, patch))
         result.sort(key=lambda item: item.source_id)
         ids = tuple(item.source_id for item in result)
@@ -1319,15 +1394,66 @@ class QuadricOcclusion3D:
         *,
         cached_source_ids: frozenset[str] = frozenset(),
         cached_crossings: Sequence[object] = (),
+        rank_one_section_source_group: (
+            QuadricRankOneSectionSourceGroup | None
+        ) = None,
     ) -> tuple[object, ...]:
         from itertools import combinations
 
         result = list(cached_crossings)
+        rank_one_source_ids = (
+            frozenset()
+            if rank_one_section_source_group is None
+            else rank_one_section_source_group.source_ids
+        )
+        rank_one_point_source_ids = (
+            frozenset()
+            if rank_one_section_source_group is None
+            else rank_one_section_source_group.point_source_ids
+        )
+
+        def pair_is_certified_rank_one_overlap(
+            first: QuadricBoundarySource,
+            second: QuadricBoundarySource,
+        ) -> bool:
+            if rank_one_section_source_group is None:
+                return False
+            if (
+                first.source_id in rank_one_point_source_ids
+                or second.source_id in rank_one_point_source_ids
+            ):
+                # A certified POINT member paints no stroke, so it cannot own a
+                # fragment-level crossing even when another projected curve
+                # happens to pass through the same screen coordinate.
+                return True
+            first_is_section = first.source_id in rank_one_source_ids
+            second_is_section = second.source_id in rank_one_source_ids
+            if first_is_section and second_is_section:
+                # Both world curves are analytically certified members of the
+                # same surface/plane section.  Their rank-one images overlap by
+                # construction; asking the generic 2D root finder to rediscover
+                # that fact produces duplicate roots and zero-length pieces.
+                return True
+            if not first_is_section and not second_is_section:
+                return False
+            other = second if first_is_section else first
+            return (
+                other.owner_surface_id
+                == rank_one_section_source_group.surface_id
+                and other.semantic_kind
+                in {
+                    BoundarySemanticKind.SURFACE_BOUNDARY,
+                    BoundarySemanticKind.TRUE_SILHOUETTE,
+                }
+            )
+
         for first, second in combinations(sources, 2):
             if (
                 first.source_id in cached_source_ids
                 and second.source_id in cached_source_ids
             ):
+                continue
+            if pair_is_certified_rank_one_overlap(first, second):
                 continue
             active_intervals = None
             if self.paint_policy is QuadricPaintPolicy.PHYSICAL:
@@ -1589,11 +1715,29 @@ class QuadricOcclusion3D:
                 )
                 for role in PlaneDepthRole
             }
+            plane_outline_paths = {
+                role: (
+                    tuple(
+                        np.asarray(
+                            (
+                                (*fragment.screen_start, 0.0),
+                                (*fragment.screen_end, 0.0),
+                            ),
+                            dtype=float,
+                        )
+                        for fragment in section_frame.outline_fragments_by_role[role]
+                    )
+                    if section_frame.projection_kind
+                    is PlanePatchProjectionKind.LINE
+                    else ()
+                )
+                for role in PlaneDepthRole
+            }
             section_layers = _PreparedSectionLayers(
                 section_frame,
                 surface_points,
                 plane_polygons,
-                {role: () for role in PlaneDepthRole},
+                plane_outline_paths,
                 component_fills[surface.surface_id],
             )
             item_mobjects.update(
@@ -1649,6 +1793,11 @@ class QuadricOcclusion3D:
                 plane,
                 patch,
                 surface_sources=static_sources,
+                include_plane_outline=(
+                    section_frame is None
+                    or section_frame.projection_kind
+                    is PlanePatchProjectionKind.AREA
+                ),
             )
             non_plane = tuple(
                 item
@@ -1675,8 +1824,35 @@ class QuadricOcclusion3D:
                 raise QuadricManimError(
                     f"semantic boundary visibility failed: {exc}"
                 ) from exc
-            if section_frame is not None:
+            if (
+                section_frame is not None
+                and section_frame.projection_kind is PlanePatchProjectionKind.AREA
+            ):
                 spans.update(self._plane_outline_visibility(section_frame))
+        rank_one_section_source_group: (
+            QuadricRankOneSectionSourceGroup | None
+        ) = None
+        if (
+            section_frame is not None
+            and section_frame.projection_kind is PlanePatchProjectionKind.LINE
+        ):
+            try:
+                with _performance_stage(
+                    performance_attempt, "rank_one_section_certification"
+                ):
+                    rank_one_section_source_group = (
+                        certify_rank_one_section_boundary_sources(
+                            sources,
+                            section_frame,
+                            view,
+                            surface=surfaces[0],
+                            context=self.context,
+                        )
+                    )
+            except QuadricBoundaryCompositingError as exc:
+                raise QuadricManimError(
+                    f"rank-one section boundary certification failed: {exc}"
+                ) from exc
         with _performance_stage(performance_attempt, "curve_crossings"):
             crossings = self._boundary_crossings(
                 sources,
@@ -1684,9 +1860,15 @@ class QuadricOcclusion3D:
                 view,
                 cached_source_ids=static_source_ids,
                 cached_crossings=static_crossings,
+                rank_one_section_source_group=rank_one_section_source_group,
             )
         with _performance_stage(performance_attempt, "boundary_section_spans"):
             if section_frame is None:
+                section_spans = {}
+            elif section_frame.projection_kind is PlanePatchProjectionKind.LINE:
+                # The rank-one certificate above replaces area placement.  A
+                # finite LINE patch has no fill that can occlude or bracket a
+                # boundary, so there are deliberately no section-plane spans.
                 section_spans = {}
             else:
                 if section_geometry_signature is None:
@@ -1750,6 +1932,9 @@ class QuadricOcclusion3D:
                         else self._section_anchors(section_frame)
                     ),
                     section_spans_by_source=section_spans,
+                    rank_one_section_source_group=(
+                        rank_one_section_source_group
+                    ),
                 )
         except QuadricBoundaryCompositingError as exc:
             raise QuadricManimError(
@@ -1817,12 +2002,13 @@ class QuadricOcclusion3D:
     def _translate_prepared_numeric(
         self,
         numeric: _PreparedNumericFrame,
+        display_offset: tuple[float, float],
     ) -> _PreparedNumericFrame:
         """Apply a display-only screen translation to prepared numeric paths."""
 
-        if self.display_offset == (0.0, 0.0):
+        if display_offset == (0.0, 0.0):
             return numeric
-        delta = np.asarray((*self.display_offset, 0.0), dtype=float)
+        delta = np.asarray((*display_offset, 0.0), dtype=float)
 
         def points(value: np.ndarray) -> np.ndarray:
             return np.asarray(value, dtype=float) + delta
@@ -1939,7 +2125,10 @@ class QuadricOcclusion3D:
                 resolved_inputs.surface_view_signature,
                 performance_attempt,
             )
-            return self._translate_prepared_numeric(numeric)
+            return self._translate_prepared_numeric(
+                numeric,
+                resolved_inputs.display_offset,
+            )
         component_fills = self._prepare_surface_component_fills(
             surfaces,
             view,
@@ -2271,7 +2460,10 @@ class QuadricOcclusion3D:
             section_layers=section_layers,
             projected_source_segment_counts=projected_source_segment_counts,
         )
-        return self._translate_prepared_numeric(numeric)
+        return self._translate_prepared_numeric(
+            numeric,
+            resolved_inputs.display_offset,
+        )
 
     def _prepare_painter(
         self,
@@ -2433,6 +2625,7 @@ class QuadricOcclusion3D:
         opacity: float,
         *,
         draw_legacy_strokes: bool = True,
+        draw_plane_outline: bool | None = None,
     ) -> None:
         frame = prepared.frame
         if len(self._section_slots) != len(frame.paint_items.ordered):
@@ -2458,6 +2651,9 @@ class QuadricOcclusion3D:
             draw_front_stroke=draw_legacy_strokes,
         )
 
+        if draw_plane_outline is None:
+            draw_plane_outline = draw_legacy_strokes
+
         fill_item_by_role = {
             PlaneDepthRole.BEHIND_SURFACE: frame.paint_items.plane_behind,
             PlaneDepthRole.OUTSIDE_PROJECTION: frame.paint_items.plane_outside,
@@ -2478,7 +2674,7 @@ class QuadricOcclusion3D:
             _set_open_subpaths(
                 slot,
                 prepared.plane_outline_paths[role]
-                if draw_legacy_strokes
+                if draw_plane_outline
                 else (),
             )
             slot.set_fill(opacity=0.0)
@@ -2487,7 +2683,7 @@ class QuadricOcclusion3D:
                 width=self.style.section_plane_stroke_width,
                 opacity=(
                     self.style.section_plane_stroke_opacity * opacity
-                    if draw_legacy_strokes
+                    if draw_plane_outline
                     else 0.0
                 ),
             )
@@ -2600,6 +2796,10 @@ class QuadricOcclusion3D:
 
         section = prepared.numeric.section_layers
         if section is not None:
+            draw_plane_outline = (
+                not unified
+                or section.frame.projection_kind is PlanePatchProjectionKind.LINE
+            )
             actions.append(
                 _PreparedDisplayAction(
                     "section:layers",
@@ -2614,12 +2814,14 @@ class QuadricOcclusion3D:
                         self.style,
                         opacity,
                         not unified,
+                        draw_plane_outline,
                     ),
                     partial(
                         self._apply_section_layers,
                         section,
                         opacity,
                         draw_legacy_strokes=not unified,
+                        draw_plane_outline=draw_plane_outline,
                     ),
                 )
             )

@@ -30,6 +30,180 @@ Both figures expose an object mapping keyed by stable semantic IDs. Pass a
 custom Manim `TexTemplate` to the renderer when the portable Fandol/Latin
 Modern defaults are not suitable.
 
+## Semantic parallel camera
+
+`ParallelCameraState` is a renderer-neutral parallel-camera contract. Its
+matrix rows are screen-right, screen-up, and positive depth towards the
+observer. `target` is the world point placed at `screen_anchor`; `zoom` changes
+the scale around that anchor instead of moving the anchor itself.
+
+```python
+from tikz_native import CameraPlane, ParallelCameraState
+
+cut_plane = CameraPlane(
+    point=(1.0, -0.5, 0.75),
+    normal=(1.0, 1.0, 1.0),
+    u_axis=(1.0, -1.0, 0.0),
+)
+
+front = ParallelCameraState.normal_to_plane(
+    cut_plane,
+    target=cut_plane.point,
+    screen_anchor=(-2.0, 0.5),
+    zoom=1.2,
+)
+oblique = ParallelCameraState.relative_to_plane(
+    cut_plane,
+    inclination_degrees=55,
+    azimuth_degrees=25,
+    target=cut_plane.point,
+)
+edge_on = ParallelCameraState.along_plane(
+    cut_plane,
+    azimuth_degrees=25,
+    target=cut_plane.point,
+)
+```
+
+`inclination_degrees=0` is normal to the plane; `90` is exactly along the
+plane. The latter is still a valid invertible 3D camera state even though that
+particular plane has a rank-one screen projection. `side="negative"` selects
+the opposite half-space, and positive `roll_degrees` rotates the rendered
+screen coordinates counter-clockwise.
+`SectionPlane` can be passed directly because the constructors use only its
+`point`, `normal`, and `u_axis` attributes; the camera module does not import
+the quadric package.
+
+Use the state with `MultiProjectionCamera`:
+
+```python
+from tikz_native.camera_3d import MultiProjectionCamera
+
+camera = MultiProjectionCamera()
+camera.register_parallel_state("cut-front", front)
+camera.set_parallel_state("cut-front")
+
+# In a Scene:
+scene.play(
+    camera.animate_to_parallel_state(oblique, transition="orbit"),
+    run_time=1.5,
+)
+```
+
+The new transition path uses rotation interpolation plus positive-definite
+stretch interpolation, so every intermediate 3-by-3 matrix stays finite,
+right-handed, and invertible. `transition="shortest"` is available when the
+two orientations are not exactly 180 degrees apart; an exact half-turn must
+use the explicit orbit path. Existing `ProjectionPreset`, `set_mode`,
+`animate_to`, and `animate_orbit_to` behavior remains available unchanged.
+
+For a repeatable teaching sequence, author named static shots instead of
+calling the camera tracker directly:
+
+```python
+from tikz_native import (
+    ParallelCameraShot,
+    ParallelCameraShotSequence,
+    play_parallel_camera_shot_sequence,
+)
+
+front_shot = ParallelCameraShot.normal_to_plane(
+    "front",
+    cut_plane,
+    target=cut_plane.point,
+    screen_anchor=(-1.2, 0.2),
+    duration=1.0,
+    hold=0.3,
+)
+side_shot = ParallelCameraShot.along_plane(
+    "side",
+    cut_plane,
+    azimuth_degrees=25,
+    target=cut_plane.point,
+    duration=1.2,
+    cue="exact edge-on",
+)
+sequence = ParallelCameraShotSequence((front_shot, side_shot))
+play_parallel_camera_shot_sequence(scene, sequence)
+```
+
+`look_at`, `normal_to_plane`, `relative_to_plane`, and `along_plane` all create
+the same immutable `ParallelCameraShot` contract. A shot records its complete
+camera state, duration, optional hold/cue, transition mode, and orbit height.
+Sequences have unique IDs and serialize as `parallel-shot-sequence/v1`; the
+public schema is
+`tikz_native/schemas/parallel-shot-sequence-v1.schema.json`.
+
+`fit_points_to_parallel_camera_state()` computes the largest positive zoom that
+keeps a fixed point envelope inside an explicit `ParallelCameraSafeFrame`
+without moving the authored target or screen anchor. It supports both area and
+line-valued projections. A point set whose screen image collapses completely
+must provide an explicit fallback zoom instead of receiving a guessed scale.
+
+For a genuinely moving target, first play a static shot to its exact endpoint,
+then start `ParallelCameraTargetFollowController`. Its one preallocated updater
+changes only the target; `stop()` keeps the latest followed view and
+`restore()` returns to the authored endpoint. Playback or provider failure
+removes the updater and rolls the camera back. At startup the binding preserves
+already-earlier target producers, then places the follow driver immediately
+before explicitly marked quadric/composite camera-state consumers. This gives
+the deterministic same-frame order `producer -> follow -> occlusion`. A target
+provider that depends on a later, unmarked Mobject updater remains outside this
+contract and must be reordered by the author.
+
+Manim's inherited camera zoom composes multiplicatively with the state's
+`zoom`, while `screen_anchor` remains a final viewport-relative coordinate even
+when the inherited `frame_center` is non-zero. The semantic state's `target`
+remains an absolute world point.
+
+The Manim quadric controllers accept the same complete state through their
+existing `projection=` argument. Pass the camera itself from a callback when
+the view is animated, so direction, target, viewport anchor, and both zoom
+layers are sampled together exactly once per frame:
+
+```python
+section = QuadricOcclusion3D(
+    scene,
+    surfaces=(cone,),
+    curves=section_curves,
+    section_id=section_id,
+    section_plane=cut_plane,
+    projection=lambda active_scene: active_scene.camera,
+)
+```
+
+Passing a static `ParallelCameraState` is also supported. Existing 3-by-3
+matrices and `ParallelView` values keep their original raw screen-coordinate
+semantics; they do not inherit target, anchor, frame-center, or Manim zoom.
+`display_offset=(x, y)` remains an extra final screen translation and composes
+with, rather than replaces, the semantic camera anchor. Geometry and occlusion
+still consume only the resolved linear view; the affine target/anchor shift is
+applied at the fixed-frame Manim boundary and therefore cannot change depth
+evidence.
+
+For a finite `PlaneDisplayPatchSpec`, an exact edge-on view now has an explicit
+one-dimensional display contract. Its fill disappears, it no longer occludes
+other boundaries as an area, and the compositor retains one certified finite
+near-side outline chain without duplicate strokes. The existing fixed section
+slots are reused through `AREA -> LINE -> AREA`. Section sources are certified
+from their complete analytic geometry rather than their IDs. Circle, ellipse,
+parabola, and hyperbola section members which retain a line are repainted with
+hidden intervals before visible intervals; a finite cap chord which becomes one
+screen point keeps its source identity and fixed slot but emits no fake stroke.
+This exception is deliberately narrow: external curves, other surfaces, and
+independently coincident or otherwise uncertifiable arrangements still fail
+explicitly.
+
+The low-level controller only grants that section-family provenance when
+`section_id=` and `section_plane=` are both supplied. Passing a plane without a
+section ID remains backward compatible for ordinary free curves and the finite
+plane patch, but those curves are not silently reclassified as a section.
+
+See the runnable
+[parallel-camera view example](../examples/parallel_camera_views/README.md) and
+the three
+[semantic shot acceptance scenes](../examples/parallel_camera_shots/README.md).
+
 ## Source-authoritative project builds
 
 Keep the TikZ file, optional motion and Bridge template, render intent, and any
@@ -533,6 +707,14 @@ the maximum distance from the apex, and the retained contact points. A remote
 point, nonzero coincident segment, or positive-area overlap fails
 transactionally instead of guessing an interleaved order.
 
+The composite frame exposes the same explicit `projection_kind` and
+`patch_projection` evidence as one local frame. In an exact side view both
+children must certify the same finite `LINE` endpoints. The coordinator then
+omits every plane fill, merges their one-dimensional depth partitions into one
+complete near-side outline, and gives each nappe its own authenticated section
+source group. `AREA -> LINE -> AREA` reuses the original plane, surface, and
+curve slots; a failed critical frame leaves the previous display untouched.
+
 A plane callback may move a section only while its lateral conic topology and
 curve identities stay fixed. Cap chords may activate or disappear because all
 authored cap identities are reserved independently. An empty/non-empty change,
@@ -678,6 +860,10 @@ The renderer-neutral boundary sidecar is exported from
   `QuadricBoundaryPaintFragment`, and `QuadricBoundaryCompositingFrame`;
 - `BoundarySourceKind`, `BoundarySemanticKind`, `BoundaryOcclusionScope`, and
   `BoundaryRenderIntent`;
+- `BoundaryScreenProjectionDimension`,
+  `QuadricBoundarySectionSourceProjection`,
+  `QuadricRankOneSectionSourceGroup`, and
+  `certify_rank_one_section_boundary_sources`;
 - `GeneratorBoundarySpec`, `build_surface_boundary_sources`,
   `compute_boundary_visibility`, and `compute_quadric_boundary_compositing`;
 - `BoundaryPlaneRelation`, `QuadricBoundarySectionSpan`,
@@ -685,8 +871,11 @@ The renderer-neutral boundary sidecar is exported from
   `compute_boundary_section_spans`.
 
 The boundary painter frame uses
-`manim-quadric-boundary-compositing/v2`. The short-lived v1 boundary frame is
-superseded rather than maintained as a second runtime path: generated boundary
+`manim-quadric-boundary-compositing/v3`. The v3 payload adds explicit
+surface/plane provenance on section sources and serializes the optional
+rank-one source-group certificate, including its finite line, projection
+dimension, screen covector, and tolerance. Earlier boundary frames are
+superseded rather than maintained as parallel runtime paths: generated boundary
 frames and caches must be rebuilt. Other quadric v1 surface, visibility, and
 section schemas remain unchanged. The Manim controller selects the unified path
 only when `boundary_visibility_mode="unified"` is supplied.

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from math import acosh, cos, pi, sin, tau
+from math import acosh, atanh, cos, log, pi, sin, tau
 import unittest
 from unittest.mock import patch
 
@@ -54,6 +54,18 @@ PLANE_EMBEDDING = (
     (1.0, 0.0, 0.0),
     (0.0, 1.0, 0.0),
     (0.0, 0.0, 1.0),
+    (0.0, 0.0, 1.0),
+)
+RANK_ONE_PARABOLA_EMBEDDING = (
+    (1.0, 1.0, 0.0),
+    (0.0, 0.0, 0.0),
+    (0.0, 1.0, 0.0),
+    (0.0, 0.0, 1.0),
+)
+RANK_ONE_HYPERBOLA_EMBEDDING = (
+    (1.0, 0.0, 0.0),
+    (0.0, 0.0, 0.0),
+    (0.0, 1.0, 0.0),
     (0.0, 0.0, 1.0),
 )
 
@@ -1628,6 +1640,269 @@ class ProjectedConicCrossingTests(unittest.TestCase):
             ProjectedCurveIntersectionError, "infinitely many"
         ):
             compute_projected_curve_crossings((first, overlapping), IDENTITY_VIEW)
+
+    def test_rank_one_parabola_recovers_two_parameters_and_one_exact_turn(
+        self,
+    ) -> None:
+        parabola = ParametricConicBranch(
+            "z-rank-one-parabola",
+            ConicParameterization(
+                ConicKind.PARABOLA,
+                "rank-one-parabola",
+                (0.0, 0.0),
+                (1.0, 0.0),
+                (0.0, 1.0),
+            ),
+            RANK_ONE_PARABOLA_EMBEDDING,
+            ParameterInterval(-2.0, 2.0),
+        )
+        secant = SegmentCurve(
+            "a-transverse-secant",
+            (0.0, -1.0, 3.0),
+            (0.0, 1.0, 3.0),
+        )
+        crossings = compute_projected_curve_crossings(
+            (secant, parabola),
+            IDENTITY_VIEW,
+        )
+        self.assertEqual(len(crossings), 2)
+        self.assertEqual(
+            tuple(round(item.second_parameter, 12) for item in crossings),
+            (-1.0, 0.0),
+        )
+
+        turn = SegmentCurve(
+            "a-turn-segment",
+            (-0.25, -1.0, 3.0),
+            (-0.25, 1.0, 3.0),
+        )
+        turn_crossings = compute_projected_curve_crossings(
+            (turn, parabola),
+            IDENTITY_VIEW,
+        )
+        self.assertEqual(len(turn_crossings), 1)
+        self.assertAlmostEqual(turn_crossings[0].second_parameter, -0.5)
+        self.assertTrue(turn_crossings[0].tangential)
+
+    def test_rank_one_hyperbola_crosses_an_external_nondegenerate_conic(
+        self,
+    ) -> None:
+        hyperbola = ParametricConicBranch(
+            "z-rank-one-hyperbola",
+            ConicParameterization(
+                ConicKind.HYPERBOLA,
+                "rank-one-hyperbola",
+                (0.0, 0.0),
+                (1.0, 0.0),
+                (0.0, 1.0),
+                branch_sign=1,
+            ),
+            RANK_ONE_HYPERBOLA_EMBEDDING,
+            ParameterInterval(-2.0, 2.0),
+        )
+        circle = CircleArcCurve(
+            "a-external-circle",
+            (2.0, 0.0, 5.0),
+            0.5,
+            (0.0, 0.0, 1.0),
+            radial_axis=(1.0, 0.0, 0.0),
+        )
+
+        crossings = compute_projected_curve_crossings(
+            (circle, hyperbola),
+            IDENTITY_VIEW,
+        )
+
+        self.assertEqual(len(crossings), 4)
+        expected = sorted(
+            (
+                -acosh(2.5),
+                acosh(2.5),
+                -acosh(1.5),
+                acosh(1.5),
+            )
+        )
+        self.assertEqual(
+            tuple(round(item, 10) for item in sorted(
+                crossing.second_parameter for crossing in crossings
+            )),
+            tuple(round(item, 10) for item in expected),
+        )
+
+        oblique_rank_one = ParametricConicBranch(
+            "z-oblique-rank-one-hyperbola",
+            hyperbola.parameterization,
+            (
+                (1.0, 0.5, 0.0),
+                (0.0, 0.0, 0.0),
+                (0.0, 1.0, 0.0),
+                (0.0, 0.0, 1.0),
+            ),
+            hyperbola.domain,
+        )
+        transverse = SegmentCurve(
+            "a-oblique-transverse",
+            (1.0, -1.0, 5.0),
+            (1.0, 1.0, 5.0),
+        )
+        oblique_crossings = compute_projected_curve_crossings(
+            (transverse, oblique_rank_one),
+            IDENTITY_VIEW,
+        )
+        self.assertEqual(len(oblique_crossings), 2)
+        self.assertEqual(
+            tuple(
+                round(item.second_parameter, 12)
+                for item in oblique_crossings
+            ),
+            (round(-log(3.0), 12), 0.0),
+        )
+        minimum = float(np.sqrt(3.0) / 2.0)
+        turn_segment = SegmentCurve(
+            "a-oblique-turn",
+            (minimum, -1.0, 5.0),
+            (minimum, 1.0, 5.0),
+        )
+        turn_crossings = compute_projected_curve_crossings(
+            (turn_segment, oblique_rank_one),
+            IDENTITY_VIEW,
+        )
+        self.assertEqual(len(turn_crossings), 1)
+        self.assertAlmostEqual(
+            turn_crossings[0].second_parameter,
+            -atanh(0.5),
+        )
+        self.assertTrue(turn_crossings[0].tangential)
+
+    def test_rank_one_unbounded_same_line_domains_classify_exactly(self) -> None:
+        parabola = ParametricConicBranch(
+            "z-parabola",
+            ConicParameterization(
+                ConicKind.PARABOLA,
+                "rank-one-parabola",
+                (0.0, 0.0),
+                (1.0, 0.0),
+                (0.0, 1.0),
+            ),
+            RANK_ONE_PARABOLA_EMBEDDING,
+            ParameterInterval(-1.0, 0.0),
+        )
+        self.assertEqual(
+            compute_projected_curve_crossings(
+                (
+                    SegmentCurve("a-disjoint", (0.1, 0.0, 3.0), (0.2, 0.0, 3.0)),
+                    parabola,
+                ),
+                IDENTITY_VIEW,
+            ),
+            (),
+        )
+        parabola_contact = compute_projected_curve_crossings(
+            (
+                SegmentCurve("a-contact", (0.0, 0.0, 3.0), (0.2, 0.0, 3.0)),
+                parabola,
+            ),
+            IDENTITY_VIEW,
+        )
+        self.assertEqual(len(parabola_contact), 2)
+        self.assertEqual(
+            tuple(item.second_parameter for item in parabola_contact),
+            (-1.0, 0.0),
+        )
+        with self.assertRaisesRegex(
+            ProjectedCurveIntersectionError,
+            "positive-length interval",
+        ):
+            compute_projected_curve_crossings(
+                (
+                    SegmentCurve("a-overlap", (-0.1, 0.0, 3.0), (0.1, 0.0, 3.0)),
+                    parabola,
+                ),
+                IDENTITY_VIEW,
+            )
+
+        hyperbola = ParametricConicBranch(
+            "z-hyperbola",
+            ConicParameterization(
+                ConicKind.HYPERBOLA,
+                "rank-one-hyperbola",
+                (0.0, 0.0),
+                (1.0, 0.0),
+                (0.0, 1.0),
+                branch_sign=1,
+            ),
+            RANK_ONE_HYPERBOLA_EMBEDDING,
+            ParameterInterval(-2.0, 2.0),
+        )
+        self.assertEqual(
+            compute_projected_curve_crossings(
+                (
+                    SegmentCurve("a-disjoint", (0.1, 0.0, 3.0), (0.5, 0.0, 3.0)),
+                    hyperbola,
+                ),
+                IDENTITY_VIEW,
+            ),
+            (),
+        )
+        hyperbola_contact = compute_projected_curve_crossings(
+            (
+                SegmentCurve("a-contact", (0.5, 0.0, 3.0), (1.0, 0.0, 3.0)),
+                hyperbola,
+            ),
+            IDENTITY_VIEW,
+        )
+        self.assertEqual(len(hyperbola_contact), 1)
+        self.assertAlmostEqual(hyperbola_contact[0].second_parameter, 0.0)
+        self.assertTrue(hyperbola_contact[0].tangential)
+        with self.assertRaisesRegex(
+            ProjectedCurveIntersectionError,
+            "positive-length interval",
+        ):
+            compute_projected_curve_crossings(
+                (
+                    SegmentCurve("a-overlap", (1.0, 0.0, 3.0), (2.0, 0.0, 3.0)),
+                    hyperbola,
+                ),
+                IDENTITY_VIEW,
+            )
+
+    def test_rank_one_hyperbola_keeps_both_depth_distinct_endpoint_parameters(
+        self,
+    ) -> None:
+        hyperbola = ParametricConicBranch(
+            "z-hyperbola",
+            ConicParameterization(
+                ConicKind.HYPERBOLA,
+                "rank-one-hyperbola",
+                (0.0, 0.0),
+                (1.0, 0.0),
+                (0.0, 1.0),
+                branch_sign=1,
+            ),
+            RANK_ONE_HYPERBOLA_EMBEDDING,
+            ParameterInterval(-2.0, 2.0),
+        )
+        endpoint = float(np.cosh(2.0))
+        segment = SegmentCurve(
+            "a-endpoint-contact",
+            (endpoint, 0.0, 3.0),
+            (endpoint + 1.0, 0.0, 3.0),
+        )
+
+        crossings = compute_projected_curve_crossings(
+            (segment, hyperbola),
+            IDENTITY_VIEW,
+        )
+
+        self.assertEqual(len(crossings), 2)
+        self.assertEqual(
+            tuple(item.second_parameter for item in crossings),
+            (-2.0, 2.0),
+        )
+        self.assertNotEqual(
+            crossings[0].second_depth,
+            crossings[1].second_depth,
+        )
 
 
 class ProjectedCrossingDeterminismTests(unittest.TestCase):

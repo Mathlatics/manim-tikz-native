@@ -613,6 +613,18 @@ class QuadricManimBindingTests(unittest.TestCase):
                 surface_order_mode="guess",
             )
 
+        with self.assertRaisesRegex(
+            QuadricManimError,
+            "section_id requires section_plane",
+        ):
+            QuadricOcclusion3D(
+                Scene(),
+                surfaces=(SphereSpec("sphere", (0.0, 0.0, 0.0), 1.0),),
+                curves=(),
+                projection=IDENTITY_VIEW,
+                section_id="declared-section",
+            )
+
     def test_physical_mode_ignores_fully_hidden_coincident_strokes(self) -> None:
         scene = Scene()
         controller = QuadricOcclusion3D(

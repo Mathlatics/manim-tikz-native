@@ -17,6 +17,20 @@ conic-section Manim controllers default to a true orthographic isometric view,
 which keeps a world-z cone axis vertical and does not add screen shear.
 Compiled TikZ keeps its authored projection.
 
+The renderer-neutral `ParallelCameraState` additionally supports arbitrary
+view directions, world-space targets, fixed screen anchors, zoom, and semantic
+views normal to, oblique to, or exactly along an authored plane. Safe state
+transitions keep every intermediate parallel camera invertible.
+
+`ParallelCameraShot` and `ParallelCameraShotSequence` add named timing, holds,
+cues, safe orbit transitions, and fixed-envelope zoom fitting on top of that
+state. After a static shot reaches its exact endpoint,
+`ParallelCameraTargetFollowController` can follow a moving world-space target
+without allocating Mobjects per frame. Already-earlier target producers remain
+before the follow driver, while explicitly marked quadric/composite consumers
+are kept after it, giving deterministic same-frame camera/occlusion updates.
+See the [semantic parallel-camera shots](examples/parallel_camera_shots/README.md).
+
 This project does **not** convert arbitrary TikZ and does not silently fall back
 to SVG. Unsupported syntax is reported explicitly.
 
@@ -27,6 +41,7 @@ to SVG. Unsupported syntax is reported explicitly.
 [Finite-cone section v1 contract](docs/quadric-section-v1-contract.md) ·
 [Fast and extended Cairo acceptance](docs/extended-quadric-ci.md) ·
 [Classroom cone-section gallery](examples/classroom_cone_sections/README.md) ·
+[Parallel camera example](examples/parallel_camera_views/README.md) ·
 [Supported TikZ subset](docs/supported-tikz.md) ·
 [Source-authoritative projects](docs/source-authoritative-projects.md)
 
@@ -149,9 +164,9 @@ also gives the one-call capacity-planning path.
 The frozen [finite-cone section v1 contract](docs/quadric-section-v1-contract.md)
 is the authority for release claims. In short, v1 supports closed finite single
 cones, open finite single shells, frustum sections with component-aware lateral
-and two-cap shading, rank-one trim rims in exact side views, parallel
-projection, one finite convex quadric with one non-edge-on cutting plane, and
-the constrained two-nappe coordination described above. The fixed-capacity
+and two-cap shading, rank-one trim rims and one-surface finite cutting-plane
+patches in exact side views, parallel projection, one finite convex quadric with one
+cutting plane, and the constrained two-nappe coordination described above. The fixed-capacity
 Manim production binding is Cairo-only.
 
 V1 explicitly rejects perspective projection and an OpenGL production binding,

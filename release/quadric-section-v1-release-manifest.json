@@ -9,15 +9,15 @@
   "components": {
     "quadric_geometry": {
       "contract_revision": "tikz-native-contract:quadric_geometry/v1",
-      "render_revision": "source-sha256:aa2cb1ad9c06bfba01ab9c168d5c2a74ac7fd89066bb8ca0770ab92ed5b9984b"
+      "render_revision": "source-sha256:aabb9e54831a6c1ee326f310580dc9c18598cb32ab3c16e2353a7e7699157950"
     },
     "quadric_visibility": {
       "contract_revision": "tikz-native-contract:quadric_visibility/v2",
-      "render_revision": "source-sha256:8efa5d2f53b8441f0949f59f68c7cd7b6ba4f83dc8ed9208f71c9f9204954033"
+      "render_revision": "source-sha256:8d4aab96c05b1fef95032925484f233e2f79ec3862e02c9c021fd0de751f4b03"
     },
     "quadric_manim": {
       "contract_revision": "tikz-native-contract:quadric_manim/v1",
-      "render_revision": "source-sha256:ff5c7bb858376a29f462d7499f3ffb3bd27ad5cbb24487e6d53f6318f366cad9"
+      "render_revision": "source-sha256:d67e127651db8429e56d07b2d95a1ae52bcadc766efd3fec9746d8731ee539d1"
     }
   },
   "build_artifacts": {
@@ -204,15 +204,50 @@
       "outcome": "explicit_failure",
       "test": "tests.test_quadric_section_v1_contract.QuadricSectionV1ContractTests.test_opengl_binding_fails_before_scene_mutation"
     },
-    "edge_on_plane_failure": {
+    "edge_on_plane_line_geometry": {
       "layer": "renderer_neutral",
-      "outcome": "explicit_failure",
-      "test": "tests.test_quadric_section_compositing.QuadricSectionCompositingTests.test_edge_on_plane_and_capacity_overflow_fail_closed"
+      "outcome": "pass",
+      "test": "tests.test_quadric_section_compositing.QuadricSectionCompositingTests.test_edge_on_plane_becomes_one_finite_near_outline_chain"
     },
-    "edge_on_animation_rollback": {
+    "edge_on_line_binding": {
       "layer": "manim",
-      "outcome": "explicit_failure",
-      "test": "tests.test_quadric_section_manim.QuadricSectionManimTests.test_dynamic_plane_preserves_slots_and_rolls_back_edge_on_failure"
+      "outcome": "pass",
+      "test": "tests.test_quadric_section_manim.QuadricSectionManimTests.test_dynamic_plane_preserves_slots_through_exact_edge_on_line"
+    },
+    "edge_on_line_cairo_pixels": {
+      "layer": "cairo",
+      "outcome": "pass",
+      "test": "tests.test_quadric_plane_line_cairo.QuadricFinitePlaneLineCairoTests.test_warm_edge_on_frame_matches_cold_finite_line_pixels"
+    },
+    "edge_on_section_family_certification": {
+      "layer": "renderer_neutral",
+      "outcome": "pass",
+      "test": "tests.test_quadric_boundary_section.BoundarySectionPlacementTests.test_rank_one_source_group_uses_geometry_and_certifies_line_or_point"
+    },
+    "edge_on_four_conic_fixed_slots": {
+      "layer": "manim",
+      "outcome": "pass",
+      "test": "tests.test_quadric_rank_one_conic_camera.QuadricRankOneConicCameraTests.test_four_conics_commit_area_line_area_with_fixed_slots"
+    },
+    "open_double_edge_on_geometry": {
+      "layer": "renderer_neutral",
+      "outcome": "pass",
+      "test": "tests.test_composite_quadric_section.CompositeRendererNeutralTests.test_offset_hyperbola_plane_retains_two_physical_line_branches"
+    },
+    "open_double_edge_on_binding": {
+      "layer": "manim",
+      "outcome": "pass",
+      "test": "tests.test_composite_quadric_section_line_manim.CompositeQuadricSectionLineManimTests.test_area_line_area_keeps_fixed_slots_and_matches_cold_frames"
+    },
+    "open_double_edge_on_cairo_pixels": {
+      "layer": "cairo",
+      "outcome": "pass",
+      "test": "tests.test_composite_quadric_section_line_manim.CompositeQuadricSectionLineCairoTests.test_line_frame_has_both_nappes_apex_finite_outline_and_no_double_draw"
+    },
+    "open_double_edge_on_rollback": {
+      "layer": "manim",
+      "outcome": "pass",
+      "test": "tests.test_composite_quadric_section_line_manim.CompositeQuadricSectionLineManimTests.test_positive_area_nappe_overlap_rolls_back_then_line_recovers"
     }
   },
   "projections": {
@@ -304,7 +339,11 @@
         "open_double_composite_binding",
         "open_double_composite_cairo",
         "open_double_composite_overlap_failure",
-        "open_double_single_facade_failure"
+        "open_double_single_facade_failure",
+        "open_double_edge_on_geometry",
+        "open_double_edge_on_binding",
+        "open_double_edge_on_cairo_pixels",
+        "open_double_edge_on_rollback"
       ]
     },
     {

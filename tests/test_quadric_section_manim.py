@@ -22,6 +22,7 @@ from polyhedron_visibility.quadrics.manim import (
 )
 from polyhedron_visibility.quadrics.section_compositing import (
     PlaneDepthRole,
+    PlanePatchProjectionKind,
     QuadricSectionCompositingError,
     QuadricSectionCompositingLimits,
 )
@@ -202,7 +203,7 @@ class QuadricSectionManimTests(unittest.TestCase):
         )
         controller.restore()
 
-    def test_dynamic_plane_preserves_slots_and_rolls_back_edge_on_failure(self) -> None:
+    def test_dynamic_plane_preserves_slots_through_exact_edge_on_line(self) -> None:
         state = {"normal": (0.7, 0.0, 1.0), "u": (0.0, 1.0, 0.0)}
 
         def plane() -> SectionPlane:
@@ -231,13 +232,26 @@ class QuadricSectionManimTests(unittest.TestCase):
         ):
             controller.update()
         self.assertEqual(controller.slot_identities(), identities)
-        snapshot = controller.slot_snapshot()
+        area_frame = controller.last_section_frame
+        assert area_frame is not None
+        self.assertIs(area_frame.projection_kind, PlanePatchProjectionKind.AREA)
 
         state["normal"] = (1.0, 0.0, 0.0)
         state["u"] = (0.0, 0.0, 1.0)
-        with self.assertRaisesRegex(QuadricManimError, "projects edge-on"):
+        with patch.object(
+            Mobject,
+            "__init__",
+            side_effect=AssertionError("edge-on update allocated a Mobject"),
+        ):
             controller.update()
-        self.assertEqual(controller.slot_snapshot(), snapshot)
+        line_frame = controller.last_section_frame
+        assert line_frame is not None
+        self.assertIs(line_frame.projection_kind, PlanePatchProjectionKind.LINE)
+        self.assertEqual(line_frame.plane_fragments, ())
+        self.assertTrue(line_frame.plane_outline_fragments)
+        self.assertEqual(controller.slot_identities(), identities)
+        for slot_index in (0, 2, 3, 5):
+            self.assertEqual(len(controller._section_slots[slot_index].points), 0)
         controller.restore()
 
     def test_five_state_updates_keep_ten_slots_identity_and_painter_order(

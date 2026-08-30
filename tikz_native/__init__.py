@@ -53,6 +53,21 @@ from .open_face_visibility_3d_manim import (
     TikzNativeOpenFaceAutoOcclusion3D,
     bind_picture_open_face_visibility_3d,
 )
+from .parallel_camera import CameraPlane, ParallelCameraState, ProjectionRank
+from .parallel_shots import (
+    PARALLEL_CAMERA_SHOT_SEQUENCE_SCHEMA,
+    ParallelCameraSafeFrame,
+    ParallelCameraShot,
+    ParallelCameraShotSequence,
+    canonical_parallel_camera_shot_sequence_json,
+    fit_points_to_parallel_camera_state,
+)
+from .parallel_shots_manim import (
+    ParallelCameraShotManimError,
+    ParallelCameraTargetFollowController,
+    play_parallel_camera_shot,
+    play_parallel_camera_shot_sequence,
+)
 from .polyhedron_visibility_3d_adapter import (
     TikzNativeVisibility3DAdapterError,
     TikzNativeVisibility3DAdapterResult,
@@ -120,6 +135,7 @@ __all__ = [
     "COMPONENT_TIKZ_OPEN_FACE_VISIBILITY_3D",
     "COMPONENT_TIKZ_POLYHEDRON_VISIBILITY_3D",
     "CompiledAsset",
+    "CameraPlane",
     "DocumentSpec",
     "EllipseChordMetrics",
     "IntersectionSpec",
@@ -140,9 +156,17 @@ __all__ = [
     "NativeRig2D",
     "ObjectSpec",
     "OcclusionRelationSpec",
+    "PARALLEL_CAMERA_SHOT_SEQUENCE_SCHEMA",
     "PROTOCOL_VERSION",
+    "ParallelCameraSafeFrame",
+    "ParallelCameraShot",
+    "ParallelCameraShotManimError",
+    "ParallelCameraShotSequence",
+    "ParallelCameraState",
+    "ParallelCameraTargetFollowController",
     "PictureSpec",
     "Projection3DSpec",
+    "ProjectionRank",
     "REQUEST_SCHEMA",
     "RESPONSE_SCHEMA",
     "TikzNativeAutoOcclusion3D",
@@ -164,7 +188,9 @@ __all__ = [
     "bind_picture_visibility_3d",
     "compile_asset",
     "compile_document",
+    "canonical_parallel_camera_shot_sequence_json",
     "ellipse_chord_metrics",
+    "fit_points_to_parallel_camera_state",
     "generate_native_manim_source_3d_v3",
     "instantiate_picture",
     "load_motion_spec",
@@ -173,6 +199,8 @@ __all__ = [
     "provider_component_revisions",
     "provider_info",
     "provider_revision",
+    "play_parallel_camera_shot",
+    "play_parallel_camera_shot_sequence",
     "render_static_png",
     "validate_open_face_static_asset_3d_contract",
 ]

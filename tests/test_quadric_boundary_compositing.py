@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 import json
-from math import pi, sqrt
+from math import pi, sqrt, tau
 import unittest
 
 import numpy as np
@@ -11,12 +11,15 @@ from polyhedron_visibility.parallel_solver import ParallelView
 from polyhedron_visibility.quadrics.boundary_compositing import (
     BoundaryOcclusionScope,
     BoundaryRenderIntent,
+    BoundaryScreenProjectionDimension,
     BoundarySectionAnchors,
     BoundarySemanticKind,
     BoundarySourceKind,
     QUADRIC_BOUNDARY_COMPOSITING_SCHEMA,
     QuadricBoundaryCompositingError,
+    QuadricBoundarySectionSourceProjection,
     QuadricBoundaryVisibilitySpan,
+    QuadricRankOneSectionSourceGroup,
     canonical_quadric_boundary_compositing_json,
     compute_boundary_visibility,
     compute_quadric_boundary_compositing,
@@ -40,7 +43,7 @@ from polyhedron_visibility.quadrics.curve_intersections import (
     ProjectedCurveCrossing,
     compute_projected_curve_crossings,
 )
-from polyhedron_visibility.quadrics.curves import SegmentCurve
+from polyhedron_visibility.quadrics.curves import CircleArcCurve, SegmentCurve
 from polyhedron_visibility.quadrics.surface_boundaries import (
     GeneratorBoundarySpec,
     build_surface_boundary_sources,
@@ -65,6 +68,576 @@ IDENTITY_VIEW = ParallelView.from_matrix(np.eye(3))
 
 
 class QuadricBoundaryContractTests(unittest.TestCase):
+    def test_explicit_rank_one_group_omits_points_and_orders_hidden_before_visible(
+        self,
+    ) -> None:
+        line_source = curve_boundary_source(
+            CircleArcCurve(
+                "rank-one-line",
+                (0.0, 0.0, 0.0),
+                1.0,
+                (0.0, 0.0, 1.0),
+                radial_axis=(1.0, 0.0, 0.0),
+            ),
+            source_kind=BoundarySourceKind.SECTION_CURVE,
+            owner_id="section",
+            section_surface_id="surface",
+            section_plane_id="plane",
+        )
+        point_source = curve_boundary_source(
+            SegmentCurve(
+                "rank-one-point",
+                (0.0, -1.0, 0.0),
+                (0.0, 1.0, 0.0),
+            ),
+            source_kind=BoundarySourceKind.SECTION_CURVE,
+            owner_id="section",
+            section_surface_id="surface",
+            section_plane_id="plane",
+        )
+        spans = {
+            line_source.source_id: (
+                QuadricBoundaryVisibilitySpan(
+                    ParameterInterval(0.0, pi),
+                    VisibilityKind.HIDDEN,
+                    ("occluder",),
+                ),
+                QuadricBoundaryVisibilitySpan(
+                    ParameterInterval(pi, tau),
+                    VisibilityKind.VISIBLE,
+                ),
+            ),
+            point_source.source_id: (
+                QuadricBoundaryVisibilitySpan(
+                    point_source.curve.domain,
+                    VisibilityKind.VISIBLE,
+                ),
+            ),
+        }
+        kwargs = {
+            "paint_policy": QuadricPaintPolicy.DIAGRAMMATIC,
+            "parent_item_ids": (),
+            "parent_relations": (),
+            "surface_item_by_id": {},
+        }
+
+        default_frame = compute_quadric_boundary_compositing(
+            (line_source, point_source),
+            spans,
+            **kwargs,
+        )
+        explicit_none = compute_quadric_boundary_compositing(
+            (line_source, point_source),
+            spans,
+            rank_one_section_source_group=None,
+            **kwargs,
+        )
+        self.assertEqual(
+            canonical_quadric_boundary_compositing_json(default_frame),
+            canonical_quadric_boundary_compositing_json(explicit_none),
+        )
+        self.assertTrue(
+            any(
+                item.source_id == point_source.source_id
+                for item in default_frame.fragments
+            )
+        )
+
+        group = QuadricRankOneSectionSourceGroup(
+            "surface",
+            "plane",
+            (
+                QuadricBoundarySectionSourceProjection(
+                    line_source.source_id,
+                    BoundaryScreenProjectionDimension.LINE,
+                ),
+                QuadricBoundarySectionSourceProjection(
+                    point_source.source_id,
+                    BoundaryScreenProjectionDimension.POINT,
+                ),
+            ),
+            (-1.0, 0.0),
+            (1.0, 0.0),
+            (1.0, 0.0, 0.0),
+            1.0e-12,
+        )
+        frame = compute_quadric_boundary_compositing(
+            (line_source, point_source),
+            spans,
+            rank_one_section_source_group=group,
+            **kwargs,
+        )
+        plural_frame = compute_quadric_boundary_compositing(
+            (line_source, point_source),
+            spans,
+            rank_one_section_source_groups=(group,),
+            **kwargs,
+        )
+        self.assertEqual(
+            canonical_quadric_boundary_compositing_json(frame),
+            canonical_quadric_boundary_compositing_json(plural_frame),
+        )
+
+        self.assertEqual(
+            tuple(item.source_id for item in frame.sources),
+            (line_source.source_id, point_source.source_id),
+        )
+        self.assertEqual(
+            {item.source_id for item in frame.fragments},
+            {line_source.source_id},
+        )
+        hidden = next(
+            item
+            for item in frame.fragments
+            if item.effective_visibility_kind is VisibilityKind.HIDDEN
+        )
+        visible = next(
+            item
+            for item in frame.fragments
+            if item.effective_visibility_kind is VisibilityKind.VISIBLE
+        )
+        self.assertIn(
+            (
+                hidden.item_id,
+                visible.item_id,
+                "rank_one_section_hidden_before_visible",
+            ),
+            {
+                (item.far_item_id, item.near_item_id, item.reason)
+                for item in frame.order_relations
+            },
+        )
+        self.assertLess(
+            frame.draw_order.index(hidden.item_id),
+            frame.draw_order.index(visible.item_id),
+        )
+        payload = frame.to_dict()
+        self.assertEqual(
+            payload["rankOneSectionSourceGroup"],
+            group.to_dict(),
+        )
+        self.assertNotIn("rankOneSectionSourceGroups", payload)
+        self.assertIsNone(default_frame.to_dict()["rankOneSectionSourceGroup"])
+        self.assertNotIn(
+            "rankOneSectionSourceGroups",
+            default_frame.to_dict(),
+        )
+
+    def test_rank_one_order_ignores_disjoint_coverage_and_avoids_external_cycle(
+        self,
+    ) -> None:
+        def section_source(source_id: str, start: float, end: float):
+            return curve_boundary_source(
+                SegmentCurve(
+                    source_id,
+                    (start, 0.0, 0.0),
+                    (end, 0.0, 0.0),
+                ),
+                source_kind=BoundarySourceKind.SECTION_CURVE,
+                owner_id="section",
+                section_surface_id="surface",
+                section_plane_id="plane",
+            )
+
+        hidden = section_source("a-hidden", -3.0, -2.0)
+        visible = section_source("c-visible", 2.0, 3.0)
+        external = curve_boundary_source(
+            SegmentCurve(
+                "b-external",
+                (-4.0, 1.0, 0.0),
+                (4.0, 1.0, 0.0),
+            )
+        )
+        sources = (hidden, external, visible)
+        spans = {
+            hidden.source_id: (
+                QuadricBoundaryVisibilitySpan(
+                    hidden.curve.domain,
+                    VisibilityKind.HIDDEN,
+                    ("solid",),
+                ),
+            ),
+            external.source_id: (
+                QuadricBoundaryVisibilitySpan(
+                    external.curve.domain,
+                    VisibilityKind.VISIBLE,
+                ),
+            ),
+            visible.source_id: (
+                QuadricBoundaryVisibilitySpan(
+                    visible.curve.domain,
+                    VisibilityKind.VISIBLE,
+                ),
+            ),
+        }
+        group = QuadricRankOneSectionSourceGroup(
+            "surface",
+            "plane",
+            (
+                QuadricBoundarySectionSourceProjection(
+                    hidden.source_id,
+                    BoundaryScreenProjectionDimension.LINE,
+                ),
+                QuadricBoundarySectionSourceProjection(
+                    visible.source_id,
+                    BoundaryScreenProjectionDimension.LINE,
+                ),
+            ),
+            (-3.0, 0.0),
+            (3.0, 0.0),
+            (1.0, 0.0, 0.0),
+            1.0e-12,
+        )
+        crossings = (
+            ProjectedCurveCrossing(
+                "external-to-hidden",
+                hidden.source_id,
+                external.source_id,
+                0.5,
+                0.5,
+                (-2.5, 0.0),
+                1.0,
+                0.0,
+                external.source_id,
+                hidden.source_id,
+            ),
+            ProjectedCurveCrossing(
+                "visible-to-external",
+                external.source_id,
+                visible.source_id,
+                0.5,
+                0.5,
+                (2.5, 0.0),
+                1.0,
+                0.0,
+                visible.source_id,
+                external.source_id,
+            ),
+        )
+
+        frame = compute_quadric_boundary_compositing(
+            sources,
+            spans,
+            paint_policy=QuadricPaintPolicy.DIAGRAMMATIC,
+            parent_item_ids=(),
+            parent_relations=(),
+            surface_item_by_id={},
+            crossings=crossings,
+            rank_one_section_source_group=group,
+        )
+
+        self.assertFalse(
+            any(
+                relation.reason == "rank_one_section_hidden_before_visible"
+                for relation in frame.order_relations
+            )
+        )
+
+    def test_two_rank_one_groups_omit_all_points_and_order_only_within_group(
+        self,
+    ) -> None:
+        def source(
+            source_id: str,
+            surface_id: str,
+            plane_id: str,
+            start: tuple[float, float, float],
+            end: tuple[float, float, float],
+        ):
+            return curve_boundary_source(
+                SegmentCurve(source_id, start, end),
+                source_kind=BoundarySourceKind.SECTION_CURVE,
+                owner_id=f"section:{surface_id}",
+                section_surface_id=surface_id,
+                section_plane_id=plane_id,
+            )
+
+        a_hidden = source(
+            "a-hidden", "surface-a", "plane-a", (-2.0, 0.0, 0.0), (2.0, 0.0, 0.0)
+        )
+        a_point = source(
+            "a-point", "surface-a", "plane-a", (0.0, -1.0, 0.0), (0.0, 1.0, 0.0)
+        )
+        a_visible = source(
+            "a-visible", "surface-a", "plane-a", (-1.0, 0.0, 0.0), (1.0, 0.0, 0.0)
+        )
+        b_hidden = source(
+            "b-hidden", "surface-b", "plane-b", (-2.0, 0.0, 1.0), (2.0, 0.0, 1.0)
+        )
+        b_point = source(
+            "b-point", "surface-b", "plane-b", (0.0, -1.0, 1.0), (0.0, 1.0, 1.0)
+        )
+        b_visible = source(
+            "b-visible", "surface-b", "plane-b", (-1.0, 0.0, 1.0), (1.0, 0.0, 1.0)
+        )
+        sources = (
+            a_hidden,
+            a_point,
+            a_visible,
+            b_hidden,
+            b_point,
+            b_visible,
+        )
+        hidden_ids = {a_hidden.source_id, b_hidden.source_id}
+        spans = {
+            item.source_id: (
+                QuadricBoundaryVisibilitySpan(
+                    item.curve.domain,
+                    (
+                        VisibilityKind.HIDDEN
+                        if item.source_id in hidden_ids
+                        else VisibilityKind.VISIBLE
+                    ),
+                    (
+                        (item.section_surface_id,)
+                        if item.source_id in hidden_ids
+                        else ()
+                    ),
+                ),
+            )
+            for item in sources
+        }
+
+        def group(
+            surface_id: str,
+            plane_id: str,
+            hidden_id: str,
+            point_id: str,
+            visible_id: str,
+        ) -> QuadricRankOneSectionSourceGroup:
+            return QuadricRankOneSectionSourceGroup(
+                surface_id,
+                plane_id,
+                (
+                    QuadricBoundarySectionSourceProjection(
+                        hidden_id,
+                        BoundaryScreenProjectionDimension.LINE,
+                    ),
+                    QuadricBoundarySectionSourceProjection(
+                        point_id,
+                        BoundaryScreenProjectionDimension.POINT,
+                    ),
+                    QuadricBoundarySectionSourceProjection(
+                        visible_id,
+                        BoundaryScreenProjectionDimension.LINE,
+                    ),
+                ),
+                (-2.0, 0.0),
+                (2.0, 0.0),
+                (1.0, 0.0, 0.0),
+                1.0e-12,
+            )
+
+        group_a = group(
+            "surface-a", "plane-a", "a-hidden", "a-point", "a-visible"
+        )
+        group_b = group(
+            "surface-b", "plane-b", "b-hidden", "b-point", "b-visible"
+        )
+        frame = compute_quadric_boundary_compositing(
+            sources,
+            spans,
+            paint_policy=QuadricPaintPolicy.DIAGRAMMATIC,
+            parent_item_ids=(),
+            parent_relations=(),
+            surface_item_by_id={},
+            rank_one_section_source_groups=(group_b, group_a),
+        )
+
+        self.assertIsNone(frame.rank_one_section_source_group)
+        self.assertEqual(
+            frame.rank_one_section_source_groups,
+            (group_a, group_b),
+        )
+        self.assertFalse(
+            {"a-point", "b-point"}
+            & {item.source_id for item in frame.fragments}
+        )
+        fragment_sources = {
+            item.item_id: item.source_id for item in frame.fragments
+        }
+        rank_one_pairs = {
+            (
+                fragment_sources[item.far_item_id],
+                fragment_sources[item.near_item_id],
+            )
+            for item in frame.order_relations
+            if item.reason == "rank_one_section_hidden_before_visible"
+        }
+        self.assertEqual(
+            rank_one_pairs,
+            {("a-hidden", "a-visible"), ("b-hidden", "b-visible")},
+        )
+        self.assertEqual(
+            frame.to_dict()["rankOneSectionSourceGroups"],
+            [group_a.to_dict(), group_b.to_dict()],
+        )
+
+    def test_plural_rank_one_groups_reject_overlap_forgery_and_mutual_inputs(
+        self,
+    ) -> None:
+        source = curve_boundary_source(
+            SegmentCurve("section-source", (-1.0, 0.0, 0.0), (1.0, 0.0, 0.0)),
+            source_kind=BoundarySourceKind.SECTION_CURVE,
+            owner_id="section",
+            section_surface_id="surface",
+            section_plane_id="plane",
+        )
+        spans = {
+            source.source_id: (
+                QuadricBoundaryVisibilitySpan(
+                    source.curve.domain,
+                    VisibilityKind.VISIBLE,
+                ),
+            )
+        }
+
+        def group(surface_id: str, plane_id: str):
+            return QuadricRankOneSectionSourceGroup(
+                surface_id,
+                plane_id,
+                (
+                    QuadricBoundarySectionSourceProjection(
+                        source.source_id,
+                        BoundaryScreenProjectionDimension.LINE,
+                    ),
+                ),
+                (-1.0, 0.0),
+                (1.0, 0.0),
+                (1.0, 0.0, 0.0),
+                1.0e-12,
+            )
+
+        valid = group("surface", "plane")
+        forged = group("forged-surface", "plane")
+        kwargs = {
+            "paint_policy": QuadricPaintPolicy.DIAGRAMMATIC,
+            "parent_item_ids": (),
+            "parent_relations": (),
+            "surface_item_by_id": {},
+        }
+        with self.assertRaisesRegex(
+            QuadricBoundaryCompositingError,
+            "cannot share boundary sources",
+        ):
+            compute_quadric_boundary_compositing(
+                (source,),
+                spans,
+                rank_one_section_source_groups=(valid, valid),
+                **kwargs,
+            )
+        with self.assertRaisesRegex(
+            QuadricBoundaryCompositingError,
+            "without matching section provenance",
+        ):
+            compute_quadric_boundary_compositing(
+                (source,),
+                spans,
+                rank_one_section_source_groups=(forged,),
+                **kwargs,
+            )
+        with self.assertRaisesRegex(
+            QuadricBoundaryCompositingError,
+            "mutually exclusive",
+        ):
+            compute_quadric_boundary_compositing(
+                (source,),
+                spans,
+                rank_one_section_source_group=valid,
+                rank_one_section_source_groups=(valid,),
+                **kwargs,
+            )
+
+    def test_cross_group_and_external_crossings_remain_in_painter_graph(self) -> None:
+        def section_source(source_id: str, surface_id: str, depth: float):
+            return curve_boundary_source(
+                SegmentCurve(
+                    source_id,
+                    (-1.0, depth, 0.0),
+                    (1.0, depth, 0.0),
+                ),
+                source_kind=BoundarySourceKind.SECTION_CURVE,
+                owner_id=f"section:{surface_id}",
+                section_surface_id=surface_id,
+                section_plane_id=f"plane:{surface_id}",
+            )
+
+        first = section_source("a-section", "surface-a", 0.0)
+        external = curve_boundary_source(
+            SegmentCurve("b-external", (-1.0, 1.0, 0.0), (1.0, 1.0, 0.0))
+        )
+        second = section_source("c-section", "surface-c", 2.0)
+        sources = (first, external, second)
+        spans = {
+            item.source_id: (
+                QuadricBoundaryVisibilitySpan(
+                    item.curve.domain,
+                    VisibilityKind.VISIBLE,
+                ),
+            )
+            for item in sources
+        }
+
+        def group(item, surface_id: str):
+            return QuadricRankOneSectionSourceGroup(
+                surface_id,
+                f"plane:{surface_id}",
+                (
+                    QuadricBoundarySectionSourceProjection(
+                        item.source_id,
+                        BoundaryScreenProjectionDimension.LINE,
+                    ),
+                ),
+                (-1.0, 0.0),
+                (1.0, 0.0),
+                (1.0, 0.0, 0.0),
+                1.0e-12,
+            )
+
+        crossings = (
+            ProjectedCurveCrossing(
+                "cross-group",
+                first.source_id,
+                second.source_id,
+                0.5,
+                0.5,
+                (0.0, 0.0),
+                0.0,
+                2.0,
+                first.source_id,
+                second.source_id,
+            ),
+            ProjectedCurveCrossing(
+                "external-group",
+                first.source_id,
+                external.source_id,
+                0.5,
+                0.5,
+                (0.0, 0.0),
+                1.0,
+                0.0,
+                external.source_id,
+                first.source_id,
+            ),
+        )
+        frame = compute_quadric_boundary_compositing(
+            sources,
+            spans,
+            paint_policy=QuadricPaintPolicy.DIAGRAMMATIC,
+            parent_item_ids=(),
+            parent_relations=(),
+            surface_item_by_id={},
+            crossings=crossings,
+            rank_one_section_source_groups=(
+                group(first, "surface-a"),
+                group(second, "surface-c"),
+            ),
+        )
+
+        reasons = " ".join(item.reason for item in frame.order_relations)
+        self.assertIn("boundary_crossing:cross-group", reasons)
+        self.assertIn("boundary_crossing:external-group", reasons)
+        self.assertEqual(frame.crossings, crossings)
+
     def test_generator_style_identity_is_canonical_and_non_empty(self) -> None:
         spec = GeneratorBoundarySpec(
             "generator",
@@ -553,7 +1126,7 @@ class QuadricBoundaryContractTests(unittest.TestCase):
         )
         self.assertEqual(
             payload["schema"],
-            "manim-quadric-boundary-compositing/v2",
+            "manim-quadric-boundary-compositing/v3",
         )
         self.assertEqual(
             payload["schema"],

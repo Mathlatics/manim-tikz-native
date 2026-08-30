@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import json
-from math import acos, asinh, atanh, atan2, ceil, floor, isfinite, sqrt, tau
+from math import acos, asinh, atanh, atan2, ceil, floor, isfinite, log, sqrt, tau
 from typing import Mapping, Sequence
 
 import numpy as np
@@ -303,6 +303,96 @@ def _rank_one_ellipse_model(
     )
 
 
+def _rank_one_unbounded_conic_model(
+    curve: ParametricConicBranch,
+    origin: np.ndarray,
+    first: np.ndarray,
+    second: np.ndarray,
+    *,
+    parameter_kind: str,
+) -> _ProjectedModel | None:
+    """Represent an edge-on parabola/hyperbola by its analytic line image.
+
+    The stored coefficients are the exact scalar parameterization along one
+    SVD-certified screen axis:
+
+    - parabola: ``a*t + b*t**2``;
+    - hyperbola: ``a*cosh(t) + b*sinh(t)`` (with branch sign in ``a``).
+
+    Finite domains are retained on ``curve`` and classified later without
+    sampling.
+    """
+
+    linear = np.column_stack((first, second))
+    first_length = float(np.linalg.norm(first))
+    second_length = float(np.linalg.norm(second))
+    area_scale = first_length * second_length
+    determinant = abs(float(np.linalg.det(linear)))
+    if area_scale > 0.0 and determinant > 1024.0 * _FLOAT_EPSILON * area_scale:
+        return None
+    left, singular, _right = np.linalg.svd(linear, full_matrices=False)
+    amplitude = float(singular[0]) if len(singular) else 0.0
+    if not isfinite(amplitude) or amplitude <= 0.0:
+        raise ProjectedCurveIntersectionError(
+            f"curve {curve.curve_id!r} collapses to one screen point"
+        )
+    unit_direction = np.asarray(left[:, 0], dtype=float)
+    direction = unit_direction * amplitude
+    first_coefficient = float(np.dot(first, unit_direction))
+    if parameter_kind == "hyperbola_rank_one":
+        first_coefficient *= curve.parameterization.branch_sign
+    coefficients = (
+        first_coefficient,
+        float(np.dot(second, unit_direction)),
+    )
+    if coefficients == (0.0, 0.0):  # pragma: no cover - SVD excludes this
+        raise ProjectedCurveIntersectionError(
+            f"curve {curve.curve_id!r} collapses to one screen point"
+        )
+    return _ProjectedModel(
+        curve,
+        origin,
+        direction,
+        None,
+        None,
+        _projected_line(origin, direction, curve.curve_id),
+        parameter_kind,
+        curve.parameterization.branch_sign,
+        rank_one_coefficients=coefficients,
+    )
+
+
+def _rank_one_turn_is_certified(
+    model: _ProjectedModel,
+    parameter: float,
+) -> bool:
+    """Certify a zero derivative of one analytic rank-one scalar image."""
+
+    if model.rank_one_coefficients is None:
+        return False
+    first, second = model.rank_one_coefficients
+    if model.parameter_kind == "ellipse_rank_one":
+        terms = (
+            -first * float(np.sin(parameter)),
+            second * float(np.cos(parameter)),
+        )
+    elif model.parameter_kind == "parabola_rank_one":
+        terms = (first, 2.0 * second * parameter)
+    elif model.parameter_kind == "hyperbola_rank_one":
+        terms = (
+            first * float(np.sinh(parameter)),
+            second * float(np.cosh(parameter)),
+        )
+    else:
+        return False
+    derivative = sum(terms)
+    scale = max(
+        *(abs(item) for item in terms),
+        float(np.finfo(float).tiny),
+    )
+    return abs(derivative) <= 256.0 * _FLOAT_EPSILON * scale
+
+
 def _projected_model(curve: AnalyticCurve3D, view: ParallelView) -> _ProjectedModel:
     screen = view.matrix[:2]
     if isinstance(curve, SegmentCurve):
@@ -352,12 +442,30 @@ def _projected_model(curve: AnalyticCurve3D, view: ParallelView) -> _ProjectedMo
     elif kind is ConicKind.HYPERBOLA:
         canonical = np.diag((1.0, -1.0, -1.0))
         parameter_kind = "hyperbola"
+        rank_one = _rank_one_unbounded_conic_model(
+            curve,
+            origin,
+            first,
+            second,
+            parameter_kind="hyperbola_rank_one",
+        )
+        if rank_one is not None:
+            return rank_one
     elif kind is ConicKind.PARABOLA:
         canonical = np.asarray(
             ((-1.0, 0.0, 0.0), (0.0, 0.0, 0.5), (0.0, 0.5, 0.0)),
             dtype=float,
         )
         parameter_kind = "parabola"
+        rank_one = _rank_one_unbounded_conic_model(
+            curve,
+            origin,
+            first,
+            second,
+            parameter_kind="parabola_rank_one",
+        )
+        if rank_one is not None:
+            return rank_one
     elif kind in {
         ConicKind.INTERSECTING_LINES,
         ConicKind.PARALLEL_LINES,
@@ -420,6 +528,92 @@ def _model_world_origin(model: _ProjectedModel) -> np.ndarray:
     return origin
 
 
+def _real_quadratic_roots(
+    quadratic: float,
+    linear: float,
+    constant: float,
+) -> tuple[float, ...]:
+    """Solve one real quadratic with a local arithmetic discriminant bound."""
+
+    a = np.longdouble(quadratic)
+    b = np.longdouble(linear)
+    c = np.longdouble(constant)
+    if a == 0.0:
+        if b == 0.0:
+            return ()
+        return (float(-c / b),)
+    discriminant = b * b - np.longdouble(4.0) * a * c
+    envelope = (
+        np.longdouble(64.0)
+        * np.longdouble(_FLOAT_EPSILON)
+        * (abs(b * b) + np.longdouble(4.0) * abs(a * c))
+    )
+    if discriminant < -envelope:
+        return ()
+    if discriminant <= envelope:
+        return (float(-b / (np.longdouble(2.0) * a)),)
+    root_discriminant = np.sqrt(discriminant)
+    sign = np.longdouble(1.0 if b >= 0.0 else -1.0)
+    stable = -np.longdouble(0.5) * (b + sign * root_discriminant)
+    if stable == 0.0:
+        return (float(-b / (np.longdouble(2.0) * a)),)
+    values = sorted((float(stable / a), float(c / stable)))
+    if values[1] == values[0]:
+        return (values[0],)
+    return tuple(values)
+
+
+def _rank_one_unbounded_parameters(
+    model: _ProjectedModel,
+    scalar: float,
+    *,
+    screen_epsilon: float,
+) -> tuple[float, ...]:
+    """Invert a certified rank-one parabola/hyperbola scalar equation."""
+
+    if model.rank_one_coefficients is None:  # pragma: no cover
+        return ()
+    first, second = model.rank_one_coefficients
+    if model.parameter_kind == "parabola_rank_one":
+        candidates = _real_quadratic_roots(second, first, -scalar)
+
+        def evaluate(parameter: float) -> float:
+            return first * parameter + second * parameter * parameter
+
+    elif model.parameter_kind == "hyperbola_rank_one":
+        positive_roots = tuple(
+            root
+            for root in _real_quadratic_roots(
+                first + second,
+                -2.0 * scalar,
+                first - second,
+            )
+            if root > 0.0 and isfinite(root)
+        )
+        candidates = tuple(log(root) for root in positive_roots)
+
+        def evaluate(parameter: float) -> float:
+            return first * float(np.cosh(parameter)) + second * float(
+                np.sinh(parameter)
+            )
+
+    else:  # pragma: no cover
+        return ()
+    result: list[float] = []
+    for parameter in sorted(candidates):
+        value = evaluate(parameter)
+        arithmetic = 64.0 * _FLOAT_EPSILON * max(
+            1.0,
+            abs(value),
+            abs(scalar),
+        )
+        if abs(value - scalar) > screen_epsilon + arithmetic:
+            continue
+        if not result or parameter != result[-1]:
+            result.append(float(parameter))
+    return tuple(result)
+
+
 def _target_parameters(
     model: _ProjectedModel,
     point: np.ndarray,
@@ -466,6 +660,21 @@ def _target_parameters(
                 base, curve, parameter_epsilon
             )
         )
+    elif model.parameter_kind in {
+        "hyperbola_rank_one",
+        "parabola_rank_one",
+    }:
+        axis = np.asarray(model.screen_first, dtype=float)
+        axis_length = float(np.linalg.norm(axis))
+        if axis_length <= 0.0:  # pragma: no cover - construction rejects this
+            return ()
+        axis /= axis_length
+        scalar = float(np.dot(screen_delta, axis))
+        candidates = _rank_one_unbounded_parameters(
+            model,
+            scalar,
+            screen_epsilon=screen_epsilon,
+        )
     elif model.parameter_kind == "line":
         displacement = model.screen_first
         denominator = float(np.dot(displacement, displacement))
@@ -509,14 +718,29 @@ def _target_parameters(
     result: list[float] = []
     for candidate in sorted(float(item) for item in candidates):
         if world_point is not None and view is not None:
-            for endpoint in (curve.domain.start, curve.domain.end):
-                endpoint_delta = view.matrix[:2] @ (
-                    np.asarray(world_point, dtype=float)
-                    - np.asarray(curve.point(endpoint), dtype=float)
+            matching_endpoints = tuple(
+                endpoint
+                for endpoint in (curve.domain.start, curve.domain.end)
+                if float(
+                    np.linalg.norm(
+                        view.matrix[:2]
+                        @ (
+                            np.asarray(world_point, dtype=float)
+                            - np.asarray(curve.point(endpoint), dtype=float)
+                        )
+                    )
                 )
-                if float(np.linalg.norm(endpoint_delta)) <= screen_epsilon:
-                    candidate = endpoint
-                    break
+                <= screen_epsilon
+            )
+            if matching_endpoints:
+                # A rank-one finite curve can project both authored endpoints
+                # to the same screen point while retaining different depths.
+                # Snap to the endpoint nearest the analytic parameter instead
+                # of always choosing domain.start and erasing one crossing.
+                candidate = min(
+                    matching_endpoints,
+                    key=lambda endpoint: abs(endpoint - candidate),
+                )
         if candidate < curve.domain.start - parameter_epsilon:
             continue
         if candidate > curve.domain.end + parameter_epsilon:
@@ -1091,9 +1315,17 @@ def _stationary_is_projected_tangency(
         target_tangent = screen @ np.asarray(
             target.curve.tangent(target_parameter), dtype=float
         )
-        tangent_scale = float(np.linalg.norm(source_tangent)) * float(
-            np.linalg.norm(target_tangent)
-        )
+        source_tangent_length = float(np.linalg.norm(source_tangent))
+        target_tangent_length = float(np.linalg.norm(target_tangent))
+        if (
+            _rank_one_turn_is_certified(source_model, parameter)
+            and target_tangent_length > 0.0
+        ) or (
+            _rank_one_turn_is_certified(target, target_parameter)
+            and source_tangent_length > 0.0
+        ):
+            return True
+        tangent_scale = source_tangent_length * target_tangent_length
         if tangent_scale <= 0.0:
             continue
         cross = abs(
@@ -1309,8 +1541,97 @@ def _same_projected_support(
     )
 
 
+def _rank_one_interval_scalar_evidence(
+    model: _ProjectedModel,
+    target: _ProjectedModel,
+    view: ParallelView,
+    axis: np.ndarray,
+    *,
+    parameter_epsilon: float,
+) -> tuple[float, float, tuple[tuple[float, float], ...]]:
+    """Return analytic extrema of one finite curve on a shared screen line."""
+
+    curve = model.curve
+    candidates = {float(curve.domain.start), float(curve.domain.end)}
+    if model.parameter_kind == "ellipse_rank_one":
+        if model.rank_one_coefficients is None:  # pragma: no cover
+            raise ProjectedCurveIntersectionError(
+                "rank-one ellipse has no scalar coefficients"
+            )
+        first, second = model.rank_one_coefficients
+        phase = atan2(second, first)
+        candidates.update(
+            _parameters_in_angular_domain(
+                phase,
+                curve,
+                parameter_epsilon,
+            )
+        )
+        candidates.update(
+            _parameters_in_angular_domain(
+                phase + 0.5 * tau,
+                curve,
+                parameter_epsilon,
+            )
+        )
+    elif model.parameter_kind == "parabola_rank_one":
+        if model.rank_one_coefficients is None:  # pragma: no cover
+            raise ProjectedCurveIntersectionError(
+                "rank-one parabola has no scalar coefficients"
+            )
+        first, second = model.rank_one_coefficients
+        if second != 0.0:
+            stationary = -first / (2.0 * second)
+            if curve.domain.contains(stationary, tolerance=parameter_epsilon):
+                candidates.add(
+                    min(curve.domain.end, max(curve.domain.start, stationary))
+                )
+    elif model.parameter_kind == "hyperbola_rank_one":
+        if model.rank_one_coefficients is None:  # pragma: no cover
+            raise ProjectedCurveIntersectionError(
+                "rank-one hyperbola has no scalar coefficients"
+            )
+        first, second = model.rank_one_coefficients
+        if first != 0.0:
+            ratio = -second / first
+            if abs(ratio) < 1.0:
+                stationary = atanh(ratio)
+                if curve.domain.contains(
+                    stationary,
+                    tolerance=parameter_epsilon,
+                ):
+                    candidates.add(
+                        min(
+                            curve.domain.end,
+                            max(curve.domain.start, stationary),
+                        )
+                    )
+
+    screen = view.matrix[:2]
+    reference_world = _model_world_origin(target)
+    evidence = tuple(
+        (
+            parameter,
+            float(
+                np.dot(
+                    screen
+                    @ (
+                        np.asarray(curve.point(parameter), dtype=float)
+                        - reference_world
+                    ),
+                    axis,
+                )
+            ),
+        )
+        for parameter in sorted(candidates)
+    )
+    values = tuple(value for _parameter, value in evidence)
+    return min(values), max(values), evidence
+
+
 def _same_line_support_parameters(
     source: AnalyticCurve3D,
+    source_model: _ProjectedModel,
     target: _ProjectedModel,
     view: ParallelView,
     *,
@@ -1319,24 +1640,33 @@ def _same_line_support_parameters(
 ) -> tuple[float, ...]:
     """Classify finite overlap on one shared projected line support."""
 
-    screen = view.matrix[:2]
     # ``screen_first`` is stored inside a frozen model, but NumPy arrays are
     # still mutable.  Copy before normalization so one pair calculation cannot
     # silently change the model used by the later parameter recovery step.
     axis = np.array(target.screen_first, dtype=float, copy=True)
     axis /= float(np.linalg.norm(axis))
 
-    def coordinate(curve: AnalyticCurve3D, parameter: float) -> float:
-        point = screen @ np.asarray(curve.point(parameter), dtype=float)
-        return float(np.dot(point - target.screen_origin, axis))
-
-    source_start = coordinate(source, source.domain.start)
-    source_end = coordinate(source, source.domain.end)
     target_curve = target.curve
-    target_start = coordinate(target_curve, target_curve.domain.start)
-    target_end = coordinate(target_curve, target_curve.domain.end)
-    lower = max(min(source_start, source_end), min(target_start, target_end))
-    upper = min(max(source_start, source_end), max(target_start, target_end))
+    source_lower, source_upper, source_evidence = (
+        _rank_one_interval_scalar_evidence(
+            source_model,
+            target,
+            view,
+            axis,
+            parameter_epsilon=parameter_epsilon,
+        )
+    )
+    target_lower, target_upper, _target_evidence = (
+        _rank_one_interval_scalar_evidence(
+            target,
+            target,
+            view,
+            axis,
+            parameter_epsilon=parameter_epsilon,
+        )
+    )
+    lower = max(source_lower, target_lower)
+    upper = min(source_upper, target_upper)
     if upper < lower - screen_epsilon:
         return ()
     if upper - lower > screen_epsilon:
@@ -1345,16 +1675,22 @@ def _same_line_support_parameters(
             "coincident projected support over a positive-length interval "
             "and therefore infinitely many crossings"
         )
-    denominator = source_end - source_start
-    if abs(denominator) <= screen_epsilon:
-        raise ProjectedCurveIntersectionError(
-            f"curve {source.curve_id!r} collapses on its projected line"
-        )
     scalar = 0.5 * (lower + upper)
-    ratio = (scalar - source_start) / denominator
-    parameter = source.domain.start + ratio * source.domain.length
-    parameter = min(source.domain.end, max(source.domain.start, parameter))
-    return (float(parameter),)
+    parameters = tuple(
+        parameter
+        for parameter, coordinate in source_evidence
+        if abs(coordinate - scalar) <= screen_epsilon
+    )
+    if not parameters:
+        raise ProjectedCurveIntersectionError(
+            f"point contact for curve {source.curve_id!r} cannot be recovered "
+            "from its analytic line-image extrema"
+        )
+    result: list[float] = []
+    for parameter in sorted(parameters):
+        if not result or parameter - result[-1] > parameter_epsilon:
+            result.append(float(parameter))
+    return tuple(result)
 
 
 def _same_ellipse_support_parameters(
@@ -1548,9 +1884,10 @@ def _same_support_source_parameters(
     parameter_epsilon: float,
     screen_epsilon: float,
 ) -> tuple[float, ...]:
-    if source_model.parameter_kind == target.parameter_kind == "line":
+    if source_model.line is not None and target.line is not None:
         return _same_line_support_parameters(
             source,
+            source_model,
             target,
             view,
             parameter_epsilon=parameter_epsilon,
@@ -2215,23 +2552,25 @@ def compute_projected_curve_crossings(
                             tangent_scale = float(
                                 np.linalg.norm(first_tangent)
                             ) * float(np.linalg.norm(second_tangent))
-                            if tangent_scale <= 0.0:
-                                rank_one_turn = (
-                                    first_model.parameter_kind
-                                    == "ellipse_rank_one"
-                                    and float(np.linalg.norm(first_tangent)) == 0.0
-                                    and float(np.linalg.norm(second_tangent)) > 0.0
-                                ) or (
-                                    second_model.parameter_kind
-                                    == "ellipse_rank_one"
-                                    and float(np.linalg.norm(second_tangent)) == 0.0
-                                    and float(np.linalg.norm(first_tangent)) > 0.0
+                            rank_one_turn = (
+                                _rank_one_turn_is_certified(
+                                    first_model,
+                                    first_parameter,
                                 )
-                                if not rank_one_turn:
-                                    raise ProjectedCurveIntersectionError(
-                                        "a projected curve tangent collapsed at a crossing"
-                                    )
+                                and float(np.linalg.norm(second_tangent)) > 0.0
+                            ) or (
+                                _rank_one_turn_is_certified(
+                                    second_model,
+                                    second_parameter,
+                                )
+                                and float(np.linalg.norm(first_tangent)) > 0.0
+                            )
+                            if rank_one_turn:
                                 tangential = True
+                            elif tangent_scale <= 0.0:
+                                raise ProjectedCurveIntersectionError(
+                                    "a projected curve tangent collapsed at a crossing"
+                                )
                             else:
                                 tangent_cross = float(
                                     first_tangent[0] * second_tangent[1]

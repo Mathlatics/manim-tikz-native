@@ -1,7 +1,12 @@
 # Finite-cone section v1 support contract
 
-- Status: **frozen semantic support contract**
+- Status: **versioned, evidence-gated support contract**
 - Contract ID: `quadric-section-v1`
+
+The original matrix was frozen on 2026-08-27 to prevent implicit claims.
+Additive row expansions remain allowed only through the evidence and change
+control rules below; the exact expansion history is recorded in the
+machine-readable contract.
 
 Machine-readable contract:
 [`tests/fixtures/quadric-section-v1-contract.json`](../tests/fixtures/quadric-section-v1-contract.json)
@@ -28,7 +33,7 @@ case.
 | Finite cone frustum: section, clipping, ordinary occlusion | Supported | Uniform styling, automatic boundary visibility, and up to two real cap chords are supported |
 | Frustum: component-aware lateral and two-terminal-cap shading | Supported | Both terminal disks remain separate depth components; exact edge-on zero-area cap fills are omitted without inventing area |
 | Finite open double shell: display and general occlusion | Supported with constraints | It expands once into two stable open single-nappe components |
-| Finite open double shell: unified cutting-plane compositing | Supported with constraints | `CompositeQuadricSection3D` coordinates the two canonical nappes only when their complete projected contact set is one zero-dimensional point inside the shared-apex tolerance; remote points, nonzero segments, area overlap, and topology-family changes fail explicitly |
+| Finite open double shell: unified cutting-plane compositing | Supported with constraints | `CompositeQuadricSection3D` coordinates the two canonical nappes for both `AREA` and certified edge-on `LINE` plane projections when their complete projected contact set is one zero-dimensional point inside the shared-apex tolerance; remote points, nonzero segments, area overlap, and topology-family changes fail explicitly |
 | One finite convex quadric and one cutting plane | Supported | This is the complete local section-compositor scope |
 | Multiple intersecting quadrics and one cutting plane | Unsupported; explicit failure | No local multi-surface plane arrangement is guessed |
 | Parallel projection | Supported | Orthographic and general affine-free parallel views use `ParallelView` |
@@ -36,7 +41,7 @@ case.
 | Manim Cairo | Supported | The fixed-capacity production binding and pixel regressions target Cairo |
 | Manim OpenGL | Unsupported; explicit failure | `QuadricOcclusion3D.attach()` rejects a non-Cairo renderer before Scene ownership changes |
 | Cutting plane with a two-dimensional screen projection | Supported | The plane display patch must retain certifiable display area |
-| Cutting plane projected completely edge-on | Unsupported; explicit failure | Frame preparation fails and an animated controller rolls back to its last committed frame |
+| Finite cutting-plane patch projected completely edge-on | Supported with constraints | The ordinary one-surface compositor and the dedicated open-double coordinator emit a certified zero-area `LINE`: fill is omitted, one finite near-side outline chain is retained without duplicate strokes, and the line does not occlude other boundaries as an area; each open-double nappe keeps separate section evidence and painter ordering |
 
 “Multiple intersecting quadrics + one cutting plane” is a local section-plane
 limitation. It does not remove the separate ability to place multiple strictly
@@ -45,20 +50,34 @@ disjoint quadrics in one global occlusion graph.
 The open-double row is a narrow coordination exception, not a general
 multi-surface arrangement. Each nappe is still solved by the ordinary
 one-surface compositor. The coordinator certifies their projected interiors,
-retains both local rear/front sheet pairs, replaces the two local outside
-partitions with one area-conserving common plane partition, and publishes one
-draw order. Degenerate polygon intersection is not discarded during this
+retains both local rear/front sheet pairs, and publishes one draw order. In an
+`AREA` view it replaces the two local outside partitions with one
+area-conserving common plane partition. In a `LINE` view it removes all fill,
+merges the two independently certified one-dimensional child partitions, and
+draws one complete finite near-side chain. Degenerate polygon intersection is
+not discarded during this
 certificate: the evidence records `contact_dimension`, `contact_extent`, the
 maximum distance from the apex, and all retained contact points. Only
 dimension zero inside the apex tolerance succeeds. A nonzero contact segment,
 a remote point, or positive-area contact is an explicit failure.
 
-An individual cone trim rim may project rank one, meaning it becomes a finite
-line segment in an exact side view. That case is supported. The compositor
-either certifies that the finite segment belongs to the outer projection proxy
-or treats it as a finite arrangement boundary. This is different from the
-cutting plane itself projecting edge-on, where no two-dimensional display
-patch exists and v1 fails explicitly.
+An individual cone trim rim or finite cutting-plane display patch may project
+rank one, meaning it becomes a finite line segment in an exact side view. In
+the plane-patch case, SVD evidence records the rank change and finite endpoints.
+The patch contributes no fill and no plane-occlusion spans; only the
+observer-near boundary envelope is drawn, so coincident rectangle edges do not
+make the line darker or thicker. This is a display contract for the finite
+patch, not an invented thickness for the infinite mathematical plane.
+
+The section boundary is resolved in the same rank-one frame. Membership in the
+current surface/plane section is certified from the full analytic curve and
+finite-surface equations, never from an ID prefix. Circle, ellipse, parabola,
+and hyperbola members which retain a line place painted hidden intervals before
+painted visible intervals. In an open double shell, each nappe owns a separate
+rank-one source group; a local certificate cannot silently suppress a crossing
+from the sibling nappe or an external curve. A cap chord which projects to one
+point retains its semantic source and preallocated slot but emits no zero-length
+stroke.
 
 ## Layer ownership
 
@@ -168,8 +187,9 @@ V1 never guesses an image outside the matrix:
 - the composite coordinator rejects non-canonical children, contact outside
   the shared apex, nonzero coincident contact segments, positive-area nappe
   projection overlap, and unscheduled curve-identity topology changes;
-- a completely edge-on cutting plane fails during frame preparation; an
-  attached animation retains its prior committed state;
+- an edge-on finite plane patch must certify a nonzero one-dimensional extent
+  and one complete, non-overlapping near-side outline chain; otherwise frame
+  preparation fails before the previous committed state is changed;
 - OpenGL attachment fails before the controller adds display slots to the
   Scene;
 - perspective/projective input fails as an invalid parallel projection before

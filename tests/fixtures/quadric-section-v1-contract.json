@@ -2,6 +2,33 @@
   "schema": "manim-quadric-section-support-contract/v1",
   "contract_id": "quadric-section-v1",
   "frozen_on": "2026-08-27",
+  "last_expanded_on": "2026-08-30",
+  "expansions": [
+    {
+      "id": "single_surface_edge_on_plane_line",
+      "capability_ids": ["edge_on_cutting_plane"],
+      "evidence_ids": [
+        "edge_on_plane_line_geometry",
+        "edge_on_line_binding",
+        "edge_on_line_cairo_pixels",
+        "edge_on_section_family_certification",
+        "edge_on_four_conic_fixed_slots"
+      ]
+    },
+    {
+      "id": "open_double_edge_on_plane_line",
+      "capability_ids": [
+        "open_double_unified_section_plane_compositing",
+        "edge_on_cutting_plane"
+      ],
+      "evidence_ids": [
+        "open_double_edge_on_geometry",
+        "open_double_edge_on_binding",
+        "open_double_edge_on_cairo_pixels",
+        "open_double_edge_on_rollback"
+      ]
+    }
+  ],
   "scope": "Finite cone sections and automatic occlusion under parallel projection",
   "components": {
     "quadric_geometry": {
@@ -23,10 +50,12 @@
         "allowed_dimension": 0,
         "max_distance_from_shared_apex": "boundary_tolerance",
         "reject_nonzero_segment": true,
-        "reject_positive_area": true
+        "reject_positive_area": true,
+        "requires_area_patch_projection": false,
+        "accepted_patch_projection_kinds": ["area", "line"]
       },
       "cutting_plane_limit": 1,
-      "cutting_plane_requires_display_area": true
+      "cutting_plane_projection_kinds": ["area", "line"]
     },
     "manim_binding": {
       "renderer": "cairo",
@@ -110,7 +139,11 @@
         "open_double_composite_binding",
         "open_double_composite_cairo",
         "open_double_composite_overlap_failure",
-        "open_double_single_facade_failure"
+        "open_double_single_facade_failure",
+        "open_double_edge_on_geometry",
+        "open_double_edge_on_binding",
+        "open_double_edge_on_cairo_pixels",
+        "open_double_edge_on_rollback"
       ]
     },
     {
@@ -185,12 +218,18 @@
     },
     {
       "id": "edge_on_cutting_plane",
-      "status": "unsupported_explicit_failure",
-      "renderer_neutral": false,
-      "cairo_binding": false,
+      "status": "supported_with_constraints",
+      "renderer_neutral": true,
+      "cairo_binding": true,
       "evidence_ids": [
-        "edge_on_plane_failure",
-        "edge_on_animation_rollback"
+        "edge_on_plane_line_geometry",
+        "edge_on_line_binding",
+        "edge_on_line_cairo_pixels",
+        "edge_on_section_family_certification",
+        "edge_on_four_conic_fixed_slots",
+        "open_double_edge_on_geometry",
+        "open_double_edge_on_binding",
+        "open_double_edge_on_cairo_pixels"
       ]
     }
   ]

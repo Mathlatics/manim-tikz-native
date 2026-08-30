@@ -42,6 +42,7 @@ from .boundary_compositing import (
     QuadricBoundaryCompositingError,
     QuadricBoundaryCompositingFrame,
     QuadricBoundaryPaintFragment,
+    QuadricRankOneSectionSourceGroup,
     QuadricBoundarySource,
     QuadricBoundaryVisibilitySpan,
     compute_boundary_visibility,
@@ -50,6 +51,7 @@ from .boundary_compositing import (
 from .boundary_section import (
     QUADRIC_BOUNDARY_SECTION_LIMITS,
     QuadricBoundarySectionLimits,
+    certify_rank_one_section_boundary_sources,
     compute_boundary_section_spans,
 )
 from .composite_section import (
@@ -86,7 +88,9 @@ from .manim_runtime import (
     _ManagedQuadricDisplayGroup,
     _PreparedBoundaryFragment,
     _PreparedConeFill,
+    _PreparedDash,
     _PreparedDisplayAction,
+    _ResolvedParallelCameraFrame,
     _SurfaceViewCache,
     _SurfacePaintSlot,
     _apply_display_delta,
@@ -95,9 +99,10 @@ from .manim_runtime import (
     _boundary_style_registry,
     _capture_root,
     _classify_dirty_frame,
-    _coerce_view,
+    _coerce_projection_frame,
     _curve_slots_family_capacity,
     _display_digest,
+    _display_offset,
     _hide_vmobject,
     _invalidate_cairo_static_image,
     _prepare_boundary_fragments,
@@ -110,7 +115,9 @@ from .manim_runtime import (
     _rollback_display_transaction,
     _scene_containers,
     _set_closed_subpaths,
+    _set_open_subpaths,
     _painter_band_signature,
+    _projection_display_offset,
 )
 from .plane_patch import PlanePatchFitError, fit_plane_display_patch
 from .projection import (
@@ -126,6 +133,7 @@ from .performance import (
 )
 from .section_compositing import (
     PlaneDepthRole,
+    PlanePatchProjectionKind,
     QUADRIC_SECTION_COMPOSITING_LIMITS,
     QuadricSectionCompositingError,
     QuadricSectionCompositingFrame,
@@ -166,6 +174,7 @@ class _PreparedCompositeNumeric:
     frame: CompositeQuadricSectionCompositingFrame
     surfaces: tuple[_PreparedCompositeSurface, ...]
     plane_polygons: Mapping[PlaneDepthRole, tuple[np.ndarray, ...]]
+    plane_outline_paths: Mapping[PlaneDepthRole, tuple[np.ndarray, ...]]
     boundary_frame: QuadricBoundaryCompositingFrame
     boundary_fragments: Mapping[str, tuple[_PreparedBoundaryFragment, ...]]
     fragment_slot_maps: Mapping[str, Mapping[str, int]]
@@ -180,6 +189,7 @@ class _ResolvedCompositeFrameInputs:
     lineage: tuple[CompositeSectionBranchLineage, ...]
     owners: Mapping[str, ConeSpec]
     view: ParallelView
+    display_offset: tuple[float, float]
     patch: PlaneDisplayPatchSpec
     surface_view_signature: bytes
     geometry_signature: bytes
@@ -280,6 +290,7 @@ class CompositeQuadricSection3D:
         include_surface_boundaries: bool = True,
         generator_boundaries: Sequence[GeneratorBoundarySpec] = (),
         allocated_boundary_ids: Sequence[str] | None = None,
+        display_offset: Sequence[float] = (0.0, 0.0),
     ) -> None:
         if not isinstance(surface, ConeSpec):
             raise TypeError("surface must be a ConeSpec")
@@ -355,6 +366,7 @@ class CompositeQuadricSection3D:
         self.boundary_section_limits = boundary_section_limits
         self.include_surface_boundaries = include_surface_boundaries
         self._generator_boundaries = generators
+        self.display_offset = display_offset
         self.boundary_styles = _boundary_style_registry(
             style,
             boundary_styles,
@@ -510,6 +522,7 @@ class CompositeQuadricSection3D:
             opacity_sentinel=self._opacity_sentinel,
         )
         self._update_driver = Mobject()
+        self._update_driver._tikz_native_parallel_camera_state_consumer = True
 
         def update_display(mobject: Mobject, dt: float) -> None:
             del mobject
@@ -563,13 +576,23 @@ class CompositeQuadricSection3D:
             )
         return value
 
-    def _resolve_view(self) -> ParallelView:
+    def _resolve_projection_frame(self) -> _ResolvedParallelCameraFrame:
         value = (
             self._projection_input(self.scene)
             if callable(self._projection_input)
             else self._projection_input
         )
-        return _coerce_view(value)
+        return _coerce_projection_frame(value, scene=self.scene)
+
+    def _resolve_view(
+        self,
+        projection_frame: _ResolvedParallelCameraFrame | None = None,
+    ) -> ParallelView:
+        """Resolve the linear kernel view, preserving the legacy helper."""
+
+        if projection_frame is None:
+            projection_frame = self._resolve_projection_frame()
+        return projection_frame.view
 
     def _section_curves(
         self,
@@ -628,7 +651,13 @@ class CompositeQuadricSection3D:
             plane = self._resolve_plane(expected_id=self._plane_id)
             curves, lineage, owner = self._section_curves(plane)
         self._validate_curve_topology(curves)
-        view = self._resolve_view()
+        projection_frame = self._resolve_projection_frame()
+        view = self._resolve_view(projection_frame)
+        display_offset = _projection_display_offset(
+            self.scene,
+            projection_frame,
+            self.display_offset,
+        )
         patch = self._fit_patch(plane)
         surface_view_signature = _display_digest(
             "composite-quadric-surface-view-v1",
@@ -660,6 +689,7 @@ class CompositeQuadricSection3D:
             self.boundary_section_limits,
             self.include_surface_boundaries,
             self._generator_boundaries,
+            display_offset,
         )
         return _ResolvedCompositeFrameInputs(
             plane,
@@ -667,11 +697,22 @@ class CompositeQuadricSection3D:
             lineage,
             dict(owner),
             view,
+            display_offset,
             patch,
             surface_view_signature,
             geometry_signature,
             _display_digest("composite-quadric-frame-draw-v1"),
         )
+
+    @property
+    def display_offset(self) -> tuple[float, float]:
+        """Return the validated display-only screen translation."""
+
+        return self._display_offset
+
+    @display_offset.setter
+    def display_offset(self, value: Sequence[float]) -> None:
+        self._display_offset = _display_offset(value)
 
     def _validate_curve_topology(
         self,
@@ -779,13 +820,40 @@ class CompositeQuadricSection3D:
                 PlaneDepthRole.OUTSIDE_PROJECTION,
                 PlaneDepthRole.IN_FRONT_OF_SURFACE,
             }
+            occluder_surface_ids: tuple[str, ...] = ()
+            if not visible:
+                midpoint = fragment.interval.midpoint
+                occluders: list[str] = []
+                for child in frame.child_frames:
+                    matches = tuple(
+                        item.role
+                        for item in child.plane_outline_fragments
+                        if item.edge_index == fragment.edge_index
+                        and item.interval.contains(midpoint, tolerance=0.0)
+                    )
+                    if len(set(matches)) != 1:
+                        raise CompositeQuadricSectionAuthoringError(
+                            "a child plane-outline partition has no unique "
+                            "depth role at a composite interval midpoint"
+                        )
+                    if matches[0] in {
+                        PlaneDepthRole.BEHIND_SURFACE,
+                        PlaneDepthRole.BETWEEN_SURFACE_SHEETS,
+                    }:
+                        occluders.append(child.surface_id)
+                if not occluders:
+                    raise CompositeQuadricSectionAuthoringError(
+                        "a hidden composite plane outline has no child "
+                        "occluder surface"
+                    )
+                occluder_surface_ids = tuple(sorted(occluders))
             grouped[
                 f"boundary:plane:{frame.plane.plane_id}:edge:{fragment.edge_index}"
             ].append(
                 QuadricBoundaryVisibilitySpan(
                     fragment.interval,
                     VisibilityKind.VISIBLE if visible else VisibilityKind.HIDDEN,
-                    (),
+                    occluder_surface_ids,
                     fragment.role.value,
                 )
             )
@@ -803,12 +871,29 @@ class CompositeQuadricSection3D:
         view: ParallelView,
         *,
         surface_sources: Sequence[QuadricBoundarySource] | None = None,
+        include_plane_outline: bool = True,
     ) -> tuple[QuadricBoundarySource, ...]:
+        authoritative_by_surface = {
+            surface.surface_id: compute_quadric_section_boundary_curves(
+                self.section_id,
+                surface,
+                plane,
+                context=self.context,
+                coefficient_tolerance=self.coefficient_tolerance,
+            )
+            for surface in {
+                item.surface_id: item for item in owners.values()
+            }.values()
+        }
         result = [
             section_curve_boundary_source(
                 curve,
                 owners[curve.curve_id],
                 plane,
+                section_id=self.section_id,
+                authoritative_curves=authoritative_by_surface[
+                    owners[curve.curve_id].surface_id
+                ],
                 context=self.context,
                 style_id="style:curve",
             )
@@ -817,7 +902,8 @@ class CompositeQuadricSection3D:
         if surface_sources is None:
             surface_sources = self._surface_boundary_sources(view)
         result.extend(surface_sources)
-        result.extend(plane_outline_sources(plane, patch))
+        if include_plane_outline:
+            result.extend(plane_outline_sources(plane, patch))
         result.sort(key=lambda item: item.source_id)
         ids = tuple(item.source_id for item in result)
         if len(set(ids)) != len(ids):
@@ -862,14 +948,75 @@ class CompositeQuadricSection3D:
         *,
         cached_source_ids: frozenset[str] = frozenset(),
         cached_crossings: Sequence[object] = (),
+        rank_one_section_source_groups: Sequence[
+            QuadricRankOneSectionSourceGroup
+        ] = (),
     ) -> tuple[object, ...]:
         result = list(cached_crossings)
         child_ids = {child.surface_id for child in self.children}
+        groups = tuple(rank_one_section_source_groups)
+        if not all(
+            isinstance(item, QuadricRankOneSectionSourceGroup) for item in groups
+        ):
+            raise TypeError(
+                "rank_one_section_source_groups must contain "
+                "QuadricRankOneSectionSourceGroup"
+            )
+        group_by_source_id: dict[str, QuadricRankOneSectionSourceGroup] = {}
+        point_source_ids: set[str] = set()
+        for group in groups:
+            for source_id in group.source_ids:
+                if source_id in group_by_source_id:
+                    raise CompositeQuadricSectionAuthoringError(
+                        "rank-one section source belongs to multiple nappe groups: "
+                        f"{source_id!r}"
+                    )
+                group_by_source_id[source_id] = group
+            point_source_ids.update(group.point_source_ids)
+
+        def pair_is_certified_rank_one_overlap(
+            first: QuadricBoundarySource,
+            second: QuadricBoundarySource,
+        ) -> bool:
+            if (
+                first.source_id in point_source_ids
+                or second.source_id in point_source_ids
+            ):
+                # A certified POINT member paints no stroke.  It cannot own a
+                # fragment crossing even if another curve passes through the
+                # same screen coordinate.
+                return True
+            first_group = group_by_source_id.get(first.source_id)
+            second_group = group_by_source_id.get(second.source_id)
+            if first_group is not None and first_group is second_group:
+                # Only one independently certified nappe may suppress its own
+                # coincident rank-one section roots.
+                return True
+            if first_group is not None and second_group is not None:
+                # Curves belonging to opposite nappes remain ordinary crossing
+                # candidates.  Their shared apex must never be inferred from a
+                # local rank-one certificate.
+                return False
+            group = first_group if first_group is not None else second_group
+            if group is None:
+                return False
+            other = second if first_group is not None else first
+            return (
+                other.owner_surface_id == group.surface_id
+                and other.semantic_kind
+                in {
+                    BoundarySemanticKind.SURFACE_BOUNDARY,
+                    BoundarySemanticKind.TRUE_SILHOUETTE,
+                }
+            )
+
         for first, second in combinations(sources, 2):
             if (
                 first.source_id in cached_source_ids
                 and second.source_id in cached_source_ids
             ):
+                continue
+            if pair_is_certified_rank_one_overlap(first, second):
                 continue
             active_intervals = None
             if self.paint_policy is QuadricPaintPolicy.PHYSICAL:
@@ -1099,13 +1246,16 @@ class CompositeQuadricSection3D:
                         self.section_compositing_limits.max_plane_fragments
                     ),
                 )
-            with _performance_stage(performance_attempt, "contour_union"):
-                contours = merge_quadric_plane_fragment_contours(
-                    frame.plane,
-                    frame.patch,
-                    child_frames[0].base_frame.visibility.projection_matrix,
-                    frame.plane_fragments,
-                )
+            if frame.projection_kind is PlanePatchProjectionKind.AREA:
+                with _performance_stage(performance_attempt, "contour_union"):
+                    contours = merge_quadric_plane_fragment_contours(
+                        frame.plane,
+                        frame.patch,
+                        child_frames[0].base_frame.visibility.projection_matrix,
+                        frame.plane_fragments,
+                    )
+            else:
+                contours = {role: () for role in PlaneDepthRole}
         except (
             CompositeQuadricSectionCompositingError,
             QuadricSectionCompositingError,
@@ -1139,6 +1289,23 @@ class CompositeQuadricSection3D:
             )
             for role in PlaneDepthRole
         }
+        plane_outline_paths = {
+            role: (
+                tuple(
+                    np.asarray(
+                        (
+                            (*fragment.screen_start, 0.0),
+                            (*fragment.screen_end, 0.0),
+                        ),
+                        dtype=float,
+                    )
+                    for fragment in frame.outline_fragments_by_role[role]
+                )
+                if frame.projection_kind is PlanePatchProjectionKind.LINE
+                else ()
+            )
+            for role in PlaneDepthRole
+        }
 
         static_sources, static_spans, static_crossings = (
             self._prepare_static_surface_boundaries(
@@ -1156,6 +1323,9 @@ class CompositeQuadricSection3D:
                 patch,
                 view,
                 surface_sources=static_sources,
+                include_plane_outline=(
+                    frame.projection_kind is PlanePatchProjectionKind.AREA
+                ),
             )
             non_plane = tuple(
                 item
@@ -1182,7 +1352,31 @@ class CompositeQuadricSection3D:
                 raise CompositeQuadricSectionAuthoringError(
                     f"semantic boundary visibility failed: {exc}"
                 ) from exc
-            spans.update(self._plane_outline_visibility(frame))
+            if frame.projection_kind is PlanePatchProjectionKind.AREA:
+                spans.update(self._plane_outline_visibility(frame))
+        rank_one_section_source_groups: tuple[
+            QuadricRankOneSectionSourceGroup, ...
+        ] = ()
+        if frame.projection_kind is PlanePatchProjectionKind.LINE:
+            try:
+                with _performance_stage(
+                    performance_attempt, "rank_one_section_certification"
+                ):
+                    rank_one_section_source_groups = tuple(
+                        certify_rank_one_section_boundary_sources(
+                            sources,
+                            frame.child_frame(child.surface_id),
+                            view,
+                            surface=child,
+                            context=self.context,
+                        )
+                        for child in self.children
+                    )
+            except QuadricBoundaryCompositingError as exc:
+                raise CompositeQuadricSectionAuthoringError(
+                    "rank-one open-double section certification failed: "
+                    f"{exc}"
+                ) from exc
         with _performance_stage(performance_attempt, "curve_crossings"):
             crossings = self._boundary_crossings(
                 sources,
@@ -1190,34 +1384,38 @@ class CompositeQuadricSection3D:
                 view,
                 cached_source_ids=static_source_ids,
                 cached_crossings=static_crossings,
+                rank_one_section_source_groups=(
+                    rank_one_section_source_groups
+                ),
             )
         section_spans: dict[str, tuple[object, ...]] = {}
         with _performance_stage(performance_attempt, "boundary_section_spans"):
-            for child in self.children:
-                owned = tuple(
-                    source
-                    for source in non_plane
-                    if source.owner_surface_id == child.surface_id
-                )
-                if not owned:
-                    continue
-                try:
-                    section_spans.update(
-                        compute_boundary_section_spans(
-                            owned,
-                            frame.child_frame(child.surface_id),
-                            view,
-                            crossings,
-                            surface=child,
-                            visibility_spans_by_source=spans,
-                            context=self.context,
-                            limits=self.boundary_section_limits,
-                        )
+            if frame.projection_kind is PlanePatchProjectionKind.AREA:
+                for child in self.children:
+                    owned = tuple(
+                        source
+                        for source in non_plane
+                        if source.owner_surface_id == child.surface_id
                     )
-                except QuadricBoundaryCompositingError as exc:
-                    raise CompositeQuadricSectionAuthoringError(
-                        f"boundary/section placement failed: {exc}"
-                    ) from exc
+                    if not owned:
+                        continue
+                    try:
+                        section_spans.update(
+                            compute_boundary_section_spans(
+                                owned,
+                                frame.child_frame(child.surface_id),
+                                view,
+                                crossings,
+                                surface=child,
+                                visibility_spans_by_source=spans,
+                                context=self.context,
+                                limits=self.boundary_section_limits,
+                            )
+                        )
+                    except QuadricBoundaryCompositingError as exc:
+                        raise CompositeQuadricSectionAuthoringError(
+                            f"boundary/section placement failed: {exc}"
+                        ) from exc
         anchors = self._anchors_by_surface(frame)
         surface_item_by_id = {
             item.child_surface_id: item.surface_front
@@ -1237,6 +1435,9 @@ class CompositeQuadricSection3D:
                     crossings=crossings,
                     section_anchors_by_surface=anchors,
                     section_spans_by_source=section_spans,
+                    rank_one_section_source_groups=(
+                        rank_one_section_source_groups
+                    ),
                 )
         except QuadricBoundaryCompositingError as exc:
             raise CompositeQuadricSectionAuthoringError(
@@ -1284,15 +1485,93 @@ class CompositeQuadricSection3D:
                 "ray_classification_count",
                 sum(item.ray_classification_count for item in child_frames),
             )
-        return _PreparedCompositeNumeric(
+        numeric = _PreparedCompositeNumeric(
             frame,
             prepared_surfaces,
             plane_polygons,
+            plane_outline_paths,
             boundary_frame,
             boundary_batch.fragments,
             boundary_batch.fragment_slot_maps,
             item_mobjects,
             boundary_frame.draw_order,
+        )
+        return self._translate_prepared_numeric(
+            numeric,
+            resolved_inputs.display_offset,
+        )
+
+    def _translate_prepared_numeric(
+        self,
+        numeric: _PreparedCompositeNumeric,
+        display_offset: tuple[float, float],
+    ) -> _PreparedCompositeNumeric:
+        """Apply the shared affine-camera translation to display paths only."""
+
+        if display_offset == (0.0, 0.0):
+            return numeric
+        delta = np.asarray((*display_offset, 0.0), dtype=float)
+
+        def points(value: np.ndarray) -> np.ndarray:
+            return np.asarray(value, dtype=float) + delta
+
+        def dashes(
+            values: tuple[_PreparedDash, ...],
+        ) -> tuple[_PreparedDash, ...]:
+            return tuple(replace(item, points=points(item.points)) for item in values)
+
+        def cone_fill(value: _PreparedConeFill | None) -> _PreparedConeFill | None:
+            if value is None:
+                return None
+            return replace(
+                value,
+                opaque_lateral_paths=tuple(
+                    points(item) for item in value.opaque_lateral_paths
+                ),
+                opaque_cap_paths=tuple(
+                    points(item) for item in value.opaque_cap_paths
+                ),
+                back_lateral_paths=tuple(
+                    points(item) for item in value.back_lateral_paths
+                ),
+                back_cap_paths=tuple(points(item) for item in value.back_cap_paths),
+                front_lateral_paths=tuple(
+                    points(item) for item in value.front_lateral_paths
+                ),
+                front_cap_paths=tuple(
+                    points(item) for item in value.front_cap_paths
+                ),
+            )
+
+        return replace(
+            numeric,
+            surfaces=tuple(
+                replace(
+                    item,
+                    surface_points=points(item.surface_points),
+                    cone_fill=cone_fill(item.cone_fill),
+                )
+                for item in numeric.surfaces
+            ),
+            plane_polygons={
+                role: tuple(points(item) for item in values)
+                for role, values in numeric.plane_polygons.items()
+            },
+            plane_outline_paths={
+                role: tuple(points(item) for item in values)
+                for role, values in numeric.plane_outline_paths.items()
+            },
+            boundary_fragments={
+                source_id: tuple(
+                    replace(
+                        item,
+                        points=points(item.points),
+                        dashes=dashes(item.dashes),
+                    )
+                    for item in values
+                )
+                for source_id, values in numeric.boundary_fragments.items()
+            },
         )
 
     def _scene_containers(self) -> tuple[list[object], ...]:
@@ -1456,6 +1735,15 @@ class CompositeQuadricSection3D:
                 opacity=self.style.section_plane_fill_opacity * opacity,
             )
             slot.set_stroke(opacity=0.0)
+        for role, item_id in self._plane_outline_anchor_ids.items():
+            slot = self._plane_slots[item_id]
+            _set_open_subpaths(slot, numeric.plane_outline_paths[role])
+            slot.set_fill(opacity=0.0)
+            slot.set_stroke(
+                color=self.style.section_plane_stroke_color,
+                width=self.style.section_plane_stroke_width,
+                opacity=self.style.section_plane_stroke_opacity * opacity,
+            )
 
     def _prepare_display_actions(
         self,
@@ -1487,6 +1775,7 @@ class CompositeQuadricSection3D:
                 _display_digest(
                     "composite-plane-roles",
                     prepared.numeric.plane_polygons,
+                    prepared.numeric.plane_outline_paths,
                     self.style,
                     opacity,
                 ),

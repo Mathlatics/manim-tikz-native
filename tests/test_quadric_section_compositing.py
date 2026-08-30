@@ -20,6 +20,7 @@ from polyhedron_visibility.quadrics.compositing import (
 )
 from polyhedron_visibility.quadrics.contract import (
     ConeSpec,
+    PlaneDisplayPatchSpec,
     SectionPlane,
     SphereSpec,
     CylinderSpec,
@@ -34,6 +35,7 @@ from polyhedron_visibility.quadrics.plane_motion import AxisAnglePlaneMotion
 from polyhedron_visibility.quadrics.projection import build_opaque_projection_proxy
 from polyhedron_visibility.quadrics.section_compositing import (
     PlaneDepthRole,
+    PlanePatchProjectionKind,
     QUADRIC_SECTION_COMPOSITING_LIMITS,
     QuadricPlaneFragment,
     QuadricSectionCompositingError,
@@ -45,6 +47,7 @@ from polyhedron_visibility.quadrics.section_compositing import (
     _adaptive_section_curve_parameters,
     _CanonicalVertexRegistry,
     _point_segment_distance_2d,
+    _plane_patch_projection_evidence,
     _SECTION_BOUNDARY_CHORD_DIVISOR,
     _section_curve_tangent_envelope_error_bound,
     _make_plane_partition_polygon,
@@ -1914,7 +1917,7 @@ class QuadricSectionCompositingTests(unittest.TestCase):
             )
             self.assertAlmostEqual(fragment_area, contour_area, places=8)
 
-    def test_edge_on_plane_and_capacity_overflow_fail_closed(self) -> None:
+    def test_edge_on_plane_becomes_one_finite_near_outline_chain(self) -> None:
         sphere = SphereSpec("sphere", (0.0, 0.0, 0.0), 1.0)
         edge_on = SectionPlane(
             "edge-on",
@@ -1923,18 +1926,202 @@ class QuadricSectionCompositingTests(unittest.TestCase):
             u_axis=(0.0, 0.0, 1.0),
         )
         edge_patch = fit_plane_display_patch("edge", edge_on, (sphere,)).patch
+        frame = compute_quadric_section_compositing(
+            _base_frame(sphere),
+            sphere,
+            edge_on,
+            edge_patch,
+            IDENTITY_VIEW,
+        )
+
+        self.assertIs(frame.projection_kind, PlanePatchProjectionKind.LINE)
+        self.assertFalse(frame.has_plane_fill)
+        self.assertEqual(frame.plane_fragments, ())
+        self.assertAlmostEqual(
+            frame.patch_projection.singular_values[0],
+            edge_patch.half_height,
+            places=12,
+        )
+        self.assertEqual(frame.patch_projection.singular_values[1], 0.0)
+        self.assertEqual(frame.patch_projection.rank_ratio, 0.0)
+        self.assertEqual(
+            frame.to_dict()["patchProjection"]["kind"],  # type: ignore[index]
+            "line",
+        )
+        self.assertTrue(frame.plane_outline_fragments)
+        # Positive depth points towards the observer.  Of the two coincident
+        # long patch edges, only the z=+half_width edge is retained.
+        self.assertEqual(
+            {item.edge_index for item in frame.plane_outline_fragments},
+            {1},
+        )
+        self.assertTrue(
+            all(
+                abs(item.world_start[2] - edge_patch.half_width) <= 1.0e-12
+                and abs(item.world_end[2] - edge_patch.half_width) <= 1.0e-12
+                for item in frame.plane_outline_fragments
+            )
+        )
+
+        projected_length = sum(
+            float(
+                np.linalg.norm(
+                    np.asarray(item.screen_end) - np.asarray(item.screen_start)
+                )
+            )
+            for item in frame.plane_outline_fragments
+        )
+        endpoints = np.asarray(
+            (
+                frame.patch_projection.line_screen_start,
+                frame.patch_projection.line_screen_end,
+            ),
+            dtype=float,
+        )
+        self.assertAlmostEqual(
+            projected_length,
+            float(np.linalg.norm(endpoints[1] - endpoints[0])),
+            places=12,
+        )
+        self.assertTrue(
+            all(not loops for loops in quadric_plane_fragment_contours(frame).values())
+        )
+        repeated = compute_quadric_section_compositing(
+            _base_frame(sphere),
+            sphere,
+            edge_on,
+            edge_patch,
+            IDENTITY_VIEW,
+        )
+        self.assertEqual(
+            canonical_quadric_section_compositing_json(frame),
+            canonical_quadric_section_compositing_json(repeated),
+        )
+        reverse_view = ParallelView.from_matrix(
+            ((1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, -1.0))
+        )
+        reverse_proxy = build_opaque_projection_proxy(
+            sphere,
+            reverse_view,
+            max_chord_error=0.01,
+        )
+        reverse_base = compute_quadric_compositing(
+            compute_quadric_visibility((), (sphere,), reverse_view),
+            (reverse_proxy,),
+        )
+        reverse = compute_quadric_section_compositing(
+            reverse_base,
+            sphere,
+            edge_on,
+            edge_patch,
+            reverse_view,
+        )
+        self.assertEqual(
+            reverse.patch_projection.line_screen_start,
+            frame.patch_projection.line_screen_start,
+        )
+        self.assertEqual(
+            reverse.patch_projection.line_screen_end,
+            frame.patch_projection.line_screen_end,
+        )
+        self.assertEqual(
+            {item.edge_index for item in reverse.plane_outline_fragments},
+            {3},
+        )
+        self.assertTrue(
+            all(
+                abs(item.world_start[2] + edge_patch.half_width) <= 1.0e-12
+                and abs(item.world_end[2] + edge_patch.half_width) <= 1.0e-12
+                for item in reverse.plane_outline_fragments
+            )
+        )
+
+    def test_projection_rank_evidence_uses_finite_patch_extents(self) -> None:
+        plane = SectionPlane(
+            "aspect-sensitive",
+            (0.0, 0.0, 0.0),
+            (1.0, 0.0, -1.0e-13),
+            u_axis=(0.0, 1.0, 0.0),
+        )
+        patch = PlaneDisplayPatchSpec(
+            "aspect-sensitive-patch",
+            plane.plane_id,
+            1.0,
+            1.0e6,
+        )
+        plane_u, plane_v, _normal = plane.basis
+        unit_screen_basis = np.column_stack(
+            (
+                IDENTITY_VIEW.matrix[:2] @ plane_u,
+                IDENTITY_VIEW.matrix[:2] @ plane_v,
+            )
+        )
+        scaled = unit_screen_basis @ np.diag(
+            (patch.half_width, patch.half_height)
+        )
+        evidence, _axis = _plane_patch_projection_evidence(
+            scaled,
+            np.asarray(patch.corners(plane), dtype=float),
+            IDENTITY_VIEW,
+        )
+        self.assertIs(evidence.kind, PlanePatchProjectionKind.AREA)
+        self.assertGreater(evidence.rank_ratio, evidence.rank_ratio_threshold)
+        self.assertAlmostEqual(evidence.rank_ratio, 1.0e-7, delta=1.0e-18)
+
+        # Swapping the two authored plane axes together with their finite
+        # extents only permutes the scaled columns and must not change rank.
+        swapped, _axis = _plane_patch_projection_evidence(
+            scaled[:, ::-1],
+            np.asarray(patch.corners(plane), dtype=float),
+            IDENTITY_VIEW,
+        )
+        self.assertIs(swapped.kind, PlanePatchProjectionKind.AREA)
+        np.testing.assert_allclose(
+            swapped.singular_values,
+            evidence.singular_values,
+            atol=0.0,
+            rtol=1.0e-15,
+        )
+        self.assertAlmostEqual(swapped.rank_ratio, evidence.rank_ratio)
+        sphere = SphereSpec("aspect-sensitive-sphere", (0.0, 0.0, 0.0), 1.0)
         with self.assertRaisesRegex(
             QuadricSectionCompositingError,
-            "projects edge-on",
+            "extreme aspect ratio.*unit plane projection is numerically rank-one",
         ):
             compute_quadric_section_compositing(
                 _base_frame(sphere),
                 sphere,
-                edge_on,
-                edge_patch,
+                plane,
+                patch,
                 IDENTITY_VIEW,
             )
 
+        thin_plane = SectionPlane(
+            "aspect-thin",
+            (0.0, 0.0, 0.3),
+            (0.0, 0.0, 1.0),
+            u_axis=(1.0, 0.0, 0.0),
+        )
+        thin_patch = PlaneDisplayPatchSpec(
+            "aspect-thin-patch",
+            thin_plane.plane_id,
+            1.0e-13,
+            1.2,
+        )
+        with self.assertRaisesRegex(
+            QuadricSectionCompositingError,
+            "extreme thin aspect ratio.*unit plane projection retains area",
+        ):
+            compute_quadric_section_compositing(
+                _base_frame(sphere),
+                sphere,
+                thin_plane,
+                thin_patch,
+                IDENTITY_VIEW,
+            )
+
+    def test_area_plane_capacity_overflow_still_fails_closed(self) -> None:
+        sphere = SphereSpec("sphere", (0.0, 0.0, 0.0), 1.0)
         tilted = SectionPlane(
             "tilted",
             (0.0, 0.0, 0.0),
@@ -1998,6 +2185,15 @@ class QuadricSectionBoundaryPartitionContractTests(unittest.TestCase):
         for case in SECTION_PARTITION_CASES:
             with self.subTest(case=case.name):
                 frame = self.frames[case.name]
+                self.assertIs(
+                    frame.projection_kind,
+                    PlanePatchProjectionKind.AREA,
+                )
+                self.assertTrue(frame.has_plane_fill)
+                self.assertGreater(
+                    frame.patch_projection.rank_ratio,
+                    frame.patch_projection.rank_ratio_threshold,
+                )
                 self.assertLessEqual(
                     len(frame.plane_fragments),
                     QUADRIC_SECTION_COMPOSITING_LIMITS.max_plane_fragments,
