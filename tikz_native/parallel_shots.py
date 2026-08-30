@@ -118,7 +118,12 @@ def _finite_json_vector(value: object, size: int, location: str) -> list[float]:
 def _identity(value: object, label: str) -> str:
     if not isinstance(value, str) or not value.strip():
         raise ValueError(f"{label} must be a non-empty string")
-    return value.strip()
+    result = value.strip()
+    try:
+        result.encode("utf-8")
+    except UnicodeEncodeError as exc:
+        raise ValueError(f"{label} must contain valid Unicode") from exc
+    return unicodedata.normalize("NFC", result)
 
 
 def _finite_float(value: object, label: str) -> float:

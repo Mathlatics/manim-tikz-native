@@ -147,6 +147,27 @@ class ParallelCameraShotDeserializationTests(unittest.TestCase):
         rebuilt = parallel_camera_shot_sequence_from_dict(payload)
         self.assertEqual(rebuilt.shots[0].id, "caf\N{LATIN SMALL LETTER E WITH ACUTE}")
 
+    def test_programmatic_unicode_round_trip_is_also_canonical(self) -> None:
+        sequence = ParallelCameraShotSequence(
+            (
+                ParallelCameraShot(
+                    "cafe\N{COMBINING ACUTE ACCENT}",
+                    ParallelCameraState(np.identity(3)),
+                    cue="re\N{COMBINING ACUTE ACCENT}sume\N{COMBINING ACUTE ACCENT}",
+                ),
+            )
+        )
+        first = canonical_parallel_camera_shot_sequence_json(sequence)
+        rebuilt = parallel_camera_shot_sequence_from_json(first)
+        second = canonical_parallel_camera_shot_sequence_json(rebuilt)
+
+        self.assertEqual(
+            sequence.shots[0].id,
+            "caf\N{LATIN SMALL LETTER E WITH ACUTE}",
+        )
+        self.assertEqual(sequence.shots[0].cue, "résumé")
+        self.assertEqual(first, second)
+
 
 if __name__ == "__main__":
     unittest.main()
