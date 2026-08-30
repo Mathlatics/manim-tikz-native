@@ -116,10 +116,10 @@ OPEN_FACE_UNIFIED_COMPOSITING_REVISION = (
     "source-sha256:5b2bdd7146a0e548f395637653b61b16cb5cf4a8758399030df934c071b72832"
 )
 MANAGED_PAINTER_BAND_REVISION = (
-    "source-sha256:0aac25e610d7055edf5ce989ce5a91989a62439534645023c4f5f43cdbe25475"
+    "source-sha256:f48b339673a8daf691e8ad6ec134c77d3ad1a6750c38f1003d42d3d6e41b0a73"
 )
 OPEN_FACE_UNIFIED_MANIM_REVISION = (
-    "source-sha256:4aeeb8388f50c6193d534b77bd60cb3fe0e202d2e439513eecb4d7e51c82410d"
+    "source-sha256:d9cbe232fba7dfdfb2f62e0d0ffb503a1bf096a2f9632922914b49457f1e8d7e"
 )
 TIKZ_OPEN_FACE_VISIBILITY_3D_REVISION = (
     "source-sha256:cdf237694a76c8c6c7869bfa9bf391cedbab410f56409d10c8808a21ecc8710d"
@@ -128,19 +128,19 @@ TIKZ_OPEN_FACE_STATIC_ASSET_3D_REVISION = (
     "source-sha256:5602140f9269ac819e0f84abebf12c133decce44927e4725c4e05ca5272d9d4c"
 )
 GENERATED_OPEN_FACE_VISIBILITY_3D_REVISION = (
-    "source-sha256:612dac37f6851e70c1ec8175455166111412f33ad9c65a43f98ffdce8c87c603"
+    "source-sha256:1125fd1c8b9a6f63b14d421e50315c3e4ccf7f1830b00b310808cdf957c8e94f"
 )
 SOURCE_PROJECT_BUILD_REVISION = (
     "source-sha256:c108980773c47c6dc8a070c01cec9fb4bc4c26620b9cba9de03f3efe12fbee70"
 )
 QUADRIC_GEOMETRY_REVISION = (
-    "source-sha256:aabb9e54831a6c1ee326f310580dc9c18598cb32ab3c16e2353a7e7699157950"
+    "source-sha256:289cfbecfc9ccd81244e16916840f04c7462b9e851370c634e914c6bd2643b2e"
 )
 QUADRIC_VISIBILITY_REVISION = (
-    "source-sha256:8d4aab96c05b1fef95032925484f233e2f79ec3862e02c9c021fd0de751f4b03"
+    "source-sha256:81f188d5933a66bdf86e12135bd469975a31d673355021f2295bb474d4cbc2f0"
 )
 QUADRIC_MANIM_REVISION = (
-    "source-sha256:d67e127651db8429e56d07b2d95a1ae52bcadc766efd3fec9746d8731ee539d1"
+    "source-sha256:c982fafdf8e3b8a245e5ea1ad4084620c3f1172f0a264196d4470005f6758805"
 )
 CONVEX_SECTION_3D_REVISION = (
     "source-sha256:a6c71249ce429884b0fcc3341eeea33dacf2d64e14d875d1e0f222c1530637bf"
@@ -149,7 +149,7 @@ COPY_IDENTITY_HANDOFF_REVISION = (
     "source-sha256:bf8aa2d0fe3ec9921320305279f2e23c8ab71d68b5613d19d19f467326d293b7"
 )
 DERIVED_DIHEDRAL_VISIBILITY_REVISION = (
-    "source-sha256:1fcf6ff43a119d35afe4294157f5f0145bed1749153da248c2335e1582216f22"
+    "source-sha256:2240dceedbda6c2c2255af11cda9989218d483dfc199d2b611553155b5fa3101"
 )
 TIKZ_CONVEX_SECTION_3D_REVISION = (
     "source-sha256:b0623617cf182f17eaaa7ef260540c12749b532e0fbf9fe079316cfbc8da166a"
@@ -528,6 +528,20 @@ print(json.dumps({
         baseline = provider_component_revisions()
         mutated = self._probe_copy(
             "@tool/polyhedron_visibility/quadrics/manim.py"
+        )
+        components = mutated["components"]
+        self.assertNotEqual(
+            components[COMPONENT_QUADRIC_MANIM],
+            baseline[COMPONENT_QUADRIC_MANIM],
+        )
+        for component in baseline:
+            if component != COMPONENT_QUADRIC_MANIM:
+                self.assertEqual(components[component], baseline[component])
+
+    def test_editing_quadric_rig_changes_only_manim(self) -> None:
+        baseline = provider_component_revisions()
+        mutated = self._probe_copy(
+            "@tool/polyhedron_visibility/quadrics/rig.py"
         )
         components = mutated["components"]
         self.assertNotEqual(

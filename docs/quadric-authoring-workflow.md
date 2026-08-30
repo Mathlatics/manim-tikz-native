@@ -4,10 +4,82 @@ This guide is the short product path for ordinary scene authors. Geometry,
 visibility, painter ordering, fixed Manim slots, and rollback stay inside the
 existing production controllers; the public facade only collects the inputs.
 
-## Quick start
+## Natural fixed-topology actions
+
+[`quadric_section_rig_quick_start.py`](../examples/quadrics/quadric_section_rig_quick_start.py)
+is the recommended entry point when the storyboard says “move the plane” or
+“rotate the plane”. `QuadricSectionRig` owns the immutable current plane,
+reserves a non-overlapping painter band for the Scene, and returns ordinary
+Manim animations:
+
+```python
+from math import pi
+from manim import Scene
+from polyhedron_visibility.quadrics import (
+    ConeSpec, QuadricSectionRig, SectionPlane,
+)
+
+class ConeSectionLesson(Scene):
+    def construct(self):
+        cone = ConeSpec("cone", (0, 0, -1.5), (0, 0, 1), pi / 6, (0, 4))
+        plane = SectionPlane(
+            "cut", (0, 0, -0.4), (0.45, 0, 1), u_axis=(0, 1, 0),
+        )
+        with QuadricSectionRig(
+            self, surface=cone, section_id="section", plane=plane,
+            paint_policy="depth_aware_diagrammatic",
+        ).session() as section:
+            self.play(section.animate_plane_shift(0.6), run_time=2)
+            self.play(
+                section.animate_plane_rotation(
+                    axis=(0, 0, 1), angle=pi / 3, pivot=cone.apex,
+                ),
+                run_time=2,
+            )
+```
+
+The action is compiled before it is returned. Axis-angle rotation uses the
+analytic critical schedule; parallel translation uses the exact critical
+heights of the finite sphere, cylinder, or cone. Stable tracked curve slots
+separate renderer identity from incidental `circle`/`ellipse`, hyperbola-label,
+and periodic-seam IDs. No Manim object or curve slot is created by an updater.
+
+Phase 1 also resolves and freezes one complete non-callable parallel
+`projection` when the rig is constructed. A semantic camera state's target,
+screen anchor, and zoom are retained; a callable projection is rejected instead
+of being sampled once.
+Whenever either `show_plane` or `draw_section_boundary` is enabled, the initial
+plane and the complete axis-angle rotation path are analytically certified as
+AREA projections; an interior edge-on or numerically rank-deficient view is
+rejected before playback with its analytic candidate progress. The lower-level
+facade and semantic-camera APIs can render certified edge-on LINE frames, but
+this narrower Phase 1 Rig does not animate through that rank handoff. Set both
+options to `False` only when no rank-sensitive plane or section ink should be
+displayed.
+
+`reverse_rate_function=True` is not supported by these actions and is rejected
+when playback begins, including when supplied through `Scene.play(...)`.
+An ordinary non-monotone `rate_func` is allowed when it still maps the two
+endpoints to `0` and `1`: moving backward within the already certified path is
+safe. Every progress actually returned during playback must remain finite and
+inside `[0, 1]`.
+
+This first layer deliberately fails before `Scene.play` when a path enters an
+empty or degenerate section, changes conic family, branch count, or component
+count. `animate_plane_to()` currently accepts only a target with the same
+`plane_id` and exactly the same normalized normal and `u_axis`; a normal-changing
+point-lerp path needs the topology-aware timeline compiler. Cap-chord
+activation/deactivation also remains in that compiler even though the facade
+has already reserved its display slots.
+
+Pass `painter_z_band=(low, high)` only for an advanced exact override. The
+default reserves the first available Scene band at or above `(20, 30)` and
+releases it on `restore()` or session exit.
+
+## Manual callback quick start
 
 [`quadric_section_quick_start.py`](../examples/quadrics/quadric_section_quick_start.py)
-contains one moving closed cone section. The scene declares one cone and one
+contains the equivalent lower-level moving closed cone section. The scene declares one cone and one
 live plane; `QuadricSection3D` derives the complete finite section, cap-chord
 capacity, solid/hidden spans, and unified painter order automatically.
 

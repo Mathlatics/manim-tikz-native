@@ -26,12 +26,17 @@ from polyhedron_visibility.open_faces.contract import (
     OpenFaceVisibilityModel,
 )
 from polyhedron_visibility.open_faces.manim import OpenFaceOcclusion3D
+from polyhedron_visibility.painter_band import (
+    ScenePainterBandError,
+    ScenePainterBandReservation,
+    release_scene_painter_band,
+    reserve_scene_painter_band,
+)
 from polyhedron_visibility.style import OcclusionStyle
 
 
 _OVERRIDE_BEGIN = "# === tikz-native unified open-face override v1: begin ==="
 _OVERRIDE_END = "# === tikz-native unified open-face override v1: end ==="
-_SCENE_BAND_REGISTRY = "_tikz_native_generated_open_face_painter_bands"
 _OWNER_ATTRIBUTE = "_mathppt_open_face_visibility_owner"
 _TEX_POINTS_PER_CM = 72.27 / 2.54
 
@@ -71,57 +76,24 @@ def _normalise_policy(value: str) -> str:
         ) from exc
 
 
-def _registry(scene: object) -> dict[object, tuple[float, float]]:
-    value = getattr(scene, _SCENE_BAND_REGISTRY, None)
-    if value is None:
-        value = {}
-        setattr(scene, _SCENE_BAND_REGISTRY, value)
-    if not isinstance(value, dict):
-        raise GeneratedOpenFaceVisibility3DError(
-            "Scene generated-open-face painter-band registry is invalid"
-        )
-    return value
-
-
-def _bands_overlap(first: tuple[float, float], second: tuple[float, float]) -> bool:
-    return not (first[1] < second[0] or second[1] < first[0])
-
-
 def _reserve_band(
     scene: object,
-    token: object,
-    preferred: tuple[float, float],
+    reservation: ScenePainterBandReservation,
 ) -> tuple[float, float]:
-    registry = _registry(scene)
-    current = registry.get(token)
-    if current is not None:
-        return current
-    width = preferred[1] - preferred[0]
-    gap = max(1.0, width * 1.0e-6)
-    candidate = preferred
-    occupied = tuple(registry.values())
-    while any(_bands_overlap(candidate, other) for other in occupied):
-        candidate = (
-            max(other[1] for other in occupied if _bands_overlap(candidate, other))
-            + gap,
-            max(other[1] for other in occupied if _bands_overlap(candidate, other))
-            + gap
-            + width,
-        )
-    registry[token] = candidate
-    return candidate
+    try:
+        return reserve_scene_painter_band(scene, reservation)
+    except ScenePainterBandError as exc:
+        raise GeneratedOpenFaceVisibility3DError(str(exc)) from exc
 
 
-def _release_band(scene: object, token: object) -> None:
-    registry = getattr(scene, _SCENE_BAND_REGISTRY, None)
-    if not isinstance(registry, dict):
-        return
-    registry.pop(token, None)
-    if not registry:
-        try:
-            delattr(scene, _SCENE_BAND_REGISTRY)
-        except AttributeError:
-            pass
+def _release_band(
+    scene: object,
+    reservation: ScenePainterBandReservation,
+) -> None:
+    try:
+        release_scene_painter_band(scene, reservation)
+    except ScenePainterBandError as exc:
+        raise GeneratedOpenFaceVisibility3DError(str(exc)) from exc
 
 
 def _point3(value: object, label: str) -> np.ndarray:
@@ -391,7 +363,7 @@ class GeneratedOpenFaceVisibility3D(OpenFaceOcclusion3D):
         detach_static_entry: Callable[[Mobject], object],
         restore_static_entry: Callable[[Mobject, object], None],
         preferred_painter_z_band: tuple[float, float],
-        reservation_token: object,
+        reservation_token: ScenePainterBandReservation,
         **kwargs: Any,
     ) -> None:
         self.shape = shape
@@ -443,10 +415,12 @@ class GeneratedOpenFaceVisibility3D(OpenFaceOcclusion3D):
                 "TikZ ShapeState already has an open-face visibility owner"
             )
         if not self._reservation_active:
-            actual = _reserve_band(
-                self.scene, self._reservation_token, self.preferred_painter_z_band
-            )
-            self.set_painter_z_band(actual)
+            actual = _reserve_band(self.scene, self._reservation_token)
+            try:
+                self.set_painter_z_band(actual)
+            except Exception:
+                _release_band(self.scene, self._reservation_token)
+                raise
             self._reservation_active = True
         proxy_added = False
         static_entry_detached = False
@@ -587,8 +561,15 @@ def install_generated_open_face_visibility_3d(
         styles[edge_id] = style
     proxy_root = VGroup(*(proxies[key] for key in sorted(proxies)))
     preferred = _normalise_band(preferred_painter_z_band)
-    token = object()
-    actual = _reserve_band(scene, token, preferred)
+    token = ScenePainterBandReservation(
+        owner_key=(
+            "tikz-generated-open-face",
+            str(visibility_group_id),
+            id(shape),
+        ),
+        preferred_z_band=preferred,
+    )
+    actual = _reserve_band(scene, token)
     try:
         default_style = (
             styles[min(styles)]
