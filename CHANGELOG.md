@@ -34,6 +34,12 @@ All notable changes to this project will be documented in this file.
   plane outline without fill, holes, or duplicate strokes, keep two independent
   section-source groups for boundary order, and reuse the same fixed Cairo
   slots transactionally through `AREA -> LINE -> AREA`;
+- add `QuadricSectionRig` above the existing finite-section facade: immutable
+  committed/staged plane state, exact fixed-path preflight for parallel shifts
+  and axis-angle rotations, stable tracked curve slots, automatic Scene painter
+  bands, and author/display transaction rollback provide natural Manim actions
+  without allocating Mobjects inside frame updates; normal-changing targets and
+  cap/topology transitions remain fail-closed for the later timeline compiler;
 - let `QuadricSection3D` consume named Preview/Final render profiles directly;
   add a one-factory capacity scan with deterministic human-readable summaries,
   preserve the existing progress-scan and immutable limit APIs, and publish a

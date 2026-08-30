@@ -29,6 +29,7 @@ from ..geometry import GeometryContext, ResolvedGeometryContext
 from ..topology import ParameterInterval
 from .conics import ConicKind
 from .contract import ConeSpec, CylinderSpec, SectionPlane, SphereSpec
+from .curves import ParametricConicBranch
 from .sections import QuadricSurfaceSpec, compute_quadric_section
 from .trace import (
     FiniteSectionTopology,
@@ -1094,6 +1095,58 @@ def match_tracked_section_frame(
         section=section,
         branches=_continued_mappings(reference, section),
     )
+
+
+def _materialize_tracked_section_curves(
+    frame: TrackedSectionFrame,
+    curve_id: Callable[[TrackedSectionBranch, int], str],
+    *,
+    max_intervals_per_component: int = 2,
+) -> tuple[ParametricConicBranch, ...]:
+    """Adapt tracked capacity slots to renderer-facing analytic curve IDs.
+
+    Raw conic labels and periodic seam splits are representation details, not
+    persistent renderer capacity identities.  Both the scheduled transition
+    controller and the high-level fixed-topology rig use this one adapter so a
+    circle/ellipse label change, a hyperbola label flip, or a one/two-interval
+    seam crossing cannot allocate a new slot during playback.
+    """
+
+    if not isinstance(frame, TrackedSectionFrame):
+        raise TypeError("frame must be a TrackedSectionFrame")
+    if not callable(curve_id):
+        raise TypeError("curve_id must be callable")
+    if (
+        isinstance(max_intervals_per_component, bool)
+        or not isinstance(max_intervals_per_component, int)
+        or max_intervals_per_component <= 0
+    ):
+        raise SectionAnimationError(
+            "max_intervals_per_component must be a positive integer"
+        )
+    result: list[ParametricConicBranch] = []
+    for mapping in frame.branches:
+        component = frame.section.component_map[mapping.source_component_id]
+        branch = frame.section.branch_map[mapping.source_branch_id]
+        if len(component.parameter_intervals) > max_intervals_per_component:
+            raise SectionAnimationError(
+                "one tracked section component exceeds its fixed interval capacity"
+            )
+        for interval_index, interval in enumerate(component.parameter_intervals):
+            result.append(
+                ParametricConicBranch(
+                    _identity(curve_id(mapping, interval_index), "curve_id"),
+                    branch.parameterization,
+                    branch.plane_embedding,
+                    interval,
+                )
+            )
+    identities = tuple(item.curve_id for item in result)
+    if len(set(identities)) != len(identities):
+        raise SectionAnimationError(
+            "tracked section curve adapter produced duplicate identities"
+        )
+    return tuple(sorted(result, key=lambda item: item.curve_id))
 
 
 def canonical_quadric_section_animation_json(trace: SectionAnimationTrace) -> str:

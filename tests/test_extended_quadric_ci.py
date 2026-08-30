@@ -77,7 +77,7 @@ class ExtendedQuadricCIContractTests(unittest.TestCase):
                 "RUN_TIKZ_NATIVE_MOTION_RENDER_TEST": "1",
             },
         )
-        self.assertEqual(len(smoke), 5)
+        self.assertLess(len(smoke), len(extended))
         self.assertIn(
             "test_composite_quadric_section_cairo."
             "CompositeQuadricSectionCairoTests."
@@ -87,6 +87,11 @@ class ExtendedQuadricCIContractTests(unittest.TestCase):
         self.assertIn(
             "test_quadric_section_authoring.QuadricSectionAuthoringTests."
             "test_real_cairo_animation_uses_the_facade_update_path",
+            smoke,
+        )
+        self.assertIn(
+            "test_quadric_section_rig.QuadricSectionRigTests."
+            "test_real_cairo_scene_play_writes_mp4_and_commits_target",
             smoke,
         )
         self.assertIn(

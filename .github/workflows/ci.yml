@@ -92,6 +92,7 @@ jobs:
           command -v xelatex
           command -v dvisvgm
           command -v ffmpeg
+          command -v ffprobe
           command -v pdftoppm
 
       - uses: actions/setup-python@v7

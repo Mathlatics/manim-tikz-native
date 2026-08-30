@@ -38,44 +38,51 @@ TikZ 图压成一张 SVG 或图片。转换后的直线、面、点、标签仍�
 
 ## 圆锥截口 Quick Start
 
-普通使用者只需要声明圆锥和当前截平面。高层控制器会自动生成完整截线、判断
-实线/虚线、排好曲面与平面图层，并在动画开始前建立固定容量对象；不需要手工管理
-曲线 ID、端盖弦 ID、fragment 槽或 painter band。
+普通使用者只需要声明圆锥、当前截平面和“平移/旋转”这类数学动作。高层 Rig
+会自动生成完整截线、判断实线/虚线、排好曲面与平面图层，并在动画开始前建立
+固定容量对象；不需要手工管理 tracker、曲线 ID、端盖弦 ID 或 painter band。
 
 ```python
 from math import pi
-from manim import Scene, ValueTracker, linear
+from manim import Scene
 from polyhedron_visibility.quadrics import (
-    ConeSpec, QuadricManimStyle, QuadricSection3D, SectionPlane,
+    ConeSpec, QuadricSectionRig, SectionPlane,
 )
 
-class ConeSectionQuickStart(Scene):
+class ConeSectionRigQuickStart(Scene):
     def construct(self):
-        progress = ValueTracker(0)
         cone = ConeSpec("cone", (0, 0, -1.5), (0, 0, 1), pi / 6, (0, 4))
-        def plane():
-            return SectionPlane(
-                "cut", (0, 0, -1 + 2.7 * progress.get_value()),
-                (0.65, 0, 1), u_axis=(0, 1, 0),
-            )
-        QuadricSection3D(
+        plane = SectionPlane(
+            "cut", (0, 0, -0.4), (0.45, 0, 1), u_axis=(0, 1, 0),
+        )
+        with QuadricSectionRig(
             self, surface=cone, section_id="cone-section", plane=plane,
-            paint_policy="depth_aware_diagrammatic", render_profile="preview",
-            style=QuadricManimStyle(surface_fill_opacity=.62),
-        ).attach()
-        self.play(progress.animate.set_value(1), run_time=4, rate_func=linear)
+            paint_policy="depth_aware_diagrammatic",
+        ).session() as section:
+            self.play(section.animate_plane_shift(0.6), run_time=2)
+            self.play(section.animate_plane_rotation(
+                axis=(0, 0, 1), angle=pi / 3, pivot=cone.apex,
+            ), run_time=2)
 ```
 
 直接渲染仓库中的完整示例：
 
 ```bash
 manim -r 480,270 --fps 15 \
-  examples/quadrics/quadric_section_quick_start.py ConeSectionQuickStart
+  examples/quadrics/quadric_section_rig_quick_start.py \
+  ConeSectionRigQuickStart
 ```
 
-正式课堂视频只需把 `render_profile` 改为 `"final"`，并使用 960×540、30 fps。
+构图时可传 `render_profile="preview"`；正式课堂视频改传 `"final"`，并使用
+960×540、30 fps。
 Preview、Final、Release/Evidence 三档的准确区别，以及一行容量扫描入口，见
 [圆锥截口创作工作流](docs/quadric-authoring-workflow.md)。
+
+`QuadricSectionRig` 位于现有 `QuadricSection3D` 之上，不另写求交或绘制器。每个
+动作在交给 `Scene.play` 之前先解析整条运动的临界位置；如果会进入空集、退化，
+或改变曲线族、分支数、组件数、端盖弦启用状态，就提前报错。圆/椭圆的底层标签
+变化、双曲线分支标签翻转和周期参数缝则统一映射到固定槽。画面事务失败时，平面
+状态也会一起回滚。
 
 现在还提供一套独立的二次曲面模块：在正交投影或一般平行投影下，支持有限
 球体、带端盖圆柱、封闭单锥、张口单锥壳和有限张口双锥壳。封闭单锥的底面是

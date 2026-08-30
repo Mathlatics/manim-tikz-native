@@ -21,6 +21,7 @@ from manim import (
     tempconfig,
 )
 
+from polyhedron_visibility.painter_band import scene_painter_band_allocations
 from tikz_native.compiler import compile_document
 from tikz_native.geometry_rig_3d import analyze_geometry_rig_3d
 from tikz_native.native_manim_codegen_3d_v3 import generate_native_manim_source_3d_v3
@@ -186,9 +187,7 @@ class SourceProjectRealV3Tests(unittest.TestCase):
         for namespace, _figure, geometry, controller in (first, second, third):
             namespace["restore_open_face_visibility_3d"](controller)
             namespace["restore_geometry_3d_objects"](geometry)
-        self.assertFalse(
-            hasattr(scene, "_tikz_native_generated_open_face_painter_bands")
-        )
+        self.assertEqual(scene_painter_band_allocations(scene), ())
 
     def test_controller_construction_failure_releases_scene_band(self) -> None:
         from tikz_native import generated_open_face_visibility_3d as adapter
@@ -206,9 +205,23 @@ class SourceProjectRealV3Tests(unittest.TestCase):
                 namespace["install_open_face_visibility_3d"](
                     scene, figure.group, figure.objects, geometry
                 )
-        self.assertFalse(
-            hasattr(scene, "_tikz_native_generated_open_face_painter_bands")
-        )
+        self.assertEqual(scene_painter_band_allocations(scene), ())
+        namespace["restore_geometry_3d_objects"](geometry)
+
+    def test_reattach_band_configuration_failure_releases_scene_band(self) -> None:
+        scene = Scene()
+        namespace, _figure, geometry, controller = self._install(scene)
+        namespace["restore_open_face_visibility_3d"](controller)
+        self.assertEqual(scene_painter_band_allocations(scene), ())
+
+        with mock.patch.object(
+            controller,
+            "set_painter_z_band",
+            side_effect=RuntimeError("band configuration failure"),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "band configuration failure"):
+                controller.attach()
+        self.assertEqual(scene_painter_band_allocations(scene), ())
         namespace["restore_geometry_3d_objects"](geometry)
 
     def test_attach_preparation_failure_rolls_back_proxy_and_band(self) -> None:
@@ -227,9 +240,7 @@ class SourceProjectRealV3Tests(unittest.TestCase):
         self.assertEqual(
             tuple(map(id, scene.mobjects)), tuple(map(id, scene_before))
         )
-        self.assertFalse(
-            hasattr(scene, "_tikz_native_generated_open_face_painter_bands")
-        )
+        self.assertEqual(scene_painter_band_allocations(scene), ())
         self.assertFalse(
             hasattr(figure.group, "_mathppt_open_face_visibility_owner")
         )
@@ -286,9 +297,7 @@ class SourceProjectRealV3Tests(unittest.TestCase):
         self.assertTrue(controller.attached)
         self.assertIsNotNone(controller.last_unified_frame)
         controller.restore()
-        self.assertFalse(
-            hasattr(scene, "_tikz_native_generated_open_face_painter_bands")
-        )
+        self.assertEqual(scene_painter_band_allocations(scene), ())
 
     def test_real_source_project_build_reaches_v3_bridge_and_unified_runtime(self) -> None:
         with tempfile.TemporaryDirectory(prefix="source-project-real-v3-") as temporary:
