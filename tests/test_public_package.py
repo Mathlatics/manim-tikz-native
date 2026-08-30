@@ -21,9 +21,12 @@ from polyhedron_visibility.quadrics import (
     QuadricSection3D,
     QuadricSectionTransition3D,
     SectionPlane,
+    SectionTimeline,
+    SectionTimelineTransitionPlan,
     SectionTransitionPlan,
     SphereSpec,
     build_section_transition_plan,
+    compile_section_timeline,
     compute_quadric_section,
     compute_quadric_section_boundary,
     compute_quadric_section_boundary_curves,
@@ -62,6 +65,14 @@ class PublicPackageTests(unittest.TestCase):
             "fit_points_to_parallel_camera_state",
             "play_parallel_camera_shot",
             "play_parallel_camera_shot_sequence",
+            "play_parallel_section_sequence",
+            "compile_parallel_section_sequence_from_shots",
+            "parallel_section_frame_grid",
+            "parallel_section_preflight_gate",
+            "section_bank_frame_participant",
+            "section_display_frame_participant",
+            "section_plane_patch_participant",
+            "section_painter_order_participant",
         ):
             with self.subTest(name=name):
                 self.assertTrue(callable(getattr(tikz_native, name)))
@@ -72,6 +83,11 @@ class PublicPackageTests(unittest.TestCase):
         self.assertEqual(ConeSpec.__name__, "ConeSpec")
         self.assertEqual(SectionPlane.__name__, "SectionPlane")
         self.assertEqual(SectionTransitionPlan.__name__, "SectionTransitionPlan")
+        self.assertEqual(SectionTimeline.__name__, "SectionTimeline")
+        self.assertEqual(
+            SectionTimelineTransitionPlan.__name__,
+            "SectionTimelineTransitionPlan",
+        )
         self.assertEqual(QuadricSectionBoundary.__name__, "QuadricSectionBoundary")
         self.assertEqual(QuadricSection3D.__name__, "QuadricSection3D")
         self.assertEqual(QuadricCapacityPlanner.__name__, "QuadricCapacityPlanner")
@@ -81,6 +97,7 @@ class PublicPackageTests(unittest.TestCase):
             QuadricSectionTransition3D.__name__, "QuadricSectionTransition3D"
         )
         self.assertTrue(callable(build_section_transition_plan))
+        self.assertTrue(callable(compile_section_timeline))
         self.assertTrue(callable(compute_quadric_section))
         self.assertTrue(callable(compute_quadric_section_boundary))
         self.assertTrue(callable(compute_quadric_section_boundary_curves))

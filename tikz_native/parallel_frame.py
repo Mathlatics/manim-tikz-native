@@ -20,7 +20,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
-from enum import IntEnum
+from enum import Enum, IntEnum
 from math import isfinite
 from types import MappingProxyType
 from typing import Generic, TypeVar, cast
@@ -48,11 +48,24 @@ class ParallelFramePhase(IntEnum):
     the existing public contract.
     """
 
+    PREFLIGHT = 0
     CAMERA = 10
     GEOMETRY = 20
     VISIBILITY = 30
     PAINT = 40
     FINALIZE = 50
+
+
+class ParallelFrameBindingKind(str, Enum):
+    """Audited capability implemented by a standard participant factory."""
+
+    PREFLIGHT_GATE = "preflight-gate"
+    SCREEN_TRANSFORM_GUARD = "screen-transform-guard"
+    CAMERA = "camera"
+    SECTION_BANK = "section-bank"
+    SECTION_PLANE_PATCH = "section-plane-patch"
+    SECTION_PAINTER = "section-painter"
+    SECTION_DISPLAY = "section-display"
 
 
 def _identity(value: object, label: str) -> str:
@@ -76,6 +89,8 @@ class ParallelFrameState:
 
     camera: ParallelCameraState
     channels: Mapping[str, object] = field(default_factory=dict)
+    frame_id: str | None = None
+    preflight_input_digest: str | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.camera, ParallelCameraState):
@@ -95,6 +110,24 @@ class ParallelFrameState:
             "channels",
             MappingProxyType(dict(sorted(normalized.items()))),
         )
+        if (self.frame_id is None) != (self.preflight_input_digest is None):
+            raise ParallelFrameCoordinatorError(
+                "frame_id and preflight_input_digest must be provided together"
+            )
+        if self.frame_id is not None:
+            object.__setattr__(
+                self,
+                "frame_id",
+                _identity(self.frame_id, "frame_id"),
+            )
+            object.__setattr__(
+                self,
+                "preflight_input_digest",
+                _identity(
+                    self.preflight_input_digest,
+                    "preflight_input_digest",
+                ),
+            )
 
     def channel(self, name: str) -> object:
         """Return one required channel or fail with a useful authoring error."""
@@ -124,6 +157,7 @@ class ParallelFrameParticipant(Generic[FrameT]):
     snapshot: Callable[[], object]
     commit: Callable[[object], None]
     rollback: Callable[[object], None]
+    binding_kind: ParallelFrameBindingKind | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(
@@ -138,6 +172,14 @@ class ParallelFrameParticipant(Generic[FrameT]):
                 "phase must be a ParallelFramePhase"
             ) from exc
         object.__setattr__(self, "phase", phase)
+        if self.binding_kind is not None:
+            try:
+                binding_kind = ParallelFrameBindingKind(self.binding_kind)
+            except (TypeError, ValueError) as exc:
+                raise ParallelFrameCoordinatorError(
+                    "binding_kind must be a ParallelFrameBindingKind"
+                ) from exc
+            object.__setattr__(self, "binding_kind", binding_kind)
         for name in ("prepare", "snapshot", "commit", "rollback"):
             if not callable(getattr(self, name)):
                 raise TypeError(f"{name} must be callable")
@@ -213,6 +255,22 @@ class ParallelFrameCoordinator(Generic[FrameT]):
     def participant_ids(self) -> tuple[str, ...]:
         return tuple(
             participant.participant_id
+            for _, participant in self._ordered_participants()
+        )
+
+    @property
+    def participant_bindings(
+        self,
+    ) -> tuple[
+        tuple[str, ParallelFramePhase, ParallelFrameBindingKind | None],
+        ...,
+    ]:
+        return tuple(
+            (
+                participant.participant_id,
+                participant.phase,
+                participant.binding_kind,
+            )
             for _, participant in self._ordered_participants()
         )
 
@@ -540,6 +598,7 @@ def parallel_camera_frame_participant(
         snapshot=capture,
         commit=apply,
         rollback=rollback,
+        binding_kind=ParallelFrameBindingKind.CAMERA,
     )
 
 
@@ -548,6 +607,7 @@ __all__ = [
     "ParallelFrameCoordinator",
     "ParallelFrameCoordinatorError",
     "ParallelFrameCoordinatorPoisonedError",
+    "ParallelFrameBindingKind",
     "ParallelFrameParticipant",
     "ParallelFramePhase",
     "ParallelFrameSource",

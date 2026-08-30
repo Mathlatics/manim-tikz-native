@@ -27,6 +27,7 @@ from tikz_native.parallel_camera import ParallelCameraState
 from tikz_native.parallel_shots import (
     ParallelCameraShot,
     ParallelCameraShotSequence,
+    parallel_camera_shot_progress,
 )
 from tikz_native.parallel_shots_manim import (
     ParallelCameraShotManimError,
@@ -56,11 +57,14 @@ class _RecordingParallelScene(_ParallelScene):
     def __init__(self) -> None:
         super().__init__()
         self.play_run_times: list[float] = []
+        self.play_rate_funcs: list[object] = []
         self.wait_durations: list[float] = []
 
     def play(self, *animations, **kwargs):
         if "run_time" in kwargs:
             self.play_run_times.append(float(kwargs["run_time"]))
+        if "rate_func" in kwargs:
+            self.play_rate_funcs.append(kwargs["rate_func"])
         return super().play(*animations, **kwargs)
 
     def wait(self, duration: float = 1.0, *args, **kwargs):
@@ -166,6 +170,7 @@ class ParallelCameraShotPlaybackTests(unittest.TestCase):
             arc_height=shot.arc_height,
         )
         self.assertEqual(scene.play_run_times, [shot.duration])
+        self.assertEqual(scene.play_rate_funcs, [parallel_camera_shot_progress])
         self.assertEqual(scene.wait_durations, [shot.hold])
         self.assertIs(endpoint, shot.state)
         self.assertIs(camera.snapshot_parallel_state(), shot.state)

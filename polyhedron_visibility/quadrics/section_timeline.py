@@ -12,6 +12,7 @@ This module deliberately has no Manim, camera, painter-band, or Scene binding.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import hashlib
 import json
 from math import isfinite
 from typing import Mapping, Sequence, TypeAlias
@@ -102,6 +103,52 @@ def _finite(value: object, label: str) -> float:
     if not isfinite(result):
         raise SectionTimelineError(f"{label} must be finite")
     return result
+
+
+def _geometry_context_to_dict(
+    context: GeometryContext | ResolvedGeometryContext | None,
+) -> dict[str, object] | None:
+    if context is None:
+        return None
+    if isinstance(context, ResolvedGeometryContext):
+        return {"kind": "resolved", **context.to_dict()}
+    if not isinstance(context, GeometryContext):
+        raise TypeError(
+            "geometry_context must be GeometryContext or ResolvedGeometryContext"
+        )
+    policy = context.tolerance
+    return {
+        "kind": "unresolved",
+        "tolerance": {
+            "relative": policy.relative,
+            "absoluteFloor": policy.absolute_floor,
+            "angular": policy.angular,
+            "boundaryFactor": policy.boundary_factor,
+            "depthFactor": policy.depth_factor,
+        },
+        "screenTolerance": context.screen_tolerance,
+        "overrides": {
+            quantity.value: value
+            for quantity, value in context.overrides.items()
+        },
+    }
+
+
+def _geometry_policy_digest(
+    context: GeometryContext | ResolvedGeometryContext | None,
+    coefficient_tolerance: float | None,
+) -> str:
+    payload = json.dumps(
+        {
+            "geometryContext": _geometry_context_to_dict(context),
+            "coefficientTolerance": coefficient_tolerance,
+        },
+        ensure_ascii=False,
+        allow_nan=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return "sha256:" + hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
 def _surface(value: object) -> QuadricSurfaceSpec:
@@ -364,6 +411,9 @@ class SectionTimeline:
     cap_chord_ids: tuple[str, ...]
     cap_chord_states: tuple[SectionTimelineCapChordState, ...]
     cap_chord_events: tuple[SectionTimelineCapChordEvent, ...]
+    geometry_context: GeometryContext | ResolvedGeometryContext | None = None
+    coefficient_tolerance: float | None = None
+    geometry_policy_digest: str = ""
     schema: str = SECTION_TIMELINE_SCHEMA
 
     def __post_init__(self) -> None:
@@ -380,6 +430,43 @@ class SectionTimeline:
             _identity(self.surface_id, "surface_id"),
         )
         object.__setattr__(self, "plane_id", _identity(self.plane_id, "plane_id"))
+        if self.geometry_context is not None and not isinstance(
+            self.geometry_context,
+            (GeometryContext, ResolvedGeometryContext),
+        ):
+            raise TypeError(
+                "geometry_context must be GeometryContext or ResolvedGeometryContext"
+            )
+        coefficient_tolerance = self.coefficient_tolerance
+        if coefficient_tolerance is not None:
+            coefficient_tolerance = _finite(
+                coefficient_tolerance,
+                "coefficient_tolerance",
+            )
+            if coefficient_tolerance <= 0.0:
+                raise SectionTimelineError(
+                    "coefficient_tolerance must be finite and positive"
+                )
+        object.__setattr__(
+            self,
+            "coefficient_tolerance",
+            coefficient_tolerance,
+        )
+        expected_policy_digest = _geometry_policy_digest(
+            self.geometry_context,
+            coefficient_tolerance,
+        )
+        if self.geometry_policy_digest:
+            if self.geometry_policy_digest != expected_policy_digest:
+                raise SectionTimelineError(
+                    "geometry_policy_digest does not match the stored solve policy"
+                )
+        else:
+            object.__setattr__(
+                self,
+                "geometry_policy_digest",
+                expected_policy_digest,
+            )
         if not self.segment_schedules:
             raise SectionTimelineError("timeline requires at least one segment")
         if not all(
@@ -625,6 +712,9 @@ class SectionTimeline:
             "capChordIds": list(self.cap_chord_ids),
             "capChordStates": [item.to_dict() for item in self.cap_chord_states],
             "capChordEvents": [item.to_dict() for item in self.cap_chord_events],
+            "geometryContext": _geometry_context_to_dict(self.geometry_context),
+            "coefficientTolerance": self.coefficient_tolerance,
+            "geometryPolicyDigest": self.geometry_policy_digest,
         }
 
 
@@ -994,6 +1084,8 @@ def compile_section_timeline(
         cap_chord_ids=cap_ids,
         cap_chord_states=cap_states,
         cap_chord_events=cap_events,
+        geometry_context=context,
+        coefficient_tolerance=coefficient_tolerance,
     )
 
 

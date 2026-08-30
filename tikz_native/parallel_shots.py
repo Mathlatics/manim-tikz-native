@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import json
-from math import isfinite
+from math import exp, isfinite
 from numbers import Real
 from typing import Sequence
 import unicodedata
@@ -21,6 +21,7 @@ from .parallel_camera import CameraPlane, ParallelCameraState, PlaneLike
 
 
 PARALLEL_CAMERA_SHOT_SEQUENCE_SCHEMA = "parallel-shot-sequence/v1"
+PARALLEL_CAMERA_SHOT_EASING = "manim-smooth-v1"
 _FIT_TOLERANCE_FACTOR = 4096.0
 
 
@@ -150,6 +151,27 @@ def _nonnegative_float(value: object, label: str) -> float:
     if result < 0.0:
         raise ValueError(f"{label} must be finite and non-negative")
     return result
+
+
+def parallel_camera_shot_progress(value: float) -> float:
+    """Return the fixed easing shared by offline sampling and Manim playback.
+
+    This is Manim's ``smooth`` rate function with its default inflection of
+    ``10``.  Keeping the small formula in the renderer-neutral authoring layer
+    makes sampled camera evidence describe the same intermediate states as a
+    real ``Scene.play`` call without importing Manim here.
+    """
+
+    progress = _finite_float(value, "camera shot progress")
+    if progress < 0.0 or progress > 1.0:
+        raise ValueError("camera shot progress must lie in [0, 1]")
+
+    def sigmoid(argument: float) -> float:
+        return 1.0 / (1.0 + exp(-argument))
+
+    error = sigmoid(-5.0)
+    eased = (sigmoid(10.0 * (progress - 0.5)) - error) / (1.0 - 2.0 * error)
+    return min(1.0, max(0.0, eased))
 
 
 @dataclass(frozen=True, slots=True)
@@ -698,6 +720,7 @@ def canonical_parallel_camera_shot_sequence_json(
 
 
 __all__ = [
+    "PARALLEL_CAMERA_SHOT_EASING",
     "PARALLEL_CAMERA_SHOT_SEQUENCE_SCHEMA",
     "ParallelCameraSafeFrame",
     "ParallelCameraShot",
@@ -706,4 +729,5 @@ __all__ = [
     "fit_points_to_parallel_camera_state",
     "parallel_camera_shot_sequence_from_dict",
     "parallel_camera_shot_sequence_from_json",
+    "parallel_camera_shot_progress",
 ]

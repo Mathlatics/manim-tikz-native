@@ -129,6 +129,7 @@ class SectionDisplayRole(str, Enum):
     PLANE_FILL = "plane-fill"
     PLANE_OUTLINE = "plane-outline"
     SECTION_CURVE = "section-curve"
+    SECTION_POINT = "section-point"
     GENERATOR = "generator"
     CONTOUR = "contour"
     CAP_RIM = "cap-rim"
@@ -148,7 +149,11 @@ _FILL_ROLES = frozenset(
     {SectionDisplayRole.SURFACE_FILL, SectionDisplayRole.PLANE_FILL}
 )
 _SECTION_ROLES = frozenset(
-    {SectionDisplayRole.SECTION_CURVE, SectionDisplayRole.CAP_CHORD}
+    {
+        SectionDisplayRole.SECTION_CURVE,
+        SectionDisplayRole.SECTION_POINT,
+        SectionDisplayRole.CAP_CHORD,
+    }
 )
 _SURFACE_HANDLE_ROLES = frozenset(
     {
@@ -208,10 +213,15 @@ class SectionSemanticSlot:
             )
         if (
             self.topology_bank is not None
-            and role is not SectionDisplayRole.SECTION_CURVE
+            and role
+            not in {
+                SectionDisplayRole.SECTION_CURVE,
+                SectionDisplayRole.SECTION_POINT,
+                SectionDisplayRole.CAP_CHORD,
+            }
         ):
             raise SectionSemanticDisplayError(
-                "topology_bank is valid only for section-curve slots"
+                "topology_bank is valid only for section curve/point/cap slots"
             )
 
     def to_dict(self) -> dict[str, object]:
@@ -619,10 +629,15 @@ class SectionDisplaySlotState:
             )
         if (
             self.topology_bank is not None
-            and role is not SectionDisplayRole.SECTION_CURVE
+            and role
+            not in {
+                SectionDisplayRole.SECTION_CURVE,
+                SectionDisplayRole.SECTION_POINT,
+                SectionDisplayRole.CAP_CHORD,
+            }
         ):
             raise SectionSemanticDisplayError(
-                "topology_bank is valid only for section-curve slots"
+                "topology_bank is valid only for section curve/point/cap slots"
             )
         if isinstance(self.opacity_multiplier, bool):
             raise SectionSemanticDisplayError(

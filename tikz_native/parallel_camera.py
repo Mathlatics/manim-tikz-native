@@ -470,7 +470,12 @@ def _rotation_slerp(source: np.ndarray, target: np.ndarray, alpha: float) -> np.
     relative = target @ source.T
     cosine = float(np.clip((np.trace(relative) - 1.0) / 2.0, -1.0, 1.0))
     angle = float(np.arccos(cosine))
-    if angle <= 1.0e-10:
+    if angle <= 1.0e-10 or np.allclose(
+        relative,
+        np.identity(3),
+        atol=64.0 * float(np.finfo(float).eps),
+        rtol=0.0,
+    ):
         blended = (1.0 - alpha) * source + alpha * target
         left, _singular, right = np.linalg.svd(blended)
         return left @ right
@@ -486,7 +491,12 @@ def _rotation_slerp(source: np.ndarray, target: np.ndarray, alpha: float) -> np.
             relative[1, 0] - relative[0, 1],
         ),
         dtype=float,
-    ) / (2.0 * sine)
+    )
+    if float(np.linalg.norm(axis)) <= 64.0 * float(np.finfo(float).eps):
+        blended = (1.0 - alpha) * source + alpha * target
+        left, _singular, right = np.linalg.svd(blended)
+        return left @ right
+    axis /= 2.0 * sine
     step = _rotation_matrix(axis, sin(alpha * angle), cos(alpha * angle))
     return step @ source
 

@@ -534,6 +534,14 @@ class ParallelFrameCoordinatorTests(unittest.TestCase):
             "no channel",
         ):
             state.channel("missing")
+        with self.assertRaisesRegex(
+            ParallelFrameCoordinatorError,
+            "provided together",
+        ):
+            ParallelFrameState(
+                ParallelCameraState(IDENTITY),
+                frame_id="frame-only",
+            )
 
 
 if __name__ == "__main__":

@@ -45,6 +45,11 @@ def _slots() -> tuple[SectionSemanticSlot, ...]:
             topology_bank="hyperbola",
         ),
         SectionSemanticSlot(
+            "section-point:ellipse:0",
+            "section-point",
+            topology_bank="ellipse",
+        ),
+        SectionSemanticSlot(
             "generator:0",
             "generator",
             source_id="boundary:cone:generator:positive",
@@ -125,6 +130,7 @@ class QuadricSemanticDisplayTests(unittest.TestCase):
                 "section-bank:ellipse:0",
                 "section-bank:hyperbola:0",
                 "section-bank:parabola:0",
+                "section-point:ellipse:0",
             ),
         )
 
@@ -199,6 +205,7 @@ class QuadricSemanticDisplayTests(unittest.TestCase):
         self.assertEqual(outline.opacity_for("generator:0"), 1.0)
         self.assertEqual(section.opacity_for("section-bank:ellipse:0"), 1.0)
         self.assertEqual(section.opacity_for("cap-chord:0"), 1.0)
+        self.assertEqual(section.opacity_for("section-point:ellipse:0"), 1.0)
         self.assertEqual(section.opacity_for("plane-outline:0"), 0.0)
         self.assertEqual(section.opacity_for("contour:0"), 0.0)
         self.assertTrue(all(item.opacity_multiplier == 0.0 for item in hidden.slots))

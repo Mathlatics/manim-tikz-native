@@ -12,19 +12,28 @@ fails closed when ``require_accepted()`` is called.
 
 from __future__ import annotations
 
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from enum import Enum
 import hashlib
 import json
 from math import isfinite
-from typing import Sequence
+from types import MappingProxyType
 
 import numpy as np
 
 from .parallel_camera import ParallelCameraState
+from .parallel_frame import (
+    ParallelFrameBindingKind,
+    ParallelFrameCoordinatorError,
+    ParallelFrameParticipant,
+    ParallelFramePhase,
+    ParallelFrameState,
+)
 
 
 PARALLEL_PREFLIGHT_REPORT_SCHEMA = "parallel-scene-preflight-report/v1"
+PARALLEL_PREFLIGHT_FRAME_CHANNEL = "parallel-preflight-frame"
 
 
 class ParallelPreflightError(ValueError):
@@ -114,6 +123,18 @@ def _canonical_json(value: object) -> str:
         raise ParallelPreflightError(
             f"preflight evidence is not canonical JSON: {exc}"
         ) from exc
+
+
+def _sha256_digest(value: object, label: str) -> str:
+    digest = _identity(value, label)
+    payload = digest[7:] if digest.startswith("sha256:") else ""
+    if len(payload) != 64 or any(
+        item not in "0123456789abcdef" for item in payload
+    ):
+        raise ParallelPreflightError(
+            f"{label} must be a lowercase sha256 digest"
+        )
+    return digest
 
 
 class ParallelPreflightSeverity(str, Enum):
@@ -348,6 +369,7 @@ class ParallelPreflightFrame:
     topology_events: tuple[TopologyEventEvidence, ...] = ()
     capacities: tuple[CapacityEvidence, ...] = ()
     painter_order: PainterOrderEvidence = field(default_factory=PainterOrderEvidence)
+    channel_digests: tuple[tuple[str, str], ...] = ()
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "frame_id", _identity(self.frame_id, "frame_id"))
@@ -372,6 +394,25 @@ class ParallelPreflightFrame:
             raise TypeError("capacities must contain CapacityEvidence values")
         if not isinstance(self.painter_order, PainterOrderEvidence):
             raise TypeError("painter_order must be PainterOrderEvidence")
+        channel_digests: list[tuple[str, str]] = []
+        for index, item in enumerate(self.channel_digests):
+            if not isinstance(item, (tuple, list)) or len(item) != 2:
+                raise ParallelPreflightError(
+                    f"channel_digests[{index}] must contain a channel and digest"
+                )
+            channel_digests.append(
+                (
+                    _identity(item[0], "preflight channel name"),
+                    _sha256_digest(item[1], "preflight channel digest"),
+                )
+            )
+        canonical_channel_digests = tuple(sorted(channel_digests))
+        if len({item[0] for item in canonical_channel_digests}) != len(
+            canonical_channel_digests
+        ):
+            raise ParallelPreflightError(
+                "channel_digests must use unique channel names"
+            )
         object.__setattr__(self, "framing_points", points)
         object.__setattr__(
             self,
@@ -382,6 +423,11 @@ class ParallelPreflightFrame:
             self,
             "capacities",
             tuple(sorted(capacities, key=lambda item: item.resource_id)),
+        )
+        object.__setattr__(
+            self,
+            "channel_digests",
+            canonical_channel_digests,
         )
 
     def to_dict(self) -> dict[str, object]:
@@ -399,7 +445,17 @@ class ParallelPreflightFrame:
             "topologyEvents": [item.to_dict() for item in self.topology_events],
             "capacities": [item.to_dict() for item in self.capacities],
             "painterOrder": self.painter_order.to_dict(),
+            "channelDigests": {
+                channel: digest for channel, digest in self.channel_digests
+            },
         }
+
+    def to_json(self) -> str:
+        return _canonical_json(self.to_dict())
+
+    @property
+    def digest(self) -> str:
+        return "sha256:" + hashlib.sha256(self.to_json().encode("utf-8")).hexdigest()
 
 
 @dataclass(frozen=True, slots=True)
@@ -460,12 +516,68 @@ class ParallelPreflightReport:
     """Deterministic audit evidence for a complete authored sequence."""
 
     input_digest: str
+    frame_ids: tuple[str, ...]
+    frame_digests: tuple[str, ...]
     frame_count: int
     framing_point_count: int
     topology_event_count: int
     capacity_count: int
     painter_relation_count: int
     issues: tuple[ParallelPreflightIssue, ...]
+
+    def __post_init__(self) -> None:
+        digest = _identity(self.input_digest, "input_digest")
+        payload = digest[7:] if digest.startswith("sha256:") else ""
+        if len(payload) != 64 or any(
+            item not in "0123456789abcdef" for item in payload
+        ):
+            raise ParallelPreflightError(
+                "input_digest must be a lowercase sha256 digest"
+            )
+        frame_ids = tuple(_identity(item, "frame_id") for item in self.frame_ids)
+        object.__setattr__(self, "input_digest", digest)
+        object.__setattr__(self, "frame_ids", frame_ids)
+        frame_digests = tuple(
+            _identity(item, "frame digest") for item in self.frame_digests
+        )
+        if len(frame_digests) != len(frame_ids):
+            raise ParallelPreflightError(
+                "frame_digests must match report frame_ids"
+            )
+        for frame_digest in frame_digests:
+            frame_payload = (
+                frame_digest[7:] if frame_digest.startswith("sha256:") else ""
+            )
+            if len(frame_payload) != 64 or any(
+                item not in "0123456789abcdef" for item in frame_payload
+            ):
+                raise ParallelPreflightError(
+                    "frame digest must be a lowercase sha256 digest"
+                )
+        object.__setattr__(self, "frame_digests", frame_digests)
+        for name in (
+            "frame_count",
+            "framing_point_count",
+            "topology_event_count",
+            "capacity_count",
+            "painter_relation_count",
+        ):
+            value = getattr(self, name)
+            if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+                raise ParallelPreflightError(
+                    f"{name} must be a non-negative integer"
+                )
+        if self.frame_count != len(frame_ids):
+            raise ParallelPreflightError(
+                "frame_count must match report frame_ids"
+            )
+        if not all(isinstance(item, ParallelPreflightIssue) for item in self.issues):
+            raise TypeError("issues must contain ParallelPreflightIssue values")
+        canonical_issues = tuple(
+            sorted(self.issues, key=ParallelPreflightIssue.sort_key)
+        )
+        if self.issues != canonical_issues:
+            raise ParallelPreflightError("report issues must use canonical order")
 
     @property
     def accepted(self) -> bool:
@@ -479,6 +591,8 @@ class ParallelPreflightReport:
             "schema": PARALLEL_PREFLIGHT_REPORT_SCHEMA,
             "accepted": self.accepted,
             "inputDigest": self.input_digest,
+            "frameIds": list(self.frame_ids),
+            "frameDigests": list(self.frame_digests),
             "counts": {
                 "frames": self.frame_count,
                 "framingPoints": self.framing_point_count,
@@ -519,6 +633,146 @@ class ParallelPreflightReport:
         raise ParallelPreflightRejectedError(
             f"parallel scene preflight rejected {len(errors)} error(s): "
             f"{preview}{suffix}"
+        )
+
+
+class ParallelPreflightGate:
+    """Transactional sequence gate bound to one accepted preflight report."""
+
+    def __init__(
+        self,
+        report: ParallelPreflightReport,
+        *,
+        channel_digesters: Mapping[str, Callable[[object], str]] | None = None,
+    ) -> None:
+        if not isinstance(report, ParallelPreflightReport):
+            raise TypeError("report must be a ParallelPreflightReport")
+        report.require_accepted()
+        self.report = report
+        normalized_digesters: dict[str, Callable[[object], str]] = {}
+        for raw_name, digester in (channel_digesters or {}).items():
+            name = _identity(raw_name, "channel digester name")
+            if not callable(digester):
+                raise TypeError("channel digesters must be callable")
+            normalized_digesters[name] = digester
+        self.channel_digesters = MappingProxyType(
+            dict(sorted(normalized_digesters.items()))
+        )
+        self._next_frame_index = 0
+
+    @property
+    def next_frame_index(self) -> int:
+        return self._next_frame_index
+
+    def participant(
+        self,
+        *,
+        participant_id: str = "parallel-preflight-gate",
+    ) -> ParallelFrameParticipant[ParallelFrameState]:
+        def prepare(frame: ParallelFrameState) -> int:
+            if not isinstance(frame, ParallelFrameState):
+                raise TypeError("preflight gate requires ParallelFrameState")
+            if frame.preflight_input_digest != self.report.input_digest:
+                raise ParallelFrameCoordinatorError(
+                    "coordinated frame does not belong to the accepted preflight input"
+                )
+            index = self._next_frame_index
+            if index >= len(self.report.frame_ids):
+                raise ParallelFrameCoordinatorError(
+                    "accepted preflight sequence has no remaining frame"
+                )
+            expected = self.report.frame_ids[index]
+            if frame.frame_id != expected:
+                raise ParallelFrameCoordinatorError(
+                    f"expected preflight frame {expected!r}, got {frame.frame_id!r}"
+                )
+            evidence = frame.channel(PARALLEL_PREFLIGHT_FRAME_CHANNEL)
+            if not isinstance(evidence, ParallelPreflightFrame):
+                raise TypeError(
+                    "preflight frame channel must contain ParallelPreflightFrame"
+                )
+            if (
+                evidence.frame_id != expected
+                or evidence.digest != self.report.frame_digests[index]
+            ):
+                raise ParallelFrameCoordinatorError(
+                    "coordinated frame evidence differs from the accepted "
+                    "preflight frame"
+                )
+            expected_channels = {
+                PARALLEL_PREFLIGHT_FRAME_CHANNEL,
+                *(name for name, _digest in evidence.channel_digests),
+            }
+            actual_channels = set(frame.channels)
+            if actual_channels != expected_channels:
+                raise ParallelFrameCoordinatorError(
+                    "coordinated runtime channels differ from preflight: "
+                    f"missing={sorted(expected_channels - actual_channels)!r}, "
+                    f"extra={sorted(actual_channels - expected_channels)!r}"
+                )
+            if not (
+                np.array_equal(frame.camera.matrix, evidence.camera.matrix)
+                and np.array_equal(frame.camera.target, evidence.camera.target)
+                and np.array_equal(
+                    frame.camera.screen_anchor,
+                    evidence.camera.screen_anchor,
+                )
+                and frame.camera.zoom == evidence.camera.zoom
+            ):
+                raise ParallelFrameCoordinatorError(
+                    "coordinated camera differs from its accepted preflight frame"
+                )
+            for channel_name, expected_digest in evidence.channel_digests:
+                try:
+                    digester = self.channel_digesters[channel_name]
+                except KeyError as exc:
+                    raise ParallelFrameCoordinatorError(
+                        f"no canonical digester is registered for preflight "
+                        f"channel {channel_name!r}"
+                    ) from exc
+                actual_value = frame.channel(channel_name)
+                try:
+                    actual_digest = _sha256_digest(
+                        digester(actual_value),
+                        f"runtime channel {channel_name!r} digest",
+                    )
+                except Exception as exc:
+                    raise ParallelFrameCoordinatorError(
+                        f"runtime channel {channel_name!r} cannot be "
+                        f"canonically verified: {exc}"
+                    ) from exc
+                if actual_digest != expected_digest:
+                    raise ParallelFrameCoordinatorError(
+                        f"coordinated channel {channel_name!r} differs from "
+                        "its accepted preflight evidence"
+                    )
+            return index
+
+        def snapshot() -> int:
+            return self._next_frame_index
+
+        def commit(prepared: object) -> None:
+            if not isinstance(prepared, int) or prepared != self._next_frame_index:
+                raise ParallelFrameCoordinatorError(
+                    "preflight gate commit order changed after preparation"
+                )
+            self._next_frame_index += 1
+
+        def rollback(value: object) -> None:
+            if not isinstance(value, int) or value < 0:
+                raise ParallelFrameCoordinatorError(
+                    "preflight gate snapshot is invalid"
+                )
+            self._next_frame_index = value
+
+        return ParallelFrameParticipant(
+            participant_id=participant_id,
+            phase=ParallelFramePhase.PREFLIGHT,
+            prepare=prepare,
+            snapshot=snapshot,
+            commit=commit,
+            rollback=rollback,
+            binding_kind=ParallelFrameBindingKind.PREFLIGHT_GATE,
         )
 
 
@@ -838,6 +1092,8 @@ def preflight_parallel_frames(
     ).hexdigest()
     return ParallelPreflightReport(
         input_digest=input_digest,
+        frame_ids=tuple(item.frame_id for item in authored),
+        frame_digests=tuple(item.digest for item in authored),
         frame_count=len(authored),
         framing_point_count=sum(len(item.framing_points) for item in authored),
         topology_event_count=sum(len(item.topology_events) for item in authored),
@@ -851,10 +1107,12 @@ def preflight_parallel_frames(
 
 __all__ = [
     "PARALLEL_PREFLIGHT_REPORT_SCHEMA",
+    "PARALLEL_PREFLIGHT_FRAME_CHANNEL",
     "CapacityEvidence",
     "PainterOrderEvidence",
     "ParallelPreflightError",
     "ParallelPreflightFrame",
+    "ParallelPreflightGate",
     "ParallelPreflightIssue",
     "ParallelPreflightLimits",
     "ParallelPreflightRejectedError",

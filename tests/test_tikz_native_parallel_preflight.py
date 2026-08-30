@@ -1,17 +1,27 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import unittest
 
 import numpy as np
 
 from tikz_native.parallel_camera import ParallelCameraState
+from tikz_native.parallel_frame import (
+    ParallelFrameCoordinator,
+    ParallelFrameCoordinatorError,
+    ParallelFrameParticipant,
+    ParallelFramePhase,
+    ParallelFrameState,
+)
 from tikz_native.parallel_preflight import (
     PARALLEL_PREFLIGHT_REPORT_SCHEMA,
+    PARALLEL_PREFLIGHT_FRAME_CHANNEL,
     CapacityEvidence,
     PainterOrderEvidence,
     ParallelPreflightError,
     ParallelPreflightFrame,
+    ParallelPreflightGate,
     ParallelPreflightLimits,
     ParallelPreflightRejectedError,
     ParallelSafeFrame,
@@ -85,6 +95,10 @@ def _frame(
 
 def _codes(report: object) -> set[str]:
     return {item.code for item in report.issues}  # type: ignore[attr-defined]
+
+
+def _text_digest(value: object) -> str:
+    return "sha256:" + hashlib.sha256(str(value).encode("utf-8")).hexdigest()
 
 
 class TikzNativeParallelPreflightTests(unittest.TestCase):
@@ -392,6 +406,200 @@ class TikzNativeParallelPreflightTests(unittest.TestCase):
         payload = json.loads(first.to_json())
         self.assertEqual(payload["schema"], PARALLEL_PREFLIGHT_REPORT_SCHEMA)
         self.assertTrue(payload["accepted"])
+        self.assertEqual(payload["frameIds"], ["frame-0"])
+        self.assertEqual(payload["frameDigests"], [frame.digest])
+
+    def test_accepted_report_gates_exact_frame_sequence_and_rolls_back(self) -> None:
+        first = _frame()
+        second = _frame(
+            "frame-1",
+            1.0,
+            topology_events=(
+                TopologyEventEvidence(
+                    "event-1",
+                    "parabola-to-hyperbola",
+                    True,
+                    requires_slot_bank=True,
+                    slot_bank_id="conic-bank-1",
+                ),
+            ),
+        )
+        report = preflight_parallel_frames((first, second), _limits())
+
+        mismatch_gate = ParallelPreflightGate(report)
+        mismatch_coordinator: ParallelFrameCoordinator[ParallelFrameState]
+        mismatch_coordinator = ParallelFrameCoordinator()
+        mismatch_coordinator.add(mismatch_gate.participant())
+        with self.assertRaisesRegex(
+            ParallelFrameCoordinatorError,
+            "camera differs",
+        ):
+            mismatch_coordinator.update(
+                ParallelFrameState(
+                    _camera(zoom=1.1),
+                    channels={PARALLEL_PREFLIGHT_FRAME_CHANNEL: first},
+                    frame_id=first.frame_id,
+                    preflight_input_digest=report.input_digest,
+                )
+            )
+
+        gate = ParallelPreflightGate(report)
+        coordinator: ParallelFrameCoordinator[ParallelFrameState]
+        coordinator = ParallelFrameCoordinator()
+        coordinator.add(gate.participant())
+        coordinator.update(
+            ParallelFrameState(
+                first.camera,
+                channels={PARALLEL_PREFLIGHT_FRAME_CHANNEL: first},
+                frame_id=first.frame_id,
+                preflight_input_digest=report.input_digest,
+            )
+        )
+        self.assertEqual(gate.next_frame_index, 1)
+
+        with self.assertRaisesRegex(
+            ParallelFrameCoordinatorError,
+            "does not belong",
+        ):
+            coordinator.update(
+                ParallelFrameState(
+                    second.camera,
+                    channels={PARALLEL_PREFLIGHT_FRAME_CHANNEL: second},
+                    frame_id=second.frame_id,
+                    preflight_input_digest="sha256:" + "0" * 64,
+                )
+            )
+        self.assertEqual(gate.next_frame_index, 1)
+        coordinator.update(
+            ParallelFrameState(
+                second.camera,
+                channels={PARALLEL_PREFLIGHT_FRAME_CHANNEL: second},
+                frame_id=second.frame_id,
+                preflight_input_digest=report.input_digest,
+            )
+        )
+        self.assertEqual(gate.next_frame_index, 2)
+        coordinator.restore()
+        self.assertEqual(gate.next_frame_index, 0)
+
+        failing_gate = ParallelPreflightGate(report)
+        failing_coordinator: ParallelFrameCoordinator[ParallelFrameState]
+        failing_coordinator = ParallelFrameCoordinator()
+        failing_coordinator.add(failing_gate.participant())
+
+        def fail_commit(_prepared: object) -> None:
+            raise RuntimeError("synthetic commit failure")
+
+        failing_coordinator.add(
+            ParallelFrameParticipant(
+                "synthetic-failure",
+                ParallelFramePhase.PAINT,
+                lambda _frame: None,
+                lambda: None,
+                fail_commit,
+                lambda _snapshot: None,
+            )
+        )
+        with self.assertRaisesRegex(RuntimeError, "synthetic commit failure"):
+            failing_coordinator.update(
+                ParallelFrameState(
+                    first.camera,
+                    channels={PARALLEL_PREFLIGHT_FRAME_CHANNEL: first},
+                    frame_id=first.frame_id,
+                    preflight_input_digest=report.input_digest,
+                )
+            )
+        self.assertEqual(failing_gate.next_frame_index, 0)
+
+        rejected = preflight_parallel_frames((), _limits())
+        with self.assertRaises(ParallelPreflightRejectedError):
+            ParallelPreflightGate(rejected)
+
+    def test_gate_binds_declared_runtime_channel_digests(self) -> None:
+        expected = "certified-plane"
+        frame = _frame(
+            channel_digests=(("section-plane", _text_digest(expected)),),
+        )
+        report = preflight_parallel_frames((frame,), _limits())
+        gate = ParallelPreflightGate(
+            report,
+            channel_digesters={"section-plane": _text_digest},
+        )
+        coordinator: ParallelFrameCoordinator[ParallelFrameState]
+        coordinator = ParallelFrameCoordinator()
+        coordinator.add(gate.participant())
+        with self.assertRaisesRegex(
+            ParallelFrameCoordinatorError,
+            "section-plane.*differs",
+        ):
+            coordinator.update(
+                ParallelFrameState(
+                    frame.camera,
+                    channels={
+                        PARALLEL_PREFLIGHT_FRAME_CHANNEL: frame,
+                        "section-plane": "tampered-plane",
+                    },
+                    frame_id=frame.frame_id,
+                    preflight_input_digest=report.input_digest,
+                )
+            )
+        self.assertEqual(gate.next_frame_index, 0)
+        coordinator.update(
+            ParallelFrameState(
+                frame.camera,
+                channels={
+                    PARALLEL_PREFLIGHT_FRAME_CHANNEL: frame,
+                    "section-plane": expected,
+                },
+                frame_id=frame.frame_id,
+                preflight_input_digest=report.input_digest,
+            )
+        )
+        self.assertEqual(gate.next_frame_index, 1)
+
+        extra_gate = ParallelPreflightGate(
+            report,
+            channel_digesters={"section-plane": _text_digest},
+        )
+        extra_coordinator: ParallelFrameCoordinator[ParallelFrameState]
+        extra_coordinator = ParallelFrameCoordinator()
+        extra_coordinator.add(extra_gate.participant())
+        with self.assertRaisesRegex(
+            ParallelFrameCoordinatorError,
+            "runtime channels differ.*unpreflighted-command",
+        ):
+            extra_coordinator.update(
+                ParallelFrameState(
+                    frame.camera,
+                    channels={
+                        PARALLEL_PREFLIGHT_FRAME_CHANNEL: frame,
+                        "section-plane": expected,
+                        "unpreflighted-command": "mutate",
+                    },
+                    frame_id=frame.frame_id,
+                    preflight_input_digest=report.input_digest,
+                )
+            )
+
+        missing = ParallelPreflightGate(report)
+        missing_coordinator: ParallelFrameCoordinator[ParallelFrameState]
+        missing_coordinator = ParallelFrameCoordinator()
+        missing_coordinator.add(missing.participant())
+        with self.assertRaisesRegex(
+            ParallelFrameCoordinatorError,
+            "no canonical digester",
+        ):
+            missing_coordinator.update(
+                ParallelFrameState(
+                    frame.camera,
+                    channels={
+                        PARALLEL_PREFLIGHT_FRAME_CHANNEL: frame,
+                        "section-plane": expected,
+                    },
+                    frame_id=frame.frame_id,
+                    preflight_input_digest=report.input_digest,
+                )
+            )
 
     def test_malformed_evidence_is_rejected_before_preflight(self) -> None:
         with self.assertRaisesRegex(ParallelPreflightError, "positive width"):

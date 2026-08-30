@@ -1,0 +1,139 @@
+# Parallel camera and section render sequences
+
+`compile_parallel_section_sequence_from_shots()` is the renderer-neutral seam
+between semantic parallel-camera shots and a certified `SectionTimeline`.  It
+compiles the camera, cutting plane, topology handoff, semantic display state,
+fixed bank capacity, cap-chord activation, painter order, and renderer affine
+terms into one immutable sequence before a Scene is mutated.
+
+## Why the sequence has a render grid
+
+Analytic section timelines contain exact key times, but a topology crossfade
+also needs frames strictly inside its left and right windows.  A sequence may
+therefore be compiled in either of two ways:
+
+- omit `frame_rate` to get the smallest proof grid (all analytic keyframes plus
+  one interior frame per non-empty crossfade side); or
+- provide `frame_rate` to obtain Manim's real output-frame grid.  An analytic
+  key time replaces a nearby nominal output time; it never inserts a physical
+  frame.  Manim renders a play segment on `[0, run_time)`, so the final
+  analytic endpoint replaces the last nominal output frame instead of becoming
+  an extra, unrendered endpoint.
+
+The camera sampler and real Manim playback share the named
+`manim-smooth-v1` easing contract.  Intermediate offline camera evidence thus
+matches `Scene.play`, not only its endpoints.
+
+The provenance stores both grids one-to-one: `nominalFrameTimes` is the
+renderer clock, while `evaluationTimes` contains the exact analytic times used
+for geometry.  A critical time that differs from a shot boundary only by
+floating-point roundoff is still assigned to that shot's exact endpoint.
+Playback rejects a different live frame rate or shot source before `Scene.play`.
+Absolute authoring times whose floating-point spacing is too coarse for the
+local shot/frame duration are rejected instead of collapsing multiple frames.
+
+```python
+sequence = compile_parallel_section_sequence_from_shots(
+    timeline,
+    camera_shots,
+    initial_camera,
+    display_keyframes,
+    limits=preflight_limits,
+    painter_orders=painter_keyframes,
+    semantic_bank_ids=("section-bank-a", "section-bank-b"),
+    frame_rate=30,
+    plane_patch_margin=0.08,
+)
+```
+
+## Fixed semantic banks
+
+`semantic_bank_ids` names two real `SECTION_CURVE` banks in the immutable
+`SectionDisplayCatalog`; they are not synthetic preflight labels.  Every bank
+must reserve both branch slots required by the section animation contract.
+During a crossfade, `SectionBankRenderFrame` activates both banks in one
+coordinated frame and records, per bank:
+
+- the certified reference frame and geometry time;
+- the semantic bank identity;
+- the active branch count;
+- the active isolated-point count;
+- a digest of the freshly solved finite section geometry at `geometry_time`;
+- the effective handoff opacity.
+
+Each topology bank must own its own fixed slots for finite-surface `CAP_CHORD`
+identities.  This lets both sides of a crossfade carry different cap states at
+the same output frame.  Their per-bank capacity and analytic activation events
+are included in the same preflight report.  Pure trim tangencies remain instant
+cuts and use certified one-sided live geometry at the exact critical time,
+avoiding a zero-length degenerate render.
+
+## Finite plane patch and exact side view
+
+`plane_patch_margin=None` means that no finite plane patch is drawn.  A finite
+value uses the same analytic `fit_plane_display_patch()` contract as the Rig,
+and the margin must be passed explicitly (the Rig default is `0.08`).  The
+derived `FittedPlaneDisplayPatch` is serialized, channel-digested, and its four
+world-space corners enter every safe-frame check.
+
+When the camera looks exactly along the plane, those four corners naturally
+project to the two endpoints of one finite line segment.  The preflight does
+not invent thickness and does not treat the display patch as visibility truth.
+If any `PLANE_FILL` or `PLANE_OUTLINE` slot is visible, `None` is rejected: a
+visible plane must have a source-bound finite patch and runtime participant.
+
+## Runtime gate and transaction order
+
+Every runtime channel has a canonical SHA-256 digest embedded in its accepted
+`ParallelPreflightFrame`.  Use the sequence-owned gate; constructing a gate
+from only a report omits the section-specific digest functions.
+
+```python
+coordinator = ParallelFrameCoordinator()
+gate = parallel_section_preflight_gate(sequence)
+coordinator.add(gate.participant())
+coordinator.add(parallel_screen_transform_guard(read_live_screen_transform))
+coordinator.add(parallel_camera_frame_participant(camera))
+coordinator.add(section_bank_frame_participant(bank_binding))
+coordinator.add(section_plane_patch_participant(bank_binding))
+coordinator.add(section_painter_order_participant(painter_binding))
+coordinator.add(section_display_frame_participant(display_binding))
+
+for frame in sequence.frames:
+    coordinator.update(frame)
+```
+
+The bank and display bindings must each expose complete snapshot, apply, and
+restore methods.  Preparation is read-only; if any commit partially mutates a
+bank and then raises, the failing participant, the camera, and all earlier
+participants are restored in reverse order.  A live inherited zoom, frame
+center, or display offset that differs from preflight is rejected before any
+commit.
+
+The player verifies both participant identity and its audited binding kind and
+phase; same-name no-op participants are not accepted.  Manim cache identity is
+bound to the complete section-sequence digest and semantic segment identity.
+Original shot `duration`/`hold` values are passed to `Scene.play` directly so
+non-integral segment boundaries do not gain duplicate frames through cumulative
+floating-point subtraction.
+
+## Fail-closed boundaries
+
+Compilation rejects, rather than guesses, when:
+
+- the render grid omits an analytic key time or a crossfade interior;
+- a display or painter keyframe changes inside an inserted crossfade frame
+  without explicit render-frame values;
+- a dynamic section slot is outside the two declared semantic banks;
+- either bank has fewer than two fixed branch slots;
+- cap-chord slots do not exactly match the finite-surface reservation;
+- a finite plane patch differs from the source surface, evaluation plane, or
+  explicit margin used by preflight;
+- bank geometry is solved under a context or coefficient tolerance other than
+  the policy serialized by `SectionTimeline`;
+- painter evidence is empty;
+- a runtime plane, display, bank, transition, or screen-transform channel no
+  longer matches its accepted digest.
+
+This contract remains parallel-projection-only.  Perspective cameras require
+per-point view rays and are intentionally outside this sequence.

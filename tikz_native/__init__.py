@@ -55,18 +55,59 @@ from .open_face_visibility_3d_manim import (
 )
 from .parallel_camera import CameraPlane, ParallelCameraState, ProjectionRank
 from .parallel_shots import (
+    PARALLEL_CAMERA_SHOT_EASING,
     PARALLEL_CAMERA_SHOT_SEQUENCE_SCHEMA,
     ParallelCameraSafeFrame,
     ParallelCameraShot,
     ParallelCameraShotSequence,
     canonical_parallel_camera_shot_sequence_json,
     fit_points_to_parallel_camera_state,
+    parallel_camera_shot_progress,
 )
 from .parallel_shots_manim import (
     ParallelCameraShotManimError,
     ParallelCameraTargetFollowController,
     play_parallel_camera_shot,
     play_parallel_camera_shot_sequence,
+)
+from .parallel_frame import (
+    ParallelFrameBindingKind,
+    ParallelFrameCoordinator,
+    ParallelFrameParticipant,
+    ParallelFramePhase,
+    ParallelFrameState,
+    parallel_camera_frame_participant,
+)
+from .parallel_preflight import (
+    PainterOrderEvidence,
+    ParallelPreflightLimits,
+    ParallelSafeFrame,
+    ParallelScreenTransform,
+)
+from .quadric_section_parallel import (
+    SECTION_PLANE_PATCH_CHANNEL,
+    ParallelCameraSamplingProvenance,
+    ParallelSectionSequence,
+    ParallelSectionSequenceError,
+    compile_parallel_section_sequence,
+    compile_parallel_section_sequence_from_shots,
+    parallel_screen_transform_guard,
+    parallel_camera_shot_frame_times,
+    parallel_section_frame_grid,
+    parallel_section_preflight_gate,
+    parallel_section_render_times,
+    section_display_frame_participant,
+    section_plane_patch_participant,
+    section_painter_order_participant,
+)
+from .section_bank_render import (
+    SectionBankRenderFrame,
+    SectionBankRenderLayer,
+    section_bank_frame_participant,
+)
+from .quadric_section_parallel_manim import (
+    ParallelSectionPlaybackError,
+    play_parallel_section_sequence,
 )
 from .polyhedron_visibility_3d_adapter import (
     TikzNativeVisibility3DAdapterError,
@@ -156,6 +197,7 @@ __all__ = [
     "NativeRig2D",
     "ObjectSpec",
     "OcclusionRelationSpec",
+    "PARALLEL_CAMERA_SHOT_EASING",
     "PARALLEL_CAMERA_SHOT_SEQUENCE_SCHEMA",
     "PROTOCOL_VERSION",
     "ParallelCameraSafeFrame",
@@ -163,7 +205,20 @@ __all__ = [
     "ParallelCameraShotManimError",
     "ParallelCameraShotSequence",
     "ParallelCameraState",
+    "ParallelCameraSamplingProvenance",
     "ParallelCameraTargetFollowController",
+    "ParallelFrameCoordinator",
+    "ParallelFrameBindingKind",
+    "ParallelFrameParticipant",
+    "ParallelFramePhase",
+    "ParallelFrameState",
+    "ParallelPreflightLimits",
+    "ParallelSafeFrame",
+    "ParallelScreenTransform",
+    "ParallelSectionSequence",
+    "ParallelSectionSequenceError",
+    "ParallelSectionPlaybackError",
+    "PainterOrderEvidence",
     "PictureSpec",
     "Projection3DSpec",
     "ProjectionRank",
@@ -201,6 +256,23 @@ __all__ = [
     "provider_revision",
     "play_parallel_camera_shot",
     "play_parallel_camera_shot_sequence",
+    "play_parallel_section_sequence",
+    "parallel_camera_frame_participant",
+    "parallel_camera_shot_frame_times",
+    "parallel_camera_shot_progress",
+    "parallel_screen_transform_guard",
+    "parallel_section_frame_grid",
+    "parallel_section_preflight_gate",
+    "parallel_section_render_times",
+    "compile_parallel_section_sequence",
+    "compile_parallel_section_sequence_from_shots",
+    "SectionBankRenderFrame",
+    "SectionBankRenderLayer",
+    "SECTION_PLANE_PATCH_CHANNEL",
+    "section_bank_frame_participant",
+    "section_display_frame_participant",
+    "section_plane_patch_participant",
+    "section_painter_order_participant",
     "render_static_png",
     "validate_open_face_static_asset_3d_contract",
 ]

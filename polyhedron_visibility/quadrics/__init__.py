@@ -437,6 +437,55 @@ _EXPORTS: Final[dict[str, tuple[str, str]]] = {
         ".plane_motion",
         "track_scheduled_plane_section",
     ),
+    "ParallelPlaneTranslation": (
+        ".parallel_plane_motion",
+        "ParallelPlaneTranslation",
+    ),
+    "ParallelPlaneMotionSchedule": (
+        ".parallel_plane_motion",
+        "ParallelPlaneMotionSchedule",
+    ),
+    "compute_parallel_plane_motion_schedule": (
+        ".parallel_plane_motion",
+        "compute_parallel_plane_motion_schedule",
+    ),
+    "SectionTimeline": (".section_timeline", "SectionTimeline"),
+    "SectionTimelineError": (".section_timeline", "SectionTimelineError"),
+    "compile_section_timeline": (
+        ".section_timeline",
+        "compile_section_timeline",
+    ),
+    "SectionDisplayCatalog": (
+        ".semantic_display",
+        "SectionDisplayCatalog",
+    ),
+    "SectionDisplayFrame": (".semantic_display", "SectionDisplayFrame"),
+    "SectionDisplayInstruction": (
+        ".semantic_display",
+        "SectionDisplayInstruction",
+    ),
+    "SectionDisplayRole": (".semantic_display", "SectionDisplayRole"),
+    "SectionSemanticSlot": (".semantic_display", "SectionSemanticSlot"),
+    "compile_section_display": (
+        ".semantic_display",
+        "compile_section_display",
+    ),
+    "SectionTimelineTransitionPlan": (
+        ".section_timeline_transition",
+        "SectionTimelineTransitionPlan",
+    ),
+    "SectionTimelineTransitionState": (
+        ".section_timeline_transition",
+        "SectionTimelineTransitionState",
+    ),
+    "build_section_timeline_transition_plan": (
+        ".section_timeline_transition",
+        "build_section_timeline_transition_plan",
+    ),
+    "section_timeline_transition_state_at": (
+        ".section_timeline_transition",
+        "section_timeline_transition_state_at",
+    ),
     "SECTION_TRANSITION_PLAN_SCHEMA": (
         ".transition",
         "SECTION_TRANSITION_PLAN_SCHEMA",

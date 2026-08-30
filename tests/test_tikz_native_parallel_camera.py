@@ -238,6 +238,13 @@ class ParallelCameraStateTests(unittest.TestCase):
             self.assertTrue(np.all(np.isfinite(state.matrix)))
             self.assertGreater(state.zoom, 0.0)
 
+    def test_identical_view_interpolates_a_stable_middle_frame(self) -> None:
+        source = ParallelCameraState.from_view_direction((1.0, 1.0, 1.0))
+        middle = interpolate_parallel_camera_states(source, source, 0.5)
+
+        np.testing.assert_allclose(middle.matrix, source.matrix, atol=1.0e-12)
+        self.assert_camera_frame(middle.matrix)
+
     def test_opposite_views_require_an_explicit_orbit_control(self) -> None:
         source = ParallelCameraState.from_view_direction(
             (0.0, 0.0, 1.0), up_hint=(0.0, 1.0, 0.0)
