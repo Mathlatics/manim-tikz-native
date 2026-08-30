@@ -11,7 +11,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 import json
 from math import isfinite
+from numbers import Real
 from typing import Sequence
+import unicodedata
 
 import numpy as np
 
@@ -20,6 +22,97 @@ from .parallel_camera import CameraPlane, ParallelCameraState, PlaneLike
 
 PARALLEL_CAMERA_SHOT_SEQUENCE_SCHEMA = "parallel-shot-sequence/v1"
 _FIT_TOLERANCE_FACTOR = 4096.0
+
+
+def _strict_json_object(
+    pairs: list[tuple[str, object]],
+) -> dict[str, object]:
+    result: dict[str, object] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError(f"duplicate JSON object key: {key!r}")
+        result[key] = value
+    return result
+
+
+def _reject_json_constant(value: str) -> None:
+    raise ValueError(f"non-finite JSON number is not allowed: {value}")
+
+
+def _parse_finite_json_float(value: str) -> float:
+    result = float(value)
+    if not isfinite(result):
+        raise ValueError(f"non-finite JSON number is not allowed: {value}")
+    return result
+
+
+def _normalize_json_strings(value: object) -> object:
+    if isinstance(value, str):
+        try:
+            value.encode("utf-8")
+        except UnicodeEncodeError as exc:
+            raise ValueError("JSON strings must contain valid Unicode") from exc
+        return unicodedata.normalize("NFC", value)
+    if isinstance(value, list):
+        return [_normalize_json_strings(item) for item in value]
+    if isinstance(value, dict):
+        result: dict[str, object] = {}
+        for key, item in value.items():
+            if not isinstance(key, str):
+                raise ValueError("JSON object keys must be strings")
+            normalized_key = _normalize_json_strings(key)
+            assert isinstance(normalized_key, str)
+            if normalized_key in result:
+                raise ValueError(
+                    f"duplicate JSON object key after Unicode normalization: "
+                    f"{normalized_key!r}"
+                )
+            result[normalized_key] = _normalize_json_strings(item)
+        return result
+    return value
+
+
+def _mapping_with_exact_keys(
+    value: object,
+    *,
+    required: set[str],
+    location: str,
+) -> dict[str, object]:
+    if not isinstance(value, dict):
+        raise ValueError(f"{location} must be an object")
+    actual = set(value)
+    missing = sorted(required - actual)
+    extra = sorted(actual - required)
+    if missing:
+        raise ValueError(
+            f"{location} is missing required fields: {', '.join(missing)}"
+        )
+    if extra:
+        raise ValueError(
+            f"{location} contains unsupported fields: {', '.join(extra)}"
+        )
+    return value
+
+
+def _finite_json_number(value: object, location: str) -> float:
+    if isinstance(value, bool) or not isinstance(value, Real):
+        raise ValueError(f"{location} must be a finite number")
+    try:
+        result = float(value)
+    except (OverflowError, ValueError) as exc:
+        raise ValueError(f"{location} must be a finite number") from exc
+    if not isfinite(result):
+        raise ValueError(f"{location} must be a finite number")
+    return result
+
+
+def _finite_json_vector(value: object, size: int, location: str) -> list[float]:
+    if not isinstance(value, list) or len(value) != size:
+        raise ValueError(f"{location} must contain exactly {size} finite numbers")
+    return [
+        _finite_json_number(item, f"{location}[{index}]")
+        for index, item in enumerate(value)
+    ]
 
 
 def _identity(value: object, label: str) -> str:
@@ -347,6 +440,146 @@ class ParallelCameraShotSequence:
         }
 
 
+def parallel_camera_shot_sequence_from_dict(
+    value: object,
+) -> ParallelCameraShotSequence:
+    """Strictly reconstruct one canonical parallel-camera shot sequence.
+
+    This is the inverse of :meth:`ParallelCameraShotSequence.to_dict`.  It is
+    deliberately stricter than the Python constructors: JSON arrays must
+    remain arrays, booleans are not accepted as numbers, and every object must
+    contain exactly the fields declared by ``parallel-shot-sequence/v1``.
+    """
+
+    normalized = _normalize_json_strings(value)
+    root = _mapping_with_exact_keys(
+        normalized,
+        required={"schema", "shots"},
+        location="parallel camera shot sequence",
+    )
+    schema = root["schema"]
+    if schema != PARALLEL_CAMERA_SHOT_SEQUENCE_SCHEMA:
+        raise ValueError(
+            "parallel camera shot sequence schema must be "
+            f"{PARALLEL_CAMERA_SHOT_SEQUENCE_SCHEMA!r}"
+        )
+    raw_shots = root["shots"]
+    if not isinstance(raw_shots, list) or not raw_shots:
+        raise ValueError(
+            "parallel camera shot sequence shots must be a non-empty array"
+        )
+
+    shots: list[ParallelCameraShot] = []
+    shot_fields = {
+        "id",
+        "state",
+        "duration",
+        "hold",
+        "transition",
+        "arcHeight",
+        "cue",
+    }
+    state_fields = {"matrix", "target", "screenAnchor", "zoom"}
+    for index, raw_shot in enumerate(raw_shots):
+        location = f"parallel camera shot sequence shots[{index}]"
+        shot = _mapping_with_exact_keys(
+            raw_shot,
+            required=shot_fields,
+            location=location,
+        )
+        raw_state = _mapping_with_exact_keys(
+            shot["state"],
+            required=state_fields,
+            location=f"{location}.state",
+        )
+        raw_matrix = raw_state["matrix"]
+        if not isinstance(raw_matrix, list) or len(raw_matrix) != 3:
+            raise ValueError(
+                f"{location}.state.matrix must contain exactly three rows"
+            )
+        matrix = [
+            _finite_json_vector(
+                row,
+                3,
+                f"{location}.state.matrix[{row_index}]",
+            )
+            for row_index, row in enumerate(raw_matrix)
+        ]
+        try:
+            state = ParallelCameraState(
+                matrix,
+                target=_finite_json_vector(
+                    raw_state["target"],
+                    3,
+                    f"{location}.state.target",
+                ),
+                screen_anchor=_finite_json_vector(
+                    raw_state["screenAnchor"],
+                    2,
+                    f"{location}.state.screenAnchor",
+                ),
+                zoom=_finite_json_number(
+                    raw_state["zoom"],
+                    f"{location}.state.zoom",
+                ),
+            )
+            shots.append(
+                ParallelCameraShot(
+                    id=shot["id"],
+                    state=state,
+                    duration=_finite_json_number(
+                        shot["duration"],
+                        f"{location}.duration",
+                    ),
+                    hold=_finite_json_number(
+                        shot["hold"],
+                        f"{location}.hold",
+                    ),
+                    transition=shot["transition"],
+                    arc_height=_finite_json_number(
+                        shot["arcHeight"],
+                        f"{location}.arcHeight",
+                    ),
+                    cue=shot["cue"],
+                )
+            )
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"invalid {location}: {exc}") from exc
+    try:
+        return ParallelCameraShotSequence(tuple(shots))
+    except ValueError as exc:
+        raise ValueError(f"invalid parallel camera shot sequence: {exc}") from exc
+
+
+def parallel_camera_shot_sequence_from_json(
+    source: str | bytes | bytearray,
+) -> ParallelCameraShotSequence:
+    """Parse strict UTF-8 JSON and reconstruct a shot sequence."""
+
+    if not isinstance(source, (str, bytes, bytearray)):
+        raise TypeError("parallel camera shot sequence JSON must be text or bytes")
+    if isinstance(source, (bytes, bytearray)):
+        try:
+            source = bytes(source).decode("utf-8")
+        except UnicodeDecodeError as exc:
+            raise ValueError(
+                "parallel camera shot sequence JSON must be UTF-8"
+            ) from exc
+    try:
+        value = json.loads(
+            source,
+            object_pairs_hook=_strict_json_object,
+            parse_constant=_reject_json_constant,
+            parse_float=_parse_finite_json_float,
+        )
+    except json.JSONDecodeError as exc:
+        raise ValueError(
+            "invalid parallel camera shot sequence JSON: "
+            f"line {exc.lineno}, column {exc.colno}: {exc.msg}"
+        ) from exc
+    return parallel_camera_shot_sequence_from_dict(value)
+
+
 def _fit_tolerance(values: np.ndarray) -> float:
     scale = max(1.0, float(np.max(np.abs(values))))
     return np.finfo(float).eps * _FIT_TOLERANCE_FACTOR * scale
@@ -466,4 +699,6 @@ __all__ = [
     "ParallelCameraShotSequence",
     "canonical_parallel_camera_shot_sequence_json",
     "fit_points_to_parallel_camera_state",
+    "parallel_camera_shot_sequence_from_dict",
+    "parallel_camera_shot_sequence_from_json",
 ]

@@ -1,0 +1,13 @@
+{
+  "schemaVersion": "tikz-native-source-project/v1",
+  "tikzSource": "figure.tex",
+  "cameraShots": "camera-shots.json",
+  "derivedOutput": ".tikz-native/derived",
+  "renderIntent": {
+    "paintPolicy": "diagrammatic",
+    "projection": {
+      "kind": "orthographic",
+      "direction": [1, -1, -1]
+    }
+  }
+}

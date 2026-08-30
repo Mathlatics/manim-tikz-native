@@ -1,0 +1,41 @@
+{
+  "schema": "parallel-shot-sequence/v1",
+  "shots": [
+    {
+      "id": "overview",
+      "state": {
+        "matrix": [
+          [-0.7071067811865475, 0.7071067811865475, 0.0],
+          [-0.4082482904638631, -0.4082482904638631, 0.8164965809277261],
+          [0.5773502691896258, 0.5773502691896258, 0.5773502691896258]
+        ],
+        "target": [0.5, 0.5, 0.5],
+        "screenAnchor": [-0.5, 0.15],
+        "zoom": 1.0
+      },
+      "duration": 1.0,
+      "hold": 0.3,
+      "transition": "orbit",
+      "arcHeight": 0.7,
+      "cue": "overview"
+    },
+    {
+      "id": "front",
+      "state": {
+        "matrix": [
+          [0.0, 1.0, 0.0],
+          [0.0, 0.0, 1.0],
+          [1.0, 0.0, 0.0]
+        ],
+        "target": [0.5, 0.5, 0.5],
+        "screenAnchor": [0.25, -0.1],
+        "zoom": 1.2
+      },
+      "duration": 0.8,
+      "hold": 0.2,
+      "transition": "shortest",
+      "arcHeight": 0.0,
+      "cue": "front view"
+    }
+  ]
+}

@@ -1,9 +1,10 @@
 # Source-authoritative projects
 
 A source project keeps the authored TikZ file as the durable source of truth.
-Optional motion JSON, a Bridge request template, and render intent are authored
-inputs as well. Python hooks are also optional, but require a Bridge template
-because they are appended to generated Manim source. ShapeAssets, compositing
+Optional motion JSON, parallel-camera shots, a Bridge request template, and
+render intent are authored inputs as well. Python hooks are also optional, but
+require a Bridge template because they are appended to generated Manim source.
+ShapeAssets, compositing
 plans, generated Manim source, and the build manifest are disposable outputs:
 they may be deleted and rebuilt with the current Provider. Preview and final
 media are downstream application outputs; this CLI neither creates nor removes
@@ -53,6 +54,35 @@ and must not be edited by hand.
 The manifest deliberately does not persist `compositingMode`, a generated
 ShapeAsset, or generated Python. Those describe a particular implementation,
 not the mathematical source.
+
+### Authored parallel-camera shots
+
+A project may point to one renderer-neutral parallel-camera sequence:
+
+```json
+{
+  "schemaVersion": "tikz-native-source-project/v1",
+  "tikzSource": "figure.tex",
+  "cameraShots": "camera-shots.json"
+}
+```
+
+`camera-shots.json` must satisfy `parallel-shot-sequence/v1`. It stores complete
+parallel-camera states—matrix, target, screen anchor, zoom, timing, transition,
+and cue—rather than generated Manim code. The source file is authoritative. The
+canonical `camera-shots.json` written under `derivedOutput`, the copy embedded
+in generated source, and rendered media are disposable.
+
+The first source-project slice deliberately rejects a manifest containing both
+`cameraShots` and `motionJson`. Existing 3D motion documents can own camera
+steps themselves, and two independent camera writers would make updater order
+part of the result. A future coordinated scene-timeline contract may relax this
+restriction; this build does not silently choose whichever writer runs last.
+
+`renderIntent.projection` remains the static compositing entry/fallback
+projection. An authored shot sequence is temporal data and changes the live
+scene camera only when a host explicitly plays it. Source-project builds never
+start playback as a side effect.
 
 ## Build and inspect
 
@@ -132,6 +162,7 @@ Depending on the project inputs, the derived directory can contain:
 
 - `shape-asset.json`;
 - `motion-asset.json`;
+- `camera-shots.json`;
 - `unified-compositing.json`;
 - `generated_scene.py`;
 - `build-manifest.json`.
@@ -150,6 +181,12 @@ bytes; the build manifest records the union of revisions used by all present
 nodes. As a result, a generated-source adapter change does not force an
 unrelated ShapeAsset rebuild, while an orchestrator contract change cannot
 silently reuse an output built under old rules.
+
+The optional `camera_shots` node also records the `embedded_motion_3d`
+component revision, because that component owns the strict
+`parallel-shot-sequence/v1` parser and immutable camera-state implementation.
+A camera-only source edit rebuilds `camera_shots`, `compositing`, and (when a
+Bridge template is present) `generated_source`; it reuses `shape`.
 
 Use `tikz-native health` to inspect the current component render and contract
 revisions.
@@ -192,6 +229,14 @@ The unified AST rewrite runs before trusted hooks are appended inside a marked
 hook block. Hook bytes are otherwise preserved, so comments, strings, and
 ordinary hand-written animation code are not rewritten merely because they
 mention a lower-level or legacy name.
+
+When both a Bridge template and `cameraShots` are present, generated source
+exports the immutable `TIKZ_NATIVE_CAMERA_SHOTS` sequence before the authored
+hook block. Importing that module does not play the sequence or mutate a Scene.
+Hooks and downstream hosts may consume the binding explicitly. In particular,
+the build does not patch the older generated `local_camera_matrix` path: those
+objects are already projected locally, so automatically applying a second
+scene camera would be geometrically incorrect.
 
 The low-level Manim binding retains an explicit legacy mode only so existing
 hand-authored scenes can request their historical behavior. That compatibility
