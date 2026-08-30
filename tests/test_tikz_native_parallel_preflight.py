@@ -242,6 +242,20 @@ class TikzNativeParallelPreflightTests(unittest.TestCase):
             {"uncertified-topology-event", "missing-topology-slot-bank"},
         )
 
+        accepted = TopologyEventEvidence(
+            "handoff-with-bank",
+            "parabola-to-hyperbola",
+            True,
+            requires_slot_bank=True,
+            slot_bank_id="section-bank-1",
+        )
+        accepted_report = preflight_parallel_frames(
+            (_frame(topology_events=(accepted,)),),
+            _limits(),
+        )
+        self.assertTrue(accepted_report.accepted)
+        self.assertEqual(accepted_report.topology_event_count, 1)
+
     def test_capacity_overflow_negative_and_duplicate_resources_are_reported(
         self,
     ) -> None:
