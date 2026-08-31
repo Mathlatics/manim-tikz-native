@@ -1,11 +1,16 @@
 from __future__ import annotations
 
+import sys
 import unittest
 from unittest.mock import patch
 
+import numpy as np
 from manim import Scene, VGroup, VMobject
 
-from polyhedron_visibility.painter_band import ManagedPainterBand
+from polyhedron_visibility.painter_band import (
+    ManagedPainterBand,
+    ManagedPainterBandError,
+)
 
 
 def _stroke(x: float) -> VMobject:
@@ -13,6 +18,65 @@ def _stroke(x: float) -> VMobject:
 
 
 class IncrementalPainterBandTests(unittest.TestCase):
+    def test_large_band_rejects_duplicate_float_slots_before_mutation(self) -> None:
+        scene = Scene()
+        items = tuple(_stroke(float(index)) for index in range(64))
+        root = VGroup(*items)
+        scene.add(root)
+        low = 1.0e300
+        high = low
+        for _ in range(16):
+            high = float(np.nextafter(high, np.inf))
+        band = ManagedPainterBand(
+            z_band=(low, high),
+            managed_roots=(root,),
+        )
+        band.configure(containers=(scene.mobjects,), sources={"root": root})
+        before = tuple(item.z_index for item in items)
+        mapping = {
+            f"item:{index}": item for index, item in enumerate(items)
+        }
+
+        with self.assertRaisesRegex(
+            ManagedPainterBandError,
+            "finite, remain within.*strictly increasing.*insufficient "
+            "floating-point",
+        ):
+            band.prepare(
+                draw_order=tuple(mapping),
+                item_mobjects=mapping,
+            )
+
+        self.assertEqual(tuple(item.z_index for item in items), before)
+        self.assertEqual(band.active_z_indices, {})
+
+    def test_explicit_and_derived_bands_reject_ambiguous_endpoints(self) -> None:
+        scene = Scene()
+        first = _stroke(0.0)
+        second = _stroke(1.0)
+        scene.add(first, second)
+
+        with self.assertRaisesRegex(
+            ManagedPainterBandError,
+            "finite increasing values.*finite span",
+        ):
+            ManagedPainterBand(z_band=(False, 2.0)).configure(
+                containers=(scene.mobjects,),
+                sources={"first": first},
+            )
+
+        maximum = float(sys.float_info.max)
+        first.set_z_index(-maximum)
+        second.set_z_index(maximum)
+        with self.assertRaisesRegex(
+            ManagedPainterBandError,
+            "finite increasing values.*finite span",
+        ):
+            ManagedPainterBand().configure(
+                containers=(scene.mobjects,),
+                sources={"first": first, "second": second},
+            )
+
     def test_only_items_with_changed_ranks_receive_family_writes(self) -> None:
         scene = Scene()
         first, second, third = (_stroke(value) for value in (0.0, 1.0, 2.0))

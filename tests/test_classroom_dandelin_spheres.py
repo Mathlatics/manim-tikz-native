@@ -11,7 +11,10 @@ from examples.classroom_dandelin_spheres.classroom_dandelin_spheres import (
     DandelinThreeConicsLesson,
     build_dandelin_act,
 )
-from polyhedron_visibility.quadrics import DandelinConicFamily
+from polyhedron_visibility.quadrics import (
+    DandelinConicFamily,
+    DandelinSectionAuthoringError,
+)
 
 
 class ClassroomDandelinMetadataTests(unittest.TestCase):
@@ -48,10 +51,15 @@ class ClassroomDandelinFacadeTests(unittest.TestCase):
                 with self.subTest(act=act.act_id):
                     scene = Scene()
                     facade = build_dandelin_act(scene, act)
-                    slot_ids = facade.slot_identities()
                     display_id = id(facade.display_mobject)
+                    with self.assertRaisesRegex(
+                        DandelinSectionAuthoringError,
+                        "slot_identities.*only while attached",
+                    ):
+                        facade.slot_identities()
 
                     facade.attach()
+                    slot_ids = facade.slot_identities()
 
                     family, sphere_count = expected[act.act_id]
                     self.assertIs(facade.construction.family, family)
@@ -65,7 +73,19 @@ class ClassroomDandelinFacadeTests(unittest.TestCase):
                     facade.restore()
 
                     self.assertEqual(scene.mobjects, [])
-                    self.assertEqual(facade.slot_identities(), slot_ids)
+                    with self.assertRaisesRegex(
+                        DandelinSectionAuthoringError,
+                        "slot_identities.*only while attached",
+                    ):
+                        facade.slot_identities()
+
+                    facade.attach()
+                    try:
+                        self.assertTrue(facade.slot_identities())
+                        self.assertEqual(id(facade.display_mobject), display_id)
+                    finally:
+                        facade.restore()
+                    self.assertEqual(scene.mobjects, [])
 
 
 class ClassroomDandelinCairoTests(unittest.TestCase):

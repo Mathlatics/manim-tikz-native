@@ -933,10 +933,18 @@ the tangent cone/spheres have **not** been physically multi-surface
 composited. `build_dandelin_teaching_overlay()` likewise rejects `physical`
 and `depth_aware_diagrammatic` mode requests.
 
-The facade accepts one immutable parallel projection and immutable cone/plane
-geometry. Projection callbacks, perspective, OpenGL, and dynamic family
-transitions are outside v1. Full formulas, the support/rejection matrix, and
-the finite-fit rule are in
+The facade accepts immutable cone/plane geometry and one complete immutable
+parallel-camera frame. A `ParallelCameraState` freezes matrix, target,
+screen-anchor, zoom, and current viewport translation for the section,
+overlay, and focus dots together; projection callbacks are rejected without
+execution. On `attach()` the facade lazily reserves one non-overlapping Scene
+painter band, derives separate section/overlay/focus sub-bands, and releases
+the aggregate on `restore()`. If cleanup cannot prove that Scene and
+fixed-frame ownership are gone, it retains both the runtime references and
+reservation for an explicit retry instead of creating orphan display objects.
+Display-slot identities therefore exist only while attached. Perspective,
+OpenGL, and dynamic family transitions remain outside v1. Full formulas, the
+support/rejection matrix, and the finite-fit rule are in
 [Dandelin spheres v1](dandelin-spheres-v1.md).
 
 The static TikZ-facing path declares the source relation rather than inferring

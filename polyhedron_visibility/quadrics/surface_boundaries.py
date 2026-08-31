@@ -635,13 +635,17 @@ def build_surface_boundary_sources(
     by_id = {item.surface_id: item for item in surface_items}
     resolved = None
     if include_silhouettes:
-        resolved = resolve_geometry_context(
-            context,
-            positions=tuple(
-                point
-                for surface in surface_items
-                for point in surface.characteristic_points
-            ),
+        resolved = (
+            resolve_geometry_context(context)
+            if isinstance(context, ResolvedGeometryContext)
+            else resolve_geometry_context(
+                context,
+                positions=tuple(
+                    point
+                    for surface in surface_items
+                    for point in surface.characteristic_points
+                ),
+            )
         )
     result: list[QuadricBoundarySource] = []
     for surface in surface_items:

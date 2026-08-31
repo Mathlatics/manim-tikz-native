@@ -80,7 +80,18 @@ def _validate_scene_painter_band(value: object) -> tuple[float, float]:
         raise ScenePainterBandError(
             "scene painter z band must be a two-value tuple"
         )
-    low, high = (float(item) for item in value)
+    if any(isinstance(item, (bool, np.bool_)) for item in value):
+        raise ScenePainterBandError(
+            "scene painter z band must contain two finite increasing values "
+            "with a finite span"
+        )
+    try:
+        low, high = (float(item) for item in value)
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise ScenePainterBandError(
+            "scene painter z band must contain two finite increasing values "
+            "with a finite span"
+        ) from exc
     if (
         not np.isfinite(low)
         or not np.isfinite(high)
@@ -326,10 +337,27 @@ class ManagedPainterBand:
     def _validate_explicit_band(value: tuple[float, float]) -> tuple[float, float]:
         if not isinstance(value, tuple) or len(value) != 2:
             raise ManagedPainterBandError("painter_z_band must be a two-value tuple")
-        low, high = (float(item) for item in value)
-        if not np.isfinite(low) or not np.isfinite(high) or low >= high:
+        if any(isinstance(item, (bool, np.bool_)) for item in value):
             raise ManagedPainterBandError(
-                "painter_z_band must contain two finite increasing values"
+                "painter_z_band must contain two finite increasing values "
+                "with a finite span"
+            )
+        try:
+            low, high = (float(item) for item in value)
+        except (TypeError, ValueError, OverflowError) as exc:
+            raise ManagedPainterBandError(
+                "painter_z_band must contain two finite increasing values "
+                "with a finite span"
+            ) from exc
+        if (
+            not np.isfinite(low)
+            or not np.isfinite(high)
+            or low >= high
+            or not np.isfinite(high - low)
+        ):
+            raise ManagedPainterBandError(
+                "painter_z_band must contain two finite increasing values "
+                "with a finite span"
             )
         return low, high
 
@@ -373,7 +401,9 @@ class ManagedPainterBand:
                     raise ManagedPainterBandError(
                         "derived painter band requires at least two authored z_index values"
                     )
-                low, high = min(authored.values()), max(authored.values())
+                low, high = self._validate_explicit_band(
+                    (min(authored.values()), max(authored.values()))
+                )
             else:
                 low, high = self._validate_explicit_band(self._requested_band)
 
@@ -414,17 +444,32 @@ class ManagedPainterBand:
                 "one Mobject cannot represent multiple active painter items"
             )
         denominator = max(1, len(order) - 1)
-        return PreparedPainterBand(
-            tuple(
-                PreparedPainterItem(
-                    item_id,
-                    item_mobjects[item_id],
-                    self._z_low
-                    + (self._z_high - self._z_low) * rank / denominator,
-                )
-                for rank, item_id in enumerate(order)
+        prepared = tuple(
+            PreparedPainterItem(
+                item_id,
+                item_mobjects[item_id],
+                self._z_low
+                + (self._z_high - self._z_low) * rank / denominator,
             )
+            for rank, item_id in enumerate(order)
         )
+        z_values = tuple(item.z_index for item in prepared)
+        if (
+            any(not np.isfinite(value) for value in z_values)
+            or any(
+                value < self._z_low or value > self._z_high
+                for value in z_values
+            )
+            or any(
+                right <= left for left, right in zip(z_values, z_values[1:])
+            )
+        ):
+            raise ManagedPainterBandError(
+                "managed painter z values must be finite, remain within the "
+                "reserved band, and be strictly increasing in draw_order; "
+                "the reserved band has insufficient floating-point capacity"
+            )
+        return PreparedPainterBand(prepared)
 
     def apply(self, prepared: PreparedPainterBand) -> None:
         changed = {item.item_id for item in self.changed_items(prepared)}

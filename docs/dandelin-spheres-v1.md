@@ -234,10 +234,26 @@ DandelinSection3D(
 ).attach()
 ```
 
-The cone, plane, and projection are immutable for the lifetime of this v1
-facade. A projection callback is rejected. `attach()`, `restore()` / `detach()`,
-and `session()` retain the existing transactional Scene lifecycle, while
-`slot_identities()` exposes the preallocated display identities for tests.
+The cone, plane, and complete parallel-camera frame are immutable for the
+lifetime of this v1 facade. A `ParallelCameraState` freezes its matrix,
+`target`, `screen_anchor`, `zoom`, and the current Manim viewport translation
+once; a projection callback is rejected without being called. The section,
+overlay, and focus dots then consume that same affine frame.
+
+`attach()` lazily reserves one Scene painter band, builds the fixed-capacity
+controllers, and commits all Scene, fixed-frame, display, cache, and author
+state as one transaction. The default preferred aggregate band is `(10, 32)`;
+it is moved upward when another owner already occupies it, then split into
+section `(10, 20)`, overlay `(21, 31)`, and focus `32` in the unshifted case.
+`restore()` / `detach()` and `session()` release the reservation even when a
+later cleanup layer reports an error, provided Scene and fixed-frame ownership
+are actually gone. If a child still owns display objects, the facade retains
+its controller references and painter band so a later `restore()` can retry;
+another `attach()` is refused in that state. Consequently `slot_identities()`
+is available only while the facade is attached. The older explicit
+`section_painter_z_band` and `overlay_painter_z_band` arguments remain a paired
+exact-band override. A band that cannot represent every active painter item
+with a distinct finite float fails before any z-index mutation.
 
 The ordinary cone/section part remains subject to its own certified painter
 graph. The auxiliary sphere surfaces, contact circles, finite directrix
@@ -252,7 +268,8 @@ separated entities.
 
 - The mathematical solver is renderer-neutral.
 - The current facade accepts one immutable orthographic or general parallel
-  projection. Perspective projection is unsupported.
+  projection, including full `ParallelCameraState` target, anchor, and zoom
+  semantics. Perspective projection is unsupported.
 - The production Manim path targets Cairo. OpenGL is unsupported and fails
   through the existing quadric binding.
 - Camera/projection animation, moving cone or plane callbacks, and scheduled

@@ -6,6 +6,7 @@ import unittest
 
 import numpy as np
 
+from polyhedron_visibility.geometry import GeometryContext
 from polyhedron_visibility.parallel_solver import ParallelView
 from polyhedron_visibility.topology import ParameterInterval, assert_exact_partition
 from polyhedron_visibility.visibility import VisibilityKind
@@ -168,6 +169,34 @@ class QuadricCriticalEventTests(unittest.TestCase):
 
 
 class QuadricCurveVisibilityTests(unittest.TestCase):
+    def test_surface_boundaries_reuse_one_resolved_context(self) -> None:
+        cone = ConeSpec(
+            "resolved-context-cone",
+            (0.0, 0.0, 0.0),
+            (0.0, 0.0, 1.0),
+            pi / 6.0,
+            (0.0, 3.0),
+            radial_axis=(1.0, 0.0, 0.0),
+        )
+        context = GeometryContext(screen_tolerance=0.001)
+        resolved = context.resolve(positions=cone.characteristic_points)
+
+        unresolved_sources = build_surface_boundary_sources(
+            (cone,),
+            ISOMETRIC_VIEW,
+            context=context,
+        )
+        resolved_sources = build_surface_boundary_sources(
+            (cone,),
+            ISOMETRIC_VIEW,
+            context=resolved,
+        )
+
+        self.assertEqual(
+            tuple(item.to_dict() for item in resolved_sources),
+            tuple(item.to_dict() for item in unresolved_sources),
+        )
+
     def test_near_parabolic_ellipse_uses_only_its_authored_tan_chart(self) -> None:
         normal_angle = 59.5 * pi / 180.0
         cases = (

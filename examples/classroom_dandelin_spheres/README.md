@@ -20,6 +20,10 @@ renderer-neutral 几何内核与截平面 compositor 计算；橙色球、球—
 把它解释为物理深度结果。接口公开的 `visibility_authoritative=False` 也明确记录了
 这一点。
 
+每一幕在 `attach()` 时才预留一个 Scene 级 painter band，并自动拆成圆锥截线、
+教学叠加层和焦点三段；若前一幕或另一个控制器已占用首选范围，整组会一起上移，
+不会只移动其中一层。`restore()` 会同时撤回画面对象、fixed-frame 注册和该 band。
+
 ## 低清预览
 
 在仓库根目录执行：
