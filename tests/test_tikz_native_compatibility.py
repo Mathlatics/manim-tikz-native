@@ -179,7 +179,10 @@ class TikzNativeCompatibilityTests(unittest.TestCase):
   \DeclareSpacePlane{cut}{O/U/V};
   \DeclareSpaceRightCone{cone}{A/Z/R}{30}{0/9}{open_single};
   \DeclareDandelinConstruction{dan}{cone}{cut};
-  \DrawDandelinDiagram[view=spatial]{dan};
+  \DrawDandelinDiagram[
+    view=spatial,
+    mode=depth_aware_diagrammatic
+  ]{dan};
 \end{tikzpicture}
 """
         )
