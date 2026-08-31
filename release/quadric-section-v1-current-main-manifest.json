@@ -1,27 +1,27 @@
 {
   "schema": "manim-quadric-section-release-manifest/v1",
-  "release_id": "quadric-section-v1-current-main-global-plane-role-fixture-2026-08-31",
+  "release_id": "quadric-section-v1-current-main-dandelin-depth-painter-2026-08-31",
   "contract_id": "quadric-section-v1",
-  "implementation_base_commit": "6982069b6b0e9704c4dc66adb008f77e0e1b0996",
-  "implementation_head_commit": "cc819783e474f1946cb9af8ccf531498787592d1",
-  "implementation_tree_sha": "b624dcceeef9353a38640188ba9d8b87971d2052",
-  "merged_main_commit": "ca599add701b0fec27f77a68ca71b1e1dac15586",
+  "implementation_base_commit": "761eb43224a27b82c67db449624693fe62eb21d3",
+  "implementation_head_commit": "44ec534e8d1d57fd8d5fe46276578e1a07e380a5",
+  "implementation_tree_sha": "66a72dd98a6eba6bbff2d80f7ebf17c86896d26c",
+  "merged_main_commit": "f5c2e4ece2266f01c0db2503540836dfc3fb84af",
   "components": {
     "quadric_geometry": {
       "contract_revision": "tikz-native-contract:quadric_geometry/v1",
-      "render_revision": "source-sha256:ae5e127cf375d9a0e3452a388dde6e6bc8ce91662e5b9b18a05d9f900ed91b38"
+      "render_revision": "source-sha256:c8e45188674911a605e52f4555cf9ac698864704b1c91e45abbc4ed33f87b576"
     },
     "quadric_visibility": {
       "contract_revision": "tikz-native-contract:quadric_visibility/v2",
-      "render_revision": "source-sha256:55ffb899ac6bde2884391d7fa6e28ad48dacc47067722cd582b1e390bed1994b"
+      "render_revision": "source-sha256:9d626ebb1c56be97235d261b1136bf15a136d25de884dbe7f00667c492cd7360"
     },
     "quadric_manim": {
       "contract_revision": "tikz-native-contract:quadric_manim/v1",
-      "render_revision": "source-sha256:109843f2127c7921c5a786099af989ac8db2cec196e563092a8b3cf24f6a2849"
+      "render_revision": "source-sha256:9ecb86f7e83c1e883c8e466085076e2a3f0d883c4c8c9ef786f5046f7a6021d6"
     }
   },
   "build_artifacts": {
-    "source_date_epoch": 1788168857,
+    "source_date_epoch": 1788176686,
     "builder_python": "3.12.13",
     "build_frontend": "build 1.6.0",
     "build_backend": "setuptools 84.0.0",
@@ -30,11 +30,11 @@
     "twine_check": "twine 7.0.0 passed",
     "wheel": {
       "filename": "manim_tikz_native-0.1.1-py3-none-any.whl",
-      "sha256": "d1e5ef343bce844d26e4f2cc03425745343a4d35e44d20e0fc54116e35c98996"
+      "sha256": "1ab14b802204b13a5411b71996b7030208f41e63f812f39a6011c1f5154ddab1"
     },
     "sdist": {
       "filename": "manim_tikz_native-0.1.1.tar.gz",
-      "sha256": "fbefe2cd01c80fe0cd44d7b1094b7049c1fe0d934821b8f3ba4c11a69c8a3791",
+      "sha256": "4d4afb11ca59cf25e8c2a8d6f52d906dca92aa6b7db2b2aa0c38d02d03321ebb",
       "normalization": "sorted regular files and links; USTAR; uid/gid 0; root owner/group; SOURCE_DATE_EPOCH mtime; gzip -n -9 equivalent; gzip OS byte 255"
     }
   },
@@ -248,6 +248,41 @@
       "layer": "manim",
       "outcome": "pass",
       "test": "tests.test_composite_quadric_section_line_manim.CompositeQuadricSectionLineManimTests.test_positive_area_nappe_overlap_rolls_back_then_line_recovers"
+    },
+    "dandelin_tangent_contact_nappes": {
+      "layer": "renderer_neutral",
+      "outcome": "pass",
+      "test": "tests.test_quadric_dandelin_visibility.DandelinVisibilityTests.test_open_double_contacts_identify_their_exact_nappes"
+    },
+    "dandelin_hidden_line_frame": {
+      "layer": "renderer_neutral",
+      "outcome": "pass",
+      "test": "tests.test_quadric_dandelin_visibility.DandelinVisibilityTests.test_existing_quadric_kernel_certifies_hidden_line_frame"
+    },
+    "dandelin_camera_recompute": {
+      "layer": "renderer_neutral",
+      "outcome": "pass",
+      "test": "tests.test_quadric_dandelin_visibility.DandelinVisibilityTests.test_camera_rotation_recomputes_visibility_without_changing_source_ids"
+    },
+    "dandelin_static_painter_graph": {
+      "layer": "manim",
+      "outcome": "pass",
+      "test": "tests.test_tikz_native_dandelin_fixed_view.DandelinFixedViewTests.test_depth_aware_spatial_view_uses_certified_hidden_line_fragments"
+    },
+    "dandelin_live_binding": {
+      "layer": "manim",
+      "outcome": "pass",
+      "test": "tests.test_quadric_dandelin_live_manim.DandelinOcclusion3DTests.test_live_camera_reuses_one_frame_and_fixed_slot_family"
+    },
+    "dandelin_live_cairo": {
+      "layer": "cairo",
+      "outcome": "pass",
+      "test": "tests.test_quadric_dandelin_manim_cairo.DandelinOcclusion3DCairoTests.test_real_cairo_movie_recomputes_hidden_lines_for_camera_change"
+    },
+    "dandelin_restore_cleanup": {
+      "layer": "manim",
+      "outcome": "pass",
+      "test": "tests.test_classroom_dandelin_spheres.ClassroomDandelinFacadeTests.test_restore_purges_focus_family_from_cairo_runtime_caches"
     }
   },
   "projections": {
@@ -414,6 +449,25 @@
       "evidence_ids": [
         "scheduled_facade_complete_boundary",
         "scheduled_facade_cairo_animation"
+      ]
+    },
+    {
+      "id": "dandelin_tangent_depth_painter",
+      "kind": "renderer_neutral_manim_and_cairo",
+      "expected": {
+        "tangent_contact_dimension": 1,
+        "curve_visibility_authoritative": true,
+        "surface_visibility_authoritative": false,
+        "shared_boundary_compositing_frame": true
+      },
+      "evidence_ids": [
+        "dandelin_tangent_contact_nappes",
+        "dandelin_hidden_line_frame",
+        "dandelin_camera_recompute",
+        "dandelin_static_painter_graph",
+        "dandelin_live_binding",
+        "dandelin_live_cairo",
+        "dandelin_restore_cleanup"
       ]
     }
   ]
