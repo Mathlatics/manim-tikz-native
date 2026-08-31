@@ -69,40 +69,40 @@ ROOT = Path(__file__).resolve().parents[1]
 PACKAGE_ROOT = ROOT / "tikz_native"
 VISIBILITY_ROOT = ROOT / "polyhedron_visibility"
 ASSET_REVISION = (
-    "source-sha256:d8bccecebb4dd5f2576a5be8ec2d2ef93a2239025dd38f7cceaddd93bd5f3dbf"
+    "source-sha256:43d491b4493e700166502ee37b9f27c5015dc819c907d3d09f583a5f2279aaf8"
 )
 GEOMETRY_RIG_2D_REVISION = (
-    "source-sha256:b636ca65e16c86c141f631b4a1f85ad4068fcad529714f406a455a2420338f25"
+    "source-sha256:49fbf99e6c611dda8d6d8b45f457191b6261b58f9231a425e98e4788f33f73ca"
 )
 NATIVE_SOURCE_2D_REVISION = (
-    "source-sha256:db6cf5ff98a610362cbe8ac95dae1bd4d355377102abddd2e20b294214503e49"
+    "source-sha256:79700f77a667f8d590cff6e6ebfcb881974baebc5a22f2e6c84293c66ace4cc4"
 )
 NATIVE_RIG_2D_REVISION = (
-    "source-sha256:d2f940f00b0773ada5fc7a61ba46f56ed9a28181c00b8b7675243ef31985869a"
+    "source-sha256:72f2d095d427ef6c1a5c5c4dcd69a1d49414783277808812ab38e39a7d379b03"
 )
 MOTION_PREVIEW_2D_REVISION = (
-    "source-sha256:6212ce463352772d3e536b0bbef4b527b067ac83e3e5330f9fc2d0be8f40bf9a"
+    "source-sha256:dfad73c968eb4de5e11e52d818d2355ca73fa7cd43c6116dc4b849e91d3b69c4"
 )
 GEOMETRY_RIG_3D_REVISION = (
-    "source-sha256:129d7642d8af338bde6cb05de4ec40aa1578f258072356c367142f6e8f271050"
+    "source-sha256:e6a05ab9d67bbf9a68aaae97b91076b9e671b236d8264c1244ec5b06fd7de9ca"
 )
 NATIVE_SOURCE_3D_REVISION = (
-    "source-sha256:44cad71905b005ef3db03d83edbc19dad2aec910df5113afe8328d56e4349c04"
+    "source-sha256:ed4d52f4bf7c60d9e5b7db8d8f96ba349ecb098459a28adf9904f19f6ac46bdd"
 )
 NATIVE_SOURCE_3D_V2_REVISION = (
-    "source-sha256:5cd9503f5ce2b8573374ec427b2303636529166177ee8220d55f3aae0a2490b4"
+    "source-sha256:4c1f4ef9348a042be76a0257d10b888c47fee4bff8f5278ebeec764d72741fb0"
 )
 NATIVE_SOURCE_3D_V3_REVISION = (
-    "source-sha256:cad0e538aac6d18a173bf65de29a75bf2a5adf6d01cd7597bd464e3fcc5c850e"
+    "source-sha256:d956c01a69d7917dea1e03197649d43366fd50a7b3a7f6548ee1bbdf024dfdad"
 )
 PARALLEL_CAMERA_CORE_REVISION = (
     "source-sha256:a6ca69204f5d7cbdaf0eaeff9c47fa8a2cc26d1f6c30436e04eb0aeaa717ab15"
 )
 EMBEDDED_MOTION_3D_REVISION = (
-    "source-sha256:2d1ca33b562f6ae8b4cdac6e8309422e4a987dbb93e8c6fef8ad4d41f1da6be9"
+    "source-sha256:e717aaddcfed67507598a2e6559dfe791597319ec75f410f4d5fa0d07024177d"
 )
 MOTION_PREVIEW_3D_REVISION = (
-    "source-sha256:6028ea5d0b04d8b2ea78297de219162e23d8dd985e7e876cce7f26bd95e3d5b0"
+    "source-sha256:41919f409192ca5dad64ccfc5ac8219fb7b9fd2d9eb90289f125d461b1a79f86"
 )
 POLYHEDRON_VISIBILITY_REVISION = (
     "source-sha256:8fff612f011f5b67cecaa66dc251af3126fe091cfe6b753e7fd5e9301cfcc53f"
@@ -111,7 +111,7 @@ FACE_DEPTH_CUE_3D_REVISION = (
     "source-sha256:499495b399f1078f0532413690821764208bbb87695f1f40019ce396f2ac347a"
 )
 TIKZ_POLYHEDRON_VISIBILITY_3D_REVISION = (
-    "source-sha256:d002c9ce3a9fdbb518c6277e07afc8b358e5b63c209edb13cf9beb23e19c2252"
+    "source-sha256:b5a7515ff4493060c17d725b7f567e3cd4a94009dd0a850abc07bb008b6899c7"
 )
 OPEN_FACE_VISIBILITY_REVISION = (
     "source-sha256:583f95c7e3a9056b306d90e14f85e580442cf0c2cfd9d0043795f1670dfc43ae"
@@ -126,25 +126,25 @@ OPEN_FACE_UNIFIED_MANIM_REVISION = (
     "source-sha256:6ea6cf42d61d2cc8c4331b6da5f25ea3b61b659c75ae4c7a493425f0efddd934"
 )
 TIKZ_OPEN_FACE_VISIBILITY_3D_REVISION = (
-    "source-sha256:220e611d1aaccacc2c4795c3c426148533f92b6fb55fa3ae1feefc944b182832"
+    "source-sha256:252023019b4bf83f04c779d91afc92a338db77acbe9db2e82f15259f4f1fc459"
 )
 TIKZ_OPEN_FACE_STATIC_ASSET_3D_REVISION = (
-    "source-sha256:ab8c42d0861b45624fd91bef34c21eb1a60d2adbc09ffd759b2587199aeaad0b"
+    "source-sha256:6d2fff618b245695147bc133bfbd660357d85e8b2b501adfd5a9e3fe0445cab3"
 )
 GENERATED_OPEN_FACE_VISIBILITY_3D_REVISION = (
-    "source-sha256:62051cd5422583603dc283efb41901de28f806bad7ab5c3b9294d1fb9c9643ff"
+    "source-sha256:f880ca4b5e070be2094dddf856ec5e9a16ccb7d6225faaa5b47649ff902d3ad3"
 )
 SOURCE_PROJECT_BUILD_REVISION = (
     "source-sha256:34980c51d6190e21bcbf5bfbe19e565eff17fddfc0bc2a84f1f379b0da73432b"
 )
 QUADRIC_GEOMETRY_REVISION = (
-    "source-sha256:1c840ac5354294313be097c400ded6a83fee6f6263637390e994da972068eb39"
+    "source-sha256:18a51b0fdda95a6f49d1120dca44e942f96225afd6ef0c13c041121b937fe363"
 )
 QUADRIC_VISIBILITY_REVISION = (
-    "source-sha256:75f00e94caa6e5a3d77f05a1676456975f3629486ce0f1a428810fe31a994291"
+    "source-sha256:11b9592b2fe186a194dacf3daee94d1ae0a36467154fd220baa006bc315b21d0"
 )
 QUADRIC_MANIM_REVISION = (
-    "source-sha256:40b08f2c9ae9ca62cc9ca901ac4050f6b4b09fe3f241eba578d08809cea0fc9c"
+    "source-sha256:5ecc69a08536a8d82631b4a05b8e22158331966b80d2bbe68ad957428bd57f05"
 )
 CONVEX_SECTION_3D_REVISION = (
     "source-sha256:a6c71249ce429884b0fcc3341eeea33dacf2d64e14d875d1e0f222c1530637bf"
@@ -156,7 +156,7 @@ DERIVED_DIHEDRAL_VISIBILITY_REVISION = (
     "source-sha256:2b49f6a0bfa4c0a8e850f94af2446dd888a469b0472463c0df5127aec8185ae2"
 )
 TIKZ_CONVEX_SECTION_3D_REVISION = (
-    "source-sha256:6a0f74bdc564fdd8ca0687edcedd5e9284344a1b2912c31c9fe09c860b03b00b"
+    "source-sha256:d12fd409d2c44f1839dd9ee1d7b5da98d0e107876a5c00498e00a6b25a02ec72"
 )
 
 QUADRIC_GEOMETRY_RECURSIVE_COMPONENTS = frozenset(
@@ -625,21 +625,29 @@ print(json.dumps({
             if component not in changed:
                 self.assertEqual(components[component], baseline[component])
 
-    def test_editing_quadric_visibility_changes_visibility_and_manim(self) -> None:
+    def test_editing_quadric_visibility_changes_recursive_dependents(self) -> None:
         baseline = provider_component_revisions()
-        mutated = self._probe_copy(
-            "@tool/polyhedron_visibility/quadrics/visibility.py"
-        )
-        components = mutated["components"]
-        changed = {
-            COMPONENT_QUADRIC_VISIBILITY,
-            COMPONENT_QUADRIC_MANIM,
+        changed = set(QUADRIC_GEOMETRY_RECURSIVE_COMPONENTS) - {
+            COMPONENT_QUADRIC_GEOMETRY
         }
-        for component in changed:
-            self.assertNotEqual(components[component], baseline[component])
-        for component in baseline:
-            if component not in changed:
-                self.assertEqual(components[component], baseline[component])
+        for path in (
+            "@tool/polyhedron_visibility/quadrics/visibility.py",
+            "@tool/polyhedron_visibility/quadrics/dandelin_visibility.py",
+        ):
+            with self.subTest(path=path):
+                mutated = self._probe_copy(path)
+                components = mutated["components"]
+                for component in changed:
+                    self.assertNotEqual(
+                        components[component],
+                        baseline[component],
+                    )
+                for component in baseline:
+                    if component not in changed:
+                        self.assertEqual(
+                            components[component],
+                            baseline[component],
+                        )
 
     def test_editing_quadric_manim_changes_only_manim(self) -> None:
         baseline = provider_component_revisions()
