@@ -1,27 +1,27 @@
 {
   "schema": "manim-quadric-section-release-manifest/v1",
-  "release_id": "quadric-section-v1-current-main-dandelin-depth-painter-2026-08-31",
+  "release_id": "quadric-section-v1-current-main-dandelin-teaching-surface-layers-2026-08-31",
   "contract_id": "quadric-section-v1",
-  "implementation_base_commit": "761eb43224a27b82c67db449624693fe62eb21d3",
-  "implementation_head_commit": "44ec534e8d1d57fd8d5fe46276578e1a07e380a5",
-  "implementation_tree_sha": "66a72dd98a6eba6bbff2d80f7ebf17c86896d26c",
-  "merged_main_commit": "f5c2e4ece2266f01c0db2503540836dfc3fb84af",
+  "implementation_base_commit": "9ce80fdc4b56d484ecee6dd522fc6b7be39915d0",
+  "implementation_head_commit": "e60c8b3c585e5601239b566eb988d2e316031ec4",
+  "implementation_tree_sha": "ccddd2efa780089d4cb5ca30bc121a227a8799e0",
+  "merged_main_commit": "13e70c50918b7c3a03756db0d0664f3efebe6701",
   "components": {
     "quadric_geometry": {
       "contract_revision": "tikz-native-contract:quadric_geometry/v1",
-      "render_revision": "source-sha256:c8e45188674911a605e52f4555cf9ac698864704b1c91e45abbc4ed33f87b576"
+      "render_revision": "source-sha256:e3cd1fd5e5534e4d6ba7a29bf9b822332b48a85315bc427b03da137c8a8b43bd"
     },
     "quadric_visibility": {
       "contract_revision": "tikz-native-contract:quadric_visibility/v2",
-      "render_revision": "source-sha256:9d626ebb1c56be97235d261b1136bf15a136d25de884dbe7f00667c492cd7360"
+      "render_revision": "source-sha256:b4174ebd8370f3cd77195237fe4e05dc814ff4bc14be5afd24ebdf304b87b2fa"
     },
     "quadric_manim": {
       "contract_revision": "tikz-native-contract:quadric_manim/v1",
-      "render_revision": "source-sha256:9ecb86f7e83c1e883c8e466085076e2a3f0d883c4c8c9ef786f5046f7a6021d6"
+      "render_revision": "source-sha256:7b916621f7cfda69397a93a73018970482367a3ec526235a848e736d74ad113e"
     }
   },
   "build_artifacts": {
-    "source_date_epoch": 1788176686,
+    "source_date_epoch": 1788185724,
     "builder_python": "3.12.13",
     "build_frontend": "build 1.6.0",
     "build_backend": "setuptools 84.0.0",
@@ -30,11 +30,11 @@
     "twine_check": "twine 7.0.0 passed",
     "wheel": {
       "filename": "manim_tikz_native-0.1.1-py3-none-any.whl",
-      "sha256": "1ab14b802204b13a5411b71996b7030208f41e63f812f39a6011c1f5154ddab1"
+      "sha256": "d423d0ffcea0841d43c344056ce3a6fbce409036106f0df435f1cff0c78bdcdc"
     },
     "sdist": {
       "filename": "manim_tikz_native-0.1.1.tar.gz",
-      "sha256": "4d4afb11ca59cf25e8c2a8d6f52d906dca92aa6b7db2b2aa0c38d02d03321ebb",
+      "sha256": "2d04f566dc5506f1a7b3122716ae8b0ab3b029049ed55beceacf348cfe2ea76b",
       "normalization": "sorted regular files and links; USTAR; uid/gid 0; root owner/group; SOURCE_DATE_EPOCH mtime; gzip -n -9 equivalent; gzip OS byte 255"
     }
   },
@@ -283,6 +283,36 @@
       "layer": "manim",
       "outcome": "pass",
       "test": "tests.test_classroom_dandelin_spheres.ClassroomDandelinFacadeTests.test_restore_purges_focus_family_from_cairo_runtime_caches"
+    },
+    "dandelin_surface_layer_frame": {
+      "layer": "renderer_neutral",
+      "outcome": "pass",
+      "test": "tests.test_quadric_dandelin_compositing.DandelinSurfaceCompositingTests.test_ellipse_certifies_cone_spheres_plane_and_equal_depth_seams"
+    },
+    "dandelin_surface_camera_reversal": {
+      "layer": "renderer_neutral",
+      "outcome": "pass",
+      "test": "tests.test_quadric_dandelin_compositing.DandelinSurfaceCompositingTests.test_same_screen_reverse_depth_reverses_sphere_chain"
+    },
+    "dandelin_surface_open_double_failure": {
+      "layer": "renderer_neutral",
+      "outcome": "explicit_failure",
+      "test": "tests.test_quadric_dandelin_compositing.DandelinSurfaceCompositingTests.test_open_double_unsupported_partition_fails_before_rendering"
+    },
+    "dandelin_surface_static_painter_graph": {
+      "layer": "manim",
+      "outcome": "pass",
+      "test": "tests.test_tikz_native_dandelin_fixed_view.DandelinFixedViewTests.test_teaching_transparent_mode_uses_certified_surface_painter_items"
+    },
+    "dandelin_surface_cairo_composite": {
+      "layer": "cairo",
+      "outcome": "pass",
+      "test": "tests.test_tikz_native_dandelin_cairo.TikzNativeDandelinCairoTests.test_provider_surface_order_changes_the_real_cairo_composite"
+    },
+    "dandelin_v2_contract_restore": {
+      "layer": "renderer_neutral",
+      "outcome": "pass",
+      "test": "tests.test_tikz_native_dandelin_contract.TikzDandelinContractTests.test_legacy_v2_diagram_payload_restores_to_current_contract"
     }
   },
   "projections": {
@@ -468,6 +498,25 @@
         "dandelin_live_binding",
         "dandelin_live_cairo",
         "dandelin_restore_cleanup"
+      ]
+    },
+    {
+      "id": "dandelin_teaching_transparent_surface_layers",
+      "kind": "renderer_neutral_manim_and_cairo",
+      "expected": {
+        "curve_visibility_authoritative": true,
+        "surface_layering_authoritative": true,
+        "physical_surface_visibility_authoritative": false,
+        "equal_depth_contact_owner": "contact_circle",
+        "legacy_v2_restores_to_current_v3": true
+      },
+      "evidence_ids": [
+        "dandelin_surface_layer_frame",
+        "dandelin_surface_camera_reversal",
+        "dandelin_surface_open_double_failure",
+        "dandelin_surface_static_painter_graph",
+        "dandelin_surface_cairo_composite",
+        "dandelin_v2_contract_restore"
       ]
     }
   ]
