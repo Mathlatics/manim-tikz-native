@@ -1,12 +1,16 @@
 {
   "schema": "manim-quadric-section-release-manifest/v1",
-  "release_id": "quadric-section-v1-current-main-dandelin-teaching-surface-layers-2026-08-31",
+  "release_id": "quadric-section-v1-current-main-dandelin-plane-occlusion-cues-2026-09-01",
   "contract_id": "quadric-section-v1",
-  "implementation_base_commit": "9ce80fdc4b56d484ecee6dd522fc6b7be39915d0",
-  "implementation_head_commit": "e60c8b3c585e5601239b566eb988d2e316031ec4",
-  "implementation_tree_sha": "ccddd2efa780089d4cb5ca30bc121a227a8799e0",
-  "merged_main_commit": "13e70c50918b7c3a03756db0d0664f3efebe6701",
+  "implementation_base_commit": "a910df25fc26c5565b181d8e9a550187dfa4ec20",
+  "implementation_head_commit": "6d251756262d57fde8f5914545f0c1679db7c66f",
+  "implementation_tree_sha": "7b5c2c501d8ef1bfe12ba91eaa6c7719de051b52",
+  "merged_main_commit": "ae2a567d9cda42942cfb066f0c6186ae4a76740f",
   "components": {
+    "asset_compiler": {
+      "contract_revision": "tikz-native-contract:asset_compiler/v2",
+      "render_revision": "source-sha256:de3e3e293c02e1258557a5035ea3a41f83d35f618437930c4374cabe5d8bcf3a"
+    },
     "quadric_geometry": {
       "contract_revision": "tikz-native-contract:quadric_geometry/v1",
       "render_revision": "source-sha256:e3cd1fd5e5534e4d6ba7a29bf9b822332b48a85315bc427b03da137c8a8b43bd"
@@ -21,7 +25,7 @@
     }
   },
   "build_artifacts": {
-    "source_date_epoch": 1788185724,
+    "source_date_epoch": 1788202952,
     "builder_python": "3.12.13",
     "build_frontend": "build 1.6.0",
     "build_backend": "setuptools 84.0.0",
@@ -30,11 +34,11 @@
     "twine_check": "twine 7.0.0 passed",
     "wheel": {
       "filename": "manim_tikz_native-0.1.1-py3-none-any.whl",
-      "sha256": "d423d0ffcea0841d43c344056ce3a6fbce409036106f0df435f1cff0c78bdcdc"
+      "sha256": "f39d57177e8fb2c090586fcdb03355c6a3c2a3750a7820e13cc8fe086705ff40"
     },
     "sdist": {
       "filename": "manim_tikz_native-0.1.1.tar.gz",
-      "sha256": "2d04f566dc5506f1a7b3122716ae8b0ab3b029049ed55beceacf348cfe2ea76b",
+      "sha256": "ce56f88259b04f2deae5e53f3d5331747b846c9feaf9e5e9a0eee389ad0eb47c",
       "normalization": "sorted regular files and links; USTAR; uid/gid 0; root owner/group; SOURCE_DATE_EPOCH mtime; gzip -n -9 equivalent; gzip OS byte 255"
     }
   },
@@ -309,6 +313,16 @@
       "outcome": "pass",
       "test": "tests.test_tikz_native_dandelin_cairo.TikzNativeDandelinCairoTests.test_provider_surface_order_changes_the_real_cairo_composite"
     },
+    "dandelin_plane_occlusion_style_manim": {
+      "layer": "manim",
+      "outcome": "pass",
+      "test": "tests.test_tikz_native_dandelin_fixed_view.DandelinFixedViewTests.test_teaching_transparent_plane_occlusion_uses_dashes_and_tint"
+    },
+    "dandelin_plane_occlusion_style_cairo": {
+      "layer": "cairo",
+      "outcome": "pass",
+      "test": "tests.test_tikz_native_dandelin_cairo.TikzNativeDandelinCairoTests.test_plane_occlusion_dashes_and_tint_reach_real_cairo_pixels"
+    },
     "dandelin_v2_contract_restore": {
       "layer": "renderer_neutral",
       "outcome": "pass",
@@ -508,6 +522,12 @@
         "surface_layering_authoritative": true,
         "physical_surface_visibility_authoritative": false,
         "equal_depth_contact_owner": "contact_circle",
+        "cone_occluded_plane_roles": [
+          "behind_surface",
+          "between_surface_sheets"
+        ],
+        "cone_occluded_plane_fill": "muted_grey_blue",
+        "cone_occluded_plane_outline": "dashed",
         "legacy_v2_restores_to_current_v3": true
       },
       "evidence_ids": [
@@ -516,6 +536,8 @@
         "dandelin_surface_open_double_failure",
         "dandelin_surface_static_painter_graph",
         "dandelin_surface_cairo_composite",
+        "dandelin_plane_occlusion_style_manim",
+        "dandelin_plane_occlusion_style_cairo",
         "dandelin_v2_contract_restore"
       ]
     }
