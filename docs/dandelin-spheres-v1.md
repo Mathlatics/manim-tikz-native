@@ -14,7 +14,7 @@ band. Their front/behind relationship with the tangent cone is not physically
 composited. The public evidence makes this explicit with
 `visibility_authoritative=False` and `overlay_mode="diagrammatic"`.
 
-The static TikZ spatial renderer has a separate opt-in hidden-line path. With
+The static TikZ spatial renderer has two opt-in depth-aware paths. With
 `mode=depth_aware_diagrammatic`, it reuses the analytic quadric visibility
 kernel to split cone boundaries, sphere silhouettes, contact circles, the
 section curve, the finite cutting-plane outline, and optional directrices into
@@ -23,6 +23,12 @@ intervals again before the existing fragment painter graph fixes their draw
 order. Visible intervals are solid and hidden intervals are dashed. This makes
 **curve visibility** authoritative, while translucent cone, plane, and sphere
 fill order remains diagrammatic.
+
+`mode=depth_aware_teaching_transparent` keeps that exact curve result and also
+certifies a camera-dependent classroom painter order for cone sheets, sphere
+fills, cutting-plane fragments, and the equal-depth contact seam. This second
+mode is authoritative for **teaching layers**, not for optical material or
+opaque physical surface visibility.
 
 `DandelinOcclusion3D` is the corresponding live Cairo binding. It owns the same
 immutable construction and fixed boundary/point slot pool, accepts a callable
@@ -299,11 +305,16 @@ separated entities.
 - `OPEN_DOUBLE` hyperbola display also retains the existing shared-apex-only
   projected-contact requirement of `CompositeQuadricSection3D`.
 
-Full physical ordering and splitting of the translucent cone and sphere fills
-would require a dedicated tangent-surface compositor. The ordinary global
-multi-quadric compositor cannot supply that proof because its surface-order
-contract requires strictly separated convex entities, whereas each Dandelin
-sphere has one-dimensional equal-depth contact with the cone.
+Full optical or opaque physical surface visibility remains outside this
+contract. The ordinary global multi-quadric compositor cannot supply the
+teaching order either because its surface-order contract requires strictly
+separated convex entities, whereas each Dandelin sphere is nested inside one
+cone component and has one-dimensional equal-depth contact with it. The TikZ
+fixed-view path therefore uses the dedicated
+`compute_dandelin_surface_layer_frame()` coordinator: existing cone projection
+sheets and cutting-plane partitions remain the geometric evidence, while the
+sphere is inserted analytically between its authenticated nappe's back/front
+sheets.
 
 Exact hidden-line visibility is narrower and is now supported without inventing
 a second solver. `compute_dandelin_visibility_frame(construction, view, ...)`
@@ -317,6 +328,31 @@ the Dandelin frame. Its result therefore fixes these two independent facts:
   certified for the frozen parallel camera;
 - `surface_visibility_authoritative=False`: translucent fill order is still a
   teaching presentation, not a physical transparency proof.
+
+The optional surface-layer frame adds two more explicit claims:
+
+- `surface_layering_authoritative=True`: the far-to-near order of the
+  classroom-transparent cone, spheres, and plane fragments is certified for
+  this frozen camera;
+- `physical_surface_visibility_authoritative=False`: the result is not an
+  optical transparency simulation or an opaque hidden-surface claim.
+
+For every authenticated sphere the coordinator proves
+
+```text
+cone back sheet -> sphere fill -> cone front sheet
+```
+
+The section compositor supplies the plane's behind/outside/between/front
+regions. The sign of the exact sphere-centre-to-plane ray parameter inserts the
+sphere on the correct side of those regions. Along each cone-contact circle,
+the analytic equation `normal(theta) . view = 0` gives the front/back sheet
+transition parameters; the semantic contact stroke owns those equal-depth
+pixels so two translucent fills cannot fight for the seam. The two-sphere
+circle special case additionally records the zero-dimensional common-focus
+tangency. Because that semantic stroke is the certified equal-depth owner,
+`depth_aware_teaching_transparent` requires `show-contact-circles=true` and
+fails closed before registration when an author requests `false`.
 
 Unsupported contact ownership, a missing finite plane/directrix patch, or any
 uncertifiable visibility partition fails closed instead of reverting to an
@@ -340,7 +376,7 @@ sphere-like drawing. The source must name all three relationships explicitly:
 \DrawDandelinDiagram[
   view=spatial,
   preset=classroom,
-  mode=depth_aware_diagrammatic
+  mode=depth_aware_teaching_transparent
 ]{dan};
 ```
 
@@ -355,10 +391,18 @@ and meridian directrices are rejected as cutting-plane geometry.
 This TikZ path is static fixed-view. It permits one Dandelin diagram and no
 other drawable object in the picture. Every view accepts the legacy
 `mode=diagrammatic`; only `view=spatial` additionally accepts
-`mode=depth_aware_diagrammatic`. In that mode the payload records
-`curveVisibilityAuthoritative=true`,
-`surfaceVisibilityAuthoritative=false`, and the conservative aggregate
-`visibilityAuthoritative=false`. Full `physical` mode remains unsupported.
+`mode=depth_aware_diagrammatic` and
+`mode=depth_aware_teaching_transparent`. Both depth-aware modes record
+`curveVisibilityAuthoritative=true`. Only the teaching-transparent mode records
+`surfaceLayeringAuthoritative=true`; both keep
+`surfaceVisibilityAuthoritative=false`,
+`physicalSurfaceVisibilityAuthoritative=false`, and the conservative aggregate
+`visibilityAuthoritative=false`. The first surface-layer release supports the
+single-nappe ellipse, circle, and parabola configurations. An open-double
+hyperbola whose exact plane partition cannot be certified fails closed and can
+still use `depth_aware_diagrammatic`. Teaching-transparent diagrams must keep
+`show-contact-circles=true` because those strokes own the equal-depth seams.
+Full `physical` mode remains unsupported.
 The section-plane view also rejects a request for sphere/contact circles instead
 of drawing circles around the foci. Motion, camera shots, geometry Bridge
 requests, and source-v3 generation are outside this contract and must fail

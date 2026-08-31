@@ -28,7 +28,9 @@ is classified as dynamic-safe (A), static-safe (B), or unsupported (C).
   narrower solid-stroke v1 contract below;
 - explicit finite right cones, Dandelin constructions, and one fixed
   spatial/meridian/section-plane view per picture; the spatial view may opt in
-  to certified hidden-line intervals with `mode=depth_aware_diagrammatic`;
+  to certified hidden-line intervals with `mode=depth_aware_diagrammatic`, or
+  additionally certify the teaching-transparent surface order with
+  `mode=depth_aware_teaching_transparent`;
 - one proven redundant `scope` case with `draw=none`.
 
 ## Explicit planar 3D curves (static-safe v1)
@@ -84,7 +86,7 @@ named path) is rejected and points the author to the explicit plane syntax.
 The existing physical-size circle used as a point marker, such as
 `\fill (P) circle (1pt)`, remains a dot rather than a spatial circle.
 
-## Explicit Dandelin diagrams (static-safe v1)
+## Explicit Dandelin diagrams (static-safe)
 
 The compiler never infers a Dandelin sphere from a visually plausible circle.
 Declare a finite right cone, reuse one certified `DeclareSpacePlane`, and name
@@ -103,7 +105,7 @@ the derived relation explicitly:
 \DrawDandelinDiagram[
   view=spatial,
   preset=classroom,
-  mode=depth_aware_diagrammatic,
+  mode=depth_aware_teaching_transparent,
   show-contact-circles=true,
   show-foci=true,
   show-directrices=false
@@ -126,21 +128,31 @@ circles there fails. Every visible item has a view-local ID
 and a `sourceRef` back to the shared cone, plane, sphere, focus, contact circle,
 or directrix.
 
-This path allows one Dandelin diagram and no other drawable object in the
-picture.
-It is always `static=true` and uses the fixed-view Provider path only. All
-three views accept `mode=diagrammatic`; only the spatial view accepts
-`mode=depth_aware_diagrammatic`. The latter uses the frozen `space view`
-camera to classify analytic cone boundaries, sphere silhouettes, contact
-circles, the section curve, the cutting-plane outline, and optional clipped
-directrices. The resulting pieces use the shared fragment painter graph. It
-records
-`curveVisibilityAuthoritative=true` but
-`surfaceVisibilityAuthoritative=false`, so hidden strokes are exact while
-translucent surface-fill ordering remains diagrammatic. The aggregate
-`visibilityAuthoritative` therefore stays false, and full `physical` mode is
-rejected. Motion, camera shots, Bridge geometry rigs, and source-v3 generation
-also fail closed. A complete three-view source is in
+The current contract allows one Dandelin diagram and no other drawable object
+in the picture. It is always `static=true` and uses the fixed-view Provider
+path only. All three views accept `mode=diagrammatic`; only the spatial view
+accepts
+`mode=depth_aware_diagrammatic` and
+`mode=depth_aware_teaching_transparent`. Both depth-aware modes use the frozen
+`space view` camera to classify analytic cone boundaries, sphere silhouettes,
+contact circles, the section curve, the cutting-plane outline, and optional
+clipped directrices, then order the resulting pieces with the shared fragment
+painter graph, so both record `curveVisibilityAuthoritative=true`. The
+teaching-transparent mode also
+records `surfaceLayeringAuthoritative=true`: cone sheets, sphere fills, and
+cutting-plane fragments have a certified painter order for this classroom
+display. This is not an opaque physical visibility claim, so
+`surfaceVisibilityAuthoritative` and
+`physicalSurfaceVisibilityAuthoritative` remain false, as does the aggregate
+`visibilityAuthoritative`. The first teaching-transparent release covers
+single-nappe circle, ellipse, and parabola constructions. An open-double
+hyperbola whose plane partition cannot be certified is rejected before the
+diagram is registered; use `depth_aware_diagrammatic` for its automatic curve
+visibility. This mode also requires `show-contact-circles=true`, because the
+contact strokes own the certified equal-depth seams. Full `physical` mode is
+rejected. Motion, camera shots, Bridge
+geometry rigs, and source-v3 generation also fail closed. A complete
+three-view source is in
 [`examples/tikz_dandelin_views`](../examples/tikz_dandelin_views/README.md).
 
 ## Unsupported examples

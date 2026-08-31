@@ -102,6 +102,7 @@ def provider_info(
             "quadric_open_double_section_compositing_v1": True,
             "quadric_global_compositing_v1": True,
             "dandelin_hidden_line_visibility_parallel_v1": True,
+            "dandelin_teaching_transparent_compositing_parallel_v1": True,
             "provider_component_revisions_v1": True,
             "provider_component_contract_revisions_v1": True,
             "source_authoritative_project_build_v1": True,

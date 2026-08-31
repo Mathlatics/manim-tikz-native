@@ -108,6 +108,207 @@ def _semantic_signature(group: VGroup) -> tuple[tuple[object, ...], ...]:
 
 
 class DandelinFixedViewTests(unittest.TestCase):
+    def test_teaching_transparent_mode_uses_certified_surface_painter_items(
+        self,
+    ) -> None:
+        construction = _construction("teaching-transparent")
+        group = build_dandelin_fixed_view(
+            construction,
+            view="spatial",
+            projection_matrix=SPATIAL_MATRIX,
+            mode="depth_aware_teaching_transparent",
+        )
+
+        self.assertTrue(group.curve_visibility_authoritative)
+        self.assertTrue(group.surface_layering_authoritative)
+        self.assertFalse(group.surface_visibility_authoritative)
+        self.assertFalse(group.physical_surface_visibility_authoritative)
+        self.assertIsNotNone(group.surface_layer_frame)
+        self.assertGreater(group.metadata["planeFragmentCount"], 0)
+        self.assertEqual(
+            group.metadata["equalDepthContactCount"],
+            len(construction.spheres),
+        )
+        paint_roots = {
+            member.dandelin_metadata["paintItemId"]: member
+            for wrapper in group.submobjects
+            for member in wrapper.submobjects
+            if isinstance(getattr(member, "dandelin_metadata", None), dict)
+            and "paintItemId" in member.dandelin_metadata
+        }
+        frame = group.surface_layer_frame
+        self.assertTrue(set(frame.draw_order).issubset(paint_roots))
+        self.assertEqual(
+            tuple(
+                item_id
+                for item_id in sorted(
+                    frame.draw_order,
+                    key=lambda value: paint_roots[value].z_index,
+                )
+            ),
+            frame.draw_order,
+        )
+        rank = {
+            item_id: paint_roots[item_id].z_index
+            for item_id in frame.draw_order
+        }
+        cone = frame.cone_layers[0]
+        cone_sheet_alpha = tuple(
+            paint_roots[item_id].dandelin_metadata["fillOpacity"]
+            for item_id in (cone.back_item_id, cone.front_item_id)
+        )
+        self.assertAlmostEqual(cone_sheet_alpha[0], cone_sheet_alpha[1])
+        self.assertAlmostEqual(
+            1.0 - (1.0 - cone_sheet_alpha[0]) ** 2,
+            0.13,
+            places=12,
+        )
+        for sphere in frame.sphere_layers:
+            self.assertLess(rank[cone.back_item_id], rank[sphere.item_id])
+            self.assertLess(rank[sphere.item_id], rank[cone.front_item_id])
+        plane_items = (*frame.plane_layers, *frame.plane_outline_layers)
+        far_sphere = next(
+            item
+            for item in frame.sphere_layers
+            if item.plane_position.value == "in_front_of_sphere"
+        )
+        near_sphere = next(
+            item
+            for item in frame.sphere_layers
+            if item.plane_position.value == "behind_sphere"
+        )
+        for item in plane_items:
+            if item.role.value == "behind_surface":
+                self.assertLess(rank[item.item_id], rank[far_sphere.item_id])
+            else:
+                self.assertLess(rank[far_sphere.item_id], rank[item.item_id])
+            if item.role.value == "in_front_of_surface":
+                self.assertLess(rank[near_sphere.item_id], rank[item.item_id])
+            else:
+                self.assertLess(rank[item.item_id], rank[near_sphere.item_id])
+        hidden = tuple(
+            item
+            for item in paint_roots.values()
+            if item.dandelin_metadata.get("renderIntent") == "dashed"
+        )
+        visible = tuple(
+            item
+            for item in paint_roots.values()
+            if item.dandelin_metadata.get("renderIntent") == "solid"
+        )
+        self.assertTrue(hidden)
+        self.assertTrue(visible)
+        self.assertLess(max(rank.values()), min(item.z_index for item in visible))
+        contact_fragments = tuple(
+            member
+            for wrapper in group.submobjects
+            if wrapper.dandelin_metadata["semanticKind"] == "contact_circle"
+            for member in wrapper.submobjects
+        )
+        self.assertTrue(contact_fragments)
+        self.assertTrue(
+            all(
+                item.dandelin_metadata["equalDepthFeatureOwner"] is True
+                for item in contact_fragments
+            )
+        )
+
+    def test_teaching_transparent_same_screen_reverse_depth_swaps_spheres(
+        self,
+    ) -> None:
+        construction = _construction("teaching-reverse-depth")
+        reverse = SPATIAL_MATRIX.copy()
+        reverse[2] *= -1.0
+        groups = tuple(
+            build_dandelin_fixed_view(
+                construction,
+                view="spatial",
+                projection_matrix=matrix,
+                mode="depth_aware_teaching_transparent",
+            )
+            for matrix in (SPATIAL_MATRIX, reverse)
+        )
+
+        first, second = (item.surface_layer_frame for item in groups)
+        self.assertEqual(first.projection_matrix[:2], second.projection_matrix[:2])
+        self.assertEqual(
+            first.sphere_pair_evidence[0].farther_sphere_id,
+            second.sphere_pair_evidence[0].nearer_sphere_id,
+        )
+        self.assertNotEqual(first.draw_order, second.draw_order)
+        for group in groups:
+            frame = group.surface_layer_frame
+            paint_roots = {
+                member.dandelin_metadata["paintItemId"]: member
+                for wrapper in group.submobjects
+                for member in wrapper.submobjects
+                if isinstance(getattr(member, "dandelin_metadata", None), dict)
+                and "paintItemId" in member.dandelin_metadata
+            }
+            rank = {
+                item_id: paint_roots[item_id].z_index
+                for item_id in frame.draw_order
+            }
+            far_sphere = next(
+                item
+                for item in frame.sphere_layers
+                if item.plane_position.value == "in_front_of_sphere"
+            )
+            near_sphere = next(
+                item
+                for item in frame.sphere_layers
+                if item.plane_position.value == "behind_sphere"
+            )
+            for item in (*frame.plane_layers, *frame.plane_outline_layers):
+                if item.role.value == "behind_surface":
+                    self.assertLess(rank[item.item_id], rank[far_sphere.item_id])
+                else:
+                    self.assertLess(rank[far_sphere.item_id], rank[item.item_id])
+                if item.role.value == "in_front_of_surface":
+                    self.assertLess(rank[near_sphere.item_id], rank[item.item_id])
+                else:
+                    self.assertLess(rank[item.item_id], rank[near_sphere.item_id])
+
+    def test_teaching_transparent_mode_fails_closed_outside_certified_scope(
+        self,
+    ) -> None:
+        with self.assertRaisesRegex(
+            DandelinFixedViewError,
+            "show_contact_circles=true.*equal-depth seams",
+        ):
+            build_dandelin_fixed_view(
+                _construction("teaching-hidden-equal-depth-seams"),
+                view="spatial",
+                projection_matrix=SPATIAL_MATRIX,
+                mode="depth_aware_teaching_transparent",
+                show_contact_circles=False,
+            )
+        with self.assertRaisesRegex(
+            DandelinFixedViewError,
+            "only valid for the spatial view",
+        ):
+            build_dandelin_fixed_view(
+                _construction("teaching-two-dimensional"),
+                view="meridian",
+                mode="depth_aware_teaching_transparent",
+            )
+        hyperbola = _construction(
+            "teaching-hyperbola",
+            axis_dot=0.2,
+            model=ConeModel.OPEN_DOUBLE,
+            axial_range=(-20.0, 20.0),
+        )
+        with self.assertRaisesRegex(
+            DandelinFixedViewError,
+            "cannot be certified|remains mixed|positive-area overlap",
+        ):
+            build_dandelin_fixed_view(
+                hyperbola,
+                view="spatial",
+                projection_matrix=SPATIAL_MATRIX,
+                mode="depth_aware_teaching_transparent",
+            )
+
     def test_depth_aware_spatial_view_uses_certified_hidden_line_fragments(
         self,
     ) -> None:

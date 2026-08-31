@@ -22,6 +22,8 @@ from polyhedron_visibility.quadrics import (
     DandelinPlaneSide,
     DandelinSectionPlaneDiagram2D,
     DandelinSphere3D,
+    DandelinSurfaceLayerFrame,
+    DandelinEqualDepthContact,
     Ellipse3DSpec,
     PlanarCurveScene3D,
     PlanarFrame3D,
@@ -50,6 +52,7 @@ from polyhedron_visibility.quadrics import (
     canonical_dandelin_meridian_diagram_json,
     canonical_dandelin_section_plane_diagram_json,
     compute_dandelin_construction,
+    compute_dandelin_surface_layer_frame,
     compute_quadric_section,
     compute_quadric_section_boundary,
     compute_quadric_section_boundary_curves,
@@ -113,6 +116,14 @@ class PublicPackageTests(unittest.TestCase):
         self.assertEqual(DandelinPlaneSide.__name__, "DandelinPlaneSide")
         self.assertEqual(DandelinConstruction3D.__name__, "DandelinConstruction3D")
         self.assertEqual(DandelinSphere3D.__name__, "DandelinSphere3D")
+        self.assertEqual(
+            DandelinSurfaceLayerFrame.__name__,
+            "DandelinSurfaceLayerFrame",
+        )
+        self.assertEqual(
+            DandelinEqualDepthContact.__name__,
+            "DandelinEqualDepthContact",
+        )
         self.assertEqual(DandelinDirectrix3D.__name__, "DandelinDirectrix3D")
         self.assertEqual(
             DandelinMeridianDiagram2D.__name__,
@@ -124,6 +135,7 @@ class PublicPackageTests(unittest.TestCase):
         )
         self.assertTrue(issubclass(DandelinConstructionError, ValueError))
         self.assertTrue(callable(compute_dandelin_construction))
+        self.assertTrue(callable(compute_dandelin_surface_layer_frame))
         self.assertTrue(callable(canonical_dandelin_construction_json))
         self.assertTrue(callable(build_dandelin_meridian_diagram))
         self.assertTrue(callable(build_dandelin_section_plane_diagram))
@@ -168,12 +180,14 @@ class PublicPackageTests(unittest.TestCase):
                     "DandelinConstructionError, DandelinDirectrix3D, "
                     "DandelinMeridianDiagram2D, DandelinSectionPlaneDiagram2D, "
                     "DandelinPlaneSide, DandelinSphere3D, "
+                    "DandelinSurfaceLayerFrame, DandelinEqualDepthContact, "
                     "build_dandelin_meridian_diagram, "
                     "build_dandelin_section_plane_diagram, "
                     "canonical_dandelin_construction_json, "
                     "canonical_dandelin_meridian_diagram_json, "
                     "canonical_dandelin_section_plane_diagram_json, "
                     "compute_dandelin_construction, "
+                    "compute_dandelin_surface_layer_frame, "
                     "QuadricSectionBoundary, compute_quadric_section_boundary, "
                     "compute_quadric_section_boundary_curves, "
                     "section_cap_chord_curve_ids; "
@@ -191,12 +205,15 @@ class PublicPackageTests(unittest.TestCase):
                     "assert DandelinSectionPlaneDiagram2D.__name__; "
                     "assert DandelinPlaneSide.__name__; "
                     "assert DandelinSphere3D.__name__; "
+                    "assert DandelinSurfaceLayerFrame.__name__; "
+                    "assert DandelinEqualDepthContact.__name__; "
                     "assert callable(canonical_dandelin_construction_json); "
                     "assert callable(build_dandelin_meridian_diagram); "
                     "assert callable(build_dandelin_section_plane_diagram); "
                     "assert callable(canonical_dandelin_meridian_diagram_json); "
                     "assert callable(canonical_dandelin_section_plane_diagram_json); "
                     "assert callable(compute_dandelin_construction); "
+                    "assert callable(compute_dandelin_surface_layer_frame); "
                     "assert QuadricSectionBoundary.__name__; "
                     "assert callable(compute_quadric_section_boundary); "
                     "assert callable(build_section_transition_plan); "

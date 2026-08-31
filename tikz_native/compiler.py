@@ -9,6 +9,16 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Iterable
 
+from polyhedron_visibility.parallel_solver import ParallelView
+from polyhedron_visibility.quadrics.dandelin_compositing import (
+    DandelinSurfaceCompositingError,
+    compute_dandelin_surface_layer_frame,
+)
+from polyhedron_visibility.quadrics.plane_patch import (
+    PlanePatchFitError,
+    fit_plane_display_patch,
+)
+
 from .macro_frontend import MacroFrontendError, materialize_entry_macro
 from .dandelin_contract import (
     TikzDandelinContractError,
@@ -1142,7 +1152,7 @@ class TikzNativeCompiler:
             or picture.objects[0].kind != "dandelin_diagram"
         ):
             picture.unsupported.append(
-                "Dandelin static v1 requires exactly one diagram object and "
+                "Dandelin static diagrams require exactly one diagram object and "
                 "cannot share a picture with ordinary drawable objects"
             )
         return picture
@@ -1678,11 +1688,12 @@ class TikzNativeCompiler:
         )
         if picture.dandelin_diagrams:
             raise TikzNativeError(
-                "Dandelin static v1 allows only one diagram per picture"
+                "Dandelin static diagrams allow only one diagram per picture"
             )
         if picture.objects:
             raise TikzNativeError(
-                "Dandelin static v1 cannot share a picture with drawable objects"
+                "Dandelin static diagrams cannot share a picture with "
+                "drawable objects"
             )
         construction_ref = required[0].strip()
         construction_contract = self._restore_dandelin_construction(
@@ -1718,10 +1729,12 @@ class TikzNativeCompiler:
         if values["mode"] not in {
             "diagrammatic",
             "depth_aware_diagrammatic",
+            "depth_aware_teaching_transparent",
         }:
             raise TikzNativeError(
-                "DrawDandelinDiagram mode must be diagrammatic or "
-                "depth_aware_diagrammatic"
+                "DrawDandelinDiagram mode must be diagrammatic, "
+                "depth_aware_diagrammatic, or "
+                "depth_aware_teaching_transparent"
             )
         try:
             contract = build_dandelin_static_diagram_contract(
@@ -1733,7 +1746,26 @@ class TikzNativeCompiler:
                 show_foci=values["show-foci"],
                 show_directrices=values["show-directrices"],
             )
-        except (TikzDandelinContractError, TypeError, ValueError) as exc:
+            if contract.mode == "depth_aware_teaching_transparent":
+                construction = construction_contract.construction
+                surface_patch = fit_plane_display_patch(
+                    f"{construction.plane.plane_id}:dandelin-fixed-view-base",
+                    construction.plane,
+                    construction.cone.render_components,
+                    margin_ratio=0.14,
+                ).patch
+                compute_dandelin_surface_layer_frame(
+                    construction,
+                    ParallelView.from_matrix(picture.projection_3d.matrix),
+                    surface_patch,
+                )
+        except (
+            TikzDandelinContractError,
+            DandelinSurfaceCompositingError,
+            PlanePatchFitError,
+            TypeError,
+            ValueError,
+        ) as exc:
             raise TikzNativeError(str(exc)) from exc
         diagram_id = contract.diagram_id
         self._reserve_explicit_semantic_id(
