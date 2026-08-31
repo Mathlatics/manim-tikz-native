@@ -36,6 +36,12 @@ def _source(options: str = "view=spatial") -> str:
 class TikzNativeDandelinCompilerTests(unittest.TestCase):
     def test_checked_in_example_contains_the_three_distinct_views(self) -> None:
         source = ROOT / "examples" / "tikz_dandelin_views" / "tikz_dandelin_views.tex"
+        authored_source = source.read_text(encoding="utf-8")
+        self.assertEqual(
+            authored_source.count("mode=depth_aware_teaching_transparent"),
+            1,
+        )
+        self.assertEqual(authored_source.count("mode=diagrammatic"), 2)
         document = compile_document(source)
 
         self.assertEqual(len(document.pictures), 3)

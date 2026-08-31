@@ -1,6 +1,10 @@
 % One authoritative ellipse construction shown in three distinct static views.
+% The painter policy is authored here rather than left to Provider defaults:
+% the spatial view certifies camera-dependent cone/sphere/plane layering, while
+% the two planar reductions use their explicit diagrammatic draw contracts.
 
-% 1. Fixed spatial teaching view.
+% 1. Fixed spatial teaching view.  The contact circles remain visible because
+% they own the equal-depth seams between each sphere and its tangent cone sheet.
 \begin{tikzpicture}[3d view={38}{24},scale=0.58]
   \coordinate (A) at (0,0,0);
   \coordinate (Z) at (0,0,1);
@@ -22,6 +26,7 @@
 \end{tikzpicture}
 
 % 2. True meridian section: the two sphere circles are genuine great circles.
+% This is a planar reduction, so it deliberately uses the 2D diagrammatic order.
 \begin{tikzpicture}[3d view={38}{24},scale=0.58]
   \coordinate (A) at (0,0,0);
   \coordinate (Z) at (0,0,1);
@@ -34,6 +39,7 @@
   \DeclareDandelinConstruction{dan}{cone}{cut};
   \DrawDandelinDiagram[
     view=meridian,
+    mode=diagrammatic,
     preset=classroom,
     show-contact-circles=true,
     show-foci=true,
@@ -42,6 +48,7 @@
 \end{tikzpicture}
 
 % 3. Cutting-plane conic: no sphere circle is invented in this plane.
+% This planar view also freezes the diagrammatic order explicitly.
 \begin{tikzpicture}[3d view={38}{24},scale=0.58]
   \coordinate (A) at (0,0,0);
   \coordinate (Z) at (0,0,1);
@@ -54,6 +61,7 @@
   \DeclareDandelinConstruction{dan}{cone}{cut};
   \DrawDandelinDiagram[
     view=section-plane,
+    mode=diagrammatic,
     preset=classroom,
     show-contact-circles=false,
     show-foci=true,
