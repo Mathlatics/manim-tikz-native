@@ -13,7 +13,6 @@ from polyhedron_visibility.quadrics.boundary_section import (
     BoundaryPlaneRelation,
     QuadricBoundarySectionLimits,
     _compute_boundary_section_spans_with_contours,
-    _prepare_finite_surface_ray_hits,
     _projected_segment_intersection_parameters,
     certify_rank_one_section_boundary_sources,
     compute_boundary_section_spans,
@@ -32,6 +31,7 @@ from polyhedron_visibility.quadrics.contract import (
     PlaneDisplayPatchSpec,
     SectionPlane,
     SphereSpec,
+    _prepare_finite_surface_ray_hits,
 )
 from polyhedron_visibility.quadrics.curve_intersections import (
     compute_projected_curve_crossings,
@@ -177,27 +177,33 @@ class BoundarySectionPlacementTests(unittest.TestCase):
                 positions=surface.characteristic_points,
             )
             for direction in directions:
-                prepared = _prepare_finite_surface_ray_hits(
-                    surface,
-                    direction,
-                    context,
-                )
-                for origin in origins:
-                    with self.subTest(
-                        surface=surface.surface_id,
-                        origin=tuple(origin),
-                        direction=tuple(direction),
-                    ):
-                        self.assertEqual(
-                            prepared(origin),
-                            surface.ray_hits(
-                                origin,
-                                direction,
-                                context=context,
-                                include_caps=True,
-                                forward_only=False,
-                            ),
+                for include_caps in (False, True):
+                    for forward_only in (False, True):
+                        prepared = _prepare_finite_surface_ray_hits(
+                            surface,
+                            direction,
+                            context,
+                            include_caps=include_caps,
+                            forward_only=forward_only,
                         )
+                        for origin in origins:
+                            with self.subTest(
+                                surface=surface.surface_id,
+                                origin=tuple(origin),
+                                direction=tuple(direction),
+                                include_caps=include_caps,
+                                forward_only=forward_only,
+                            ):
+                                self.assertEqual(
+                                    prepared(origin),
+                                    surface.ray_hits(
+                                        origin,
+                                        direction,
+                                        context=context,
+                                        include_caps=include_caps,
+                                        forward_only=forward_only,
+                                    ),
+                                )
 
     def test_prepared_ray_hits_preserve_extreme_scale_contracts(self) -> None:
         for scale in (1.0e-9, 1.0e9):
@@ -239,6 +245,8 @@ class BoundarySectionPlacementTests(unittest.TestCase):
                     surface,
                     direction,
                     context,
+                    include_caps=True,
+                    forward_only=False,
                 )
                 for origin in origins:
                     with self.subTest(scale=scale, surface=surface.surface_id):
@@ -279,6 +287,8 @@ class BoundarySectionPlacementTests(unittest.TestCase):
             cylinder,
             direction,
             context,
+            include_caps=True,
+            forward_only=False,
         )(origin)
         self.assertEqual(actual, expected)
         zero_roles = {
@@ -302,6 +312,8 @@ class BoundarySectionPlacementTests(unittest.TestCase):
             cylinder,
             ruling_direction,
             context,
+            include_caps=True,
+            forward_only=False,
         )(ruling_origin)
         self.assertEqual(actual, expected)
         self.assertEqual(
@@ -310,11 +322,11 @@ class BoundarySectionPlacementTests(unittest.TestCase):
         )
 
     def test_prepared_ray_hits_preserve_subclass_override(self) -> None:
-        calls: list[tuple[object, ...]] = []
+        calls: list[tuple[tuple[object, ...], dict[str, object]]] = []
 
         class AuthoredSphere(SphereSpec):
             def ray_hits(self, *args, **kwargs):
-                calls.append(args)
+                calls.append((args, dict(kwargs)))
                 return super().ray_hits(*args, **kwargs)
 
         sphere = AuthoredSphere("authored-sphere", (0.0, 0.0, 0.0), 1.0)
@@ -329,9 +341,15 @@ class BoundarySectionPlacementTests(unittest.TestCase):
             sphere,
             direction,
             context,
+            include_caps=True,
+            forward_only=False,
         )(origin)
 
         self.assertEqual(len(calls), 1)
+        self.assertIs(calls[0][0][1], direction)
+        self.assertIs(calls[0][1]["context"], context)
+        self.assertIs(calls[0][1]["include_caps"], True)
+        self.assertIs(calls[0][1]["forward_only"], False)
         self.assertEqual(
             actual,
             SphereSpec.ray_hits(

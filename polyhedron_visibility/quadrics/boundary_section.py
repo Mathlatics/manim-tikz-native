@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import Enum
 from math import acos, atan2, atanh, ceil, floor, isfinite, pi, tau
-from typing import Callable, Mapping, Sequence
+from typing import Mapping, Sequence
 
 import numpy as np
 from numpy.polynomial import Polynomial
@@ -37,11 +37,10 @@ from .contract import (
     ConeSpec,
     CylinderSpec,
     PlaneDisplayPatchSpec,
-    QuadricRayHit,
     SectionPlane,
     SphereSpec,
-    _combined_hits,
-    _support_ray_hits,
+    _FiniteSurfaceRayHits,
+    _prepare_finite_surface_ray_hits,
 )
 from .conics import ConicKind
 from .critical import _curve_chart
@@ -63,7 +62,6 @@ from .section_compositing import (
 
 ContextInput = GeometryContext | ResolvedGeometryContext | None
 QuadricSurfaceSpec = SphereSpec | CylinderSpec | ConeSpec
-_FiniteSurfaceRayHits = Callable[[np.ndarray], tuple[QuadricRayHit, ...]]
 _PlaneFragmentContours = Mapping[
     PlaneDepthRole,
     Sequence[Sequence[Sequence[float]]],
@@ -473,71 +471,6 @@ def _visibility_kind_at(
             f"parameter {parameter:.17g}"
         )
     return next(iter(kinds))
-
-
-def _prepare_finite_surface_ray_hits(
-    surface: QuadricSurfaceSpec,
-    direction: np.ndarray,
-    context: ResolvedGeometryContext,
-) -> _FiniteSurfaceRayHits:
-    """Prepare the immutable parts of repeated finite-surface ray queries.
-
-    The returned solver deliberately delegates root filtering and cap merging
-    to the contract helpers used by ``surface.ray_hits``.  It only avoids
-    rebuilding the support quadric, local frame, and finite caps for every
-    boundary probe in the same renderer frame.
-    """
-
-    ray_direction = np.asarray(direction, dtype=float).copy()
-    ray_direction.setflags(write=False)
-    if type(surface) not in (SphereSpec, CylinderSpec, ConeSpec):
-        # The public contract accepts subclasses.  Preserve an authored
-        # ``ray_hits`` override instead of silently replacing its semantics
-        # with the built-in fast path.
-        def custom_ray_hits(point: np.ndarray) -> tuple[QuadricRayHit, ...]:
-            return surface.ray_hits(
-                point,
-                ray_direction,
-                context=context,
-                include_caps=True,
-                forward_only=False,
-            )
-
-        return custom_ray_hits
-
-    support = surface.support_quadric
-    surface_id = surface.surface_id
-    if isinstance(surface, SphereSpec):
-        frame = None
-        axial_range = None
-        caps = ()
-    else:
-        frame = surface.frame
-        axial_range = surface.axial_range
-        caps = surface.end_caps
-
-    def ray_hits(point: np.ndarray) -> tuple[QuadricRayHit, ...]:
-        lateral = _support_ray_hits(
-            support,
-            surface_id,
-            point,
-            ray_direction,
-            context=context,
-            frame=frame,
-            axial_range=axial_range,
-            forward_only=False,
-        )
-        return _combined_hits(
-            lateral,
-            caps,
-            point,
-            ray_direction,
-            context=context,
-            include_caps=True,
-            forward_only=False,
-        )
-
-    return ray_hits
 
 
 def _exact_plane_depth_role(
@@ -1580,7 +1513,13 @@ def _compute_boundary_section_spans_with_contours(
     finite_surface_ray_hits = (
         None
         if surface is None
-        else _prepare_finite_surface_ray_hits(surface, direction, resolved)
+        else _prepare_finite_surface_ray_hits(
+            surface,
+            direction,
+            resolved,
+            include_caps=True,
+            forward_only=False,
+        )
     )
     plane_axes = np.column_stack((plane_u, plane_v))
     screen_projection = np.asarray(view.matrix[:2], dtype=float)

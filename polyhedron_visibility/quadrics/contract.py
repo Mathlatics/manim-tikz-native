@@ -16,7 +16,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import Enum
 from math import isfinite, pi, tan
-from typing import Literal, Sequence
+from typing import Callable, Literal, Sequence
 
 import numpy as np
 
@@ -1025,6 +1025,85 @@ class ConeSpec:
             include_caps=include_caps,
             forward_only=forward_only,
         )
+
+
+_FiniteSurfaceRayHits = Callable[
+    [Sequence[float]],
+    tuple[QuadricRayHit, ...],
+]
+
+
+def _prepare_finite_surface_ray_hits(
+    surface: SphereSpec | CylinderSpec | ConeSpec,
+    direction: Sequence[float],
+    context: ContextInput = None,
+    *,
+    include_caps: bool = True,
+    forward_only: bool = True,
+) -> _FiniteSurfaceRayHits:
+    """Prepare immutable state shared by repeated finite-surface ray queries.
+
+    This internal entry preserves the complete :meth:`ray_hits` contract.  It
+    delegates filtering and cap merging to the same helpers as the built-in
+    surface methods, while avoiding repeated construction of the support
+    quadric, local frame, end caps, and resolved geometry context.  Subclasses
+    deliberately fall back to their public method so an authored override is
+    never replaced by the built-in fast path.
+    """
+
+    if not isinstance(surface, (SphereSpec, CylinderSpec, ConeSpec)):
+        raise TypeError("surface must be SphereSpec, CylinderSpec, or ConeSpec")
+
+    if type(surface) not in (SphereSpec, CylinderSpec, ConeSpec):
+        # A subclass may change hit semantics even when its stored geometry
+        # looks like one of the built-in contracts.
+        def custom_ray_hits(origin: Sequence[float]) -> tuple[QuadricRayHit, ...]:
+            return surface.ray_hits(
+                origin,
+                direction,
+                context=context,
+                include_caps=include_caps,
+                forward_only=forward_only,
+            )
+
+        return custom_ray_hits
+
+    ray_direction = np.asarray(direction, dtype=float).copy()
+    ray_direction.setflags(write=False)
+    resolved = _resolve(context, surface.characteristic_points)
+    support = surface.support_quadric
+    surface_id = surface.surface_id
+    if isinstance(surface, SphereSpec):
+        frame = None
+        axial_range = None
+        caps: tuple[PlanarCapSpec, ...] = ()
+    else:
+        frame = surface.frame
+        axial_range = surface.axial_range
+        caps = surface.end_caps
+
+    def ray_hits(origin: Sequence[float]) -> tuple[QuadricRayHit, ...]:
+        lateral = _support_ray_hits(
+            support,
+            surface_id,
+            origin,
+            ray_direction,
+            context=resolved,
+            frame=frame,
+            axial_range=axial_range,
+            forward_only=forward_only,
+        )
+        return _combined_hits(
+            lateral,
+            caps,
+            origin,
+            ray_direction,
+            context=resolved,
+            include_caps=include_caps,
+            forward_only=forward_only,
+        )
+
+    return ray_hits
 
 
 @dataclass(frozen=True, slots=True)

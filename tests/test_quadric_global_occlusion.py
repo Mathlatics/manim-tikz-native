@@ -7,6 +7,7 @@ from unittest.mock import patch
 
 import numpy as np
 
+import polyhedron_visibility.quadrics.global_occlusion as global_occlusion
 from polyhedron_visibility.parallel_solver import ParallelView
 from polyhedron_visibility.quadrics.contract import (
     ConeSpec,
@@ -183,6 +184,36 @@ class GlobalQuadricSceneTests(unittest.TestCase):
             for item in result.frame.draw_order
         )
         self.assertEqual(surface_order, ("far", "middle", "near"))
+
+    def test_overlap_witnesses_share_one_screen_solve_and_surface_preparation(
+        self,
+    ) -> None:
+        surfaces = (
+            SphereSpec("middle", (0.0, 0.0, 3.0), 0.8),
+            SphereSpec("near", (0.0, 0.0, 6.0), 0.8),
+            SphereSpec("far", (0.0, 0.0, 0.0), 0.8),
+        )
+
+        with (
+            patch.object(
+                global_occlusion,
+                "_prepare_screen_ray_origin",
+                wraps=global_occlusion._prepare_screen_ray_origin,
+            ) as screen_solver,
+            patch.object(
+                global_occlusion,
+                "_prepare_surface_ray_interval",
+                wraps=global_occlusion._prepare_surface_ray_interval,
+            ) as surface_solver,
+        ):
+            result = compute_global_quadric_frame([], surfaces, IDENTITY_VIEW)
+
+        self.assertEqual(
+            _constraint_pairs(result),
+            (("far", "middle"), ("far", "near"), ("middle", "near")),
+        )
+        self.assertEqual(screen_solver.call_count, 1)
+        self.assertEqual(surface_solver.call_count, len(surfaces))
 
     def test_oblique_projection_overlap_of_spatially_separated_entities(self) -> None:
         # Their world centers differ in x and z.  The oblique screen x row
