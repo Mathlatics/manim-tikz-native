@@ -141,7 +141,9 @@ painter graph, so both record `curveVisibilityAuthoritative=true`. The
 teaching-transparent mode also
 records `surfaceLayeringAuthoritative=true`: cone sheets, sphere fills, and
 cutting-plane fragments have a certified painter order for this classroom
-display. This is not an opaque physical visibility claim, so
+display. Its classroom preset draws `behind`/`between` plane fragments with a
+muted fill and dashed finite outline, while `outside`/`front` remain teal and
+solid. This is not an opaque physical visibility claim, so
 `surfaceVisibilityAuthoritative` and
 `physicalSurfaceVisibilityAuthoritative` remain false, as does the aggregate
 `visibilityAuthoritative`. The first teaching-transparent release covers

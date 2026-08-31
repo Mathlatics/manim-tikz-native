@@ -354,6 +354,13 @@ tangency. Because that semantic stroke is the certified equal-depth owner,
 `depth_aware_teaching_transparent` requires `show-contact-circles=true` and
 fails closed before registration when an author requests `false`.
 
+The classroom preset also maps those certified plane roles to explicit
+occlusion cues. `behind` and `between` have at least one nearer cone sheet, so
+their fill is muted grey-blue and their finite-outline fragments are dashed.
+`outside` and `front` retain the normal teal fill and solid outline. This is a
+didactic style derived from the certified depth partition, not a claim about
+optical absorption or physical material colour.
+
 Unsupported contact ownership, a missing finite plane/directrix patch, or any
 uncertifiable visibility partition fails closed instead of reverting to an
 uncertified draw order.

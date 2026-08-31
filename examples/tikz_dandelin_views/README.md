@@ -21,6 +21,9 @@ fragment painter graph. The same fixed camera also drives a certified teaching p
 order: each cone component is split into a far and near sheet, each Dandelin
 sphere is inserted between the sheets of its authenticated nappe, and the
 cutting-plane patch is split into behind/outside/between/front regions. The
+`behind` and `between` plane regions, which have a nearer cone sheet in front
+of them, use a muted grey-blue fill and dashed finite-outline fragments;
+`outside` and `front` retain the normal teal fill and solid outline. The
 contact-circle stroke owns the equal-depth seam. This is a classroom
 transparency model, not a claim about optical materials; physical surface
 visibility remains explicitly non-authoritative. Consequently this mode keeps

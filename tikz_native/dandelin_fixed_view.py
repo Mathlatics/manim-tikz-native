@@ -80,6 +80,7 @@ from polyhedron_visibility.quadrics.dandelin_views import (
 from polyhedron_visibility.quadrics.plane_patch import (
     PlanePatchFitError,
 )
+from polyhedron_visibility.quadrics.section_compositing import PlaneDepthRole
 from polyhedron_visibility.quadrics.trace import section_trace_curves
 
 from .planar_curve_projection import (
@@ -118,6 +119,8 @@ _CLASSROOM = {
     "cone_wire": "#67D8EE",
     "plane_fill": "#2CB9A4",
     "plane_stroke": "#7EE5D5",
+    "plane_occluded_fill": "#6B7C93",
+    "plane_occluded_stroke": "#9FB3C8",
     "sphere_fill": "#F59E7A",
     "sphere_stroke": "#FFD0B8",
     "section": "#FFD166",
@@ -125,6 +128,12 @@ _CLASSROOM = {
     "focus": "#FFF4A3",
     "directrix": "#C4B5FD",
 }
+_OCCLUDED_PLANE_ROLES = frozenset(
+    {
+        PlaneDepthRole.BEHIND_SURFACE,
+        PlaneDepthRole.BETWEEN_SURFACE_SHEETS,
+    }
+)
 
 
 class DandelinFixedViewError(ValueError):
@@ -1371,6 +1380,58 @@ def _open_projection_paths_mobject(
     )  # type: ignore[return-value]
 
 
+def _dashed_projection_paths_mobject(
+    paths: Sequence[Sequence[Sequence[float]]],
+    *,
+    color: str,
+    width: float,
+    opacity: float,
+    semantic_kind: str,
+    semantic_id: str,
+    source_refs: Sequence[str],
+    **metadata: object,
+) -> Mobject:
+    """Build a visible dashed stroke from certified open projection paths."""
+
+    dashed_paths: list[DashedVMobject] = []
+    for path_index, path in enumerate(paths):
+        base = _open_projection_paths_mobject(
+            (path,),
+            color=color,
+            width=width,
+            opacity=opacity,
+            semantic_kind=semantic_kind,
+            semantic_id=f"{semantic_id}:path:{path_index}",
+            source_refs=source_refs,
+        )
+        length = float(base.get_arc_length())
+        if not isfinite(length) or length <= 0.0:
+            raise DandelinFixedViewError(
+                f"{semantic_kind} dashed path has no finite projected length"
+            )
+        dashed = DashedVMobject(
+            base,
+            num_dashes=max(2, min(128, int(ceil(length / 0.28)))),
+            dashed_ratio=0.52,
+        )
+        dashed.set_stroke(color=color, width=width, opacity=opacity)
+        dashed_paths.append(dashed)
+    if not dashed_paths:
+        raise DandelinFixedViewError(
+            f"{semantic_kind} requires at least one certified dashed path"
+        )
+    return _tag(
+        VGroup(*dashed_paths),
+        semantic_kind=semantic_kind,
+        semantic_id=semantic_id,
+        source_refs=source_refs,
+        projectionRank=1,
+        compoundPathCount=len(paths),
+        surfaceLayeringAuthoritative=True,
+        **metadata,
+    )
+
+
 def _cone_sheet_mobject(
     layer: DandelinConeLayer,
     *,
@@ -1464,30 +1525,55 @@ def _surface_layer_mobjects(
         sphere_by_id[layer.sphere_id] = sphere
     plane_members: list[Mobject] = []
     for layer in frame.plane_layers:
+        occluded = layer.role in _OCCLUDED_PLANE_ROLES
+        color = (
+            _CLASSROOM["plane_occluded_fill"]
+            if occluded
+            else _CLASSROOM["plane_fill"]
+        )
+        opacity = 0.18 if occluded else 0.12
         plane_members.append(
             _closed_projection_paths_mobject(
                 layer.contours,
-                color=_CLASSROOM["plane_fill"],
-                opacity=0.12,
+                color=color,
+                opacity=opacity,
                 semantic_kind="section_plane_fragment",
                 semantic_id=layer.item_id,
                 source_refs=(construction.plane.plane_id,),
                 paintItemId=layer.item_id,
                 planeDepthRole=layer.role.value,
+                planeOccludedByCone=occluded,
+                planeFillVariant="occluded" if occluded else "normal",
+                fillColor=color,
             )
         )
     for layer in frame.plane_outline_layers:
+        occluded = layer.role in _OCCLUDED_PLANE_ROLES
+        builder = (
+            _dashed_projection_paths_mobject
+            if occluded
+            else _open_projection_paths_mobject
+        )
+        color = (
+            _CLASSROOM["plane_occluded_stroke"]
+            if occluded
+            else _CLASSROOM["plane_stroke"]
+        )
         plane_members.append(
-            _open_projection_paths_mobject(
+            builder(
                 layer.paths,
-                color=_CLASSROOM["plane_stroke"],
-                width=1.2,
-                opacity=0.65,
+                color=color,
+                width=1.0 if occluded else 1.2,
+                opacity=0.52 if occluded else 0.65,
                 semantic_kind="section_plane_outline_fragment",
                 semantic_id=layer.item_id,
                 source_refs=(construction.plane.plane_id,),
                 paintItemId=layer.item_id,
                 planeDepthRole=layer.role.value,
+                planeOccludedByCone=occluded,
+                strokeColor=color,
+                planeOutlinePattern="dashed" if occluded else "solid",
+                strokePattern="dashed" if occluded else "solid",
             )
         )
     return cone_members, sphere_by_id, tuple(plane_members)
@@ -1990,7 +2076,10 @@ def _assign_teaching_transparent_z_indices(
                     )
                 paint_items[raw_item_id] = item
                 intent = metadata.get("renderIntent")
-                if intent == "dashed":
+                curve_fragment = (
+                    metadata.get("curveVisibilityAuthoritative") is True
+                )
+                if intent == "dashed" and curve_fragment:
                     hidden_ids.append(raw_item_id)
                     occluders = metadata.get("occluderSurfaceIds")
                     if not isinstance(occluders, tuple) or not occluders:
@@ -1998,9 +2087,7 @@ def _assign_teaching_transparent_z_indices(
                             f"hidden paint item {raw_item_id!r} has no occluder evidence"
                         )
                     occluders_by_hidden[raw_item_id] = occluders
-                elif intent == "solid" and metadata.get(
-                    "curveVisibilityAuthoritative"
-                ) is True:
+                elif intent == "solid" and curve_fragment:
                     visible_ids.append(raw_item_id)
                 return
             if metadata.get("semanticKind") == "focus":
