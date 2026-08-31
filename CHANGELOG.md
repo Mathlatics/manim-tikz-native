@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+- add opt-in `depth_aware_diagrammatic` hidden-line visibility to static TikZ
+  Dandelin spatial views by reusing the analytic quadric boundary kernel;
+  certify each sphere's one-dimensional tangent contact with the exact cone
+  nappe, expose separate curve/surface authority flags, and keep translucent
+  fill ordering explicitly diagrammatic;
 - extend the parallel-camera section Rig with fixed isolated-point slots and
   renderer-neutral `PointMarker3D` visibility, so tangent sections activate a
   real point Mobject without allocating during playback or fabricating a short

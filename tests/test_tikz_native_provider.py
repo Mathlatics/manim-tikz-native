@@ -57,6 +57,11 @@ class TikzNativeProviderTests(unittest.TestCase):
                 "convex_section_transparent_compositing_parallel_v1"
             ]
         )
+        self.assertTrue(
+            info["capabilities"][
+                "dandelin_hidden_line_visibility_parallel_v1"
+            ]
+        )
         self.assertTrue(info["capabilities"]["copy_identity_handoff_v1"])
         self.assertTrue(
             info["capabilities"]["derived_dihedral_visibility_parallel_v1"]

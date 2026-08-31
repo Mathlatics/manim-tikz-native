@@ -1715,15 +1715,20 @@ class TikzNativeCompiler:
                 values[key] = self._dandelin_bool(raw_value, key)
             else:
                 values[key] = raw_value
-        if values["mode"] != "diagrammatic":
+        if values["mode"] not in {
+            "diagrammatic",
+            "depth_aware_diagrammatic",
+        }:
             raise TikzNativeError(
-                "DrawDandelinDiagram v1 supports only mode=diagrammatic"
+                "DrawDandelinDiagram mode must be diagrammatic or "
+                "depth_aware_diagrammatic"
             )
         try:
             contract = build_dandelin_static_diagram_contract(
                 construction_contract.construction,
                 view=str(values["view"]),
                 preset=str(values["preset"]),
+                mode=str(values["mode"]),
                 show_contact_circles=values["show-contact-circles"],
                 show_foci=values["show-foci"],
                 show_directrices=values["show-directrices"],

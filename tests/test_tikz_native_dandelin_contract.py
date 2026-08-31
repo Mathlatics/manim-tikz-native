@@ -447,6 +447,34 @@ class TikzDandelinContractTests(unittest.TestCase):
             )
         )
 
+    def test_depth_aware_mode_round_trips_only_for_spatial_view(self) -> None:
+        construction = self.construction_contract.construction
+        diagram = build_dandelin_static_diagram_contract(
+            construction,
+            view="spatial",
+            mode="depth_aware_diagrammatic",
+        )
+        payload = diagram.to_dict()
+        self.assertEqual(payload["mode"], "depth_aware_diagrammatic")
+        self.assertIs(payload["visibilityAuthoritative"], False)
+        self.assertIs(payload["curveVisibilityAuthoritative"], True)
+        self.assertIs(payload["surfaceVisibilityAuthoritative"], False)
+        self.assertEqual(
+            restore_dandelin_static_diagram_contract(payload, construction),
+            diagram,
+        )
+        for view in ("meridian", "section-plane"):
+            with self.subTest(view=view):
+                with self.assertRaisesRegex(
+                    TikzDandelinContractError,
+                    "only valid for the spatial view",
+                ):
+                    build_dandelin_static_diagram_contract(
+                        construction,
+                        view=view,
+                        mode="depth_aware_diagrammatic",
+                    )
+
     def test_flags_filter_drawables_without_changing_certified_view_geometry(
         self,
     ) -> None:
@@ -530,6 +558,14 @@ class TikzDandelinContractTests(unittest.TestCase):
         authoritative = copy.deepcopy(payload)
         authoritative["visibilityAuthoritative"] = True
         cases.append(authoritative)
+
+        curve_authority = copy.deepcopy(payload)
+        curve_authority["curveVisibilityAuthoritative"] = True
+        cases.append(curve_authority)
+
+        surface_authority = copy.deepcopy(payload)
+        surface_authority["surfaceVisibilityAuthoritative"] = True
+        cases.append(surface_authority)
 
         not_static = copy.deepcopy(payload)
         not_static["static"] = False

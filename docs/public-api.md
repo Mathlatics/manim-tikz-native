@@ -780,6 +780,8 @@ points are:
   fixed-topology mathematical-action layer;
 - `compute_dandelin_construction()`, `DandelinConstruction3D`, and the static
   diagrammatic `DandelinSection3D` teaching facade;
+- `compute_dandelin_visibility_frame()`, `DandelinVisibilityFrame`, and
+  `DandelinTangentContactEvidence` for fixed-camera Dandelin hidden lines;
 - `QUADRIC_PREVIEW_PROFILE`, `QUADRIC_FINAL_PROFILE`,
   and `QuadricCapacityPlanner`;
 - `QuadricOcclusion3D`, `QuadricManimStyle`, `QuadricBoundaryStyle`, and
@@ -954,15 +956,33 @@ it from arbitrary circles:
 \DeclareSpaceRightCone{cone}{A/Z/R}{30}{0/9}{open_single};
 \DeclareSpacePlane{cut}{O/U/V};
 \DeclareDandelinConstruction{dan}{cone}{cut};
-\DrawDandelinDiagram[view=spatial,preset=classroom]{dan};
+\DrawDandelinDiagram[
+  view=spatial,
+  preset=classroom,
+  mode=depth_aware_diagrammatic
+]{dan};
 ```
 
 `view` may be `spatial`, `meridian`, or `section-plane`. The resulting
-`dandelin_diagram` is a fixed-view, diagrammatic object whose nested semantic
-items retain view-local IDs and cross-view `sourceRef` values. Physical mode,
-mixed drawable objects, a fake section-plane sphere circle, motion, camera
-shots, and source-v3 generation are rejected explicitly. The complete example
-is in [`examples/tikz_dandelin_views`](../examples/tikz_dandelin_views/README.md).
+`dandelin_diagram` is a fixed-view object whose nested semantic items retain
+view-local IDs and cross-view `sourceRef` values. The default
+`mode="diagrammatic"` preserves the original authored ordering.
+`mode="depth_aware_diagrammatic"` is valid only for the spatial view and calls
+`compute_dandelin_visibility_frame()` with the same frozen parallel camera.
+The returned analytic partitions drive solid visible strokes and dashed hidden
+strokes for cone boundaries, sphere silhouettes, contact circles, the section
+curve, and optional directrices. Tangent-contact evidence identifies each
+sphere, its exact cone nappe, and its contact circle before any fragments are
+painted.
+
+The contract keeps `curveVisibilityAuthoritative=true` separate from
+`surfaceVisibilityAuthoritative=false`; consequently the whole diagram still
+has `visibilityAuthoritative=false`. In plain terms, the hidden lines are
+computed from geometry, but the translucent colored fills are still arranged
+for teaching clarity. Full physical mode, mixed drawable objects, a fake
+section-plane sphere circle, motion, camera shots, and source-v3 generation are
+rejected explicitly. The complete example is in
+[`examples/tikz_dandelin_views`](../examples/tikz_dandelin_views/README.md).
 
 The Manim binding accepts immutable surface/curve sequences or callbacks that
 return a new sequence for the current frame.  IDs and counts remain fixed for

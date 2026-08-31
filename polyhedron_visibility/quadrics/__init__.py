@@ -153,6 +153,38 @@ _EXPORTS: Final[dict[str, tuple[str, str]]] = {
         ".dandelin_overlay",
         "canonical_dandelin_teaching_overlay_json",
     ),
+    "DANDELIN_TANGENT_CONTACT_SCHEMA": (
+        ".dandelin_visibility",
+        "DANDELIN_TANGENT_CONTACT_SCHEMA",
+    ),
+    "DANDELIN_VISIBILITY_FRAME_SCHEMA": (
+        ".dandelin_visibility",
+        "DANDELIN_VISIBILITY_FRAME_SCHEMA",
+    ),
+    "DandelinTangentContactEvidence": (
+        ".dandelin_visibility",
+        "DandelinTangentContactEvidence",
+    ),
+    "DandelinVisibilityError": (
+        ".dandelin_visibility",
+        "DandelinVisibilityError",
+    ),
+    "DandelinVisibilityFrame": (
+        ".dandelin_visibility",
+        "DandelinVisibilityFrame",
+    ),
+    "DandelinVisibilityStroke": (
+        ".dandelin_visibility",
+        "DandelinVisibilityStroke",
+    ),
+    "canonical_dandelin_visibility_json": (
+        ".dandelin_visibility",
+        "canonical_dandelin_visibility_json",
+    ),
+    "compute_dandelin_visibility_frame": (
+        ".dandelin_visibility",
+        "compute_dandelin_visibility_frame",
+    ),
     "DEFAULT_DANDELIN_OVERLAY_STYLE": (
         ".dandelin_authoring",
         "DEFAULT_DANDELIN_OVERLAY_STYLE",

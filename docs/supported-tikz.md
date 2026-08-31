@@ -27,7 +27,8 @@ is classified as dynamic-safe (A), static-safe (B), or unsupported (C).
   `\DeclareSpacePlane`, `\DrawSpaceCircle`, and `\DrawSpaceEllipse`, with the
   narrower solid-stroke v1 contract below;
 - explicit finite right cones, Dandelin constructions, and one fixed
-  diagrammatic spatial/meridian/section-plane view per picture;
+  spatial/meridian/section-plane view per picture; the spatial view may opt in
+  to certified hidden-line intervals with `mode=depth_aware_diagrammatic`;
 - one proven redundant `scope` case with `draw=none`.
 
 ## Explicit planar 3D curves (static-safe v1)
@@ -102,6 +103,7 @@ the derived relation explicitly:
 \DrawDandelinDiagram[
   view=spatial,
   preset=classroom,
+  mode=depth_aware_diagrammatic,
   show-contact-circles=true,
   show-foci=true,
   show-directrices=false
@@ -125,10 +127,17 @@ and a `sourceRef` back to the shared cone, plane, sphere, focus, contact circle,
 or directrix.
 
 V1 allows one Dandelin diagram and no other drawable object in the picture.
-It is always `static=true`, `mode=diagrammatic`, and
-`visibilityAuthoritative=false`. It uses the fixed-view Provider path only;
-motion, camera shots, physical cone/sphere occlusion, Bridge geometry rigs, and
-source-v3 generation fail closed. A complete three-view source is in
+It is always `static=true` and uses the fixed-view Provider path only. All
+three views accept `mode=diagrammatic`; only the spatial view accepts
+`mode=depth_aware_diagrammatic`. The latter uses the frozen `space view`
+camera to classify analytic cone boundaries, sphere silhouettes, contact
+circles, the section curve, and optional clipped directrices. It records
+`curveVisibilityAuthoritative=true` but
+`surfaceVisibilityAuthoritative=false`, so hidden strokes are exact while
+translucent surface-fill ordering remains diagrammatic. The aggregate
+`visibilityAuthoritative` therefore stays false, and full `physical` mode is
+rejected. Motion, camera shots, Bridge geometry rigs, and source-v3 generation
+also fail closed. A complete three-view source is in
 [`examples/tikz_dandelin_views`](../examples/tikz_dandelin_views/README.md).
 
 ## Unsupported examples

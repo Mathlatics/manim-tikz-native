@@ -105,7 +105,10 @@ Preview、Final、Release/Evidence 三档的准确区别，以及一行容量扫
 同一份认证构造还能分别生成“轴截面真圆图”和“截面平面圆锥曲线图”；后者不会把
 焦点误画成球心，也不会伪造并不存在的球截面圆。
 对应的受控 TikZ 三视图命令与可编译示例见
-[TikZ-native 丹德林三视图](examples/tikz_dandelin_views/README.md)。
+[TikZ-native 丹德林三视图](examples/tikz_dandelin_views/README.md)。其中空间图可启用
+`mode=depth_aware_diagrammatic`：圆锥轮廓、球轮廓、相切圆、截线和准线会按同一
+投影自动分成实线与遮挡虚线；半透明曲面填充仍按教学图层绘制，不冒充完整的物理
+透明合成。
 
 ## 显式三维平面、圆和椭圆
 

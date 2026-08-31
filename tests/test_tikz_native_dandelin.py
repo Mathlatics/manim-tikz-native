@@ -46,6 +46,17 @@ class TikzNativeDandelinCompilerTests(unittest.TestCase):
             ),
             ("spatial", "meridian", "section-plane"),
         )
+        self.assertEqual(
+            tuple(
+                picture.objects[0].geometry["mode"]
+                for picture in document.pictures
+            ),
+            (
+                "depth_aware_diagrammatic",
+                "diagrammatic",
+                "diagrammatic",
+            ),
+        )
         self.assertTrue(all(not picture.unsupported for picture in document.pictures))
 
     def test_three_static_views_share_one_authoritative_construction_shape(self) -> None:
@@ -163,12 +174,45 @@ class TikzNativeDandelinCompilerTests(unittest.TestCase):
                     4 if enabled else 0,
                 )
 
-    def test_physical_mode_and_dynamic_double_cone_fail_closed(self) -> None:
+    def test_automatic_hidden_lines_compile_and_physical_mode_fails_closed(
+        self,
+    ) -> None:
+        automatic = compile_document(
+            source_text=_source(
+                "view=spatial,mode=depth_aware_diagrammatic"
+            )
+        ).pictures[0]
+        self.assertFalse(automatic.unsupported)
+        self.assertEqual(
+            automatic.objects[0].geometry["mode"],
+            "depth_aware_diagrammatic",
+        )
+        self.assertIs(
+            automatic.objects[0].geometry["curveVisibilityAuthoritative"],
+            True,
+        )
+        self.assertIs(
+            automatic.objects[0].geometry["surfaceVisibilityAuthoritative"],
+            False,
+        )
+        runtime = instantiate_picture(automatic).objects["dan:view:spatial"]
+        self.assertEqual(runtime.mode, "depth_aware_diagrammatic")
+        self.assertTrue(runtime.curve_visibility_authoritative)
+        self.assertGreater(runtime.metadata["hiddenSpanCount"], 0)
+
         physical = compile_document(
             source_text=_source("view=spatial,mode=physical")
         ).pictures[0]
         self.assertTrue(physical.unsupported)
         self.assertFalse(physical.dandelin_diagrams)
+
+        non_spatial = compile_document(
+            source_text=_source(
+                "view=meridian,mode=depth_aware_diagrammatic"
+            )
+        ).pictures[0]
+        self.assertTrue(non_spatial.unsupported)
+        self.assertFalse(non_spatial.dandelin_diagrams)
 
         analytic = _source().replace(
             "{open_single}",
