@@ -178,6 +178,40 @@ class TikzNativeDandelinSourceProjectTests(unittest.TestCase):
             )
             self.assertFalse((root / ".derived" / "generated_scene.py").exists())
 
+    def test_teaching_transparent_layers_remain_a_static_shape_asset(self) -> None:
+        automatic_source = DANDELIN_SOURCE.replace(
+            "view=spatial,preset=classroom",
+            (
+                "view=spatial,mode=depth_aware_teaching_transparent,"
+                "preset=classroom"
+            ),
+        )
+        with TemporaryDirectory(prefix="tikz-dandelin-source-project-") as directory:
+            root = Path(directory)
+            (root / "dandelin.tex").write_text(
+                automatic_source,
+                encoding="utf-8",
+            )
+            manifest = root / "project.json"
+            manifest.write_text(
+                json.dumps(self._manifest(), indent=2),
+                encoding="utf-8",
+            )
+
+            result = build_project(manifest)
+
+            self.assertEqual(result.built, ("shape", "compositing"))
+            shape_asset = json.loads(
+                (root / ".derived" / "shape-asset.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+            self.assertEqual(
+                shape_asset["object_index"][0]["kind"],
+                "dandelin_diagram",
+            )
+            self.assertFalse((root / ".derived" / "generated_scene.py").exists())
+
     def test_macro_composed_draw_is_rejected_before_staging_with_or_without_entry_macro(
         self,
     ) -> None:

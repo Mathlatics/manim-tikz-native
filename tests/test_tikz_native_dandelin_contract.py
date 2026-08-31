@@ -376,6 +376,13 @@ class TikzDandelinContractTests(unittest.TestCase):
                 self.assertEqual(payload["planeRef"], "cut")
                 self.assertEqual(payload["mode"], "diagrammatic")
                 self.assertIs(payload["visibilityAuthoritative"], False)
+                self.assertIs(payload["curveVisibilityAuthoritative"], False)
+                self.assertIs(payload["surfaceVisibilityAuthoritative"], False)
+                self.assertIs(payload["surfaceLayeringAuthoritative"], False)
+                self.assertIs(
+                    payload["physicalSurfaceVisibilityAuthoritative"],
+                    False,
+                )
                 self.assertIs(payload["static"], True)
                 self.assertEqual(payload["preset"], "classroom")
                 self.assertEqual(
@@ -447,33 +454,60 @@ class TikzDandelinContractTests(unittest.TestCase):
             )
         )
 
-    def test_depth_aware_mode_round_trips_only_for_spatial_view(self) -> None:
+    def test_depth_aware_modes_round_trip_only_for_spatial_view(self) -> None:
         construction = self.construction_contract.construction
-        diagram = build_dandelin_static_diagram_contract(
-            construction,
-            view="spatial",
-            mode="depth_aware_diagrammatic",
-        )
-        payload = diagram.to_dict()
-        self.assertEqual(payload["mode"], "depth_aware_diagrammatic")
-        self.assertIs(payload["visibilityAuthoritative"], False)
-        self.assertIs(payload["curveVisibilityAuthoritative"], True)
-        self.assertIs(payload["surfaceVisibilityAuthoritative"], False)
-        self.assertEqual(
-            restore_dandelin_static_diagram_contract(payload, construction),
-            diagram,
-        )
-        for view in ("meridian", "section-plane"):
-            with self.subTest(view=view):
-                with self.assertRaisesRegex(
-                    TikzDandelinContractError,
-                    "only valid for the spatial view",
-                ):
-                    build_dandelin_static_diagram_contract(
+        for mode, layering_authoritative in (
+            ("depth_aware_diagrammatic", False),
+            ("depth_aware_teaching_transparent", True),
+        ):
+            with self.subTest(mode=mode):
+                diagram = build_dandelin_static_diagram_contract(
+                    construction,
+                    view="spatial",
+                    mode=mode,
+                )
+                payload = diagram.to_dict()
+                self.assertEqual(payload["mode"], mode)
+                self.assertIs(payload["visibilityAuthoritative"], False)
+                self.assertIs(payload["curveVisibilityAuthoritative"], True)
+                self.assertIs(payload["surfaceVisibilityAuthoritative"], False)
+                self.assertIs(
+                    payload["surfaceLayeringAuthoritative"],
+                    layering_authoritative,
+                )
+                self.assertIs(
+                    payload["physicalSurfaceVisibilityAuthoritative"],
+                    False,
+                )
+                self.assertEqual(
+                    restore_dandelin_static_diagram_contract(
+                        payload,
                         construction,
-                        view=view,
-                        mode="depth_aware_diagrammatic",
-                    )
+                    ),
+                    diagram,
+                )
+                for view in ("meridian", "section-plane"):
+                    with self.subTest(view=view):
+                        with self.assertRaisesRegex(
+                            TikzDandelinContractError,
+                            "only valid for the spatial view",
+                        ):
+                            build_dandelin_static_diagram_contract(
+                                construction,
+                                view=view,
+                                mode=mode,
+                            )
+
+        with self.assertRaisesRegex(
+            TikzDandelinContractError,
+            "show_contact_circles=true.*equal-depth seams",
+        ):
+            build_dandelin_static_diagram_contract(
+                construction,
+                view="spatial",
+                mode="depth_aware_teaching_transparent",
+                show_contact_circles=False,
+            )
 
     def test_flags_filter_drawables_without_changing_certified_view_geometry(
         self,
@@ -551,6 +585,10 @@ class TikzDandelinContractTests(unittest.TestCase):
         ).to_dict()
         cases: list[dict[str, object]] = []
 
+        old_v2 = copy.deepcopy(payload)
+        old_v2["schema"] = "tikz-native-dandelin-static-diagram/v2"
+        cases.append(old_v2)
+
         physical = copy.deepcopy(payload)
         physical["mode"] = "physical"
         cases.append(physical)
@@ -566,6 +604,16 @@ class TikzDandelinContractTests(unittest.TestCase):
         surface_authority = copy.deepcopy(payload)
         surface_authority["surfaceVisibilityAuthoritative"] = True
         cases.append(surface_authority)
+
+        layer_authority = copy.deepcopy(payload)
+        layer_authority["surfaceLayeringAuthoritative"] = True
+        cases.append(layer_authority)
+
+        physical_surface_authority = copy.deepcopy(payload)
+        physical_surface_authority[
+            "physicalSurfaceVisibilityAuthoritative"
+        ] = True
+        cases.append(physical_surface_authority)
 
         not_static = copy.deepcopy(payload)
         not_static["static"] = False

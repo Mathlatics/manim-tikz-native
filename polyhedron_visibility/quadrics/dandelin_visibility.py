@@ -326,6 +326,31 @@ def _contact_evidence(
     )
 
 
+def certify_dandelin_tangent_contacts(
+    construction: DandelinConstruction3D,
+) -> tuple[DandelinTangentContactEvidence, ...]:
+    """Return the canonical sphere-to-cone-component tangency mapping.
+
+    The same certificate is consumed by hidden-line visibility and by the
+    teaching-transparent surface compositor.  Keeping the mapping here avoids
+    two independent nappe-selection rules drifting apart.
+    """
+
+    if not isinstance(construction, DandelinConstruction3D):
+        raise TypeError("construction must be a DandelinConstruction3D")
+    components = tuple(
+        sorted(
+            construction.cone.render_components,
+            key=lambda item: item.surface_id,
+        )
+    )
+    return _contact_evidence(
+        construction,
+        components,
+        construction.certification_context,
+    )
+
+
 def _generator_specs(
     components: Sequence[ConeSpec],
     count: int,
@@ -384,7 +409,7 @@ def compute_dandelin_visibility_frame(
     sphere_ids = {
         item.surface_id for item in surfaces if isinstance(item, SphereSpec)
     }
-    contacts = _contact_evidence(construction, cone_components, context)
+    contacts = certify_dandelin_tangent_contacts(construction)
 
     entries: list[tuple[str, str, QuadricBoundarySource]] = []
     boundary_sources = build_surface_boundary_sources(
@@ -520,5 +545,6 @@ __all__ = [
     "DandelinVisibilityFrame",
     "DandelinVisibilityStroke",
     "canonical_dandelin_visibility_json",
+    "certify_dandelin_tangent_contacts",
     "compute_dandelin_visibility_frame",
 ]

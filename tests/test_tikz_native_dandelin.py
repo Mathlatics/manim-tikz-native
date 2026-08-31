@@ -52,7 +52,7 @@ class TikzNativeDandelinCompilerTests(unittest.TestCase):
                 for picture in document.pictures
             ),
             (
-                "depth_aware_diagrammatic",
+                "depth_aware_teaching_transparent",
                 "diagrammatic",
                 "diagrammatic",
             ),
@@ -224,6 +224,95 @@ class TikzNativeDandelinCompilerTests(unittest.TestCase):
         self.assertFalse(rejected.dandelin_constructions_3d)
         self.assertFalse(rejected.dandelin_diagrams)
 
+    def test_teaching_transparent_mode_instantiates_certified_surface_layers(
+        self,
+    ) -> None:
+        picture = compile_document(
+            source_text=_source(
+                "view=spatial,mode=depth_aware_teaching_transparent"
+            )
+        ).pictures[0]
+        self.assertFalse(picture.unsupported)
+        geometry = picture.objects[0].geometry
+        self.assertIs(geometry["curveVisibilityAuthoritative"], True)
+        self.assertIs(geometry["surfaceLayeringAuthoritative"], True)
+        self.assertIs(geometry["surfaceVisibilityAuthoritative"], False)
+        self.assertIs(
+            geometry["physicalSurfaceVisibilityAuthoritative"],
+            False,
+        )
+
+        runtime = instantiate_picture(picture).objects["dan:view:spatial"]
+        self.assertEqual(runtime.mode, "depth_aware_teaching_transparent")
+        self.assertTrue(runtime.curve_visibility_authoritative)
+        self.assertTrue(runtime.surface_layering_authoritative)
+        self.assertFalse(runtime.physical_surface_visibility_authoritative)
+        surface_ids = set(runtime.surface_layer_frame.draw_order)
+        rendered = {
+            member.dandelin_metadata["paintItemId"]: member.z_index
+            for wrapper in runtime.submobjects
+            for member in wrapper.submobjects
+            if isinstance(getattr(member, "dandelin_metadata", None), dict)
+            and member.dandelin_metadata.get("paintItemId") in surface_ids
+        }
+        self.assertEqual(set(rendered), surface_ids)
+        self.assertEqual(
+            tuple(sorted(rendered, key=rendered.__getitem__)),
+            runtime.surface_layer_frame.draw_order,
+        )
+
+    def test_teaching_transparent_mode_compiles_with_separate_authority(self) -> None:
+        picture = compile_document(
+            source_text=_source(
+                "view=spatial,mode=depth_aware_teaching_transparent"
+            )
+        ).pictures[0]
+
+        self.assertFalse(picture.unsupported)
+        geometry = picture.objects[0].geometry
+        self.assertEqual(geometry["mode"], "depth_aware_teaching_transparent")
+        self.assertIs(geometry["visibilityAuthoritative"], False)
+        self.assertIs(geometry["curveVisibilityAuthoritative"], True)
+        self.assertIs(geometry["surfaceVisibilityAuthoritative"], False)
+        self.assertIs(geometry["surfaceLayeringAuthoritative"], True)
+        self.assertIs(
+            geometry["physicalSurfaceVisibilityAuthoritative"],
+            False,
+        )
+
+        non_spatial = compile_document(
+            source_text=_source(
+                "view=section-plane,mode=depth_aware_teaching_transparent"
+            )
+        ).pictures[0]
+        self.assertTrue(non_spatial.unsupported)
+        self.assertFalse(non_spatial.dandelin_diagrams)
+
+        hidden_seams = compile_document(
+            source_text=_source(
+                "view=spatial,mode=depth_aware_teaching_transparent,"
+                "show-contact-circles=false"
+            )
+        ).pictures[0]
+        self.assertTrue(hidden_seams.unsupported)
+        self.assertFalse(hidden_seams.dandelin_diagrams)
+        self.assertFalse(hidden_seams.objects)
+        self.assertIn("equal-depth seams", " ".join(hidden_seams.unsupported))
+
+        hyperbola = _source(
+            "view=spatial,mode=depth_aware_teaching_transparent"
+        ).replace(
+            r"\coordinate (V) at (-0.8,0,2.6);",
+            r"\coordinate (V) at (-0.2,0,2.979795897113271);",
+        ).replace(
+            r"{30}{0/9}{open_single}",
+            r"{30}{-20/20}{open_double}",
+        )
+        blocked = compile_document(source_text=hyperbola).pictures[0]
+        self.assertTrue(blocked.unsupported)
+        self.assertFalse(blocked.dandelin_diagrams)
+        self.assertFalse(blocked.objects)
+
     def test_invalid_declaration_does_not_leave_a_partial_registry_entry(self) -> None:
         source = r"""
 \begin{tikzpicture}[3d view={38}{24}]
@@ -286,6 +375,47 @@ class TikzNativeDandelinCompilerTests(unittest.TestCase):
                     )
                     self.assertIn("section_curve", kinds)
                     self.assertIn("focus", kinds)
+
+    def test_provider_preserves_depth_aware_internal_painter_bands(self) -> None:
+        picture = compile_document(
+            source_text=_source(
+                "view=spatial,mode=depth_aware_diagrammatic"
+            )
+        ).pictures[0]
+        spec = picture.objects[0]
+        runtime = instantiate_picture(picture).objects[spec.id]
+
+        self.assertEqual(runtime.z_index, spec.z_index)
+        family = runtime.get_family()[1:]
+
+        def painter_z_indices(**expected: str) -> list[float]:
+            return [
+                float(member.z_index)
+                for member in family
+                if all(
+                    getattr(member, "dandelin_metadata", {}).get(key) == value
+                    for key, value in expected.items()
+                )
+            ]
+
+        hidden = painter_z_indices(
+            visibilityKind="hidden",
+            renderIntent="dashed",
+        )
+        cone_fill = painter_z_indices(semanticKind="cone_face")
+        visible = painter_z_indices(
+            visibilityKind="visible",
+            renderIntent="solid",
+        )
+        foci = painter_z_indices(semanticKind="focus")
+
+        self.assertTrue(hidden)
+        self.assertTrue(cone_fill)
+        self.assertTrue(visible)
+        self.assertTrue(foci)
+        self.assertLess(max(hidden), min(cone_fill))
+        self.assertLess(max(cone_fill), min(visible))
+        self.assertLess(max(visible), min(foci))
 
     def test_provider_persists_nested_semantic_source_refs(self) -> None:
         with TemporaryDirectory() as directory:

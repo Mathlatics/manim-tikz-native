@@ -177,6 +177,10 @@ _EXPORTS: Final[dict[str, tuple[str, str]]] = {
         ".dandelin_visibility",
         "DandelinVisibilityStroke",
     ),
+    "certify_dandelin_tangent_contacts": (
+        ".dandelin_visibility",
+        "certify_dandelin_tangent_contacts",
+    ),
     "canonical_dandelin_visibility_json": (
         ".dandelin_visibility",
         "canonical_dandelin_visibility_json",
@@ -184,6 +188,62 @@ _EXPORTS: Final[dict[str, tuple[str, str]]] = {
     "compute_dandelin_visibility_frame": (
         ".dandelin_visibility",
         "compute_dandelin_visibility_frame",
+    ),
+    "DANDELIN_SURFACE_LAYER_FRAME_SCHEMA": (
+        ".dandelin_compositing",
+        "DANDELIN_SURFACE_LAYER_FRAME_SCHEMA",
+    ),
+    "DandelinConeLayer": (
+        ".dandelin_compositing",
+        "DandelinConeLayer",
+    ),
+    "DandelinContactSheet": (
+        ".dandelin_compositing",
+        "DandelinContactSheet",
+    ),
+    "DandelinContactSheetSpan": (
+        ".dandelin_compositing",
+        "DandelinContactSheetSpan",
+    ),
+    "DandelinEqualDepthContact": (
+        ".dandelin_compositing",
+        "DandelinEqualDepthContact",
+    ),
+    "DandelinPlaneLayer": (
+        ".dandelin_compositing",
+        "DandelinPlaneLayer",
+    ),
+    "DandelinPlaneOutlineLayer": (
+        ".dandelin_compositing",
+        "DandelinPlaneOutlineLayer",
+    ),
+    "DandelinPlanePosition": (
+        ".dandelin_compositing",
+        "DandelinPlanePosition",
+    ),
+    "DandelinSphereLayer": (
+        ".dandelin_compositing",
+        "DandelinSphereLayer",
+    ),
+    "DandelinSpherePairEvidence": (
+        ".dandelin_compositing",
+        "DandelinSpherePairEvidence",
+    ),
+    "DandelinSurfaceCompositingError": (
+        ".dandelin_compositing",
+        "DandelinSurfaceCompositingError",
+    ),
+    "DandelinSurfaceLayerFrame": (
+        ".dandelin_compositing",
+        "DandelinSurfaceLayerFrame",
+    ),
+    "canonical_dandelin_surface_layer_json": (
+        ".dandelin_compositing",
+        "canonical_dandelin_surface_layer_json",
+    ),
+    "compute_dandelin_surface_layer_frame": (
+        ".dandelin_compositing",
+        "compute_dandelin_surface_layer_frame",
     ),
     "DEFAULT_DANDELIN_OVERLAY_STYLE": (
         ".dandelin_authoring",
