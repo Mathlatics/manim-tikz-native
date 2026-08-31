@@ -211,7 +211,16 @@ class NativeManimRenderer:
                     f"Failed to build picture {picture.index} object {spec.id} "
                     f"({spec.kind}): {error}"
                 ) from error
-            mobject.set_z_index(spec.z_index)
+            # A Dandelin diagram is contractually the picture's sole drawable
+            # and its fixed-view builder already assigns certified painter
+            # bands to descendants.  Set only the container slot here so that
+            # those internal hidden/fill/visible/focus bands survive Provider
+            # instantiation.  All ordinary drawables retain the historical
+            # family-wide assignment.
+            mobject.set_z_index(
+                spec.z_index,
+                family=spec.kind != "dandelin_diagram",
+            )
             objects[spec.id] = mobject
         return NativeFigure(picture, objects, VGroup(*objects.values()), warnings)
 

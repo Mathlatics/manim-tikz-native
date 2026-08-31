@@ -476,6 +476,7 @@ _COMPONENT_DEFINITIONS: Final[dict[str, dict[str, tuple[str, ...]]]] = {
             "@tool/polyhedron_visibility/quadrics/compositing.py",
             "@tool/polyhedron_visibility/quadrics/critical.py",
             "@tool/polyhedron_visibility/quadrics/curve_intersections.py",
+            "@tool/polyhedron_visibility/quadrics/dandelin_compositing.py",
             "@tool/polyhedron_visibility/quadrics/dandelin_visibility.py",
             "@tool/polyhedron_visibility/quadrics/global_occlusion.py",
             "@tool/polyhedron_visibility/quadrics/projection.py",
@@ -524,7 +525,10 @@ _DECLARED_COMPONENT_REVISIONS: Final[dict[str, str]] = {
 # change whenever implementation bytes change.
 _DECLARED_COMPONENT_CONTRACT_VERSIONS: Final[dict[str, int]] = {
     component: (
-        2 if component == COMPONENT_QUADRIC_VISIBILITY else 1
+        2
+        if component
+        in {COMPONENT_ASSET_COMPILER, COMPONENT_QUADRIC_VISIBILITY}
+        else 1
     )
     for component in _COMPONENT_DEFINITIONS
 }

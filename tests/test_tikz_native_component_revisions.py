@@ -291,6 +291,11 @@ class TikzNativeComponentRevisionTests(unittest.TestCase):
         self.assertTrue(
             asset["capabilities"]["quadric_global_compositing_v1"]
         )
+        self.assertTrue(
+            asset["capabilities"][
+                "dandelin_teaching_transparent_compositing_parallel_v1"
+            ]
+        )
         for component in (
             COMPONENT_GENERATED_OPEN_FACE_VISIBILITY_3D,
             COMPONENT_SOURCE_PROJECT_BUILD,
@@ -303,6 +308,10 @@ class TikzNativeComponentRevisionTests(unittest.TestCase):
         self.assertEqual(
             contracts[COMPONENT_QUADRIC_GEOMETRY],
             "tikz-native-contract:quadric_geometry/v1",
+        )
+        self.assertEqual(
+            contracts[COMPONENT_ASSET_COMPILER],
+            "tikz-native-contract:asset_compiler/v2",
         )
         self.assertEqual(
             contracts[COMPONENT_QUADRIC_VISIBILITY],
@@ -632,6 +641,7 @@ print(json.dumps({
         }
         for path in (
             "@tool/polyhedron_visibility/quadrics/visibility.py",
+            "@tool/polyhedron_visibility/quadrics/dandelin_compositing.py",
             "@tool/polyhedron_visibility/quadrics/dandelin_visibility.py",
         ):
             with self.subTest(path=path):

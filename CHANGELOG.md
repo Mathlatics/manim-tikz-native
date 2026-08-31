@@ -13,8 +13,15 @@ All notable changes to this project will be documented in this file.
   same `DandelinVisibilityFrame` under a live parallel camera while exposing
   separate curve/surface authority flags and keeping translucent fill ordering
   explicitly diagrammatic;
-- restore legacy `tikz-native-dandelin-static-diagram/v1` payloads by
-  recomputing them into the current v2 contract;
+- add opt-in `depth_aware_teaching_transparent` surface layering to static TikZ
+  Dandelin spatial views by reusing the analytic cone-sheet and
+  cutting-plane compositors; certify each sphere's one-dimensional tangent
+  contact with its exact cone nappe, place every sphere between that nappe's
+  back/front sheets, split the plane into certified depth regions, preserve
+  internal z-order through the real Provider path, and keep physical surface
+  visibility explicitly non-authoritative;
+- restore legacy `tikz-native-dandelin-static-diagram/v1` and `/v2` payloads by
+  recomputing them into the current v3 contract;
 - extend the parallel-camera section Rig with fixed isolated-point slots and
   renderer-neutral `PointMarker3D` visibility, so tangent sections activate a
   real point Mobject without allocating during playback or fabricating a short

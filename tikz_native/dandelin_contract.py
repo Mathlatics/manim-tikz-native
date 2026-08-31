@@ -6,11 +6,11 @@ persists redundant canonical evidence, and restores that evidence only by
 recomputing it from the caller's authoritative coordinates, plane frame, or
 Dandelin construction.
 
-The spatial view remains diagrammatic at the translucent-surface layer.  Its
-opt-in ``depth_aware_diagrammatic`` mode can nevertheless certify exact
-visible/hidden intervals for analytic strokes.  The payload keeps curve and
-surface authority separate so a fixed-view renderer cannot accidentally turn
-that hidden-line result into a claim of physical cone--sphere compositing.
+The spatial view keeps curve visibility, teaching-layer order, and physical
+surface visibility as three separate claims.  ``depth_aware_diagrammatic``
+certifies only analytic stroke intervals, while
+``depth_aware_teaching_transparent`` additionally certifies the transparent
+teaching-layer order.  Neither mode claims opaque physical surface visibility.
 """
 
 from __future__ import annotations
@@ -55,7 +55,10 @@ TIKZ_DANDELIN_CONSTRUCTION_3D_SCHEMA = (
 TIKZ_DANDELIN_STATIC_DIAGRAM_V1_SCHEMA = (
     "tikz-native-dandelin-static-diagram/v1"
 )
-TIKZ_DANDELIN_STATIC_DIAGRAM_SCHEMA = "tikz-native-dandelin-static-diagram/v2"
+TIKZ_DANDELIN_STATIC_DIAGRAM_V2_SCHEMA = (
+    "tikz-native-dandelin-static-diagram/v2"
+)
+TIKZ_DANDELIN_STATIC_DIAGRAM_SCHEMA = "tikz-native-dandelin-static-diagram/v3"
 TIKZ_DANDELIN_SPATIAL_VIEW_SCHEMA = "tikz-native-dandelin-spatial-view/v1"
 
 DandelinDiagramView: TypeAlias = Literal[
@@ -66,11 +69,19 @@ DandelinDiagramView: TypeAlias = Literal[
 DandelinDiagramMode: TypeAlias = Literal[
     "diagrammatic",
     "depth_aware_diagrammatic",
+    "depth_aware_teaching_transparent",
 ]
 GeometryContextInput: TypeAlias = GeometryContext | ResolvedGeometryContext | None
 
 _DANDELIN_DIAGRAM_MODES = frozenset(
-    {"diagrammatic", "depth_aware_diagrammatic"}
+    {
+        "diagrammatic",
+        "depth_aware_diagrammatic",
+        "depth_aware_teaching_transparent",
+    }
+)
+_DANDELIN_DEPTH_AWARE_MODES = frozenset(
+    {"depth_aware_diagrammatic", "depth_aware_teaching_transparent"}
 )
 
 # Authored compiler identities are narrower, but view-local IDs append stable
@@ -129,6 +140,27 @@ _DIAGRAM_PAYLOAD_FIELDS_V2 = frozenset(
         "visibilityAuthoritative",
         "curveVisibilityAuthoritative",
         "surfaceVisibilityAuthoritative",
+        "static",
+        "preset",
+        "flags",
+        "viewGeometry",
+        "semanticObjects",
+    }
+)
+_DIAGRAM_PAYLOAD_FIELDS = frozenset(
+    {
+        "schema",
+        "diagramId",
+        "constructionRef",
+        "coneRef",
+        "planeRef",
+        "view",
+        "mode",
+        "visibilityAuthoritative",
+        "curveVisibilityAuthoritative",
+        "surfaceVisibilityAuthoritative",
+        "surfaceLayeringAuthoritative",
+        "physicalSurfaceVisibilityAuthoritative",
         "static",
         "preset",
         "flags",
@@ -981,12 +1013,13 @@ class DandelinStaticDiagramContract:
             )
         if self.mode not in _DANDELIN_DIAGRAM_MODES:
             raise TikzDandelinContractError(
-                "Dandelin static diagram mode must be diagrammatic or "
-                "depth_aware_diagrammatic"
+                "Dandelin static diagram mode must be diagrammatic, "
+                "depth_aware_diagrammatic, or "
+                "depth_aware_teaching_transparent"
             )
-        if self.mode == "depth_aware_diagrammatic" and view != "spatial":
+        if self.mode in _DANDELIN_DEPTH_AWARE_MODES and view != "spatial":
             raise TikzDandelinContractError(
-                "depth_aware_diagrammatic mode is only valid for the spatial view"
+                f"{self.mode} mode is only valid for the spatial view"
             )
         if self.visibility_authoritative is not False:
             raise TikzDandelinContractError(
@@ -1005,6 +1038,15 @@ class DandelinStaticDiagramContract:
         ):
             if type(getattr(self, name)) is not bool:
                 raise TikzDandelinContractError(f"{name} must be a boolean")
+        if (
+            self.mode == "depth_aware_teaching_transparent"
+            and not self.show_contact_circles
+        ):
+            raise TikzDandelinContractError(
+                "depth_aware_teaching_transparent requires "
+                "show_contact_circles=true because those strokes own the "
+                "certified equal-depth seams"
+            )
         if view == "section-plane" and self.show_contact_circles:
             raise TikzDandelinContractError(
                 "section-plane view cannot display sphere/contact circles; "
@@ -1055,10 +1097,18 @@ class DandelinStaticDiagramContract:
 
     @property
     def curve_visibility_authoritative(self) -> bool:
-        return self.mode == "depth_aware_diagrammatic"
+        return self.mode in _DANDELIN_DEPTH_AWARE_MODES
 
     @property
     def surface_visibility_authoritative(self) -> bool:
+        return False
+
+    @property
+    def surface_layering_authoritative(self) -> bool:
+        return self.mode == "depth_aware_teaching_transparent"
+
+    @property
+    def physical_surface_visibility_authoritative(self) -> bool:
         return False
 
     def to_dict(self) -> dict[str, object]:
@@ -1076,6 +1126,10 @@ class DandelinStaticDiagramContract:
                     self.curve_visibility_authoritative
                 ),
                 "surfaceVisibilityAuthoritative": False,
+                "surfaceLayeringAuthoritative": (
+                    self.surface_layering_authoritative
+                ),
+                "physicalSurfaceVisibilityAuthoritative": False,
                 "static": True,
                 "preset": "classroom",
                 "flags": {
@@ -1122,12 +1176,13 @@ def build_dandelin_static_diagram_contract(
         )
     if not isinstance(mode, str) or mode not in _DANDELIN_DIAGRAM_MODES:
         raise TikzDandelinContractError(
-            "Dandelin static diagram mode must be diagrammatic or "
-            "depth_aware_diagrammatic"
+            "Dandelin static diagram mode must be diagrammatic, "
+            "depth_aware_diagrammatic, or "
+            "depth_aware_teaching_transparent"
         )
-    if mode == "depth_aware_diagrammatic" and resolved_view != "spatial":
+    if mode in _DANDELIN_DEPTH_AWARE_MODES and resolved_view != "spatial":
         raise TikzDandelinContractError(
-            "depth_aware_diagrammatic mode is only valid for the spatial view"
+            f"{mode} mode is only valid for the spatial view"
         )
     defaults = _VIEW_FLAG_DEFAULTS[resolved_view]
     contact = _resolved_flag(
@@ -1141,6 +1196,12 @@ def build_dandelin_static_diagram_contract(
         defaults[2],
         "show_directrices",
     )
+    if mode == "depth_aware_teaching_transparent" and not contact:
+        raise TikzDandelinContractError(
+            "depth_aware_teaching_transparent requires "
+            "show_contact_circles=true because those strokes own the "
+            "certified equal-depth seams"
+        )
     if resolved_view == "section-plane" and contact:
         raise TikzDandelinContractError(
             "section-plane view cannot display sphere/contact circles; "
@@ -1183,13 +1244,23 @@ def restore_dandelin_static_diagram_contract(
     schema = payload.get("schema")
     if schema == TIKZ_DANDELIN_STATIC_DIAGRAM_SCHEMA:
         legacy_v1 = False
+        legacy_v2 = False
+        raw = _mapping(
+            payload,
+            _DIAGRAM_PAYLOAD_FIELDS,
+            "Dandelin-diagram payload",
+        )
+    elif schema == TIKZ_DANDELIN_STATIC_DIAGRAM_V2_SCHEMA:
+        legacy_v1 = False
+        legacy_v2 = True
         raw = _mapping(
             payload,
             _DIAGRAM_PAYLOAD_FIELDS_V2,
-            "Dandelin-diagram payload",
+            "Dandelin-diagram v2 payload",
         )
     elif schema == TIKZ_DANDELIN_STATIC_DIAGRAM_V1_SCHEMA:
         legacy_v1 = True
+        legacy_v2 = False
         raw = _mapping(
             payload,
             _DIAGRAM_PAYLOAD_FIELDS_V1,
@@ -1202,8 +1273,9 @@ def restore_dandelin_static_diagram_contract(
         or raw["mode"] not in _DANDELIN_DIAGRAM_MODES
     ):
         raise TikzDandelinContractError(
-            "Dandelin static diagram mode must be diagrammatic or "
-            "depth_aware_diagrammatic"
+            "Dandelin static diagram mode must be diagrammatic, "
+            "depth_aware_diagrammatic, or "
+            "depth_aware_teaching_transparent"
         )
     if raw["visibilityAuthoritative"] is not False:
         raise TikzDandelinContractError(
@@ -1214,7 +1286,12 @@ def restore_dandelin_static_diagram_contract(
             raise TikzDandelinContractError(
                 "Dandelin static diagram v1 requires mode=diagrammatic"
             )
-    else:
+    elif legacy_v2:
+        if raw["mode"] not in {"diagrammatic", "depth_aware_diagrammatic"}:
+            raise TikzDandelinContractError(
+                "Dandelin static diagram v2 supports only diagrammatic or "
+                "depth_aware_diagrammatic mode"
+            )
         expected_curve_authority = raw["mode"] == "depth_aware_diagrammatic"
         if raw["curveVisibilityAuthoritative"] is not expected_curve_authority:
             raise TikzDandelinContractError(
@@ -1223,6 +1300,28 @@ def restore_dandelin_static_diagram_contract(
         if raw["surfaceVisibilityAuthoritative"] is not False:
             raise TikzDandelinContractError(
                 "Dandelin translucent surface ordering is not authoritative"
+            )
+    else:
+        expected_curve_authority = raw["mode"] in _DANDELIN_DEPTH_AWARE_MODES
+        if raw["curveVisibilityAuthoritative"] is not expected_curve_authority:
+            raise TikzDandelinContractError(
+                "curveVisibilityAuthoritative disagrees with Dandelin diagram mode"
+            )
+        if raw["surfaceVisibilityAuthoritative"] is not False:
+            raise TikzDandelinContractError(
+                "surfaceVisibilityAuthoritative is reserved for unsupported "
+                "physical surface visibility"
+            )
+        expected_layer_authority = (
+            raw["mode"] == "depth_aware_teaching_transparent"
+        )
+        if raw["surfaceLayeringAuthoritative"] is not expected_layer_authority:
+            raise TikzDandelinContractError(
+                "surfaceLayeringAuthoritative disagrees with Dandelin diagram mode"
+            )
+        if raw["physicalSurfaceVisibilityAuthoritative"] is not False:
+            raise TikzDandelinContractError(
+                "Dandelin diagrams are not physical-surface-visibility-authoritative"
             )
     if raw["static"] is not True:
         raise TikzDandelinContractError(
@@ -1277,9 +1376,22 @@ def restore_dandelin_static_diagram_contract(
             not in {
                 "curveVisibilityAuthoritative",
                 "surfaceVisibilityAuthoritative",
+                "surfaceLayeringAuthoritative",
+                "physicalSurfaceVisibilityAuthoritative",
             }
         }
         expected_payload["schema"] = TIKZ_DANDELIN_STATIC_DIAGRAM_V1_SCHEMA
+    elif legacy_v2:
+        expected_payload = {
+            key: value
+            for key, value in expected_payload.items()
+            if key
+            not in {
+                "surfaceLayeringAuthoritative",
+                "physicalSurfaceVisibilityAuthoritative",
+            }
+        }
+        expected_payload["schema"] = TIKZ_DANDELIN_STATIC_DIAGRAM_V2_SCHEMA
     if result.diagram_id != diagram_id or not _strict_json_equal(
         expected_payload, raw
     ):
@@ -1338,6 +1450,7 @@ __all__ = [
     "TIKZ_DANDELIN_CONSTRUCTION_3D_SCHEMA",
     "TIKZ_DANDELIN_SPATIAL_VIEW_SCHEMA",
     "TIKZ_DANDELIN_STATIC_DIAGRAM_V1_SCHEMA",
+    "TIKZ_DANDELIN_STATIC_DIAGRAM_V2_SCHEMA",
     "TIKZ_DANDELIN_STATIC_DIAGRAM_SCHEMA",
     "TIKZ_SPACE_RIGHT_CONE_3D_SCHEMA",
     "TikzDandelinContractError",
