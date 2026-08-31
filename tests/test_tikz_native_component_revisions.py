@@ -69,40 +69,40 @@ ROOT = Path(__file__).resolve().parents[1]
 PACKAGE_ROOT = ROOT / "tikz_native"
 VISIBILITY_ROOT = ROOT / "polyhedron_visibility"
 ASSET_REVISION = (
-    "source-sha256:43d491b4493e700166502ee37b9f27c5015dc819c907d3d09f583a5f2279aaf8"
+    "source-sha256:94e7617efe8c5aeb0724c9a50b9616d9a50b071e21b79ad6ab642db76691bc83"
 )
 GEOMETRY_RIG_2D_REVISION = (
-    "source-sha256:49fbf99e6c611dda8d6d8b45f457191b6261b58f9231a425e98e4788f33f73ca"
+    "source-sha256:9fcc5f40b0e8753e517a9dc16a893ad1847bc1ccabdd3516306505571fcecba5"
 )
 NATIVE_SOURCE_2D_REVISION = (
-    "source-sha256:79700f77a667f8d590cff6e6ebfcb881974baebc5a22f2e6c84293c66ace4cc4"
+    "source-sha256:d0ec5302c39c0cc7d3eacb0557cee50e12955bb7d0df0c42896d1630278881f3"
 )
 NATIVE_RIG_2D_REVISION = (
-    "source-sha256:72f2d095d427ef6c1a5c5c4dcd69a1d49414783277808812ab38e39a7d379b03"
+    "source-sha256:41aa7938fcc29836b11da28fdf427f3842c3eade96268f82878ae75f0bc94f25"
 )
 MOTION_PREVIEW_2D_REVISION = (
-    "source-sha256:dfad73c968eb4de5e11e52d818d2355ca73fa7cd43c6116dc4b849e91d3b69c4"
+    "source-sha256:70f1694003985ce4c23572d37ecc6cb98584150bfd944b14db9512b15d26d1a2"
 )
 GEOMETRY_RIG_3D_REVISION = (
-    "source-sha256:e6a05ab9d67bbf9a68aaae97b91076b9e671b236d8264c1244ec5b06fd7de9ca"
+    "source-sha256:1f7b1cfd07f9cd8425ab4bbf0267ccb4750afa4a29488af73df1e1999ac0bddd"
 )
 NATIVE_SOURCE_3D_REVISION = (
-    "source-sha256:ed4d52f4bf7c60d9e5b7db8d8f96ba349ecb098459a28adf9904f19f6ac46bdd"
+    "source-sha256:336d506c3872354aac04bd40e3d2fcba038146bf9ff10d2897d6410ba148f2e6"
 )
 NATIVE_SOURCE_3D_V2_REVISION = (
-    "source-sha256:4c1f4ef9348a042be76a0257d10b888c47fee4bff8f5278ebeec764d72741fb0"
+    "source-sha256:1a0f6725e1d18f502414c664da6a1f0cb7cd568b5ade89cf2ca34989be8f34ee"
 )
 NATIVE_SOURCE_3D_V3_REVISION = (
-    "source-sha256:d956c01a69d7917dea1e03197649d43366fd50a7b3a7f6548ee1bbdf024dfdad"
+    "source-sha256:89be859ac3cc61671d528b05beb9caa73d04853aa763eb31e951378bfba7382c"
 )
 PARALLEL_CAMERA_CORE_REVISION = (
     "source-sha256:a6ca69204f5d7cbdaf0eaeff9c47fa8a2cc26d1f6c30436e04eb0aeaa717ab15"
 )
 EMBEDDED_MOTION_3D_REVISION = (
-    "source-sha256:e717aaddcfed67507598a2e6559dfe791597319ec75f410f4d5fa0d07024177d"
+    "source-sha256:7e15127e685f60ee2222f0bbbc54fb21a7500b02de03b96173d4ff9e49b49ba9"
 )
 MOTION_PREVIEW_3D_REVISION = (
-    "source-sha256:41919f409192ca5dad64ccfc5ac8219fb7b9fd2d9eb90289f125d461b1a79f86"
+    "source-sha256:ed6b79a041c8ee174531e938fba20b534e07e0ffc611087e4017b055fb45f03d"
 )
 POLYHEDRON_VISIBILITY_REVISION = (
     "source-sha256:8fff612f011f5b67cecaa66dc251af3126fe091cfe6b753e7fd5e9301cfcc53f"
@@ -111,7 +111,7 @@ FACE_DEPTH_CUE_3D_REVISION = (
     "source-sha256:499495b399f1078f0532413690821764208bbb87695f1f40019ce396f2ac347a"
 )
 TIKZ_POLYHEDRON_VISIBILITY_3D_REVISION = (
-    "source-sha256:b5a7515ff4493060c17d725b7f567e3cd4a94009dd0a850abc07bb008b6899c7"
+    "source-sha256:c6b58189c0e6f3dd6e25bf07046141a1090361f54d08ffa27f8dcd225de1949f"
 )
 OPEN_FACE_VISIBILITY_REVISION = (
     "source-sha256:583f95c7e3a9056b306d90e14f85e580442cf0c2cfd9d0043795f1670dfc43ae"
@@ -126,25 +126,25 @@ OPEN_FACE_UNIFIED_MANIM_REVISION = (
     "source-sha256:6ea6cf42d61d2cc8c4331b6da5f25ea3b61b659c75ae4c7a493425f0efddd934"
 )
 TIKZ_OPEN_FACE_VISIBILITY_3D_REVISION = (
-    "source-sha256:252023019b4bf83f04c779d91afc92a338db77acbe9db2e82f15259f4f1fc459"
+    "source-sha256:489b865a3a2adc93887d1e4e240f62828ed97d7c1c2c34e7a425528bbf75d91e"
 )
 TIKZ_OPEN_FACE_STATIC_ASSET_3D_REVISION = (
-    "source-sha256:6d2fff618b245695147bc133bfbd660357d85e8b2b501adfd5a9e3fe0445cab3"
+    "source-sha256:8ce701bdc9694c234fb3ee36bab10f271548d5b17d78cb3e833314b50b6736a7"
 )
 GENERATED_OPEN_FACE_VISIBILITY_3D_REVISION = (
-    "source-sha256:f880ca4b5e070be2094dddf856ec5e9a16ccb7d6225faaa5b47649ff902d3ad3"
+    "source-sha256:6ef37590c16faa499466b23aff94a1203ef33048b8b6d9cad65bbc392342cb52"
 )
 SOURCE_PROJECT_BUILD_REVISION = (
     "source-sha256:34980c51d6190e21bcbf5bfbe19e565eff17fddfc0bc2a84f1f379b0da73432b"
 )
 QUADRIC_GEOMETRY_REVISION = (
-    "source-sha256:18a51b0fdda95a6f49d1120dca44e942f96225afd6ef0c13c041121b937fe363"
+    "source-sha256:4366a6f4d7b5a29649a6d93fb55e5bb76560a27ad0162876747e0bfa3c8af08c"
 )
 QUADRIC_VISIBILITY_REVISION = (
-    "source-sha256:11b9592b2fe186a194dacf3daee94d1ae0a36467154fd220baa006bc315b21d0"
+    "source-sha256:0b8bb3bed0dd28c26c9de07405ec82500c675895142c5a8cd5e414e2a1380f47"
 )
 QUADRIC_MANIM_REVISION = (
-    "source-sha256:5ecc69a08536a8d82631b4a05b8e22158331966b80d2bbe68ad957428bd57f05"
+    "source-sha256:a5616e18d5ae79858da8bc2865103f5785b472e608a0026ae01f38de2278098f"
 )
 CONVEX_SECTION_3D_REVISION = (
     "source-sha256:a6c71249ce429884b0fcc3341eeea33dacf2d64e14d875d1e0f222c1530637bf"
@@ -156,7 +156,7 @@ DERIVED_DIHEDRAL_VISIBILITY_REVISION = (
     "source-sha256:2b49f6a0bfa4c0a8e850f94af2446dd888a469b0472463c0df5127aec8185ae2"
 )
 TIKZ_CONVEX_SECTION_3D_REVISION = (
-    "source-sha256:d12fd409d2c44f1839dd9ee1d7b5da98d0e107876a5c00498e00a6b25a02ec72"
+    "source-sha256:9e5326f8cb634aa3e892a4e229384916f289100d909f05ab570399b82c2ebe4f"
 )
 
 QUADRIC_GEOMETRY_RECURSIVE_COMPONENTS = frozenset(
@@ -291,6 +291,11 @@ class TikzNativeComponentRevisionTests(unittest.TestCase):
         self.assertTrue(
             asset["capabilities"]["quadric_global_compositing_v1"]
         )
+        self.assertTrue(
+            asset["capabilities"][
+                "dandelin_teaching_transparent_compositing_parallel_v1"
+            ]
+        )
         for component in (
             COMPONENT_GENERATED_OPEN_FACE_VISIBILITY_3D,
             COMPONENT_SOURCE_PROJECT_BUILD,
@@ -303,6 +308,10 @@ class TikzNativeComponentRevisionTests(unittest.TestCase):
         self.assertEqual(
             contracts[COMPONENT_QUADRIC_GEOMETRY],
             "tikz-native-contract:quadric_geometry/v1",
+        )
+        self.assertEqual(
+            contracts[COMPONENT_ASSET_COMPILER],
+            "tikz-native-contract:asset_compiler/v2",
         )
         self.assertEqual(
             contracts[COMPONENT_QUADRIC_VISIBILITY],
