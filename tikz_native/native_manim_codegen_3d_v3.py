@@ -1118,6 +1118,11 @@ def generate_native_manim_source_3d_v3(
 ) -> dict[str, Any]:
     """Return a self-contained v3 source for proven open convex faces."""
 
+    if getattr(picture, "dandelin_diagrams", {}):
+        raise NativeManimCodegen3DV3Error(
+            "Dandelin curved geometry is static-only; open-face source v3 "
+            "requires finite independent convex faces"
+        )
     v3_rig = deepcopy(dict(rig))
     # Discovery mode has no committed motionSpecCore range.  Open-face v3 can
     # safely traverse the complete unsigned dihedral interval, including both

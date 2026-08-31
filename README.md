@@ -46,6 +46,9 @@ to SVG. Unsupported syntax is reported explicitly.
 [Automatic occlusion](docs/automatic-occlusion.md) ·
 [Quadrics and conic sections](docs/quadric-occlusion.md) ·
 [Quadric quick start](docs/quadric-authoring-workflow.md) ·
+[Dandelin spheres v1](docs/dandelin-spheres-v1.md) ·
+[Dandelin classroom lesson](examples/classroom_dandelin_spheres/README.md) ·
+[TikZ-native Dandelin views](examples/tikz_dandelin_views/README.md) ·
 [Finite-cone section v1 contract](docs/quadric-section-v1-contract.md) ·
 [Fast and extended Cairo acceptance](docs/extended-quadric-ci.md) ·
 [Classroom cone-section gallery](examples/classroom_cone_sections/README.md) ·
@@ -96,6 +99,46 @@ Pass `render_profile="preview"` for composition work or `"final"` and render
 at 960x540, 30 fps for the classroom master. The separate
 [Preview / Final / Release-Evidence workflow](docs/quadric-authoring-workflow.md)
 also gives the one-call capacity-planning path.
+
+## Explicit planar circles and ellipses in 3D
+
+Ordinary TikZ `circle` and `ellipse` paths do not identify a world-space
+supporting plane. The controlled 3D frontend therefore requires one explicit
+static plane declaration before it accepts a spatial circle or ellipse:
+
+```tex
+\begin{tikzpicture}[space view={(-0.35,-0.35),(1,0),(0,1)}]
+  \coordinate (O) at (0,0,0);
+  \coordinate (U) at (1,0,0);
+  \coordinate (V) at (0,1,0);
+  \DeclareSpacePlane{base-plane}{O/U/V};
+  \DrawSpaceCircle[draw=red,line width=1pt]
+    {circle-a}{base-plane}{0,0}{1.5};
+  \DrawSpaceEllipse[draw=blue]
+    {ellipse-a}{base-plane}{0.5,-0.25}{2}{1};
+\end{tikzpicture}
+```
+
+`O` is the plane origin, `O -> U` fixes the positive local-u direction and
+curve phase, and `V` fixes the positive local-v side. Curve centers are the
+two plane-local coordinates shown above. The distances `O -> U` and `O -> V`
+certify orientation only; local centers and semi-axis lengths remain in world
+coordinate units. This v1 syntax is static-safe and solid-stroke only: fill,
+dashes, arcs, and animated O/U/V geometry fail
+explicitly. The current embedded geometry-driver runtime also rejects a
+picture containing these curves, even when their plane is unrelated to the
+active driver; camera-only motion through `NativeManim3DRenderer` remains
+supported. `NativeFixedViewRenderer` draws a rank-two projection as the true
+affine ellipse and an exact edge-on projection as one finite segment.
+`NativeManim3DRenderer` instead keeps the curve in its authored world plane so
+the Manim camera can change without flattening the source geometry.
+This syntax creates a standalone static curve; it does not invent a planar
+disk or automatically enroll the curve in quadric occlusion/compositing.
+
+Ordinary two-dimensional TikZ circles and ellipses remain unchanged. A 3D
+circle or ellipse without `DeclareSpacePlane` is rejected rather than guessed.
+See [the supported TikZ subset](docs/supported-tikz.md) and
+[the public API](docs/public-api.md#explicit-tikz-planar-curves-in-3d).
 
 ## What it provides
 
@@ -226,6 +269,18 @@ python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
 python -m pip install -e ".[test]"
+```
+
+On macOS, a `.venv` created inside a folder carrying the Finder hidden flag can
+pass that flag to setuptools' editable `.pth` file. Python 3.12 then skips the
+file, so `manim path/to/example.py` can lose this project after changing its
+import directory. If the health commands work only from the repository root,
+repair the isolated environment and verify an import from outside the checkout:
+
+```bash
+chflags -R nohidden .venv
+(cd /tmp && "$OLDPWD/.venv/bin/python" -c \
+  'import polyhedron_visibility, tikz_native')
 ```
 
 Check the compiler and its component identities:

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
+from itertools import combinations
 import json
 from math import atan2, atanh, ceil, floor, isfinite, pi
 from typing import Mapping, Sequence
@@ -35,7 +36,11 @@ from .compositing import (
 from .contract import ConeSpec, CylinderSpec, SphereSpec
 from .conics import ConicKind
 from .critical import AnalyticCurve3D
-from .curve_intersections import ProjectedCurveCrossing
+from .curve_intersections import (
+    ProjectedCurveCrossing,
+    ProjectedCurveIntersectionError,
+    compute_projected_curve_crossings,
+)
 from .curves import EllipseArcCurve, ParametricConicBranch, SegmentCurve
 from .visibility import CurveVisibilityRecord, compute_curve_visibility
 
@@ -854,6 +859,163 @@ def compute_boundary_visibility(
             for span in record.spans
         )
     return result
+
+
+_INTRINSIC_SURFACE_BOUNDARY_KINDS = frozenset(
+    {
+        BoundarySourceKind.SURFACE_CAP_RIM,
+        BoundarySourceKind.SURFACE_TRIM_RIM,
+        BoundarySourceKind.SURFACE_GENERATOR,
+        BoundarySourceKind.SURFACE_SILHOUETTE,
+    }
+)
+
+
+def compute_quadric_boundary_crossings(
+    sources: Sequence[QuadricBoundarySource],
+    spans_by_source: Mapping[
+        str,
+        Sequence[QuadricBoundaryVisibilitySpan],
+    ],
+    view: ParallelView,
+    *,
+    paint_policy: QuadricPaintPolicy | str,
+    context: ContextInput = None,
+    cached_source_ids: frozenset[str] = frozenset(),
+    cached_crossings: Sequence[ProjectedCurveCrossing] = (),
+    rank_one_section_source_groups: Sequence[
+        QuadricRankOneSectionSourceGroup
+    ] = (),
+) -> tuple[ProjectedCurveCrossing, ...]:
+    """Certify every finite projected crossing used by the painter graph.
+
+    Intrinsic boundaries owned by the same analytic surface may have the same
+    projected support over a positive-length interval (for example opposite
+    cone generators in an edge-on view).  Their common surface anchor and
+    independently certified visibility spans already own that ordering, so
+    the generic isolated-crossing solver is deliberately not asked to invent
+    finitely many roots for an infinite overlap.
+    """
+
+    try:
+        policy = QuadricPaintPolicy(paint_policy)
+    except (TypeError, ValueError) as exc:
+        raise QuadricBoundaryCompositingError(
+            "invalid boundary crossing paint policy"
+        ) from exc
+    source_items = tuple(sorted(sources, key=lambda item: item.source_id))
+    source_ids = tuple(item.source_id for item in source_items)
+    if len(set(source_ids)) != len(source_ids):
+        raise QuadricBoundaryCompositingError(
+            "boundary crossing sources must have unique identities"
+        )
+    if set(spans_by_source) != set(source_ids):
+        raise QuadricBoundaryCompositingError(
+            "crossing spans must cover every boundary source exactly"
+        )
+    cached_ids = frozenset(cached_source_ids)
+    unknown_cached = sorted(cached_ids - set(source_ids))
+    if unknown_cached:
+        raise QuadricBoundaryCompositingError(
+            "cached crossing sources are unknown: "
+            + ", ".join(unknown_cached)
+        )
+    groups = _canonical_rank_one_groups(rank_one_section_source_groups)
+    group_by_source_id: dict[str, QuadricRankOneSectionSourceGroup] = {}
+    point_source_ids: set[str] = set()
+    for group in groups:
+        for source_id in group.source_ids:
+            if source_id in group_by_source_id:
+                raise QuadricBoundaryCompositingError(
+                    "rank-one boundary source belongs to multiple groups: "
+                    f"{source_id!r}"
+                )
+            group_by_source_id[source_id] = group
+        point_source_ids.update(group.point_source_ids)
+    unknown_grouped = sorted(set(group_by_source_id) - set(source_ids))
+    if unknown_grouped:
+        raise QuadricBoundaryCompositingError(
+            "rank-one crossing groups reference unknown sources: "
+            + ", ".join(unknown_grouped)
+        )
+
+    def pair_is_certified_rank_one_overlap(
+        first: QuadricBoundarySource,
+        second: QuadricBoundarySource,
+    ) -> bool:
+        if (
+            first.source_id in point_source_ids
+            or second.source_id in point_source_ids
+        ):
+            return True
+        first_group = group_by_source_id.get(first.source_id)
+        second_group = group_by_source_id.get(second.source_id)
+        if first_group is not None and first_group is second_group:
+            return True
+        if first_group is not None and second_group is not None:
+            return False
+        group = first_group if first_group is not None else second_group
+        if group is None:
+            return False
+        other = second if first_group is not None else first
+        return (
+            other.owner_surface_id == group.surface_id
+            and other.source_kind in _INTRINSIC_SURFACE_BOUNDARY_KINDS
+        )
+
+    result = list(cached_crossings)
+    for first, second in combinations(source_items, 2):
+        if first.source_id in cached_ids and second.source_id in cached_ids:
+            continue
+        if pair_is_certified_rank_one_overlap(first, second):
+            continue
+        active_intervals = None
+        if policy is QuadricPaintPolicy.PHYSICAL:
+            active_intervals = {
+                source.source_id: tuple(
+                    span.interval
+                    for span in spans_by_source[source.source_id]
+                    if span.kind is VisibilityKind.VISIBLE
+                )
+                for source in (first, second)
+            }
+        try:
+            result.extend(
+                compute_projected_curve_crossings(
+                    (first.curve, second.curve),
+                    view,
+                    context=context,
+                    active_intervals=active_intervals,
+                )
+            )
+        except ProjectedCurveIntersectionError as exc:
+            same_intrinsic_owner = (
+                first.owner_surface_id is not None
+                and first.owner_surface_id == second.owner_surface_id
+                and first.source_kind in _INTRINSIC_SURFACE_BOUNDARY_KINDS
+                and second.source_kind in _INTRINSIC_SURFACE_BOUNDARY_KINDS
+            )
+            if same_intrinsic_owner:
+                continue
+            raise QuadricBoundaryCompositingError(
+                "semantic boundary crossings cannot be certified: "
+                f"{first.source_id!r}, {second.source_id!r}: {exc}"
+            ) from exc
+    by_id = {item.crossing_id: item for item in result}
+    if len(by_id) != len(result):
+        # Identical certified crossings can be rediscovered by a cached/static
+        # and a dynamic source pair.  Equality is required before deduping so
+        # one identity can never silently change its geometric evidence.
+        for crossing_id in sorted(by_id):
+            matches = tuple(
+                item for item in result if item.crossing_id == crossing_id
+            )
+            if any(item != matches[0] for item in matches[1:]):
+                raise QuadricBoundaryCompositingError(
+                    "boundary crossing identity has contradictory evidence: "
+                    f"{crossing_id!r}"
+                )
+    return tuple(by_id[key] for key in sorted(by_id))
 
 
 def _dedupe_relations(
@@ -1984,5 +2146,6 @@ __all__ = [
     "QuadricRankOneSectionSourceGroup",
     "canonical_quadric_boundary_compositing_json",
     "compute_boundary_visibility",
+    "compute_quadric_boundary_crossings",
     "compute_quadric_boundary_compositing",
 ]

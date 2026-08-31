@@ -2124,6 +2124,113 @@ def _generate_scene_source(
     return rewritten
 
 
+def _certify_dandelin_source_project_boundary(
+    project: SourceProject,
+    *,
+    source_text: str,
+    custom_shape_asset_builder: bool,
+) -> None:
+    """Keep curved Dandelin diagrams on the certified static asset path.
+
+    This check deliberately compiles the captured source text instead of
+    trusting a possibly injected ShapeAsset builder.  It runs while planning,
+    before a staged output directory can be allocated.
+    """
+
+    compiler = importlib.import_module("tikz_native.compiler")
+
+    def has_dandelin_evidence(picture: Any) -> bool:
+        return bool(
+            getattr(picture, "dandelin_diagrams", {})
+            or getattr(picture, "dandelin_constructions_3d", {})
+            or any(
+                "Dandelin" in str(finding)
+                for finding in getattr(picture, "unsupported", ())
+            )
+        )
+
+    try:
+        document = compiler.compile_document(
+            source_text=source_text,
+            entry_macro=project.entry_macro,
+        )
+    except Exception as exc:
+        # A custom builder is allowed to understand a non-native entry macro,
+        # but it must not use that freedom to reinterpret compiler-supported
+        # Dandelin semantics.  Recompile the complete authoritative snapshot
+        # without entry selection: if that succeeds and contains no Dandelin
+        # evidence, the custom builder keeps its existing extension point.
+        if custom_shape_asset_builder and project.entry_macro:
+            try:
+                fallback_document = compiler.compile_document(
+                    source_text=source_text,
+                )
+            except Exception:
+                pass
+            else:
+                if not any(
+                    has_dandelin_evidence(picture)
+                    for picture in fallback_document.pictures
+                ):
+                    return
+        raise SourceProjectBuildError(
+            "cannot certify the authoritative TikZ source snapshot before "
+            f"planning derived outputs: {exc}"
+        ) from exc
+    picture = next(
+        (
+            item
+            for item in document.pictures
+            if item.index == project.picture_index
+        ),
+        None,
+    )
+    if picture is None:
+        if custom_shape_asset_builder:
+            if not any(
+                has_dandelin_evidence(candidate)
+                for candidate in document.pictures
+            ):
+                return
+        raise SourceProjectBuildError(
+            "cannot certify the Dandelin static boundary because "
+            f"picture_index {project.picture_index} is not available in the "
+            "authoritative TikZ source snapshot"
+        )
+    dandelin_findings = tuple(
+        str(finding)
+        for finding in getattr(picture, "unsupported", ())
+        if "Dandelin" in str(finding)
+    )
+    if dandelin_findings:
+        raise SourceProjectBuildError(
+            "the authoritative compiler could not certify the selected "
+            "Dandelin picture: " + "; ".join(dandelin_findings)
+        )
+    if not getattr(picture, "dandelin_diagrams", {}):
+        return
+
+    unsupported: list[str] = []
+    if project.paint_policy != "diagrammatic":
+        unsupported.append("renderIntent.paintPolicy must be 'diagrammatic'")
+    for field, value in (
+        ("motionJson", project.motion_json),
+        ("cameraShots", project.camera_shots),
+        ("bridgeRequestTemplate", project.bridge_request_template),
+        ("hooksSource", project.hooks_source),
+    ):
+        if value is not None:
+            unsupported.append(f"{field} must be absent")
+    if project.selection:
+        unsupported.append("selection must be empty or absent")
+    if unsupported:
+        raise SourceProjectBuildError(
+            "Dandelin TikZ diagrams are static, diagrammatic ShapeAssets and "
+            "cannot enter Geometry Rig/source-v2/source-v3 authoring: "
+            + "; ".join(unsupported)
+        )
+
+
 def _plan_nodes(
     project: SourceProject,
     *,
@@ -2135,6 +2242,11 @@ def _plan_nodes(
     revisions = _normalise_revisions(component_revisions)
     tikz_bytes = snapshot.payloads[project.tikz_source]
     tikz_source = snapshot.text(project.tikz_source, label="TikZ source")
+    _certify_dandelin_source_project_boundary(
+        project,
+        source_text=tikz_source,
+        custom_shape_asset_builder=shape_asset_builder is not None,
+    )
     painter_z_band = derive_painter_z_band(project, tikz_bytes)
     projection_digest = _sha256_bytes(_canonical_json(project.projection))
 

@@ -57,7 +57,13 @@ def semantic_layer_name(spec: ObjectSpec) -> str:
 
     if spec.kind == "polygon":
         return "fills"
-    if spec.kind in {"arrow", "ellipse", "circle"}:
+    if spec.kind in {
+        "arrow",
+        "ellipse",
+        "circle",
+        "planar_circle_3d",
+        "planar_ellipse_3d",
+    }:
         return "coordinate_frame"
     if spec.kind == "line":
         return (
@@ -65,6 +71,8 @@ def semantic_layer_name(spec: ObjectSpec) -> str:
             if spec.style.dash_pattern_pt
             else "solid_geometry"
         )
+    if spec.kind == "dandelin_diagram":
+        return "solid_geometry"
     if spec.kind in MARKER_KINDS:
         return "markers"
     if spec.kind == "dot":

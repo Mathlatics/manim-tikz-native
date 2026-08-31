@@ -9,9 +9,11 @@
   },
   "tiers": {
     "cairo-smoke": [
+      "test_classroom_dandelin_spheres.ClassroomDandelinCairoTests.test_three_certified_acts_produce_section_overlay_and_focus_pixels",
       "test_composite_quadric_section_cairo.CompositeQuadricSectionCairoTests.test_two_nappes_share_one_plane_alpha_and_retain_both_section_branches",
       "test_open_face_visibility_manim.OpenFaceOcclusion3DManimTests.test_real_cairo_minimal_fold_renders_and_restores",
       "test_polyhedron_visibility_manim_binding.AutoOcclusion3DManimTests.test_real_cairo_render_accepts_rotate_tracker_and_wait",
+      "test_quadric_dandelin_manim_cairo.DandelinOcclusion3DCairoTests.test_real_cairo_movie_recomputes_hidden_lines_for_camera_change",
       "test_quadric_section_authoring.QuadricSectionAuthoringTests.test_real_cairo_animation_uses_the_facade_update_path",
       "test_quadric_section_rig.QuadricSectionRigTests.test_real_cairo_scene_play_writes_mp4_and_commits_target",
       "test_quadric_transition_manim.QuadricSectionTransitionControllerTests.test_real_cairo_animation_visits_all_three_conic_families"

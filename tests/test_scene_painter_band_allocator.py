@@ -115,6 +115,11 @@ class ScenePainterBandAllocatorTests(unittest.TestCase):
                 (0.0, 1.0),
                 exact=1,  # type: ignore[arg-type]
             )
+        with self.assertRaisesRegex(
+            ScenePainterBandError,
+            "finite increasing values.*finite span",
+        ):
+            ScenePainterBandReservation("boolean-endpoint", (False, 1.0))
         self.assertEqual(scene_painter_band_allocations(scene), ())
 
     def test_automatic_upward_overflow_fails_without_mutating_allocations(

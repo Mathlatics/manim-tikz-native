@@ -24,6 +24,10 @@ from .native_manim_codegen_3d_v2 import (
     generate_native_manim_source_3d_v2,
     point_on_segment_driver_candidates,
 )
+from .planar_curves_3d import (
+    PlanarTikz3DError,
+    restore_registered_planar_curve_geometry,
+)
 
 
 GEOMETRY_RIG_3D_SCHEMA = "tikz-native-geometry-rig-3d/v1"
@@ -93,6 +97,13 @@ def semantic_model_3d_payload(picture: PictureSpec) -> dict[str, Any]:
                 "dependency": picture.coordinate_dependencies.get(name),
             }
             for name, value in picture.coordinates.items()
+        ],
+        "planarFrames3D": [
+            {
+                "planeId": plane_id,
+                "geometry": geometry,
+            }
+            for plane_id, geometry in sorted(picture.planar_frames_3d.items())
         ],
         "hingeRelations": [
             {
@@ -487,6 +498,9 @@ def _object_point_names(item: ObjectSpec) -> tuple[str, ...] | None:
         values = tuple(raw) if isinstance(raw, list) else ()
     elif item.kind in {"dot", "circle", "ellipse"}:
         values = (geometry.get("center_name"),)
+    elif item.kind in {"planar_circle_3d", "planar_ellipse_3d"}:
+        raw = geometry.get("plane_point_names")
+        values = tuple(raw) if isinstance(raw, list) else ()
     elif item.kind == "label":
         values = (geometry.get("at_name"),)
     elif item.kind in {"angle", "angle_label", "right_angle"}:
@@ -749,7 +763,52 @@ def _binding_records(
         names = _object_point_names(item)
         dynamic = names is not None and any(name in affected for name in names)
         binding_type = _MOTION_BINDING_TYPES.get(item.kind)
-        if not dynamic:
+        planar_kind = item.kind in {"planar_circle_3d", "planar_ellipse_3d"}
+        planar_error: str | None = None
+        if planar_kind:
+            try:
+                restore_registered_planar_curve_geometry(
+                    item.geometry,
+                    picture.planar_frames_3d,
+                    expected_curve_id=item.id,
+                )
+            except PlanarTikz3DError as exc:
+                planar_error = str(exc)
+        if planar_error is not None:
+            role = "unsupported"
+            enabled = False
+            reason = (
+                "The planar curve does not agree with its registered supporting "
+                f"plane: {planar_error}"
+            )
+            diagnostics.append(
+                _diagnostic(
+                    "error",
+                    "PLANAR_CURVE_REGISTRY_MISMATCH",
+                    reason,
+                    objectId=item.id,
+                )
+            )
+        elif planar_kind:
+            role = "unsupported"
+            enabled = False
+            reason = (
+                "embedded motion-3d/v1 cannot safely retain an explicit static "
+                "planar curve while another geometry driver is active."
+            )
+            diagnostics.append(
+                _diagnostic(
+                    "error",
+                    (
+                        "DYNAMIC_OBJECT_BINDING_UNSUPPORTED"
+                        if dynamic
+                        else "EMBEDDED_RUNTIME_OBJECT_UNSUPPORTED"
+                    ),
+                    reason,
+                    objectId=item.id,
+                )
+            )
+        elif not dynamic:
             role = "fixed"
             enabled = False
             reason = "No explicitly named coordinate used by this object changes with the hinge."
@@ -925,6 +984,13 @@ def analyze_geometry_rig_3d(
     selection: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Analyze one explicit 3D picture into a reviewable, restoring rig draft."""
+
+    if getattr(picture, "dandelin_diagrams", {}):
+        raise GeometryRig3DError(
+            "Dandelin diagrams contain curved cone and sphere geometry; "
+            "Geometry Rig 3D supports only its finite independent convex-face "
+            "topology. Keep this picture on the static diagrammatic ShapeAsset path."
+        )
 
     selection = {} if selection is None else selection
     if not isinstance(selection, Mapping):

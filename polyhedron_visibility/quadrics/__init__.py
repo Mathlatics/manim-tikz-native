@@ -39,6 +39,197 @@ _EXPORTS: Final[dict[str, tuple[str, str]]] = {
     "ParametricConicBranch": (".curves", "ParametricConicBranch"),
     "PointMarker3D": (".curves", "PointMarker3D"),
     "SegmentCurve": (".curves", "SegmentCurve"),
+    "PLANAR_FRAME_3D_SCHEMA": (".planar_curves", "PLANAR_FRAME_3D_SCHEMA"),
+    "PLANAR_POINT_3D_SCHEMA": (".planar_curves", "PLANAR_POINT_3D_SCHEMA"),
+    "PLANAR_CURVE_3D_SCHEMA": (".planar_curves", "PLANAR_CURVE_3D_SCHEMA"),
+    "PLANAR_CURVE_SCENE_3D_SCHEMA": (
+        ".planar_curves",
+        "PLANAR_CURVE_SCENE_3D_SCHEMA",
+    ),
+    "PlanarCurve3DContractError": (
+        ".planar_curves",
+        "PlanarCurve3DContractError",
+    ),
+    "PlanarFrame3D": (".planar_curves", "PlanarFrame3D"),
+    "PlanarPoint3D": (".planar_curves", "PlanarPoint3D"),
+    "Circle3DSpec": (".planar_curves", "Circle3DSpec"),
+    "Ellipse3DSpec": (".planar_curves", "Ellipse3DSpec"),
+    "PlanarCurve3DSpec": (".planar_curves", "PlanarCurve3DSpec"),
+    "PlanarCurveScene3D": (".planar_curves", "PlanarCurveScene3D"),
+    "DANDELIN_CONSTRUCTION_SCHEMA": (
+        ".dandelin",
+        "DANDELIN_CONSTRUCTION_SCHEMA",
+    ),
+    "DANDELIN_DIRECTRIX_SCHEMA": (
+        ".dandelin",
+        "DANDELIN_DIRECTRIX_SCHEMA",
+    ),
+    "DANDELIN_SPHERE_SCHEMA": (".dandelin", "DANDELIN_SPHERE_SCHEMA"),
+    "DandelinConicFamily": (".dandelin", "DandelinConicFamily"),
+    "DandelinConstruction3D": (".dandelin", "DandelinConstruction3D"),
+    "DandelinConstructionError": (
+        ".dandelin",
+        "DandelinConstructionError",
+    ),
+    "DandelinDirectrix3D": (".dandelin", "DandelinDirectrix3D"),
+    "DandelinPlaneSide": (".dandelin", "DandelinPlaneSide"),
+    "DandelinSphere3D": (".dandelin", "DandelinSphere3D"),
+    "canonical_dandelin_construction_json": (
+        ".dandelin",
+        "canonical_dandelin_construction_json",
+    ),
+    "compute_dandelin_construction": (
+        ".dandelin",
+        "compute_dandelin_construction",
+    ),
+    "DANDELIN_MERIDIAN_DIAGRAM_2D_SCHEMA": (
+        ".dandelin_views",
+        "DANDELIN_MERIDIAN_DIAGRAM_2D_SCHEMA",
+    ),
+    "DANDELIN_SECTION_PLANE_DIAGRAM_2D_SCHEMA": (
+        ".dandelin_views",
+        "DANDELIN_SECTION_PLANE_DIAGRAM_2D_SCHEMA",
+    ),
+    "DandelinCircleLineTangency2D": (
+        ".dandelin_views",
+        "DandelinCircleLineTangency2D",
+    ),
+    "DandelinDiagramLine2D": (".dandelin_views", "DandelinDiagramLine2D"),
+    "DandelinDiagramPoint2D": (".dandelin_views", "DandelinDiagramPoint2D"),
+    "DandelinDiagramSegment2D": (
+        ".dandelin_views",
+        "DandelinDiagramSegment2D",
+    ),
+    "DandelinMeridianDiagram2D": (
+        ".dandelin_views",
+        "DandelinMeridianDiagram2D",
+    ),
+    "DandelinSectionPlaneDiagram2D": (
+        ".dandelin_views",
+        "DandelinSectionPlaneDiagram2D",
+    ),
+    "DandelinSphereCircleSection2D": (
+        ".dandelin_views",
+        "DandelinSphereCircleSection2D",
+    ),
+    "DandelinSpherePlaneTangency2D": (
+        ".dandelin_views",
+        "DandelinSpherePlaneTangency2D",
+    ),
+    "DandelinView2DError": (".dandelin_views", "DandelinView2DError"),
+    "build_dandelin_meridian_diagram": (
+        ".dandelin_views",
+        "build_dandelin_meridian_diagram",
+    ),
+    "build_dandelin_section_plane_diagram": (
+        ".dandelin_views",
+        "build_dandelin_section_plane_diagram",
+    ),
+    "canonical_dandelin_meridian_diagram_json": (
+        ".dandelin_views",
+        "canonical_dandelin_meridian_diagram_json",
+    ),
+    "canonical_dandelin_section_plane_diagram_json": (
+        ".dandelin_views",
+        "canonical_dandelin_section_plane_diagram_json",
+    ),
+    "DANDELIN_TEACHING_OVERLAY_SCHEMA": (
+        ".dandelin_overlay",
+        "DANDELIN_TEACHING_OVERLAY_SCHEMA",
+    ),
+    "DandelinTeachingOverlay3D": (
+        ".dandelin_overlay",
+        "DandelinTeachingOverlay3D",
+    ),
+    "DandelinTeachingOverlayError": (
+        ".dandelin_overlay",
+        "DandelinTeachingOverlayError",
+    ),
+    "build_dandelin_teaching_overlay": (
+        ".dandelin_overlay",
+        "build_dandelin_teaching_overlay",
+    ),
+    "canonical_dandelin_teaching_overlay_json": (
+        ".dandelin_overlay",
+        "canonical_dandelin_teaching_overlay_json",
+    ),
+    "DANDELIN_TANGENT_CONTACT_SCHEMA": (
+        ".dandelin_visibility",
+        "DANDELIN_TANGENT_CONTACT_SCHEMA",
+    ),
+    "DANDELIN_VISIBILITY_FRAME_SCHEMA": (
+        ".dandelin_visibility",
+        "DANDELIN_VISIBILITY_FRAME_SCHEMA",
+    ),
+    "DandelinTangentContactEvidence": (
+        ".dandelin_visibility",
+        "DandelinTangentContactEvidence",
+    ),
+    "DandelinVisibilityError": (
+        ".dandelin_visibility",
+        "DandelinVisibilityError",
+    ),
+    "DandelinVisibilityFrame": (
+        ".dandelin_visibility",
+        "DandelinVisibilityFrame",
+    ),
+    "DandelinVisibilitySource": (
+        ".dandelin_visibility",
+        "DandelinVisibilitySource",
+    ),
+    "DandelinVisibilityStroke": (
+        ".dandelin_visibility",
+        "DandelinVisibilityStroke",
+    ),
+    "canonical_dandelin_visibility_json": (
+        ".dandelin_visibility",
+        "canonical_dandelin_visibility_json",
+    ),
+    "build_dandelin_visibility_sources": (
+        ".dandelin_visibility",
+        "build_dandelin_visibility_sources",
+    ),
+    "compute_dandelin_visibility_frame": (
+        ".dandelin_visibility",
+        "compute_dandelin_visibility_frame",
+    ),
+    "fit_dandelin_visibility_patch": (
+        ".dandelin_visibility",
+        "fit_dandelin_visibility_patch",
+    ),
+    "DEFAULT_DANDELIN_BOUNDARY_STYLES": (
+        ".dandelin_manim",
+        "DEFAULT_DANDELIN_BOUNDARY_STYLES",
+    ),
+    "DEFAULT_DANDELIN_OCCLUSION_LIMITS": (
+        ".dandelin_manim",
+        "DEFAULT_DANDELIN_OCCLUSION_LIMITS",
+    ),
+    "DEFAULT_DANDELIN_OCCLUSION_STYLE": (
+        ".dandelin_manim",
+        "DEFAULT_DANDELIN_OCCLUSION_STYLE",
+    ),
+    "DandelinManimError": (
+        ".dandelin_manim",
+        "DandelinManimError",
+    ),
+    "DandelinOcclusion3D": (
+        ".dandelin_manim",
+        "DandelinOcclusion3D",
+    ),
+    "DEFAULT_DANDELIN_OVERLAY_STYLE": (
+        ".dandelin_authoring",
+        "DEFAULT_DANDELIN_OVERLAY_STYLE",
+    ),
+    "DEFAULT_DANDELIN_SECTION_STYLE": (
+        ".dandelin_authoring",
+        "DEFAULT_DANDELIN_SECTION_STYLE",
+    ),
+    "DandelinSection3D": (".dandelin_authoring", "DandelinSection3D"),
+    "DandelinSectionAuthoringError": (
+        ".dandelin_authoring",
+        "DandelinSectionAuthoringError",
+    ),
     "CRITICAL_EVENT_SCHEMA": (".critical", "CRITICAL_EVENT_SCHEMA"),
     "CriticalEvidence": (".critical", "CriticalEvidence"),
     "CriticalEvent": (".critical", "CriticalEvent"),
@@ -284,6 +475,10 @@ _EXPORTS: Final[dict[str, tuple[str, str]]] = {
     "compute_boundary_visibility": (
         ".boundary_compositing",
         "compute_boundary_visibility",
+    ),
+    "compute_quadric_boundary_crossings": (
+        ".boundary_compositing",
+        "compute_quadric_boundary_crossings",
     ),
     "compute_quadric_boundary_compositing": (
         ".boundary_compositing",

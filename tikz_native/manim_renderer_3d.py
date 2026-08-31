@@ -5,11 +5,22 @@ from dataclasses import dataclass, field
 from math import atan2, ceil, cos, sin
 
 import numpy as np
-from manim import Line, Mobject, ORIGIN, ParametricFunction, Dot3D, VGroup
+from manim import Circle, Line, Mobject, ORIGIN, ParametricFunction, Dot3D, VGroup
+
+from polyhedron_visibility.quadrics.planar_curves import (
+    Circle3DSpec,
+    Ellipse3DSpec,
+)
 
 from .compiler import ObjectSpec, OcclusionRelationSpec, PictureSpec, StyleSpec
 from .manim_renderer import ANCHOR_TO_EDGE, NativeManimRenderer
 from .occlusion_3d import parallel_occlusion_interval, parallel_view_direction
+from .planar_curve_style import (
+    certify_planar_curve_affine_display,
+    certify_planar_curve_display_scale,
+    validate_planar_curve_stroke_style,
+)
+from .planar_curves_3d import restore_registered_planar_curve_geometry
 from .projection_3d import Matrix3, project_point, screen_delta_to_world
 
 
@@ -63,6 +74,8 @@ class NativeManim3DRenderer(NativeManimRenderer):
         "angle",
         "angle_label",
         "right_angle",
+        "planar_circle_3d",
+        "planar_ellipse_3d",
     }
 
     def render(self, picture: PictureSpec) -> Native3DFigure:
@@ -106,6 +119,67 @@ class NativeManim3DRenderer(NativeManimRenderer):
         if len(value) != 3:
             raise ValueError(f"3D renderer received {len(value)}D point: {value}")
         return self.unit * picture.scale * np.asarray(value, dtype=float)
+
+    def _build(self, spec: ObjectSpec, picture: PictureSpec) -> Mobject:
+        if spec.kind in {"planar_circle_3d", "planar_ellipse_3d"}:
+            return self._build_planar_curve_3d(spec, picture)
+        return super()._build(spec, picture)
+
+    def _build_planar_curve_3d(
+        self,
+        spec: ObjectSpec,
+        picture: PictureSpec,
+    ) -> Mobject:
+        validate_planar_curve_stroke_style(spec.style)
+        geometry = restore_registered_planar_curve_geometry(
+            spec.geometry,
+            picture.planar_frames_3d,
+            expected_curve_id=spec.id,
+        )
+        expected_type = (
+            Circle3DSpec
+            if spec.kind == "planar_circle_3d"
+            else Ellipse3DSpec
+        )
+        if not isinstance(geometry.curve, expected_type):
+            raise ValueError(
+                f"object kind {spec.kind!r} disagrees with its planar curve payload"
+            )
+        analytic = geometry.curve.lower_to_analytic_curve()
+        if not analytic.closed:
+            raise ValueError(
+                "explicit 3D planar curve v1 requires one full revolution"
+            )
+        display_scale = certify_planar_curve_display_scale(
+            self.unit,
+            picture.scale,
+        )
+        with np.errstate(over="ignore", invalid="ignore"):
+            display_basis = display_scale * np.column_stack(
+                (
+                    np.asarray(analytic.first_axis, dtype=float),
+                    np.asarray(analytic.second_axis, dtype=float),
+                )
+            )
+            display_normal = display_scale * np.asarray(
+                analytic.normal,
+                dtype=float,
+            )
+            center = display_scale * np.asarray(analytic.center, dtype=float)
+        certify_planar_curve_affine_display(center, display_basis)
+        transform = np.column_stack((display_basis, display_normal))
+        if not np.all(np.isfinite(transform)):
+            raise ValueError(
+                "explicit 3D planar curve lies outside the finite Manim range"
+            )
+        curve = Circle(
+            radius=1.0,
+            fill_opacity=0.0,
+            **self._line_kwargs(spec.style),
+        )
+        curve.apply_matrix(transform, about_point=ORIGIN)
+        curve.shift(center)
+        return curve
 
     def _screen_delta_world(
         self,
@@ -838,10 +912,35 @@ class NativeManim3DRenderer(NativeManimRenderer):
 
     def _view_center(self, picture: PictureSpec) -> np.ndarray:
         assert picture.projection_3d is not None
-        if not picture.coordinates:
+        authored_points = [
+            tuple(value) for value in picture.coordinates.values()
+        ]
+        for spec in picture.objects:
+            if spec.kind not in {"planar_circle_3d", "planar_ellipse_3d"}:
+                continue
+            geometry = restore_registered_planar_curve_geometry(
+                spec.geometry,
+                picture.planar_frames_3d,
+                expected_curve_id=spec.id,
+            )
+            analytic = geometry.curve.lower_to_analytic_curve()
+            center = np.asarray(analytic.center, dtype=float)
+            first = np.asarray(analytic.first_axis, dtype=float)
+            second = np.asarray(analytic.second_axis, dtype=float)
+            matrix = np.asarray(picture.projection_3d.matrix, dtype=float)
+            for row in matrix:
+                first_coefficient = float(np.dot(row, first))
+                second_coefficient = float(np.dot(row, second))
+                parameter = atan2(second_coefficient, first_coefficient)
+                radial = first * cos(parameter) + second * sin(parameter)
+                authored_points.extend(
+                    tuple(float(item) for item in point)
+                    for point in (center - radial, center + radial)
+                )
+        if not authored_points:
             return np.zeros(3)
         points = np.array(
-            [self.point(tuple(value), picture) for value in picture.coordinates.values()],
+            [self.point(tuple(value), picture) for value in authored_points],
             dtype=float,
         )
         projected = np.array(

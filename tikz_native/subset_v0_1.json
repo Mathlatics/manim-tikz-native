@@ -72,6 +72,24 @@
       "requirement": "铰链轴和两个面必须由三维命名坐标声明，正式运动前仍需确认角度范围"
     },
     {
+      "id": "geometry.planar_frame_3d",
+      "level": "B",
+      "description": "由 O/U/V 三个命名点认证的静态三维支撑平面",
+      "requirement": "O→U 固定参数相位，V 固定正 v 方向；当前只允许静态渲染和相机运动，不进入 embedded geometry-driver"
+    },
+    {
+      "id": "geometry.space_right_cone_3d",
+      "level": "B",
+      "description": "由 A/Z/R 命名点、半顶角和有限轴向范围认证的正圆锥",
+      "requirement": "仅作为静态丹德林图的权威几何来源；解析双圆锥和隐式猜测均不支持"
+    },
+    {
+      "id": "geometry.dandelin_construction_3d",
+      "level": "B",
+      "description": "显式引用圆锥与截面平面的有限丹德林双球构造",
+      "requirement": "必须通过有限范围、切触和圆锥曲线族认证；不支持动态几何驱动"
+    },
+    {
       "id": "relation.named_path",
       "level": "A",
       "description": "原生 name path 关系",
@@ -110,14 +128,32 @@
     {
       "id": "object.ellipse",
       "level": "A",
-      "description": "原生 Ellipse",
-      "requirement": "中心与半轴必须可解析"
+      "description": "二维画布中的原生 Ellipse",
+      "requirement": "中心与半轴必须可解析；三维圆或椭圆必须改用显式支撑平面语义"
     },
     {
       "id": "object.circle",
       "level": "A",
-      "description": "原生 Circle",
-      "requirement": "圆心与半径必须可解析"
+      "description": "二维画布中的原生 Circle",
+      "requirement": "圆心与半径必须可解析；三维圆或椭圆必须改用显式支撑平面语义"
+    },
+    {
+      "id": "object.planar_circle_3d",
+      "level": "B",
+      "description": "具有显式三维支撑平面的静态圆周",
+      "requirement": "v1 仅支持完整连续实线描边与相机运动；填充、虚线、圆弧和 embedded geometry-driver 必须明确失败"
+    },
+    {
+      "id": "object.planar_ellipse_3d",
+      "level": "B",
+      "description": "具有显式三维支撑平面和两条半轴的静态椭圆周",
+      "requirement": "v1 仅支持完整连续实线描边与相机运动；填充、虚线、椭圆弧和 embedded geometry-driver 必须明确失败"
+    },
+    {
+      "id": "object.dandelin_diagram_static",
+      "level": "B",
+      "description": "丹德林构造的空间图、轴截面图或截面平面图",
+      "requirement": "仅支持固定视角；空间图可用 depth_aware_diagrammatic 自动计算曲线实虚，但半透明曲面仍为 diagrammatic，不声明物理透明合成，也不进入 motion、cameraShots 或 source-v3"
     },
     {
       "id": "object.dot",

@@ -102,6 +102,89 @@ class TikzNativeGeometryRig3DTests(unittest.TestCase):
         self.assertEqual(features["relation.hinge_3d"]["level"], "A")
         self.assertEqual(features["relation.hinge_3d"]["count"], 1)
 
+    def test_static_planar_curve_rejects_a_hinge_moving_support_plane(self) -> None:
+        source_text = SOURCE.read_text(encoding="utf-8").replace(
+            r"\end{tikzpicture}",
+            r"""
+  \DeclareSpacePlane{moving-section-plane}{A/B/Beta0};
+  \DrawSpaceCircle{moving-section}{moving-section-plane}{0,0}{0.6};
+\end{tikzpicture}
+""",
+        )
+        picture = compile_document(source_text=source_text).pictures[0]
+        self.assertFalse(picture.unsupported)
+        planar_curve = next(
+            item for item in picture.objects if item.id == "moving-section"
+        )
+        self.assertEqual(planar_curve.kind, "planar_circle_3d")
+        self.assertEqual(
+            planar_curve.geometry["plane_point_names"],
+            ["A", "B", "Beta0"],
+        )
+
+        rig = analyze_geometry_rig_3d(
+            picture,
+            selection=self._selection(),
+        )
+
+        self.assertEqual(rig["status"], "blocked")
+        self.assertIsNone(rig["motionSpecCore"])
+        self.assertIsNone(rig["nativeManimSource"])
+        self.assertIsNone(rig["nativeManimSourceV2"])
+        binding = next(
+            item for item in rig["bindings"] if item["objectId"] == "moving-section"
+        )
+        self.assertEqual(binding["role"], "unsupported")
+        self.assertFalse(binding["enabled"])
+        self.assertEqual(binding["pointNames"], ["A", "B", "Beta0"])
+        self.assertIn("affected:Beta0", binding["evidence"])
+        diagnostic = next(
+            item
+            for item in rig["diagnostics"]
+            if item["code"] == "DYNAMIC_OBJECT_BINDING_UNSUPPORTED"
+            and item.get("objectId") == "moving-section"
+        )
+        self.assertEqual(diagnostic["severity"], "error")
+        self.assertNotIn("moving-section", rig["dynamicObjectIds"])
+        self.assertNotIn("moving-section", rig["fixedObjectIds"])
+
+    def test_embedded_rig_blocks_even_an_unrelated_static_planar_curve(self) -> None:
+        source_text = SOURCE.read_text(encoding="utf-8").replace(
+            r"\end{tikzpicture}",
+            r"""
+  \DeclareSpacePlane{fixed-section-plane}{A/B/Alpha0};
+  \DrawSpaceEllipse{fixed-section}{fixed-section-plane}{0,0}{0.7}{0.35};
+\end{tikzpicture}
+""",
+        )
+        picture = compile_document(source_text=source_text).pictures[0]
+        self.assertFalse(picture.unsupported)
+
+        rig = analyze_geometry_rig_3d(
+            picture,
+            selection=self._selection(),
+        )
+
+        self.assertEqual(rig["status"], "blocked")
+        self.assertIsNone(rig["motionSpecCore"])
+        binding = next(
+            item for item in rig["bindings"] if item["objectId"] == "fixed-section"
+        )
+        self.assertEqual(binding["role"], "unsupported")
+        self.assertFalse(binding["enabled"])
+        self.assertEqual(binding["pointNames"], ["A", "B", "Alpha0"])
+        self.assertFalse(
+            any(item.startswith("affected:") for item in binding["evidence"])
+        )
+        diagnostic = next(
+            item
+            for item in rig["diagnostics"]
+            if item["code"] == "EMBEDDED_RUNTIME_OBJECT_UNSUPPORTED"
+            and item.get("objectId") == "fixed-section"
+        )
+        self.assertEqual(diagnostic["severity"], "error")
+        self.assertNotIn("fixed-section", rig["fixedObjectIds"])
+
     def test_degenerate_hinge_face_is_rejected_by_the_compiler(self) -> None:
         source = r"""
 \begin{tikzpicture}[space view={(-0.35,-0.35),(1,0),(0,1)}]
@@ -453,6 +536,22 @@ class TikzNativeGeometryRig3DTests(unittest.TestCase):
         cases.append(changed)
         for case in cases:
             self.assertNotEqual(baseline, semantic_model_3d_hash(case))
+
+    def test_semantic_hash_includes_the_registered_planar_frame(self) -> None:
+        source_text = SOURCE.read_text(encoding="utf-8").replace(
+            r"\end{tikzpicture}",
+            r"""
+  \DeclareSpacePlane{fixed-section-plane}{A/B/Alpha0};
+  \DrawSpaceCircle{fixed-section}{fixed-section-plane}{0,0}{0.6};
+\end{tikzpicture}
+""",
+        )
+        picture = compile_document(source_text=source_text).pictures[0]
+        baseline = semantic_model_3d_hash(picture)
+        changed = deepcopy(picture)
+        changed.planar_frames_3d["fixed-section-plane"]["frame"]["point"][0] += 0.25
+
+        self.assertNotEqual(baseline, semantic_model_3d_hash(changed))
 
     def test_revision_mismatch_blocks_motion_core_but_keeps_reviewable_candidates(self) -> None:
         rig = self._portable(

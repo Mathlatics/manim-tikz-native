@@ -2043,7 +2043,17 @@ def _register_fixed_frame(scene: object, root: Mobject) -> ThreeDCamera | None:
     camera = getattr(scene, "camera", None)
     if not isinstance(camera, ThreeDCamera):
         return None
-    camera.add_fixed_in_frame_mobjects(root)
+    try:
+        camera.add_fixed_in_frame_mobjects(root)
+    except BaseException as error:
+        try:
+            camera.remove_fixed_in_frame_mobjects(root)
+        except BaseException as cleanup_error:
+            error.add_note(
+                "fixed-frame rollback after registration failure also failed: "
+                f"{cleanup_error!r}"
+            )
+        raise
     return camera
 
 
