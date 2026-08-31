@@ -985,6 +985,13 @@ def analyze_geometry_rig_3d(
 ) -> dict[str, Any]:
     """Analyze one explicit 3D picture into a reviewable, restoring rig draft."""
 
+    if getattr(picture, "dandelin_diagrams", {}):
+        raise GeometryRig3DError(
+            "Dandelin diagrams contain curved cone and sphere geometry; "
+            "Geometry Rig 3D supports only its finite independent convex-face "
+            "topology. Keep this picture on the static diagrammatic ShapeAsset path."
+        )
+
     selection = {} if selection is None else selection
     if not isinstance(selection, Mapping):
         raise GeometryRig3DError("selection must be an object")

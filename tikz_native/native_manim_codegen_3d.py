@@ -934,6 +934,11 @@ def generate_native_manim_source_3d(
 ) -> dict[str, Any]:
     """Return the readable Manim definition section for one ready hinge rig."""
 
+    if getattr(picture, "dandelin_diagrams", {}):
+        raise NativeManimCodegen3DError(
+            "Dandelin curved geometry is static-only and cannot be emitted by "
+            "the finite-face native Manim 3D authoring source"
+        )
     if picture.dimension != 3 or picture.projection_3d is None:
         raise NativeManimCodegen3DError("native Manim 3D source requires a 3D picture")
     if rig.get("status") != "ready":
