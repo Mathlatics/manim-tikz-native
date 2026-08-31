@@ -7,7 +7,7 @@ from pathlib import Path
 import unittest
 
 import numpy as np
-from manim import Line, VGroup
+from manim import DashedVMobject, Line, VGroup
 
 from polyhedron_visibility.quadrics.contract import (
     ConeModel,
@@ -18,6 +18,7 @@ from polyhedron_visibility.quadrics.dandelin import (
     DandelinConicFamily,
     compute_dandelin_construction,
 )
+from polyhedron_visibility.quadrics.section_compositing import PlaneDepthRole
 import tikz_native.dandelin_fixed_view as fixed_view_module
 from tikz_native.dandelin_fixed_view import (
     DandelinFixedViewError,
@@ -268,6 +269,79 @@ class DandelinFixedViewTests(unittest.TestCase):
                     self.assertLess(rank[near_sphere.item_id], rank[item.item_id])
                 else:
                     self.assertLess(rank[item.item_id], rank[near_sphere.item_id])
+
+    def test_teaching_transparent_plane_occlusion_uses_dashes_and_tint(
+        self,
+    ) -> None:
+        group = build_dandelin_fixed_view(
+            _construction("teaching-plane-occlusion-style"),
+            view="spatial",
+            projection_matrix=SPATIAL_MATRIX,
+            mode="depth_aware_teaching_transparent",
+        )
+        paint_roots = {
+            member.dandelin_metadata["paintItemId"]: member
+            for wrapper in group.submobjects
+            for member in wrapper.submobjects
+            if isinstance(getattr(member, "dandelin_metadata", None), dict)
+            and "paintItemId" in member.dandelin_metadata
+        }
+        frame = group.surface_layer_frame
+        fills = {
+            layer.role: paint_roots[layer.item_id]
+            for layer in frame.plane_layers
+        }
+        self.assertEqual(set(fills), set(PlaneDepthRole))
+        for role, item in fills.items():
+            occluded = role in {
+                PlaneDepthRole.BEHIND_SURFACE,
+                PlaneDepthRole.BETWEEN_SURFACE_SHEETS,
+            }
+            metadata = item.dandelin_metadata
+            self.assertIs(metadata["planeOccludedByCone"], occluded)
+            self.assertEqual(
+                metadata["planeFillVariant"],
+                "occluded" if occluded else "normal",
+            )
+            self.assertEqual(
+                metadata["fillColor"],
+                "#6B7C93" if occluded else "#2CB9A4",
+            )
+            self.assertAlmostEqual(
+                item.get_fill_opacity(),
+                0.18 if occluded else 0.12,
+            )
+
+        outlines = {
+            layer.role: paint_roots[layer.item_id]
+            for layer in frame.plane_outline_layers
+        }
+        self.assertIn(PlaneDepthRole.BEHIND_SURFACE, outlines)
+        self.assertIn(PlaneDepthRole.OUTSIDE_PROJECTION, outlines)
+        behind = outlines[PlaneDepthRole.BEHIND_SURFACE]
+        outside = outlines[PlaneDepthRole.OUTSIDE_PROJECTION]
+        behind_layer = next(
+            layer
+            for layer in frame.plane_outline_layers
+            if layer.role is PlaneDepthRole.BEHIND_SURFACE
+        )
+        self.assertIsInstance(behind, VGroup)
+        self.assertEqual(len(behind.submobjects), len(behind_layer.paths))
+        self.assertTrue(
+            all(
+                isinstance(path, DashedVMobject)
+                for path in behind.submobjects
+            )
+        )
+        self.assertEqual(
+            behind.dandelin_metadata["planeOutlinePattern"], "dashed"
+        )
+        self.assertIs(behind.dandelin_metadata["planeOccludedByCone"], True)
+        self.assertNotIsInstance(outside, DashedVMobject)
+        self.assertEqual(
+            outside.dandelin_metadata["planeOutlinePattern"], "solid"
+        )
+        self.assertIs(outside.dandelin_metadata["planeOccludedByCone"], False)
 
     def test_teaching_transparent_mode_fails_closed_outside_certified_scope(
         self,

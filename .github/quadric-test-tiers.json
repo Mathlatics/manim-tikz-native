@@ -16,7 +16,9 @@
       "test_quadric_dandelin_manim_cairo.DandelinOcclusion3DCairoTests.test_real_cairo_movie_recomputes_hidden_lines_for_camera_change",
       "test_quadric_section_authoring.QuadricSectionAuthoringTests.test_real_cairo_animation_uses_the_facade_update_path",
       "test_quadric_section_rig.QuadricSectionRigTests.test_real_cairo_scene_play_writes_mp4_and_commits_target",
-      "test_quadric_transition_manim.QuadricSectionTransitionControllerTests.test_real_cairo_animation_visits_all_three_conic_families"
+      "test_quadric_transition_manim.QuadricSectionTransitionControllerTests.test_real_cairo_animation_visits_all_three_conic_families",
+      "test_tikz_native_dandelin_cairo.TikzNativeDandelinCairoTests.test_plane_occlusion_dashes_and_tint_reach_real_cairo_pixels",
+      "test_tikz_native_dandelin_cairo.TikzNativeDandelinCairoTests.test_provider_surface_order_changes_the_real_cairo_composite"
     ],
     "extended-cairo": [
       "test_cone_models_cairo.ConeModelCairoTests.test_complete_offset_point_48_demo_frame_has_no_open_shell_corridor_leak",

@@ -985,7 +985,9 @@ painted.
 `mode="depth_aware_teaching_transparent"` is also spatial-only. It keeps the
 same certified curve partition and additionally certifies the painter order of
 the teaching-transparent cone sheets, sphere fills, and cutting-plane
-fragments. Accordingly, both depth-aware modes have
+fragments. In the classroom preset, plane fragments behind a nearer cone sheet
+use a muted fill and dashed finite outline; outside/front fragments retain the
+normal teal fill and solid outline. Accordingly, both depth-aware modes have
 `curveVisibilityAuthoritative=true`, while only the latter has
 `surfaceLayeringAuthoritative=true`. Neither mode claims opaque physical
 surface visibility: `surfaceVisibilityAuthoritative`,

@@ -18,7 +18,8 @@ All notable changes to this project will be documented in this file.
   cutting-plane compositors; certify each sphere's one-dimensional tangent
   contact with its exact cone nappe, place every sphere between that nappe's
   back/front sheets, split the plane into certified depth regions, preserve
-  internal z-order through the real Provider path, and keep physical surface
+  internal z-order through the real Provider path, render occluded plane
+  regions with a muted fill and dashed outline, and keep physical surface
   visibility explicitly non-authoritative;
 - restore legacy `tikz-native-dandelin-static-diagram/v1` and `/v2` payloads by
   recomputing them into the current v3 contract;
