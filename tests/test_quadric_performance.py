@@ -12,6 +12,7 @@ from manim import Line, Scene, tempconfig
 
 import polyhedron_visibility.quadrics.manim_runtime as manim_runtime
 import polyhedron_visibility.quadrics.manim as manim_binding
+import polyhedron_visibility.quadrics.boundary_section as boundary_section
 from polyhedron_visibility.parallel_solver import ParallelView
 from polyhedron_visibility.quadrics.composite_authoring import (
     CompositeQuadricSection3D,
@@ -130,6 +131,22 @@ def _single_controller(
 
 
 class QuadricPerformanceTraceTests(unittest.TestCase):
+    def test_manim_reuses_same_frame_contours_for_boundary_section_spans(
+        self,
+    ) -> None:
+        with tempconfig({"renderer": "cairo"}):
+            with patch.object(
+                boundary_section,
+                "quadric_plane_fragment_contours",
+                side_effect=AssertionError("same-frame contours were recomputed"),
+            ):
+                controller = _single_controller(Scene()).attach()
+            try:
+                self.assertIsNotNone(controller.last_section_frame)
+                self.assertIsNotNone(controller.last_boundary_frame)
+            finally:
+                controller.restore()
+
     def test_paint_variants_share_section_geometry_and_translate_only_display(
         self,
     ) -> None:
@@ -155,8 +172,8 @@ class QuadricPerformanceTraceTests(unittest.TestCase):
             ) as section_geometry,
             patch.object(
                 manim_binding,
-                "compute_boundary_section_spans",
-                wraps=manim_binding.compute_boundary_section_spans,
+                "_compute_boundary_section_spans_with_contours",
+                wraps=manim_binding._compute_boundary_section_spans_with_contours,
             ) as boundary_section_spans,
         ):
             for controller in controllers:

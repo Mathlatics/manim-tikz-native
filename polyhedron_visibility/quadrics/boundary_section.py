@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import Enum
 from math import acos, atan2, atanh, ceil, floor, isfinite, pi, tau
-from typing import Mapping, Sequence
+from typing import Callable, Mapping, Sequence
 
 import numpy as np
 from numpy.polynomial import Polynomial
@@ -37,8 +37,11 @@ from .contract import (
     ConeSpec,
     CylinderSpec,
     PlaneDisplayPatchSpec,
+    QuadricRayHit,
     SectionPlane,
     SphereSpec,
+    _combined_hits,
+    _support_ray_hits,
 )
 from .conics import ConicKind
 from .critical import _curve_chart
@@ -60,6 +63,11 @@ from .section_compositing import (
 
 ContextInput = GeometryContext | ResolvedGeometryContext | None
 QuadricSurfaceSpec = SphereSpec | CylinderSpec | ConeSpec
+_FiniteSurfaceRayHits = Callable[[np.ndarray], tuple[QuadricRayHit, ...]]
+_PlaneFragmentContours = Mapping[
+    PlaneDepthRole,
+    Sequence[Sequence[Sequence[float]]],
+]
 
 
 @dataclass(frozen=True, slots=True)
@@ -467,26 +475,81 @@ def _visibility_kind_at(
     return next(iter(kinds))
 
 
-def _exact_plane_depth_role(
+def _prepare_finite_surface_ray_hits(
     surface: QuadricSurfaceSpec,
-    plane_world: np.ndarray,
     direction: np.ndarray,
     context: ResolvedGeometryContext,
+) -> _FiniteSurfaceRayHits:
+    """Prepare the immutable parts of repeated finite-surface ray queries.
+
+    The returned solver deliberately delegates root filtering and cap merging
+    to the contract helpers used by ``surface.ray_hits``.  It only avoids
+    rebuilding the support quadric, local frame, and finite caps for every
+    boundary probe in the same renderer frame.
+    """
+
+    ray_direction = np.asarray(direction, dtype=float).copy()
+    ray_direction.setflags(write=False)
+    if type(surface) not in (SphereSpec, CylinderSpec, ConeSpec):
+        # The public contract accepts subclasses.  Preserve an authored
+        # ``ray_hits`` override instead of silently replacing its semantics
+        # with the built-in fast path.
+        def custom_ray_hits(point: np.ndarray) -> tuple[QuadricRayHit, ...]:
+            return surface.ray_hits(
+                point,
+                ray_direction,
+                context=context,
+                include_caps=True,
+                forward_only=False,
+            )
+
+        return custom_ray_hits
+
+    support = surface.support_quadric
+    surface_id = surface.surface_id
+    if isinstance(surface, SphereSpec):
+        frame = None
+        axial_range = None
+        caps = ()
+    else:
+        frame = surface.frame
+        axial_range = surface.axial_range
+        caps = surface.end_caps
+
+    def ray_hits(point: np.ndarray) -> tuple[QuadricRayHit, ...]:
+        lateral = _support_ray_hits(
+            support,
+            surface_id,
+            point,
+            ray_direction,
+            context=context,
+            frame=frame,
+            axial_range=axial_range,
+            forward_only=False,
+        )
+        return _combined_hits(
+            lateral,
+            caps,
+            point,
+            ray_direction,
+            context=context,
+            include_caps=True,
+            forward_only=False,
+        )
+
+    return ray_hits
+
+
+def _exact_plane_depth_role(
+    ray_hits: _FiniteSurfaceRayHits,
+    plane_world: np.ndarray,
+    boundary_epsilon: float,
 ) -> PlaneDepthRole:
     """Classify one plane point against the finite surface by exact ray hits."""
 
-    parameters = tuple(
-        hit.parameter
-        for hit in surface.ray_hits(
-            plane_world,
-            direction,
-            context=context,
-            forward_only=False,
-        )
-    )
+    parameters = tuple(hit.parameter for hit in ray_hits(plane_world))
     if not parameters:
         return PlaneDepthRole.OUTSIDE_PROJECTION
-    boundary_epsilon = context.epsilon(GeometryQuantity.BOUNDARY)
     if min(parameters) > boundary_epsilon:
         return PlaneDepthRole.BEHIND_SURFACE
     if max(parameters) < -boundary_epsilon:
@@ -1035,24 +1098,49 @@ def _role_boundary_segments(
     frame: QuadricSectionCompositingFrame,
     screen_epsilon: float,
     limits: QuadricBoundarySectionLimits,
+    *,
+    contours: _PlaneFragmentContours | None = None,
 ) -> tuple[tuple[tuple[float, float], tuple[float, float]], ...]:
-    try:
-        contours = quadric_plane_fragment_contours(frame)
-    except QuadricSectionCompositingError as exc:
-        raise QuadricBoundaryCompositingError(
-            f"cannot extract plane-role boundaries: {exc}"
-        ) from exc
+    if contours is None:
+        try:
+            contours = quadric_plane_fragment_contours(frame)
+        except QuadricSectionCompositingError as exc:
+            raise QuadricBoundaryCompositingError(
+                f"cannot extract plane-role boundaries: {exc}"
+            ) from exc
+    elif not isinstance(contours, Mapping):
+        raise TypeError("plane_fragment_contours must be a mapping")
     by_key: dict[
         tuple[tuple[float, float], tuple[float, float]],
         tuple[tuple[float, float], tuple[float, float]],
     ] = {}
     for role in PlaneDepthRole:
-        for loop in contours[role]:
+        try:
+            loops = contours[role]
+        except KeyError as exc:
+            raise QuadricBoundaryCompositingError(
+                f"plane_fragment_contours omitted role {role.value!r}"
+            ) from exc
+        for loop in loops:
             if len(loop) < 2:
                 raise QuadricBoundaryCompositingError(
                     "plane-role contour must contain at least two vertices"
                 )
-            points = tuple(tuple(float(item) for item in point) for point in loop)
+            try:
+                points = tuple(
+                    tuple(float(item) for item in point) for point in loop
+                )
+            except (TypeError, ValueError, OverflowError) as exc:
+                raise QuadricBoundaryCompositingError(
+                    "plane-role contour points must contain two finite values"
+                ) from exc
+            if any(
+                len(point) != 2 or not all(isfinite(item) for item in point)
+                for point in points
+            ):
+                raise QuadricBoundaryCompositingError(
+                    "plane-role contour points must contain two finite values"
+                )
             for start, end in zip(points, (*points[1:], points[0])):
                 if float(
                     np.linalg.norm(
@@ -1395,6 +1483,40 @@ def compute_boundary_section_spans(
 ) -> dict[str, tuple[QuadricBoundarySectionSpan, ...]]:
     """Split semantic curves wherever their order against the finite plane changes."""
 
+    return _compute_boundary_section_spans_with_contours(
+        sources,
+        section_frame,
+        view,
+        crossings,
+        surface=surface,
+        visibility_spans_by_source=visibility_spans_by_source,
+        plane_fragment_contours=None,
+        context=context,
+        limits=limits,
+    )
+
+
+def _compute_boundary_section_spans_with_contours(
+    sources: Sequence[QuadricBoundarySource],
+    section_frame: QuadricSectionCompositingFrame,
+    view: ParallelView,
+    crossings: Sequence[ProjectedCurveCrossing] = (),
+    *,
+    surface: QuadricSurfaceSpec | None = None,
+    visibility_spans_by_source: Mapping[
+        str, Sequence[QuadricBoundaryVisibilitySpan]
+    ] | None = None,
+    plane_fragment_contours: _PlaneFragmentContours | None,
+    context: ContextInput = None,
+    limits: QuadricBoundarySectionLimits = QUADRIC_BOUNDARY_SECTION_LIMITS,
+) -> dict[str, tuple[QuadricBoundarySectionSpan, ...]]:
+    """Internal same-frame variant used by the Manim binding.
+
+    ``plane_fragment_contours`` may carry the exact contours already derived
+    from ``section_frame`` by the current renderer frame.  This input stays
+    private so external callers cannot inject stale or forged contour evidence.
+    """
+
     if not isinstance(section_frame, QuadricSectionCompositingFrame):
         raise TypeError("section_frame must be a QuadricSectionCompositingFrame")
     if not isinstance(view, ParallelView):
@@ -1455,6 +1577,11 @@ def compute_boundary_section_spans(
         )
     inverse = np.linalg.inv(screen_basis)
     direction = np.asarray(view.view_direction, dtype=float)
+    finite_surface_ray_hits = (
+        None
+        if surface is None
+        else _prepare_finite_surface_ray_hits(surface, direction, resolved)
+    )
     plane_axes = np.column_stack((plane_u, plane_v))
     screen_projection = np.asarray(view.matrix[:2], dtype=float)
     lift_linear = plane_axes @ inverse @ screen_projection
@@ -1464,7 +1591,12 @@ def compute_boundary_section_spans(
     plane_lift[:3, 3] = plane_point - lift_linear @ plane_point
     plane_lift[3, 3] = 1.0
     crossing_parameters = _crossing_parameters(source_items, crossings)
-    role_segments = _role_boundary_segments(section_frame, screen_epsilon, limits)
+    role_segments = _role_boundary_segments(
+        section_frame,
+        screen_epsilon,
+        limits,
+        contours=plane_fragment_contours,
+    )
     role_vertices = tuple(
         sorted({point for segment in role_segments for point in segment})
     )
@@ -1680,12 +1812,11 @@ def compute_boundary_section_spans(
                     )
             else:
                 roles = role_locator.roles_at(screen, screen_epsilon)
-                if surface is not None:
+                if finite_surface_ray_hits is not None:
                     exact_role = _exact_plane_depth_role(
-                        surface,
+                        finite_surface_ray_hits,
                         plane_world,
-                        direction,
-                        resolved,
+                        boundary_epsilon,
                     )
                     if (
                         exact_role is PlaneDepthRole.OUTSIDE_PROJECTION

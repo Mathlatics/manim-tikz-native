@@ -115,8 +115,8 @@ from .visibility import compute_point_visibility, compute_quadric_visibility
 from .boundary_section import (
     QUADRIC_BOUNDARY_SECTION_LIMITS,
     QuadricBoundarySectionLimits,
+    _compute_boundary_section_spans_with_contours,
     certify_rank_one_section_boundary_sources,
-    compute_boundary_section_spans,
 )
 from .surface_boundaries import (
     GeneratorBoundarySpec,
@@ -2472,13 +2472,14 @@ class QuadricOcclusion3D:
                         performance_attempt.cache_miss(
                             "shared_boundary_section_spans"
                         )
-                    section_spans = compute_boundary_section_spans(
+                    section_spans = _compute_boundary_section_spans_with_contours(
                         sources,
                         section_frame,
                         view,
                         crossings,
                         surface=surfaces[0],
                         visibility_spans_by_source=spans,
+                        plane_fragment_contours=contours,
                         context=self.context,
                         limits=self.boundary_section_limits,
                     )
