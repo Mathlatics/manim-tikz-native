@@ -62,9 +62,10 @@ jobs:
             twine==7.0.0 \
             wheel==0.48.0
 
-      - name: Rebuild and verify release manifest hashes
+      - name: Rebuild and verify current-main manifest hashes
         run: |
           python release/verify_quadric_section_release.py \
+            --manifest release/quadric-section-v1-current-main-manifest.json \
             --evidence-json \
             "${RUNNER_TEMP}/quadric-section-acceptance/evidence/release-manifest-verification.json" \
             --failure-artifacts-directory \
