@@ -11,13 +11,20 @@ the same source geometry as:
    circles.
 
 Compile picture indices 1, 2, and 3 with the ordinary Provider fixed-view
-path. The spatial picture opts into `depth_aware_diagrammatic`: existing
-quadric ray tests automatically split cone boundaries, sphere silhouettes,
-contact circles, the conic, and directrices into solid visible fragments and
-dashed hidden fragments for the authored parallel view. Translucent surface
-fill order remains diagrammatic rather than claiming physical transparent
-multi-surface compositing. Motion, `cameraShots`, and source-v3 generation are
-deliberately unsupported.
+path. The spatial picture opts into
+`depth_aware_teaching_transparent`. Existing quadric ray tests split cone
+boundaries, sphere silhouettes, contact circles, the conic, and directrices
+into solid visible fragments and dashed hidden fragments for the authored
+parallel view. The same fixed camera also drives a certified teaching painter
+order: each cone component is split into a far and near sheet, each Dandelin
+sphere is inserted between the sheets of its authenticated nappe, and the
+cutting-plane patch is split into behind/outside/between/front regions. The
+contact-circle stroke owns the equal-depth seam. This is a classroom
+transparency model, not a claim about optical materials; physical surface
+visibility remains explicitly non-authoritative. Consequently this mode keeps
+`show-contact-circles=true`; requesting `false` fails before registration.
+Motion, `cameraShots`, and
+source-v3 generation are deliberately unsupported.
 
 The semantic source commands are:
 
@@ -27,7 +34,7 @@ The semantic source commands are:
 \DeclareDandelinConstruction{dan}{cone}{cut};
 \DrawDandelinDiagram[
   view=spatial,
-  mode=depth_aware_diagrammatic,
+  mode=depth_aware_teaching_transparent,
   preset=classroom
 ]{dan};
 ```

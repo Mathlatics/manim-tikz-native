@@ -107,8 +107,13 @@ Preview、Final、Release/Evidence 三档的准确区别，以及一行容量扫
 对应的受控 TikZ 三视图命令与可编译示例见
 [TikZ-native 丹德林三视图](examples/tikz_dandelin_views/README.md)。其中空间图可启用
 `mode=depth_aware_diagrammatic`：圆锥轮廓、球轮廓、相切圆、截线和准线会按同一
-投影自动分成实线与遮挡虚线；半透明曲面填充仍按教学图层绘制，不冒充完整的物理
-透明合成。
+投影自动分成实线与遮挡虚线。若改用
+`mode=depth_aware_teaching_transparent`，还会把圆锥拆成远、近两片，把每个球插入
+所属圆锥叶的两片之间，并将截平面拆成 behind / outside / between / front 区域后
+按当前相机自动排序；相切圆线条负责覆盖等深接缝。这个模式认证的是课堂示意图层，
+因此必须保留 `show-contact-circles=true`，隐藏相切圆会在编译前被拒绝；它仍不冒充
+光学透明材质或完整的物理隐藏面结果。首版覆盖单叶圆、椭圆和抛物线；
+双曲线可继续使用前一种自动实虚线模式，无法认证的曲面分片会提前拒绝。
 
 ## 显式三维平面、圆和椭圆
 

@@ -782,6 +782,9 @@ points are:
   diagrammatic `DandelinSection3D` teaching facade;
 - `compute_dandelin_visibility_frame()`, `DandelinVisibilityFrame`, and
   `DandelinTangentContactEvidence` for fixed-camera Dandelin hidden lines;
+- `compute_dandelin_surface_layer_frame()`, `DandelinSurfaceLayerFrame`, and
+  `DandelinEqualDepthContact` for certified teaching-transparent cone, sphere,
+  cutting-plane, and tangent-seam painter order;
 - `QUADRIC_PREVIEW_PROFILE`, `QUADRIC_FINAL_PROFILE`,
   and `QuadricCapacityPlanner`;
 - `QuadricOcclusion3D`, `QuadricManimStyle`, `QuadricBoundaryStyle`, and
@@ -959,7 +962,7 @@ it from arbitrary circles:
 \DrawDandelinDiagram[
   view=spatial,
   preset=classroom,
-  mode=depth_aware_diagrammatic
+  mode=depth_aware_teaching_transparent
 ]{dan};
 ```
 
@@ -975,13 +978,19 @@ curve, and optional directrices. Tangent-contact evidence identifies each
 sphere, its exact cone nappe, and its contact circle before any fragments are
 painted.
 
-The contract keeps `curveVisibilityAuthoritative=true` separate from
-`surfaceVisibilityAuthoritative=false`; consequently the whole diagram still
-has `visibilityAuthoritative=false`. In plain terms, the hidden lines are
-computed from geometry, but the translucent colored fills are still arranged
-for teaching clarity. Full physical mode, mixed drawable objects, a fake
-section-plane sphere circle, motion, camera shots, and source-v3 generation are
-rejected explicitly. The complete example is in
+`mode="depth_aware_teaching_transparent"` is also spatial-only. It keeps the
+same certified curve partition and additionally certifies the painter order of
+the teaching-transparent cone sheets, sphere fills, and cutting-plane
+fragments. Accordingly, both depth-aware modes have
+`curveVisibilityAuthoritative=true`, while only the latter has
+`surfaceLayeringAuthoritative=true`. Neither mode claims opaque physical
+surface visibility: `surfaceVisibilityAuthoritative`,
+`physicalSurfaceVisibilityAuthoritative`, and the aggregate
+`visibilityAuthoritative` all remain false. Full physical mode, mixed drawable
+objects, a fake section-plane sphere circle, or a teaching-transparent request
+with `show-contact-circles=false` are rejected explicitly; the contact strokes
+own the certified equal-depth seams. Motion, camera shots, and source-v3
+generation are also rejected. The complete example is in
 [`examples/tikz_dandelin_views`](../examples/tikz_dandelin_views/README.md).
 
 The Manim binding accepts immutable surface/curve sequences or callbacks that
