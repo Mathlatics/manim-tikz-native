@@ -11,7 +11,8 @@ the same source geometry as:
    circles.
 
 Compile picture indices 1, 2, and 3 with the ordinary Provider fixed-view
-path. The spatial picture opts into
+path. The source pins a painter mode on every picture instead of relying on a
+default. The spatial picture opts into
 `depth_aware_teaching_transparent`. Existing quadric ray tests split cone
 boundaries, sphere silhouettes, contact circles, the conic, the cutting-plane
 outline, and directrices into solid visible fragments and dashed hidden
@@ -26,6 +27,11 @@ visibility remains explicitly non-authoritative. Consequently this mode keeps
 `show-contact-circles=true`; requesting `false` fails before registration.
 Motion, `cameraShots`, and
 source-v3 generation are deliberately unsupported.
+
+The meridian and cutting-plane pictures explicitly use `mode=diagrammatic`.
+They are true planar reductions rather than projected 3D surface composites:
+the meridian keeps the sphere circles above the cutting line, while the
+cutting-plane view contains only its conic, foci, and directrices.
 
 The semantic source commands are:
 
