@@ -87,6 +87,35 @@ class ClassroomDandelinFacadeTests(unittest.TestCase):
                         facade.restore()
                     self.assertEqual(scene.mobjects, [])
 
+    def test_restore_purges_focus_family_from_cairo_runtime_caches(self) -> None:
+        with tempconfig(
+            {
+                "renderer": "cairo",
+                "pixel_width": 320,
+                "pixel_height": 180,
+                "frame_rate": 6,
+                "disable_caching": True,
+            }
+        ):
+            scene = Scene()
+            facade = build_dandelin_act(scene, ACTS[0]).attach()
+            focus_family = tuple(facade.focus_group.get_family())
+            focus_ids = {id(item) for item in focus_family}
+            scene.moving_mobjects = [*scene.moving_mobjects, *focus_family]
+            scene.static_mobjects = [*scene.static_mobjects, *focus_family]
+
+            facade.restore()
+
+            self.assertFalse(facade.attached)
+            for container in (
+                scene.mobjects,
+                scene.moving_mobjects,
+                scene.static_mobjects,
+            ):
+                self.assertTrue(
+                    focus_ids.isdisjoint(id(item) for item in container)
+                )
+
 
 class ClassroomDandelinCairoTests(unittest.TestCase):
     def test_three_certified_acts_produce_section_overlay_and_focus_pixels(

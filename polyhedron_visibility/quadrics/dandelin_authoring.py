@@ -598,7 +598,17 @@ class DandelinSection3D:
 
     def _remove_focus_scene_ownership(self) -> None:
         if self._focus_group is not None and self._focus_group.submobjects:
+            owned = self._family_ids(self._focus_group)
             self.scene.remove(self._focus_group)
+            # During a real Cairo ``play()``, Manim also caches family members
+            # in ``moving_mobjects`` and ``static_mobjects``.  ``Scene.remove``
+            # clears the public scene list but does not purge those transient
+            # renderer containers, so the ownership audit must remove the
+            # exact focus identities from every known scene container too.
+            for container in _scene_containers(self.scene):
+                container[:] = [
+                    item for item in container if id(item) not in owned
+                ]
 
     def _restore_overlay_controller(self) -> None:
         if self._overlay_controller is not None:
