@@ -301,6 +301,15 @@ def _asset_payload(
                 "z_index": item.z_index,
                 "source_line": item.source_line,
                 "label": item.label,
+                **(
+                    {
+                        "semantic_objects": list(
+                            item.geometry["semanticObjects"]
+                        )
+                    }
+                    if item.kind == "dandelin_diagram"
+                    else {}
+                ),
             }
             for item in picture.objects
         ],

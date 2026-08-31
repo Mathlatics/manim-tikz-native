@@ -843,6 +843,11 @@ def generate_native_manim_source_3d_v2(
 ) -> dict[str, Any]:
     """Return a self-contained multi-driver Manim definition source."""
 
+    if getattr(picture, "dandelin_diagrams", {}):
+        raise NativeManimCodegen3DV2Error(
+            "Dandelin curved geometry is static-only and cannot be emitted by "
+            "the finite-face native Manim 3D v2 authoring source"
+        )
     if picture.dimension != 3 or picture.projection_3d is None:
         raise NativeManimCodegen3DV2Error(
             "native Manim 3D v2 source requires a 3D picture"

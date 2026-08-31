@@ -69,40 +69,40 @@ ROOT = Path(__file__).resolve().parents[1]
 PACKAGE_ROOT = ROOT / "tikz_native"
 VISIBILITY_ROOT = ROOT / "polyhedron_visibility"
 ASSET_REVISION = (
-    "source-sha256:47e72918791518076d0d6b0c2857c1b3162c29217265e218b2f5a44433c6dd7d"
+    "source-sha256:4c05ed021ae1d082d0f9976128f3c6e85be32f1884250481d15329839a9f77c7"
 )
 GEOMETRY_RIG_2D_REVISION = (
-    "source-sha256:55b5fe153e05e572f146556f69ca2652741071fa813bdde5df150258b4142080"
+    "source-sha256:c69ad54199cb791343de2862352d7387abc6170381ebc245218c9701e9883854"
 )
 NATIVE_SOURCE_2D_REVISION = (
-    "source-sha256:8e0067c597c086c046bc3dc0eb97795ac491815bf390ad35de40b63c5d40c5d1"
+    "source-sha256:41248c7091b41766d162efb8e826958246796c53fef121bbc7965b2dfe3364b6"
 )
 NATIVE_RIG_2D_REVISION = (
-    "source-sha256:70201c67a2703cecf3b210834977a25508b4aff972b8627443a250978f113870"
+    "source-sha256:9a5a5066f201f6d0fd23857cc0452f722782c74832da4b2051766eea864fe63b"
 )
 MOTION_PREVIEW_2D_REVISION = (
-    "source-sha256:d61945b9d99fa962288cc566de55849df42b71b640a620a7aa7cb89d7ed5c267"
+    "source-sha256:401e81371e67d6e722886a625854ea8262c30d831ccaef32efd52d0d5e360b06"
 )
 GEOMETRY_RIG_3D_REVISION = (
-    "source-sha256:9b0de81c87e32a599c145a2fb78b32403e264a98d34494c277e58d7154b1bb60"
+    "source-sha256:b8fe9dabe753ae1f7cbde64aaffe21519c428a3bb7e0d5bb091978c68a980c17"
 )
 NATIVE_SOURCE_3D_REVISION = (
-    "source-sha256:1ba17fb69e455e3694ae477ebd69de321043555af05c8e7712c3ee22d20307c1"
+    "source-sha256:da699683ca697c607dc5a14048c0bfed2852e8a1d3fc9471250506aa3447f269"
 )
 NATIVE_SOURCE_3D_V2_REVISION = (
-    "source-sha256:9fb59765ba981108a73a0a4a340de5a32ce4c03707d4925cdb729b9a7ecdcb9c"
+    "source-sha256:f396285954ffa32415d51b76b072972e7f5a100eb50dec0043b43dac246d6a7b"
 )
 NATIVE_SOURCE_3D_V3_REVISION = (
-    "source-sha256:513935788725e3c72b74905268695a90c443df208a4f321229f05efcdd3ef5aa"
+    "source-sha256:c7f0815dcb8fadc2c65d3b3f091478cb2231b30328150ceeef07bd6d9308fc3d"
 )
 PARALLEL_CAMERA_CORE_REVISION = (
     "source-sha256:a6ca69204f5d7cbdaf0eaeff9c47fa8a2cc26d1f6c30436e04eb0aeaa717ab15"
 )
 EMBEDDED_MOTION_3D_REVISION = (
-    "source-sha256:b2da641f19baa9c0691d017f80c3389ac7911d60bf9eea28d7519209fb99c2df"
+    "source-sha256:29600976c9434c4e4355f1f02caf8b39f3e2f9b9065ab95e0518f369051172ee"
 )
 MOTION_PREVIEW_3D_REVISION = (
-    "source-sha256:67fe4d97c1220cc4e638e6e0b400fc8b600f1524edad641e81207a192eb31060"
+    "source-sha256:01c6bb42b935ed94d3e82df93d3d7e7f312c713815fa7017b0fccd92c779bbe4"
 )
 POLYHEDRON_VISIBILITY_REVISION = (
     "source-sha256:8fff612f011f5b67cecaa66dc251af3126fe091cfe6b753e7fd5e9301cfcc53f"
@@ -111,7 +111,7 @@ FACE_DEPTH_CUE_3D_REVISION = (
     "source-sha256:499495b399f1078f0532413690821764208bbb87695f1f40019ce396f2ac347a"
 )
 TIKZ_POLYHEDRON_VISIBILITY_3D_REVISION = (
-    "source-sha256:b17799b6605896e53da89b59d692944848bda0ce634a792933f318abf45eba12"
+    "source-sha256:5562729e26729620588f778a8fa53b53e552f8d5714d20c8cba58b61bb00a815"
 )
 OPEN_FACE_VISIBILITY_REVISION = (
     "source-sha256:583f95c7e3a9056b306d90e14f85e580442cf0c2cfd9d0043795f1670dfc43ae"
@@ -120,31 +120,31 @@ OPEN_FACE_UNIFIED_COMPOSITING_REVISION = (
     "source-sha256:5b2bdd7146a0e548f395637653b61b16cb5cf4a8758399030df934c071b72832"
 )
 MANAGED_PAINTER_BAND_REVISION = (
-    "source-sha256:f48b339673a8daf691e8ad6ec134c77d3ad1a6750c38f1003d42d3d6e41b0a73"
+    "source-sha256:9e9bde612f6fad601c97c47b8d1cce9c9cd03360566135d17e224d1049c3ee7a"
 )
 OPEN_FACE_UNIFIED_MANIM_REVISION = (
-    "source-sha256:d9cbe232fba7dfdfb2f62e0d0ffb503a1bf096a2f9632922914b49457f1e8d7e"
+    "source-sha256:6ea6cf42d61d2cc8c4331b6da5f25ea3b61b659c75ae4c7a493425f0efddd934"
 )
 TIKZ_OPEN_FACE_VISIBILITY_3D_REVISION = (
-    "source-sha256:cdf237694a76c8c6c7869bfa9bf391cedbab410f56409d10c8808a21ecc8710d"
+    "source-sha256:e9975cd18492eef941f2d3fb7ad97a194b274c0c324617ea607c2f7ce7b920ef"
 )
 TIKZ_OPEN_FACE_STATIC_ASSET_3D_REVISION = (
-    "source-sha256:5602140f9269ac819e0f84abebf12c133decce44927e4725c4e05ca5272d9d4c"
+    "source-sha256:200fc5cb5b2d37106831535c64a460071bc177430c91de082652601dc21ceb1e"
 )
 GENERATED_OPEN_FACE_VISIBILITY_3D_REVISION = (
-    "source-sha256:1125fd1c8b9a6f63b14d421e50315c3e4ccf7f1830b00b310808cdf957c8e94f"
+    "source-sha256:dd289df21375e925651d24d728e55421f8d97e00811e32652a63266f716bf5a4"
 )
 SOURCE_PROJECT_BUILD_REVISION = (
-    "source-sha256:a99aff62e9f6a80030a55ca72c48997431b5ae15dbbae88df7a4df11edbe8c06"
+    "source-sha256:34980c51d6190e21bcbf5bfbe19e565eff17fddfc0bc2a84f1f379b0da73432b"
 )
 QUADRIC_GEOMETRY_REVISION = (
-    "source-sha256:ae5e127cf375d9a0e3452a388dde6e6bc8ce91662e5b9b18a05d9f900ed91b38"
+    "source-sha256:ce4b536087e30ad34d9b196acaf185d0e81160201e3c24b5fac1959aefb2b948"
 )
 QUADRIC_VISIBILITY_REVISION = (
-    "source-sha256:55ffb899ac6bde2884391d7fa6e28ad48dacc47067722cd582b1e390bed1994b"
+    "source-sha256:a57867a18fba3d57c9d5b728b820af84ba23d0a7ee9be71e00d9f62f1e12aea2"
 )
 QUADRIC_MANIM_REVISION = (
-    "source-sha256:109843f2127c7921c5a786099af989ac8db2cec196e563092a8b3cf24f6a2849"
+    "source-sha256:f9df1c0c25d1599e505cdf1987191b352687eb9b77f1f81892750dd696f27b11"
 )
 CONVEX_SECTION_3D_REVISION = (
     "source-sha256:a6c71249ce429884b0fcc3341eeea33dacf2d64e14d875d1e0f222c1530637bf"
@@ -153,10 +153,34 @@ COPY_IDENTITY_HANDOFF_REVISION = (
     "source-sha256:bf8aa2d0fe3ec9921320305279f2e23c8ab71d68b5613d19d19f467326d293b7"
 )
 DERIVED_DIHEDRAL_VISIBILITY_REVISION = (
-    "source-sha256:2240dceedbda6c2c2255af11cda9989218d483dfc199d2b611553155b5fa3101"
+    "source-sha256:2b49f6a0bfa4c0a8e850f94af2446dd888a469b0472463c0df5127aec8185ae2"
 )
 TIKZ_CONVEX_SECTION_3D_REVISION = (
-    "source-sha256:b0623617cf182f17eaaa7ef260540c12749b532e0fbf9fe079316cfbc8da166a"
+    "source-sha256:57bc291eb4b1c98fe7f5f1d3e01e834e228cab97308f7318870952d95cff0605"
+)
+
+QUADRIC_GEOMETRY_RECURSIVE_COMPONENTS = frozenset(
+    {
+        COMPONENT_ASSET_COMPILER,
+        COMPONENT_EMBEDDED_MOTION_3D,
+        COMPONENT_GENERATED_OPEN_FACE_VISIBILITY_3D,
+        COMPONENT_GEOMETRY_RIG_2D,
+        COMPONENT_GEOMETRY_RIG_3D,
+        COMPONENT_MOTION_PREVIEW_2D,
+        COMPONENT_MOTION_PREVIEW_3D,
+        COMPONENT_NATIVE_MANIM_SOURCE_2D,
+        COMPONENT_NATIVE_MANIM_SOURCE_3D,
+        COMPONENT_NATIVE_MANIM_SOURCE_3D_V2,
+        COMPONENT_NATIVE_MANIM_SOURCE_3D_V3,
+        COMPONENT_NATIVE_RIG_2D,
+        COMPONENT_QUADRIC_GEOMETRY,
+        COMPONENT_QUADRIC_MANIM,
+        COMPONENT_QUADRIC_VISIBILITY,
+        COMPONENT_TIKZ_CONVEX_SECTION_3D,
+        COMPONENT_TIKZ_OPEN_FACE_STATIC_ASSET_3D,
+        COMPONENT_TIKZ_OPEN_FACE_VISIBILITY_3D,
+        COMPONENT_TIKZ_POLYHEDRON_VISIBILITY_3D,
+    }
 )
 
 
@@ -537,13 +561,10 @@ print(json.dumps({
         baseline = provider_component_revisions()
         mutated = self._probe_copy("parallel_camera.py")
         components = mutated["components"]
-        changed = {
+        changed = set(QUADRIC_GEOMETRY_RECURSIVE_COMPONENTS) | {
             COMPONENT_PARALLEL_CAMERA_CORE,
             COMPONENT_EMBEDDED_MOTION_3D,
             COMPONENT_MOTION_PREVIEW_3D,
-            COMPONENT_QUADRIC_GEOMETRY,
-            COMPONENT_QUADRIC_VISIBILITY,
-            COMPONENT_QUADRIC_MANIM,
         }
         for component in changed:
             self.assertNotEqual(components[component], baseline[component])
@@ -555,13 +576,10 @@ print(json.dumps({
         baseline = provider_component_revisions()
         mutated = self._probe_copy("parallel_viewport.py")
         components = mutated["components"]
-        changed = {
+        changed = set(QUADRIC_GEOMETRY_RECURSIVE_COMPONENTS) | {
             COMPONENT_PARALLEL_CAMERA_CORE,
             COMPONENT_EMBEDDED_MOTION_3D,
             COMPONENT_MOTION_PREVIEW_3D,
-            COMPONENT_QUADRIC_GEOMETRY,
-            COMPONENT_QUADRIC_VISIBILITY,
-            COMPONENT_QUADRIC_MANIM,
         }
         for component in changed:
             self.assertNotEqual(components[component], baseline[component])
@@ -571,20 +589,28 @@ print(json.dumps({
 
     def test_editing_quadric_geometry_changes_its_recursive_dependents(self) -> None:
         baseline = provider_component_revisions()
-        mutated = self._probe_copy(
-            "@tool/polyhedron_visibility/quadrics/sections.py"
-        )
-        components = mutated["components"]
-        changed = {
-            COMPONENT_QUADRIC_GEOMETRY,
-            COMPONENT_QUADRIC_VISIBILITY,
-            COMPONENT_QUADRIC_MANIM,
-        }
-        for component in changed:
-            self.assertNotEqual(components[component], baseline[component])
-        for component in baseline:
-            if component not in changed:
-                self.assertEqual(components[component], baseline[component])
+        changed = set(QUADRIC_GEOMETRY_RECURSIVE_COMPONENTS)
+        for path in (
+            "@tool/polyhedron_visibility/quadrics/sections.py",
+            "@tool/polyhedron_visibility/quadrics/planar_curves.py",
+            "@tool/polyhedron_visibility/quadrics/dandelin.py",
+            "@tool/polyhedron_visibility/quadrics/dandelin_overlay.py",
+            "@tool/polyhedron_visibility/quadrics/dandelin_views.py",
+        ):
+            with self.subTest(path=path):
+                mutated = self._probe_copy(path)
+                components = mutated["components"]
+                for component in changed:
+                    self.assertNotEqual(
+                        components[component],
+                        baseline[component],
+                    )
+                for component in baseline:
+                    if component not in changed:
+                        self.assertEqual(
+                            components[component],
+                            baseline[component],
+                        )
 
     def test_editing_semantic_compositing_changes_geometry_dependents(self) -> None:
         baseline = provider_component_revisions()
@@ -592,11 +618,7 @@ print(json.dumps({
             "@tool/polyhedron_visibility/quadrics/semantic_compositing.py"
         )
         components = mutated["components"]
-        changed = {
-            COMPONENT_QUADRIC_GEOMETRY,
-            COMPONENT_QUADRIC_VISIBILITY,
-            COMPONENT_QUADRIC_MANIM,
-        }
+        changed = set(QUADRIC_GEOMETRY_RECURSIVE_COMPONENTS)
         for component in changed:
             self.assertNotEqual(components[component], baseline[component])
         for component in baseline:
@@ -621,17 +643,20 @@ print(json.dumps({
 
     def test_editing_quadric_manim_changes_only_manim(self) -> None:
         baseline = provider_component_revisions()
-        mutated = self._probe_copy(
-            "@tool/polyhedron_visibility/quadrics/manim.py"
-        )
-        components = mutated["components"]
-        self.assertNotEqual(
-            components[COMPONENT_QUADRIC_MANIM],
-            baseline[COMPONENT_QUADRIC_MANIM],
-        )
-        for component in baseline:
-            if component != COMPONENT_QUADRIC_MANIM:
-                self.assertEqual(components[component], baseline[component])
+        for path in (
+            "@tool/polyhedron_visibility/quadrics/manim.py",
+            "@tool/polyhedron_visibility/quadrics/dandelin_authoring.py",
+        ):
+            with self.subTest(path=path):
+                mutated = self._probe_copy(path)
+                components = mutated["components"]
+                self.assertNotEqual(
+                    components[COMPONENT_QUADRIC_MANIM],
+                    baseline[COMPONENT_QUADRIC_MANIM],
+                )
+                for component in baseline:
+                    if component != COMPONENT_QUADRIC_MANIM:
+                        self.assertEqual(components[component], baseline[component])
 
     def test_editing_global_parallel_rig_changes_only_manim(self) -> None:
         baseline = provider_component_revisions()
@@ -693,11 +718,7 @@ print(json.dumps({
             "@tool/polyhedron_visibility/quadrics/transition.py"
         )
         components = mutated["components"]
-        changed = {
-            COMPONENT_QUADRIC_GEOMETRY,
-            COMPONENT_QUADRIC_VISIBILITY,
-            COMPONENT_QUADRIC_MANIM,
-        }
+        changed = set(QUADRIC_GEOMETRY_RECURSIVE_COMPONENTS)
         for component in changed:
             self.assertNotEqual(components[component], baseline[component])
         for component in baseline:
@@ -808,7 +829,7 @@ print(json.dumps({
         )
         components = mutated["components"]
         self.assertNotEqual(mutated["build"], provider_revision())
-        changed = {
+        changed = set(QUADRIC_GEOMETRY_RECURSIVE_COMPONENTS) | {
             COMPONENT_POLYHEDRON_VISIBILITY,
             COMPONENT_FACE_DEPTH_CUE_3D,
             COMPONENT_CONVEX_SECTION_3D,
@@ -817,15 +838,6 @@ print(json.dumps({
             COMPONENT_OPEN_FACE_VISIBILITY,
             COMPONENT_OPEN_FACE_UNIFIED_COMPOSITING,
             COMPONENT_OPEN_FACE_UNIFIED_MANIM,
-            COMPONENT_TIKZ_POLYHEDRON_VISIBILITY_3D,
-            COMPONENT_TIKZ_CONVEX_SECTION_3D,
-            COMPONENT_TIKZ_OPEN_FACE_VISIBILITY_3D,
-            COMPONENT_TIKZ_OPEN_FACE_STATIC_ASSET_3D,
-            COMPONENT_NATIVE_MANIM_SOURCE_3D_V3,
-            COMPONENT_GENERATED_OPEN_FACE_VISIBILITY_3D,
-            COMPONENT_QUADRIC_GEOMETRY,
-            COMPONENT_QUADRIC_VISIBILITY,
-            COMPONENT_QUADRIC_MANIM,
         }
         for component in changed:
             self.assertNotEqual(components[component], baseline[component])

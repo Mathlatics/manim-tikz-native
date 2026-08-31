@@ -19,6 +19,9 @@ from polyhedron_visibility.quadrics.composite_section import (
     compute_composite_quadric_section_compositing,
 )
 from polyhedron_visibility.quadrics.compositing import QuadricPaintPolicy
+from polyhedron_visibility.quadrics.boundary_compositing import (
+    BoundarySourceKind,
+)
 from polyhedron_visibility.quadrics.contract import (
     ConeModel,
     ConeSpec,
@@ -38,6 +41,7 @@ from polyhedron_visibility.quadrics.section_compositing import (
 from polyhedron_visibility.quadrics.sections import (
     compute_quadric_section_boundary_curves,
 )
+from polyhedron_visibility.visibility import VisibilityKind
 
 try:
     from manim import Scene, tempconfig

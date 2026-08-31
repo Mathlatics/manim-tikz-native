@@ -98,6 +98,52 @@ Preview、Final、Release/Evidence 三档的准确区别，以及一行容量扫
 变化、双曲线分支标签翻转和周期参数缝则统一映射到固定槽。画面事务失败时，平面
 状态也会一起回滚。
 
+丹德林球的解析几何、有限圆锥认证和静态 Cairo 教学叠加入口见
+[丹德林球 v1 契约](docs/dandelin-spheres-v1.md)；其中的球体图层是讲解用示意叠加，
+并不声称已经完成圆锥与相切球之间的真实多实体遮挡。可直接渲染的椭圆、抛物线、
+双曲线三幕示例见[丹德林球课堂场景](examples/classroom_dandelin_spheres/README.md)。
+同一份认证构造还能分别生成“轴截面真圆图”和“截面平面圆锥曲线图”；后者不会把
+焦点误画成球心，也不会伪造并不存在的球截面圆。
+对应的受控 TikZ 三视图命令与可编译示例见
+[TikZ-native 丹德林三视图](examples/tikz_dandelin_views/README.md)。
+
+## 显式三维平面、圆和椭圆
+
+普通 TikZ 的 `circle` 和 `ellipse` 只给出中心与二维半径，不能唯一确定它们在三维
+世界中位于哪个平面。因此，受控三维语法要求先显式声明一个静态支撑平面：
+
+```tex
+\begin{tikzpicture}[space view={(-0.35,-0.35),(1,0),(0,1)}]
+  \coordinate (O) at (0,0,0);
+  \coordinate (U) at (1,0,0);
+  \coordinate (V) at (0,1,0);
+  \DeclareSpacePlane{base-plane}{O/U/V};
+  \DrawSpaceCircle[draw=red,line width=1pt]
+    {circle-a}{base-plane}{0,0}{1.5};
+  \DrawSpaceEllipse[draw=blue]
+    {ellipse-a}{base-plane}{0.5,-0.25}{2}{1};
+\end{tikzpicture}
+```
+
+其中 `O` 是平面原点，`O -> U` 决定局部 u 轴正方向和曲线参数起点，`V` 决定
+局部 v 轴的正侧；曲线中心使用这个平面内的两个局部坐标。`O -> U` 与 `O -> V`
+的长度只用于认证方向和朝向，不会缩放局部坐标或半轴，后两者仍使用世界坐标单位。
+v1 只支持静态 O/U/V 和连续实线描边，填充、虚线、圆弧/椭圆弧以及 O/U/V 的
+动画都会明确拒绝。当前
+embedded geometry-driver 运行时只要同一图片中含有这类曲线就会提前拒绝，即使
+曲线平面与主动驱动无关；只移动 Manim 相机、保持 O/U/V 不变则仍然支持。
+`NativeFixedViewRenderer` 会把一般投影画成真实的仿射椭圆；精确侧视时，圆周或
+椭圆周会退化成一条有两个端点的有限线段，不会延长成无限直线。
+`NativeManim3DRenderer` 则保留曲线所在的真实世界平面，因此改变 Manim 相机不会
+先把源几何压扁成二维图形。
+这套语法只创建独立的静态曲线，不会虚构一张圆盘，也不会自动把曲线登记进
+二次曲面遮挡或统一合成。
+
+普通二维 TikZ 圆和椭圆的写法保持不变；没有 `DeclareSpacePlane` 的三维圆或椭圆
+会明确失败，不会猜测支撑平面。完整边界见
+[支持的 TikZ 子集](docs/supported-tikz.md)和
+[公共 API](docs/public-api.md#explicit-tikz-planar-curves-in-3d)。
+
 现在还提供一套独立的二次曲面模块：在正交投影或一般平行投影下，支持有限
 球体、带端盖圆柱、封闭单锥、张口单锥壳和有限张口双锥壳。封闭单锥的底面是
 真正的平面端盖；张口圆锥只有侧面和开口圆周，不会把开口误当成底面。双锥壳

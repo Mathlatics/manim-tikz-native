@@ -79,6 +79,11 @@ class ExtendedQuadricCIContractTests(unittest.TestCase):
         )
         self.assertLess(len(smoke), len(extended))
         self.assertIn(
+            "test_classroom_dandelin_spheres.ClassroomDandelinCairoTests."
+            "test_three_certified_acts_produce_section_overlay_and_focus_pixels",
+            smoke,
+        )
+        self.assertIn(
             "test_composite_quadric_section_cairo."
             "CompositeQuadricSectionCairoTests."
             "test_two_nappes_share_one_plane_alpha_and_retain_both_section_branches",

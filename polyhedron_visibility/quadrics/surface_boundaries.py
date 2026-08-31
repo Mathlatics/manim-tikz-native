@@ -345,13 +345,7 @@ def _surface_rim_sources(
         source_id = f"boundary:{surface.surface_id}:{cap.role}:rim"
         result.append(
             curve_boundary_source(
-                CircleArcCurve(
-                    source_id,
-                    cap.center,
-                    cap.radius,
-                    cap.normal,
-                    radial_axis=cap.radial_axis,
-                ),
+                cap.boundary_circle(source_id).lower_to_analytic_curve(),
                 source_kind=BoundarySourceKind.SURFACE_CAP_RIM,
                 semantic_kind=BoundarySemanticKind.SURFACE_BOUNDARY,
                 occlusion_scope=BoundaryOcclusionScope.OWNER_AND_EXTERNAL,
@@ -365,13 +359,7 @@ def _surface_rim_sources(
             source_id = f"boundary:{surface.surface_id}:{rim.role}:rim"
             result.append(
                 curve_boundary_source(
-                    CircleArcCurve(
-                        source_id,
-                        rim.center,
-                        rim.radius,
-                        rim.normal,
-                        radial_axis=rim.radial_axis,
-                    ),
+                    rim.boundary_circle(source_id).lower_to_analytic_curve(),
                     source_kind=BoundarySourceKind.SURFACE_TRIM_RIM,
                     semantic_kind=BoundarySemanticKind.SURFACE_BOUNDARY,
                     occlusion_scope=BoundaryOcclusionScope.OWNER_AND_EXTERNAL,
@@ -645,19 +633,26 @@ def build_surface_boundary_sources(
 ) -> tuple[QuadricBoundarySource, ...]:
     surface_items = tuple(sorted(surfaces, key=lambda item: item.surface_id))
     by_id = {item.surface_id: item for item in surface_items}
-    resolved = resolve_geometry_context(
-        context,
-        positions=tuple(
-            point
-            for surface in surface_items
-            for point in surface.characteristic_points
-        ),
-    )
+    resolved = None
+    if include_silhouettes:
+        resolved = (
+            resolve_geometry_context(context)
+            if isinstance(context, ResolvedGeometryContext)
+            else resolve_geometry_context(
+                context,
+                positions=tuple(
+                    point
+                    for surface in surface_items
+                    for point in surface.characteristic_points
+                ),
+            )
+        )
     result: list[QuadricBoundarySource] = []
     for surface in surface_items:
         if include_cap_rims:
             result.extend(_surface_rim_sources(surface))
         if include_silhouettes:
+            assert resolved is not None
             if isinstance(surface, SphereSpec):
                 result.append(_sphere_silhouette_source(surface, view, resolved))
             else:

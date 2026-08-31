@@ -15,18 +15,23 @@ if picture.unsupported:
     raise ValueError(picture.unsupported)
 ```
 
-Use `NativeManimRenderer` for 2D and `NativeManim3DRenderer` for a fixed 3D
-projection:
+Use `NativeManimRenderer` for 2D, `NativeFixedViewRenderer` when a 3D TikZ
+picture should become ordinary 2D Mobjects in its authored projection, and
+`NativeManim3DRenderer` when the objects must remain in world space for a
+Manim 3D camera:
 
 ```python
 from tikz_native.manim_renderer import NativeManimRenderer
+from tikz_native.fixed_view_renderer import NativeFixedViewRenderer
 from tikz_native.manim_renderer_3d import NativeManim3DRenderer
 
-figure_2d = NativeManimRenderer(scene_unit_per_cm=1.0).render(picture)
-figure_3d = NativeManim3DRenderer(scene_unit_per_cm=1.0).render(picture)
+# Compile `picture_2d` and `picture_3d` from the corresponding source files.
+figure_2d = NativeManimRenderer(scene_unit_per_cm=1.0).render(picture_2d)
+figure_fixed_3d = NativeFixedViewRenderer(scene_unit_per_cm=1.0).render(picture_3d)
+figure_world_3d = NativeManim3DRenderer(scene_unit_per_cm=1.0).render(picture_3d)
 ```
 
-Both figures expose an object mapping keyed by stable semantic IDs. Pass a
+These figures expose an object mapping keyed by stable semantic IDs. Pass a
 custom Manim `TexTemplate` to the renderer when the portable Fandol/Latin
 Modern defaults are not suitable.
 
@@ -282,6 +287,59 @@ The three short Cairo scenes in
 [parallel_camera_advanced_compositor_demo.py](../examples/parallel_camera_advanced_compositor_demo.py)
 exercise a non-identity viewport with a tangent point, the three compositing
 axes, and cross-Rig global occlusion.
+
+## Explicit TikZ planar curves in 3D
+
+The restricted compiler does not infer a spatial supporting plane from a
+screen-space circle or ellipse. Declare one static plane from named 3D points,
+then author the curve in its local coordinates:
+
+```tex
+\begin{tikzpicture}[space view={(-0.35,-0.35),(1,0),(0,1)}]
+  \coordinate (O) at (0,0,0);
+  \coordinate (U) at (1,0,0);
+  \coordinate (V) at (0,1,0);
+  \DeclareSpacePlane{base-plane}{O/U/V};
+  \DrawSpaceCircle[draw=red,line width=1pt]
+    {circle-a}{base-plane}{0,0}{1.5};
+  \DrawSpaceEllipse[draw=blue]
+    {ellipse-a}{base-plane}{0.5,-0.25}{2}{1};
+\end{tikzpicture}
+```
+
+`O` is the origin of `base-plane`; `O -> U` fixes its local-u direction and
+the curve's parameter phase; non-collinear `V` fixes the positive local-v
+side. The lengths of `O -> U` and `O -> V` are orientation evidence, not scale
+factors: local centers and semi-axis lengths use world-coordinate units. A
+circle takes `(curve ID, plane ID, local center, radius)`. An ellipse
+takes `(curve ID, plane ID, local center, semi-u, semi-v)`. The compiler stores
+the canonical `PlanarFrame3D` and `Circle3DSpec` / `Ellipse3DSpec` evidence in
+the object geometry rather than reducing the curve to sampled screen points.
+
+This v1 frontend is static-safe and supports one complete revolution with one
+visible solid stroke. It accepts draw color, positive line width,
+draw/overall opacity, line cap, and line join. It explicitly rejects fill,
+fill opacity, dashes, arrow tips, additional canvas transforms, partial arcs,
+and animated O/U/V authorship. The present embedded geometry-driver runtime
+also rejects a picture containing these curve kinds, even if the registered
+plane is fixed and unrelated to the active hinge; this rejection happens in
+rig analysis instead of failing later during playback. Ordinary
+two-dimensional circle and ellipse paths remain supported. An ordinary
+three-dimensional circle/ellipse path or named path fails closed because it
+has no explicit supporting plane; the physical `circle (1pt)` point-marker
+form remains a dot.
+
+`NativeFixedViewRenderer` directly projects both authored semi-axis vectors.
+For rank two it applies their full affine screen basis to a unit circle; for an
+exact edge-on rank-one projection it emits exactly one finite `Line` between
+the curve extrema. It neither inverts a nearly singular ellipse basis nor
+extends the segment to an infinite chord. `NativeManim3DRenderer` instead
+applies the authored world-space center and two semi-axis vectors to a unit
+circle, retaining the actual supporting plane and the same Mobject while the
+camera changes. Neither path turns static O/U/V evidence into animated curve
+geometry. The result is a standalone curve object; it is not a planar disk and
+is not automatically registered with quadric visibility or unified
+compositing.
 
 ## Source-authoritative project builds
 
@@ -699,6 +757,8 @@ points are:
 
 - `SphereSpec`, `CylinderSpec`, `ConeSpec`, `ConeModel`,
   `CircularTrimRimSpec`, and `SectionPlane`;
+- `PlanarFrame3D`, `PlanarPoint3D`, `Circle3DSpec`, `Ellipse3DSpec`,
+  and `PlanarCurveScene3D`;
 - `build_cone_projection_layers()`, `ConeProjectionLayers`, and
   `ConeProjectionSheet`;
 - `compute_quadric_section()`, `section_trace_curves()`,
@@ -718,10 +778,191 @@ points are:
 - `QuadricSection3D`, the low-level finite-section authoring facade;
 - `QuadricSectionRig`, `SectionState`, and `QuadricSectionAction`, the natural
   fixed-topology mathematical-action layer;
+- `compute_dandelin_construction()`, `DandelinConstruction3D`, and the static
+  diagrammatic `DandelinSection3D` teaching facade;
 - `QUADRIC_PREVIEW_PROFILE`, `QUADRIC_FINAL_PROFILE`,
   and `QuadricCapacityPlanner`;
 - `QuadricOcclusion3D`, `QuadricManimStyle`, `QuadricBoundaryStyle`, and
   `QuadricManimLimits`.
+
+### Authored planar circles and ellipses in 3D
+
+`PlanarFrame3D(frame_id, point, normal, u_axis=None)` is the
+renderer-neutral supporting-plane contract for an authored 3D circle or
+ellipse. It normalizes a stable right-handed in-plane basis; an explicit
+`u_axis` fixes both the curve orientation and parameter phase instead of
+leaving those choices to a display helper. The automatic basis is deterministic
+for one fixed normal, but it is not promised to vary continuously while the
+normal moves across a world-axis tie. Animated frames that need continuous
+curve phase must provide a continuous `u_axis` explicitly.
+An authored `u_axis` whose in-plane projection is no larger than
+`sqrt(machine epsilon)` relative to the supplied direction is rejected: at
+that scale its phase is no longer numerically trustworthy.
+
+`frame.certified_point((u, v))` returns a `PlanarPoint3D` carrying both the
+exact supporting-frame contract and its local coordinates. Use this form when
+the center is produced in plane coordinates, especially at large world or
+local scales. It avoids trying to infer lost authorship from a rounded world
+point. A certified point from a different frame is rejected.
+
+`Circle3DSpec(curve_id, frame, center, radius, domain=...)` and
+`Ellipse3DSpec(curve_id, frame, center, semi_u, semi_v, domain=...)` require
+positive radii or semi-axis lengths and accept at most one revolution of a
+`ParameterInterval`. `center` may be a certified `PlanarPoint3D`. A raw
+world-space center instead goes through strict, exact-residual plane-membership
+certification based only on the coordinate quantization bound; curve size does
+not silently widen that bound. An accepted raw center remains the exact world
+point supplied by the caller; it is never snapped to a reconstructed point on
+the plane. `from_plane_coordinates(...)` is the compact constructor for the
+certified path. Both forms record canonical
+`centerCoordinates` in the serialized contract. They do not introduce another
+analytic-curve runtime:
+`lower_to_analytic_curve()` returns the existing `CircleArcCurve` or
+`EllipseArcCurve`, preserving the authored curve ID, supporting frame, and
+parameter domain.
+
+Finite input alone is not sufficient at the extreme limits of floating-point
+arithmetic. Construction fails explicitly when the existing analytic runtime
+cannot certify finite axes, normals, points, and tangents at the requested
+scale. It also verifies that the four cardinal semi-axis displacements remain
+representable after translation to the world-space center. A radius-one circle
+at a center whose floating-point spacing is already much larger than one fails
+instead of silently collapsing into a point or line.
+For both center-authoring channels, the forward plane-local-to-world embedding
+error must be no greater than `sqrt(machine epsilon)` times the circle radius,
+or the ellipse's smaller semi-axis. This relative error budget permits a large
+curve to remain usable at a large translation while requiring a small feature
+at the same translation to fail explicitly.
+
+`PlanarFrame3D.to_dict()` records canonical `normal` / `uAxis` / `vAxis`
+values together with scale-independent `normalSeed` / `uAxisSeed` direction
+evidence. `PlanarFrame3D.from_dict()` recomputes the basis from those seeds and
+requires an exact match; it never decides that arbitrary nearly orthogonal
+payload values are already certified. The point and curve contracts provide
+matching `from_dict()` methods. `PlanarCurveScene3D.from_dict()` and
+`from_json()` rebuild a complete registry, and a canonical scene JSON payload
+must round-trip byte-for-byte. This evidence also survives standard immutable
+`dataclasses.replace(...)` reconstruction. Replacing `normal` or `u_axis`
+reauthors fresh direction seeds; replacing a curve center with a certified
+`PlanarPoint3D` makes that new point authoritative over the old derived local
+coordinate field. A replacement that supplies a raw center must also reset
+`center_coordinates=None` so the coordinates are inferred and certified again.
+
+`PlanarCurveScene3D(frames, curves)` is a deterministic renderer-neutral
+registry. Frame IDs and curve IDs must be unique and globally distinct, and
+every curve must reference the exact registered frame with the same ID.
+`lower_to_analytic_curves()` returns the lowered curves in stable `curve_id`
+order; `to_dict()` and `canonical_json()` expose the corresponding serializable
+contract.
+
+Finite cylinder/cone terminal circles use the same contract. A
+`PlanarCapSpec` or `CircularTrimRimSpec` exposes its normalized
+`planar_frame`, and `boundary_circle(curve_id)` returns a `Circle3DSpec` with
+the existing cap/rim identity and parameter phase. Surface-boundary
+compositing immediately lowers that value to the existing `CircleArcCurve`, so
+visibility, painter ordering, and Manim fixed slots still have one analytic
+curve runtime. A trim rim remains only a boundary circle; this adapter does not
+invent a closing disk for an open shell.
+
+These five types remain renderer-neutral geometry contracts: they do not
+themselves parse, style, attach, or animate Manim objects. The controlled TikZ
+frontend described in
+[Explicit TikZ planar curves in 3D](#explicit-tikz-planar-curves-in-3d) now
+maps its three static commands into those contracts and consumes them through
+the fixed-view or world-space renderer. This is a deliberately narrow adapter,
+not a general `PlanarCurveScene3D` Manim authoring facade and not support for
+arbitrary TikZ circle, ellipse, fill, dash, or arc syntax. Advanced callers may
+still pass lowered `CircleArcCurve` / `EllipseArcCurve` values to the existing
+visibility or Manim layers, but that manual composition is separate from the
+static TikZ adapter.
+
+### Certified Dandelin spheres and teaching overlays
+
+`compute_dandelin_construction(construction_id, cone, plane)` derives the
+finite Dandelin spheres, their focus points on the section plane, their real
+cone-contact `Circle3DSpec` values, and their directrices. It first reuses the
+ordinary analytic section solver, then requires every complete sphere extent
+to fit strictly inside the authored `ConeSpec.axial_range`. A sphere that
+touches or crosses a terminal plane, a cap-chord section, a plane through the
+apex, or another degenerate/incomplete construction fails explicitly. The
+result is a renderer-neutral `DandelinConstruction3D` with deterministic
+canonical JSON.
+
+```python
+from math import pi
+from polyhedron_visibility.quadrics import (
+    ConeModel, ConeSpec, SectionPlane, compute_dandelin_construction,
+)
+
+cone = ConeSpec(
+    "cone", (0, 0, 0), (0, 0, 1), pi / 6, (0, 9),
+    model=ConeModel.OPEN_SINGLE,
+)
+plane = SectionPlane(
+    "cut", (0, 0, 2), (0.6, 0, 0.8), u_axis=(0, 1, 0),
+)
+construction = compute_dandelin_construction("ellipse-proof", cone, plane)
+```
+
+The v1 support rows are deliberately finite and narrow: circle/ellipse use one
+single nappe and require two finite spheres; an exact-parabola `OPEN_SINGLE`
+uses its one finite sphere and does not create an infinity placeholder; a
+complete hyperbola requires one finite sphere on each nappe of an
+`OPEN_DOUBLE`. `ANALYTIC_DOUBLE`, a single-nappe hyperbola, an ellipse or
+parabola authored on `OPEN_DOUBLE`, and any section with a real cap chord are
+rejected. `CLOSED_SINGLE` circle/ellipse works only when it remains a complete
+pure lateral section and both spheres fit before the real terminal cap.
+
+`build_dandelin_meridian_diagram(construction)` derives the genuine axial
+section: the sphere circles are true great-circle sections and their contacts
+with the finite cone generators and section line are certified.
+`build_dandelin_section_plane_diagram(construction)` derives the cutting-plane
+conic, foci, directrices, and sphere-plane tangencies. It intentionally
+contains no sphere-circle field because the sphere centres generally do not
+lie in the cutting plane. Both diagrams retain the authoritative construction,
+rederive all fields during validation, and use view-local object IDs plus a
+shared `sourceRef` for cross-view identity.
+
+`DandelinSection3D(scene, cone=..., plane=...,
+construction_id=...).attach()` is the matching static Cairo authoring facade.
+It retains the existing cone/section compositor, then draws the certified
+spheres, contact circles, clipped directrices, and focus dots in a separate
+top teaching band. This is intentionally a diagrammatic overlay:
+`visibility_authoritative` is `False`, `overlay_mode` is `"diagrammatic"`, and
+the tangent cone/spheres have **not** been physically multi-surface
+composited. `build_dandelin_teaching_overlay()` likewise rejects `physical`
+and `depth_aware_diagrammatic` mode requests.
+
+The facade accepts immutable cone/plane geometry and one complete immutable
+parallel-camera frame. A `ParallelCameraState` freezes matrix, target,
+screen-anchor, zoom, and current viewport translation for the section,
+overlay, and focus dots together; projection callbacks are rejected without
+execution. On `attach()` the facade lazily reserves one non-overlapping Scene
+painter band, derives separate section/overlay/focus sub-bands, and releases
+the aggregate on `restore()`. If cleanup cannot prove that Scene and
+fixed-frame ownership are gone, it retains both the runtime references and
+reservation for an explicit retry instead of creating orphan display objects.
+Display-slot identities therefore exist only while attached. Perspective,
+OpenGL, and dynamic family transitions remain outside v1. Full formulas, the
+support/rejection matrix, and the finite-fit rule are in
+[Dandelin spheres v1](dandelin-spheres-v1.md).
+
+The static TikZ-facing path declares the source relation rather than inferring
+it from arbitrary circles:
+
+```tex
+\DeclareSpaceRightCone{cone}{A/Z/R}{30}{0/9}{open_single};
+\DeclareSpacePlane{cut}{O/U/V};
+\DeclareDandelinConstruction{dan}{cone}{cut};
+\DrawDandelinDiagram[view=spatial,preset=classroom]{dan};
+```
+
+`view` may be `spatial`, `meridian`, or `section-plane`. The resulting
+`dandelin_diagram` is a fixed-view, diagrammatic object whose nested semantic
+items retain view-local IDs and cross-view `sourceRef` values. Physical mode,
+mixed drawable objects, a fake section-plane sphere circle, motion, camera
+shots, and source-v3 generation are rejected explicitly. The complete example
+is in [`examples/tikz_dandelin_views`](../examples/tikz_dandelin_views/README.md).
 
 The Manim binding accepts immutable surface/curve sequences or callbacks that
 return a new sequence for the current frame.  IDs and counts remain fixed for
