@@ -153,6 +153,7 @@ class NativeFixedViewRenderer(NativeManimRenderer):
                 view=diagram.view,
                 projection_matrix=projection,
                 preset=diagram.preset,
+                mode=diagram.mode,
                 show_contact_circles=diagram.show_contact_circles,
                 show_directrices=diagram.show_directrices,
                 show_foci=diagram.show_foci,

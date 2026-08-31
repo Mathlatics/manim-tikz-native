@@ -60,6 +60,7 @@ from .boundary_compositing import (
     QuadricBoundarySource,
     QuadricBoundaryVisibilitySpan,
     compute_boundary_visibility,
+    compute_quadric_boundary_crossings,
     compute_quadric_boundary_compositing,
 )
 from .contract import (
@@ -70,15 +71,15 @@ from .contract import (
     SectionPlane,
     SphereSpec,
 )
-from .curve_intersections import (
-    ProjectedCurveIntersectionError,
-    compute_projected_curve_crossings,
-)
 from .curves import (
     EllipseArcCurve,
     ParametricConicBranch,
     PointMarker3D,
     SegmentCurve,
+)
+from .curve_intersections import (
+    ProjectedCurveIntersectionError,
+    compute_projected_curve_crossings,
 )
 from .global_occlusion import (
     GlobalQuadricFrame,
@@ -237,6 +238,10 @@ ProjectionValue = (
 )
 ProjectionInput = ProjectionValue | Callable[[object], ProjectionValue]
 BoundaryGeneratorInput = Sequence[GeneratorBoundarySpec]
+BoundarySourceFactory = Callable[
+    [ParallelView],
+    Sequence[QuadricBoundarySource],
+]
 
 
 DEFAULT_QUADRIC_VIEW = ParallelView.from_matrix(
@@ -555,6 +560,7 @@ class _ResolvedQuadricFrameInputs:
     curve_opacities: Mapping[str, float]
     points: tuple[PointMarker3D, ...]
     point_opacities: Mapping[str, float]
+    boundary_sources: tuple[QuadricBoundarySource, ...] | None
     boundary_opacities: Mapping[str, float]
     section_plane_fill_opacity: float
     section_plane_stroke_opacity: float
@@ -797,6 +803,7 @@ class QuadricOcclusion3D:
         boundary_visibility_mode: str = "legacy",
         include_surface_boundaries: bool = True,
         generator_boundaries: BoundaryGeneratorInput = (),
+        boundary_source_factory: BoundarySourceFactory | None = None,
         allocated_boundary_ids: Sequence[str] | None = None,
         geometry_prototype: QuadricGeometryPrototype | None = None,
         display_offset: Sequence[float] = (0.0, 0.0),
@@ -847,6 +854,28 @@ class QuadricOcclusion3D:
             raise QuadricManimError(
                 "surface_order_mode must be 'automatic' or 'explicit'"
             )
+        if boundary_source_factory is not None:
+            if not callable(boundary_source_factory):
+                raise TypeError("boundary_source_factory must be callable or None")
+            if boundary_visibility_mode != "unified":
+                raise QuadricManimError(
+                    "boundary_source_factory requires unified boundary visibility"
+                )
+            if include_surface_boundaries or generators:
+                raise QuadricManimError(
+                    "boundary_source_factory owns all semantic boundaries; "
+                    "include_surface_boundaries must be false and "
+                    "generator_boundaries must be empty"
+                )
+            if section_plane is not None:
+                raise QuadricManimError(
+                    "boundary_source_factory cannot be combined with the "
+                    "single-surface section compositor"
+                )
+            if allocated_boundary_ids is None:
+                raise QuadricManimError(
+                    "boundary_source_factory requires allocated_boundary_ids"
+                )
         if section_patch is not None and section_plane is None:
             raise QuadricManimError(
                 "section_patch requires section_plane"
@@ -917,6 +946,7 @@ class QuadricOcclusion3D:
         self.boundary_visibility_mode = boundary_visibility_mode
         self.include_surface_boundaries = include_surface_boundaries
         self._generator_boundaries = generators
+        self._boundary_source_factory = boundary_source_factory
         self._allocated_boundary_ids_input = allocated_boundary_ids
         self._curve_opacity_input = curve_opacities
         self._point_opacity_input = point_opacities
@@ -967,6 +997,10 @@ class QuadricOcclusion3D:
         self._surface_ids = tuple(item.surface_id for item in initial_surfaces)
         initial_curve_ids = tuple(item.curve_id for item in initial_curves)
         initial_point_ids = tuple(item.point_id for item in initial_points)
+        if self._boundary_source_factory is not None and initial_curves:
+            raise QuadricManimError(
+                "boundary_source_factory replaces curves; curves must be empty"
+            )
         if self._section_enabled and len(initial_surfaces) != 1:
             raise QuadricManimError(
                 "section compositing requires exactly one finite convex quadric"
@@ -1025,7 +1059,10 @@ class QuadricOcclusion3D:
                     + ", ".join(unknown_points)
                 )
         auto_boundary_ids: tuple[str, ...] = ()
-        if self.boundary_visibility_mode == "unified":
+        if (
+            self.boundary_visibility_mode == "unified"
+            and self._boundary_source_factory is None
+        ):
             auto_boundary_ids = surface_boundary_source_ids(
                 initial_surfaces,
                 self._generator_boundaries,
@@ -1350,6 +1387,37 @@ class QuadricOcclusion3D:
         )
         return _point_items(value)
 
+    def _resolve_boundary_sources(
+        self,
+        view: ParallelView,
+    ) -> tuple[QuadricBoundarySource, ...] | None:
+        factory = self._boundary_source_factory
+        if factory is None:
+            return None
+        try:
+            raw = tuple(factory(view))
+        except TypeError as exc:
+            raise QuadricManimError(
+                "boundary_source_factory must return a finite sequence"
+            ) from exc
+        if not all(isinstance(item, QuadricBoundarySource) for item in raw):
+            raise TypeError(
+                "boundary_source_factory must return QuadricBoundarySource values"
+            )
+        ordered = tuple(sorted(raw, key=lambda item: item.source_id))
+        source_ids = tuple(item.source_id for item in ordered)
+        if len(set(source_ids)) != len(source_ids):
+            raise QuadricManimError(
+                "boundary_source_factory returned duplicate source identities"
+            )
+        unknown = sorted(set(source_ids) - set(self._boundary_source_ids))
+        if unknown:
+            raise QuadricManimCapacityError(
+                "boundary_source_factory returned unallocated sources: "
+                + ", ".join(unknown)
+            )
+        return ordered
+
     def _resolve_section_plane(self) -> SectionPlane:
         source = self._section_plane_input
         value = source() if callable(source) else source
@@ -1605,6 +1673,7 @@ class QuadricOcclusion3D:
         paint_policy = self._resolve_paint_policy()
         projection_frame = self._resolve_projection_frame()
         view = self._resolve_view(projection_frame)
+        boundary_sources = self._resolve_boundary_sources(view)
         display_offset = _projection_display_offset(
             self.scene,
             projection_frame,
@@ -1642,6 +1711,7 @@ class QuadricOcclusion3D:
             self.include_surface_boundaries,
             self.legacy_surface_stroke_fallback,
             self._generator_boundaries,
+            boundary_sources,
             self.boundary_styles,
             self.section_id,
             self.section_coefficient_tolerance,
@@ -1671,6 +1741,7 @@ class QuadricOcclusion3D:
             curve_opacities,
             points,
             point_opacities,
+            boundary_sources,
             boundary_opacities,
             section_plane_fill_opacity,
             section_plane_stroke_opacity,
@@ -1808,9 +1879,19 @@ class QuadricOcclusion3D:
         *,
         surface_sources: Sequence[QuadricBoundarySource] | None = None,
         include_plane_outline: bool = True,
+        custom_sources: Sequence[QuadricBoundarySource] | None = None,
     ) -> tuple[QuadricBoundarySource, ...]:
+        if custom_sources is not None:
+            if curves or plane is not None or patch is not None:
+                raise QuadricManimError(
+                    "custom boundary sources cannot be combined with curves "
+                    "or section inputs"
+                )
+            result = list(custom_sources)
+        else:
+            result = []
         authoritative_section_curves: tuple[AnalyticCurve3D, ...] | None = None
-        if (
+        if custom_sources is None and (
             plane is not None
             and len(surfaces) == 1
             and self.section_id is not None
@@ -1832,34 +1913,35 @@ class QuadricOcclusion3D:
                     "authoritative section-boundary preparation failed: "
                     f"{exc}"
                 ) from exc
-        result = [
-            (
-                section_curve_boundary_source(
-                    curve,
-                    surfaces[0],
-                    plane,
-                    section_id=self.section_id,
-                    authoritative_curves=authoritative_section_curves,
-                    context=self.context,
-                    style_id="style:curve",
+        if custom_sources is None:
+            result.extend(
+                (
+                    section_curve_boundary_source(
+                        curve,
+                        surfaces[0],
+                        plane,
+                        section_id=self.section_id,
+                        authoritative_curves=authoritative_section_curves,
+                        context=self.context,
+                        style_id="style:curve",
+                    )
+                    if (
+                        plane is not None
+                        and len(surfaces) == 1
+                        and self.section_id is not None
+                    )
+                    else curve_boundary_source(
+                        curve,
+                        style_id="style:curve",
+                    )
                 )
-                if (
-                    plane is not None
-                    and len(surfaces) == 1
-                    and self.section_id is not None
-                )
-                else curve_boundary_source(
-                    curve,
-                    style_id="style:curve",
-                )
+                for curve in curves
             )
-            for curve in curves
-        ]
-        if surface_sources is None:
-            surface_sources = self._surface_boundary_sources(surfaces, view)
-        result.extend(surface_sources)
-        if include_plane_outline and plane is not None and patch is not None:
-            result.extend(plane_outline_sources(plane, patch))
+            if surface_sources is None:
+                surface_sources = self._surface_boundary_sources(surfaces, view)
+            result.extend(surface_sources)
+            if include_plane_outline and plane is not None and patch is not None:
+                result.extend(plane_outline_sources(plane, patch))
         result.sort(key=lambda item: item.source_id)
         ids = tuple(item.source_id for item in result)
         if len(set(ids)) != len(ids):
@@ -1958,101 +2040,23 @@ class QuadricOcclusion3D:
             QuadricRankOneSectionSourceGroup | None
         ) = None,
     ) -> tuple[object, ...]:
-        from itertools import combinations
-
-        result = list(cached_crossings)
-        rank_one_source_ids = (
-            frozenset()
-            if rank_one_section_source_group is None
-            else rank_one_section_source_group.source_ids
-        )
-        rank_one_point_source_ids = (
-            frozenset()
-            if rank_one_section_source_group is None
-            else rank_one_section_source_group.point_source_ids
-        )
-
-        def pair_is_certified_rank_one_overlap(
-            first: QuadricBoundarySource,
-            second: QuadricBoundarySource,
-        ) -> bool:
-            if rank_one_section_source_group is None:
-                return False
-            if (
-                first.source_id in rank_one_point_source_ids
-                or second.source_id in rank_one_point_source_ids
-            ):
-                # A certified POINT member paints no stroke, so it cannot own a
-                # fragment-level crossing even when another projected curve
-                # happens to pass through the same screen coordinate.
-                return True
-            first_is_section = first.source_id in rank_one_source_ids
-            second_is_section = second.source_id in rank_one_source_ids
-            if first_is_section and second_is_section:
-                # Both world curves are analytically certified members of the
-                # same surface/plane section.  Their rank-one images overlap by
-                # construction; asking the generic 2D root finder to rediscover
-                # that fact produces duplicate roots and zero-length pieces.
-                return True
-            if not first_is_section and not second_is_section:
-                return False
-            other = second if first_is_section else first
-            return (
-                other.owner_surface_id
-                == rank_one_section_source_group.surface_id
-                and other.semantic_kind
-                in {
-                    BoundarySemanticKind.SURFACE_BOUNDARY,
-                    BoundarySemanticKind.TRUE_SILHOUETTE,
-                }
+        try:
+            return compute_quadric_boundary_crossings(
+                sources,
+                spans,
+                view,
+                paint_policy=paint_policy,
+                context=self.context,
+                cached_source_ids=cached_source_ids,
+                cached_crossings=cached_crossings,
+                rank_one_section_source_groups=(
+                    ()
+                    if rank_one_section_source_group is None
+                    else (rank_one_section_source_group,)
+                ),
             )
-
-        for first, second in combinations(sources, 2):
-            if (
-                first.source_id in cached_source_ids
-                and second.source_id in cached_source_ids
-            ):
-                continue
-            if pair_is_certified_rank_one_overlap(first, second):
-                continue
-            active_intervals = None
-            if paint_policy is QuadricPaintPolicy.PHYSICAL:
-                active_intervals = {
-                    source.source_id: tuple(
-                        span.interval
-                        for span in spans[source.source_id]
-                        if span.kind is VisibilityKind.VISIBLE
-                    )
-                    for source in (first, second)
-                }
-            try:
-                result.extend(
-                    compute_projected_curve_crossings(
-                        (first.curve, second.curve),
-                        view,
-                        context=self.context,
-                        active_intervals=active_intervals,
-                    )
-                )
-            except ProjectedCurveIntersectionError as exc:
-                same_owner = (
-                    first.owner_surface_id is not None
-                    and first.owner_surface_id == second.owner_surface_id
-                )
-                if same_owner and {
-                    first.semantic_kind,
-                    second.semantic_kind,
-                } <= {
-                    BoundarySemanticKind.SURFACE_BOUNDARY,
-                    BoundarySemanticKind.TRUE_SILHOUETTE,
-                }:
-                    continue
-                raise QuadricManimError(
-                    "semantic boundary crossings cannot be certified: "
-                    f"{first.source_id!r}, {second.source_id!r}: {exc}"
-                ) from exc
-        by_id = {item.crossing_id: item for item in result}
-        return tuple(by_id[key] for key in sorted(by_id))
+        except QuadricBoundaryCompositingError as exc:
+            raise QuadricManimError(str(exc)) from exc
 
     def _prepare_static_surface_boundaries(
         self,
@@ -2067,6 +2071,8 @@ class QuadricOcclusion3D:
         Mapping[str, tuple[QuadricBoundaryVisibilitySpan, ...]],
         tuple[object, ...],
     ]:
+        if self._boundary_source_factory is not None:
+            return (), {}, ()
         signature = _display_digest(
             "quadric-static-surface-boundaries-v1",
             surface_view_signature,
@@ -2117,6 +2123,7 @@ class QuadricOcclusion3D:
         paint_policy: QuadricPaintPolicy,
         curve_opacities: Mapping[str, float],
         boundary_opacities: Mapping[str, float],
+        custom_boundary_sources: tuple[QuadricBoundarySource, ...] | None,
         section_plane: SectionPlane | None,
         section_patch: PlaneDisplayPatchSpec | None,
         surface_view_signature: bytes,
@@ -2370,6 +2377,7 @@ class QuadricOcclusion3D:
                     or section_frame.projection_kind
                     is PlanePatchProjectionKind.AREA
                 ),
+                custom_sources=custom_boundary_sources,
             )
             non_plane = tuple(
                 item
@@ -2705,6 +2713,7 @@ class QuadricOcclusion3D:
                 resolved_inputs.paint_policy,
                 curve_opacities,
                 resolved_inputs.boundary_opacities,
+                resolved_inputs.boundary_sources,
                 resolved_inputs.section_plane,
                 resolved_inputs.section_patch,
                 resolved_inputs.surface_view_signature,
@@ -4500,6 +4509,7 @@ class QuadricOcclusion3D:
 
 
 __all__ = [
+    "BoundarySourceFactory",
     "DEFAULT_QUADRIC_VIEW",
     "PreparedQuadricManimFrame",
     "QUADRIC_MANIM_LIMITS",

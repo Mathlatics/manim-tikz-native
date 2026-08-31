@@ -153,6 +153,70 @@ _EXPORTS: Final[dict[str, tuple[str, str]]] = {
         ".dandelin_overlay",
         "canonical_dandelin_teaching_overlay_json",
     ),
+    "DANDELIN_TANGENT_CONTACT_SCHEMA": (
+        ".dandelin_visibility",
+        "DANDELIN_TANGENT_CONTACT_SCHEMA",
+    ),
+    "DANDELIN_VISIBILITY_FRAME_SCHEMA": (
+        ".dandelin_visibility",
+        "DANDELIN_VISIBILITY_FRAME_SCHEMA",
+    ),
+    "DandelinTangentContactEvidence": (
+        ".dandelin_visibility",
+        "DandelinTangentContactEvidence",
+    ),
+    "DandelinVisibilityError": (
+        ".dandelin_visibility",
+        "DandelinVisibilityError",
+    ),
+    "DandelinVisibilityFrame": (
+        ".dandelin_visibility",
+        "DandelinVisibilityFrame",
+    ),
+    "DandelinVisibilitySource": (
+        ".dandelin_visibility",
+        "DandelinVisibilitySource",
+    ),
+    "DandelinVisibilityStroke": (
+        ".dandelin_visibility",
+        "DandelinVisibilityStroke",
+    ),
+    "canonical_dandelin_visibility_json": (
+        ".dandelin_visibility",
+        "canonical_dandelin_visibility_json",
+    ),
+    "build_dandelin_visibility_sources": (
+        ".dandelin_visibility",
+        "build_dandelin_visibility_sources",
+    ),
+    "compute_dandelin_visibility_frame": (
+        ".dandelin_visibility",
+        "compute_dandelin_visibility_frame",
+    ),
+    "fit_dandelin_visibility_patch": (
+        ".dandelin_visibility",
+        "fit_dandelin_visibility_patch",
+    ),
+    "DEFAULT_DANDELIN_BOUNDARY_STYLES": (
+        ".dandelin_manim",
+        "DEFAULT_DANDELIN_BOUNDARY_STYLES",
+    ),
+    "DEFAULT_DANDELIN_OCCLUSION_LIMITS": (
+        ".dandelin_manim",
+        "DEFAULT_DANDELIN_OCCLUSION_LIMITS",
+    ),
+    "DEFAULT_DANDELIN_OCCLUSION_STYLE": (
+        ".dandelin_manim",
+        "DEFAULT_DANDELIN_OCCLUSION_STYLE",
+    ),
+    "DandelinManimError": (
+        ".dandelin_manim",
+        "DandelinManimError",
+    ),
+    "DandelinOcclusion3D": (
+        ".dandelin_manim",
+        "DandelinOcclusion3D",
+    ),
     "DEFAULT_DANDELIN_OVERLAY_STYLE": (
         ".dandelin_authoring",
         "DEFAULT_DANDELIN_OVERLAY_STYLE",
@@ -411,6 +475,10 @@ _EXPORTS: Final[dict[str, tuple[str, str]]] = {
     "compute_boundary_visibility": (
         ".boundary_compositing",
         "compute_boundary_visibility",
+    ),
+    "compute_quadric_boundary_crossings": (
+        ".boundary_compositing",
+        "compute_quadric_boundary_crossings",
     ),
     "compute_quadric_boundary_compositing": (
         ".boundary_compositing",

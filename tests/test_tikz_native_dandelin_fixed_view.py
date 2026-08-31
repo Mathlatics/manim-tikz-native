@@ -108,6 +108,143 @@ def _semantic_signature(group: VGroup) -> tuple[tuple[object, ...], ...]:
 
 
 class DandelinFixedViewTests(unittest.TestCase):
+    def test_depth_aware_spatial_view_uses_certified_hidden_line_fragments(
+        self,
+    ) -> None:
+        construction = _construction("automatic-hidden-lines")
+        group = build_dandelin_fixed_view(
+            construction,
+            view="spatial",
+            projection_matrix=SPATIAL_MATRIX,
+            mode="depth_aware_diagrammatic",
+        )
+
+        self.assertEqual(group.mode, "depth_aware_diagrammatic")
+        self.assertTrue(group.curve_visibility_authoritative)
+        self.assertFalse(group.surface_visibility_authoritative)
+        self.assertFalse(group.visibility_authoritative)
+        self.assertGreater(group.metadata["hiddenSpanCount"], 0)
+        self.assertEqual(
+            group.metadata["tangentContactCount"],
+            len(construction.spheres),
+        )
+        self.assertIsNotNone(group.visibility_frame)
+        fragments = tuple(
+            member
+            for item in group.submobjects
+            for member in item.submobjects
+            if getattr(member, "dandelin_metadata", {}).get("renderIntent")
+            in {"solid", "dashed"}
+        )
+        self.assertTrue(fragments)
+        self.assertTrue(
+            any(
+                item.dandelin_metadata["renderIntent"] == "solid"
+                for item in fragments
+            )
+        )
+        self.assertTrue(
+            any(
+                item.dandelin_metadata["renderIntent"] == "dashed"
+                and item.dandelin_metadata["occluderSurfaceIds"]
+                for item in fragments
+            )
+        )
+        primitives = tuple(
+            member
+            for item in group.submobjects
+            for member in item.submobjects
+            if isinstance(
+                getattr(member, "dandelin_metadata", {}).get("painterItemId"),
+                str,
+            )
+        )
+        z_by_item = {
+            item.dandelin_metadata["painterItemId"]: item.z_index
+            for item in primitives
+        }
+        self.assertEqual(
+            tuple(
+                item_id
+                for item_id, _z in sorted(
+                    z_by_item.items(),
+                    key=lambda item: item[1],
+                )
+            ),
+            group.visibility_frame.compositing_frame.draw_order,
+        )
+        self.assertEqual(len(set(z_by_item.values())), len(z_by_item))
+        plane_background = next(
+            member
+            for item in group.submobjects
+            for member in item.submobjects
+            if getattr(member, "dandelin_metadata", {}).get("painterLayer")
+            == "diagrammatic-plane-background"
+        )
+        self.assertLess(plane_background.z_index, min(z_by_item.values()))
+        self.assertTrue(
+            any(
+                member.dandelin_metadata.get("semanticKind")
+                == "plane_boundary_fragment"
+                for member in fragments
+            )
+        )
+
+    def test_depth_aware_mode_is_spatial_only_and_camera_dependent(self) -> None:
+        construction = _construction("automatic-camera")
+        with self.assertRaisesRegex(
+            DandelinFixedViewError,
+            "only valid for the spatial view",
+        ):
+            build_dandelin_fixed_view(
+                construction,
+                view="meridian",
+                mode="depth_aware_diagrammatic",
+            )
+        rotated = np.asarray(
+            (
+                (0.8, -0.6, 0.0),
+                (0.3, 0.4, -0.8660254037844386),
+                (0.5196152422706632, 0.6928203230275509, 0.5),
+            ),
+            dtype=float,
+        )
+        first = build_dandelin_fixed_view(
+            construction,
+            view="spatial",
+            projection_matrix=SPATIAL_MATRIX,
+            mode="depth_aware_diagrammatic",
+        )
+        second = build_dandelin_fixed_view(
+            construction,
+            view="spatial",
+            projection_matrix=rotated,
+            mode="depth_aware_diagrammatic",
+        )
+        without_directrices = build_dandelin_fixed_view(
+            construction,
+            view="spatial",
+            projection_matrix=SPATIAL_MATRIX,
+            mode="depth_aware_diagrammatic",
+            show_directrices=False,
+        )
+        self.assertEqual(
+            tuple(item.source_id for item in first.visibility_frame.strokes),
+            tuple(item.source_id for item in second.visibility_frame.strokes),
+        )
+        self.assertNotEqual(
+            first.visibility_frame.canonical_json(),
+            second.visibility_frame.canonical_json(),
+        )
+        self.assertNotIn(
+            "directrix",
+            {item.role for item in without_directrices.visibility_frame.strokes},
+        )
+        self.assertIn(
+            "plane_boundary",
+            {item.role for item in without_directrices.visibility_frame.strokes},
+        )
+
     def test_three_views_are_finite_plain_vgroups_with_explicit_non_authority(
         self,
     ) -> None:

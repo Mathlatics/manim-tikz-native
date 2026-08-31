@@ -1,28 +1,60 @@
-"""Static, diagrammatic Manim views of certified Dandelin constructions.
+"""Static Manim views of certified Dandelin constructions.
 
 This module is intentionally independent of the TikZ compiler and of the
 scene-owning quadric Manim facades.  It converts one already-certified
 ``DandelinConstruction3D`` into ordinary two-dimensional Manim mobjects in
 source-coordinate units.  Picture scaling remains the caller's responsibility.
 
-The spatial view is a fixed parallel projection.  It is explicitly
-diagrammatic: the translucent cone, section plane, and spheres are arranged in
-a stable teaching order, but no physical cone/sphere occlusion is claimed.
+The spatial view is a fixed parallel projection.  Legacy ``diagrammatic``
+mode retains its stable authored order.  ``depth_aware_diagrammatic`` reuses
+the analytic quadric kernel to split every semantic stroke into visible and
+hidden fragments and consumes the shared fragment painter graph while keeping
+translucent surface-fill ordering explicitly diagrammatic.
 """
 
 from __future__ import annotations
 
 from collections import defaultdict, deque
-from math import isfinite, tau
+from math import ceil, isfinite, tau
 from typing import Sequence
 
 import numpy as np
-from manim import Circle, Dot, Line, Mobject, ORIGIN, Polygon, VGroup, VMobject
+from manim import (
+    Circle,
+    DashedVMobject,
+    Dot,
+    Line,
+    Mobject,
+    ORIGIN,
+    Polygon,
+    VGroup,
+    VMobject,
+)
+
+from polyhedron_visibility.parallel_solver import ParallelView
+from polyhedron_visibility.topology import ParameterInterval
+from polyhedron_visibility.quadrics.critical import AnalyticCurve3D
+from polyhedron_visibility.quadrics.boundary_compositing import (
+    BoundaryRenderIntent,
+    QuadricBoundaryPaintFragment,
+)
 
 from polyhedron_visibility.quadrics.conics import ConicKind
 from polyhedron_visibility.quadrics.contract import PlaneDisplayPatchSpec
-from polyhedron_visibility.quadrics.curves import ParametricConicBranch
+from polyhedron_visibility.quadrics.curves import (
+    CircleArcCurve,
+    EllipseArcCurve,
+    ParametricConicBranch,
+    SegmentCurve,
+)
 from polyhedron_visibility.quadrics.dandelin import DandelinConstruction3D
+from polyhedron_visibility.quadrics.dandelin_visibility import (
+    DandelinVisibilityError,
+    DandelinVisibilityFrame,
+    DandelinVisibilityStroke,
+    compute_dandelin_visibility_frame,
+    fit_dandelin_visibility_patch,
+)
 from polyhedron_visibility.quadrics.dandelin_views import (
     DandelinMeridianDiagram2D,
     DandelinSectionPlaneDiagram2D,
@@ -32,7 +64,6 @@ from polyhedron_visibility.quadrics.dandelin_views import (
 )
 from polyhedron_visibility.quadrics.plane_patch import (
     PlanePatchFitError,
-    fit_plane_display_patch,
 )
 from polyhedron_visibility.quadrics.trace import section_trace_curves
 
@@ -46,7 +77,8 @@ from .dandelin_contract import build_dandelin_semantic_plan
 
 _VIEWS = frozenset({"spatial", "meridian", "section-plane"})
 _PRESETS = frozenset({"classroom"})
-_MODE = "diagrammatic"
+_MODES = frozenset({"diagrammatic", "depth_aware_diagrammatic"})
+_DEFAULT_MODE = "diagrammatic"
 _VIEW_FLAG_DEFAULTS = {
     "spatial": (True, True, True),
     "meridian": (True, False, True),
@@ -375,6 +407,7 @@ def _affine_circle_mobject(
     fill_opacity: float,
     stroke_color: str,
     stroke_width: float,
+    stroke_opacity: float = 1.0,
     semantic_kind: str,
     semantic_id: str,
     source_refs: Sequence[str],
@@ -410,7 +443,11 @@ def _affine_circle_mobject(
     )
     curve = Circle(radius=1.0)
     curve.set_fill(color=fill_color, opacity=fill_opacity)
-    curve.set_stroke(color=stroke_color, width=stroke_width, opacity=1.0)
+    curve.set_stroke(
+        color=stroke_color,
+        width=stroke_width,
+        opacity=stroke_opacity,
+    )
     curve.apply_matrix(transform, about_point=ORIGIN)
     curve.shift(_local_point(screen_center))
     axes = (
@@ -427,6 +464,7 @@ def _affine_circle_mobject(
         screenCenter=tuple(float(item) for item in screen_center),
         screenBasis=tuple(tuple(float(item) for item in row) for row in screen_basis),
         semiAxes=axes,
+        strokeOpacity=stroke_opacity,
         **metadata,
     )  # type: ignore[return-value]
 
@@ -470,6 +508,8 @@ def _sphere_mobject(
     construction: DandelinConstruction3D,
     sphere_index: int,
     matrix: np.ndarray,
+    *,
+    stroke_opacity: float = 1.0,
 ) -> Circle:
     record = construction.spheres[sphere_index]
     screen = matrix[:2]
@@ -505,12 +545,14 @@ def _sphere_mobject(
         fill_opacity=0.22,
         stroke_color=_CLASSROOM["sphere_stroke"],
         stroke_width=1.8,
+        stroke_opacity=stroke_opacity,
         semantic_kind="dandelin_sphere",
         semantic_id=record.sphere_id,
         source_refs=(record.sphere_id,),
         semi_axes=semi_axes,
         worldCenter=record.sphere.center,
         worldRadius=record.sphere.radius,
+        painterItemId=f"surface:{record.sphere_id}:opaque-projection",
     )
 
 
@@ -520,39 +562,15 @@ def _display_patch(
     include_directrices: bool,
 ) -> PlaneDisplayPatchSpec:
     try:
-        base = fit_plane_display_patch(
-            f"{construction.plane.plane_id}:dandelin-fixed-view-base",
-            construction.plane,
-            construction.cone.render_components,
+        return fit_dandelin_visibility_patch(
+            construction,
+            include_directrices=include_directrices,
             margin_ratio=0.14,
-        ).patch
-    except PlanePatchFitError as exc:
+        )
+    except DandelinVisibilityError as exc:
         raise DandelinFixedViewError(
             f"section-plane display patch cannot be fitted: {exc}"
         ) from exc
-    if not include_directrices or not construction.directrices:
-        return base
-    center = np.asarray(base.center_coordinates, dtype=float)
-    lower = center - np.asarray((base.half_width, base.half_height), dtype=float)
-    upper = center + np.asarray((base.half_width, base.half_height), dtype=float)
-    padding = 0.18 * max(base.half_width, base.half_height)
-    for directrix in construction.directrices:
-        point = np.asarray(directrix.point.coordinates, dtype=float)
-        lower = np.minimum(lower, point - padding)
-        upper = np.maximum(upper, point + padding)
-    expanded_center = 0.5 * (lower + upper)
-    half = 0.5 * (upper - lower)
-    if not np.all(np.isfinite((*expanded_center, *half))) or np.any(half <= 0.0):
-        raise DandelinFixedViewError(
-            "directrix display patch has no finite positive extent"
-        )
-    return PlaneDisplayPatchSpec(
-        f"{construction.plane.plane_id}:dandelin-fixed-view",
-        construction.plane.plane_id,
-        float(half[0]),
-        float(half[1]),
-        (float(expanded_center[0]), float(expanded_center[1])),
-    )
 
 
 def _bounds_from_patch(
@@ -727,9 +745,31 @@ def _cone_world_point(
     return _point3(point, "cone wireframe point")
 
 
+def _cone_component_id(
+    construction: DandelinConstruction3D,
+    start_axial: float,
+    end_axial: float,
+) -> str:
+    scale = max(1.0, abs(start_axial), abs(end_axial))
+    tolerance = 256.0 * np.finfo(float).eps * scale
+    matches = tuple(
+        item.surface_id
+        for item in construction.cone.render_components
+        if item.axial_range[0] >= start_axial - tolerance
+        and item.axial_range[1] <= end_axial + tolerance
+    )
+    if len(matches) != 1:
+        raise DandelinFixedViewError(
+            "cone face does not identify exactly one finite render component"
+        )
+    return matches[0]
+
+
 def _spatial_cone_mobjects(
     construction: DandelinConstruction3D,
     matrix: np.ndarray,
+    *,
+    include_wires: bool = True,
 ) -> tuple[Mobject, ...]:
     cone = construction.cone
     faces: list[Mobject] = []
@@ -743,6 +783,11 @@ def _spatial_cone_mobjects(
         for value in np.linspace(0.0, tau, _CONE_GENERATOR_COUNT, endpoint=False)
     )
     for nappe, start_axial, end_axial in _cone_nappe_intervals(construction):
+        component_id = _cone_component_id(
+            construction,
+            start_axial,
+            end_axial,
+        )
         projected_rims = {
             axial: tuple(
                 _screen_point(matrix, _cone_world_point(construction, axial, angle))
@@ -767,8 +812,12 @@ def _spatial_cone_mobjects(
                 source_refs=(cone.surface_id,),
                 nappe=nappe,
                 representation="projected-convex-nappe",
+                surfaceId=component_id,
+                painterItemId=f"surface:{component_id}:opaque-projection",
             )
         )
+        if not include_wires:
+            continue
         for axial, rim in projected_rims.items():
             if abs(axial) <= np.finfo(float).eps:
                 continue
@@ -812,7 +861,7 @@ def _spatial_cone_mobjects(
     return (*faces, *wires)
 
 
-def _spatial_view(
+def _diagrammatic_spatial_view(
     construction: DandelinConstruction3D,
     matrix: np.ndarray,
     *,
@@ -940,6 +989,276 @@ def _spatial_view(
             source_ref = focus.dandelin_metadata["semanticSourceRefs"][0]
             result.append(_semantic_wrapper("focus", source_ref, focus))
     return tuple(result)
+
+
+_AUTOMATIC_STROKE_STYLE = {
+    "cone_boundary": (_CLASSROOM["cone_wire"], 1.25),
+    "sphere_silhouette": (_CLASSROOM["sphere_stroke"], 1.8),
+    "section_curve": (_CLASSROOM["section"], 3.0),
+    "contact_circle": (_CLASSROOM["contact"], 2.0),
+    "directrix": (_CLASSROOM["directrix"], 1.6),
+    "plane_boundary": (_CLASSROOM["plane_stroke"], 1.4),
+}
+
+
+def _visibility_curve_points(
+    curve: AnalyticCurve3D,
+    interval: ParameterInterval,
+    matrix: np.ndarray,
+) -> tuple[np.ndarray, ...]:
+    if isinstance(curve, SegmentCurve):
+        count = 2
+    elif isinstance(curve, (CircleArcCurve, EllipseArcCurve)):
+        fraction = interval.length / curve.domain.length
+        count = max(4, int(ceil(64.0 * fraction)) + 1)
+    elif isinstance(curve, ParametricConicBranch):
+        fraction = interval.length / curve.domain.length
+        count = max(6, int(ceil(_SECTION_SAMPLES * fraction)) + 1)
+    else:  # pragma: no cover - guarded by the renderer-neutral contract
+        raise DandelinFixedViewError(
+            f"unsupported automatic visibility curve {type(curve).__name__}"
+        )
+    parameters = np.linspace(interval.start, interval.end, count)
+    points: list[np.ndarray] = []
+    for parameter in parameters:
+        point = _screen_point(matrix, curve.point(float(parameter)))
+        if not points or not np.array_equal(point, points[-1]):
+            points.append(point)
+    if len(points) < 2:
+        raise DandelinFixedViewError(
+            f"visibility fragment on {curve.curve_id!r} collapses in projection"
+        )
+    return tuple(points)
+
+
+def _visibility_fragment_mobject(
+    stroke: DandelinVisibilityStroke,
+    fragment: QuadricBoundaryPaintFragment,
+    matrix: np.ndarray,
+) -> Mobject:
+    color, width = _AUTOMATIC_STROKE_STYLE[stroke.role]
+    points = _visibility_curve_points(
+        stroke.source.curve,
+        fragment.interval,
+        matrix,
+    )
+    fragment_id = fragment.item_id
+    base = _path_mobject(
+        points,
+        color=color,
+        width=width,
+        semantic_kind=f"{stroke.role}_fragment",
+        semantic_id=fragment_id,
+        source_refs=(stroke.source_ref,),
+        closed=(
+            bool(getattr(stroke.source.curve, "closed", False))
+            and fragment.interval == stroke.source.curve.domain
+        ),
+        visibilitySourceId=stroke.source_id,
+        visibilityKind=fragment.effective_visibility_kind.value,
+        occluderSurfaceIds=fragment.occluder_surface_ids,
+        interval=(fragment.interval.start, fragment.interval.end),
+        painterItemId=fragment.item_id,
+        curveVisibilityAuthoritative=True,
+    )
+    if fragment.render_intent is BoundaryRenderIntent.SOLID:
+        base.dandelin_metadata["renderIntent"] = "solid"
+        base.metadata["renderIntent"] = "solid"
+        return base
+    if fragment.render_intent is BoundaryRenderIntent.OMIT:
+        raise DandelinFixedViewError(
+            "depth-aware Dandelin painter emitted an omitted fragment"
+        )
+    length = float(base.get_arc_length())
+    if not isfinite(length) or length <= 0.0:
+        raise DandelinFixedViewError(
+            f"hidden visibility fragment on {stroke.source_id!r} has no length"
+        )
+    dashed = DashedVMobject(
+        base,
+        num_dashes=max(2, min(128, int(ceil(length / 0.14)))),
+        dashed_ratio=0.56,
+    )
+    dashed.set_stroke(color=color, width=max(0.8, 0.72 * width), opacity=0.48)
+    return _tag(
+        dashed,
+        semantic_kind=f"{stroke.role}_fragment",
+        semantic_id=fragment_id,
+        source_refs=(stroke.source_ref,),
+        projectionRank=1,
+        visibilitySourceId=stroke.source_id,
+        visibilityKind=fragment.effective_visibility_kind.value,
+        occluderSurfaceIds=fragment.occluder_surface_ids,
+        interval=(fragment.interval.start, fragment.interval.end),
+        painterItemId=fragment.item_id,
+        renderIntent="dashed",
+        curveVisibilityAuthoritative=True,
+    )
+
+
+def _visibility_fragments(
+    frame: DandelinVisibilityFrame,
+    matrix: np.ndarray,
+    *,
+    role: str,
+    source_ref: str | None = None,
+) -> tuple[Mobject, ...]:
+    result = tuple(
+        _visibility_fragment_mobject(stroke, fragment, matrix)
+        for fragment in frame.compositing_frame.fragments
+        if fragment.painted
+        for stroke in (frame.stroke_map[fragment.source_id],)
+        if stroke.role == role
+        and (source_ref is None or stroke.source_ref == source_ref)
+    )
+    if not result:
+        suffix = "" if source_ref is None else f" for {source_ref!r}"
+        raise DandelinFixedViewError(
+            f"automatic Dandelin visibility has no {role!r} fragments{suffix}"
+        )
+    return result
+
+
+def _replace_wrapper_members(
+    wrapper: VGroup,
+    members: Sequence[Mobject],
+) -> None:
+    if wrapper.submobjects:
+        wrapper.remove(*tuple(wrapper.submobjects))
+    wrapper.add(*tuple(members))
+
+
+def _depth_aware_spatial_view(
+    construction: DandelinConstruction3D,
+    matrix: np.ndarray,
+    *,
+    show_contact_circles: bool,
+    show_directrices: bool,
+    show_foci: bool,
+) -> tuple[tuple[Mobject, ...], DandelinVisibilityFrame]:
+    objects = list(
+        _diagrammatic_spatial_view(
+            construction,
+            matrix,
+            show_contact_circles=show_contact_circles,
+            show_directrices=show_directrices,
+            show_foci=show_foci,
+        )
+    )
+    patch = _display_patch(
+        construction,
+        include_directrices=show_directrices,
+    )
+    try:
+        frame = compute_dandelin_visibility_frame(
+            construction,
+            ParallelView.from_matrix(matrix),
+            directrix_patch=patch,
+            include_contact_circles=show_contact_circles,
+            include_directrices=show_directrices,
+            generator_count=_CONE_GENERATOR_COUNT,
+        )
+    except DandelinVisibilityError as exc:
+        raise DandelinFixedViewError(
+            f"automatic Dandelin visibility cannot be certified: {exc}"
+        ) from exc
+
+    for item in objects:
+        role = getattr(item, "_dandelin_plan_role", None)
+        source_ref = getattr(item, "_dandelin_plan_source_ref", None)
+        if role == "cone_surface":
+            fills = tuple(
+                member
+                for member in item.submobjects
+                if getattr(member, "dandelin_metadata", {}).get("semanticKind")
+                == "cone_face"
+            )
+            _replace_wrapper_members(
+                item,
+                (
+                    *fills,
+                    *_visibility_fragments(
+                        frame,
+                        matrix,
+                        role="cone_boundary",
+                    ),
+                ),
+            )
+        elif role == "section_plane":
+            fills = tuple(item.submobjects)
+            for fill in fills:
+                fill.set_stroke(opacity=0.0)
+                if isinstance(getattr(fill, "dandelin_metadata", None), dict):
+                    fill.dandelin_metadata["strokeOpacity"] = 0.0
+                    fill.dandelin_metadata[
+                        "painterLayer"
+                    ] = "diagrammatic-plane-background"
+                    fill.metadata["strokeOpacity"] = 0.0
+                    fill.metadata[
+                        "painterLayer"
+                    ] = "diagrammatic-plane-background"
+            _replace_wrapper_members(
+                item,
+                (
+                    *fills,
+                    *_visibility_fragments(
+                        frame,
+                        matrix,
+                        role="plane_boundary",
+                        source_ref=source_ref,
+                    ),
+                ),
+            )
+        elif role == "sphere_surface":
+            fills = tuple(item.submobjects)
+            for fill in fills:
+                fill.set_stroke(opacity=0.0)
+                if isinstance(getattr(fill, "dandelin_metadata", None), dict):
+                    fill.dandelin_metadata["strokeOpacity"] = 0.0
+                    fill.metadata["strokeOpacity"] = 0.0
+            _replace_wrapper_members(
+                item,
+                (
+                    *fills,
+                    *_visibility_fragments(
+                        frame,
+                        matrix,
+                        role="sphere_silhouette",
+                        source_ref=source_ref,
+                    ),
+                ),
+            )
+        elif role == "section_curve":
+            _replace_wrapper_members(
+                item,
+                _visibility_fragments(
+                    frame,
+                    matrix,
+                    role="section_curve",
+                    source_ref=source_ref,
+                ),
+            )
+        elif role == "contact_circle":
+            _replace_wrapper_members(
+                item,
+                _visibility_fragments(
+                    frame,
+                    matrix,
+                    role="contact_circle",
+                    source_ref=source_ref,
+                ),
+            )
+        elif role == "directrix":
+            _replace_wrapper_members(
+                item,
+                _visibility_fragments(
+                    frame,
+                    matrix,
+                    role="directrix",
+                    source_ref=source_ref,
+                ),
+            )
+    return tuple(objects), frame
 
 
 def _meridian_bounds(
@@ -1265,6 +1584,54 @@ def _bind_semantic_plan(
     return tuple(result)
 
 
+def _assign_depth_aware_z_indices(
+    objects: Sequence[Mobject],
+    frame: DandelinVisibilityFrame,
+) -> None:
+    draw_order = frame.compositing_frame.draw_order
+    z_by_item = {
+        item_id: float(index + 10)
+        for index, item_id in enumerate(draw_order)
+    }
+    seen: set[str] = set()
+    background_z = min(z_by_item.values(), default=10.0) - 1.0
+    focus_z = max(z_by_item.values(), default=10.0) + 1.0
+
+    def assign(item: Mobject) -> None:
+        metadata = getattr(item, "dandelin_metadata", None)
+        if isinstance(metadata, dict):
+            painter_item_id = metadata.get("painterItemId")
+            if isinstance(painter_item_id, str):
+                try:
+                    z_index = z_by_item[painter_item_id]
+                except KeyError as exc:
+                    raise DandelinFixedViewError(
+                        "fixed Dandelin primitive references an unknown painter item"
+                    ) from exc
+                item.set_z_index(z_index, family=True)
+                seen.add(painter_item_id)
+                return
+            kind = metadata.get("semanticKind")
+            if kind == "focus":
+                item.set_z_index(focus_z, family=True)
+                return
+            if metadata.get("painterLayer") == "diagrammatic-plane-background":
+                item.set_z_index(background_z, family=True)
+                return
+        item.set_z_index(0.0, family=False)
+        for child in item.submobjects:
+            assign(child)
+
+    for item in objects:
+        assign(item)
+    missing = tuple(item_id for item_id in draw_order if item_id not in seen)
+    if missing:
+        raise DandelinFixedViewError(
+            "fixed Dandelin renderer omitted painter items: "
+            + ", ".join(missing)
+        )
+
+
 def _finalize_group(
     construction: DandelinConstruction3D,
     objects: Sequence[Mobject],
@@ -1274,6 +1641,8 @@ def _finalize_group(
     show_contact_circles: bool,
     show_directrices: bool,
     show_foci: bool,
+    mode: str,
+    visibility_frame: DandelinVisibilityFrame | None = None,
 ) -> VGroup:
     if not objects:
         raise DandelinFixedViewError("fixed Dandelin view contains no display objects")
@@ -1285,8 +1654,19 @@ def _finalize_group(
         show_directrices=show_directrices,
         show_foci=show_foci,
     )
-    for index, item in enumerate(objects):
-        item.set_z_index(index)
+    if mode == "depth_aware_diagrammatic":
+        if visibility_frame is None:
+            raise DandelinFixedViewError(
+                "depth-aware Dandelin view has no visibility frame"
+            )
+        _assign_depth_aware_z_indices(objects, visibility_frame)
+    else:
+        if visibility_frame is not None:
+            raise DandelinFixedViewError(
+                "legacy diagrammatic Dandelin view cannot retain a visibility frame"
+            )
+        for index, item in enumerate(objects):
+            item.set_z_index(index)
     group = VGroup(*objects)
     points = group.get_all_points()
     if points.ndim != 2 or points.shape[1] != 3 or not np.all(np.isfinite(points)):
@@ -1323,8 +1703,10 @@ def _finalize_group(
         "semanticSourceRefs": _construction_source_refs(construction),
         "view": view,
         "preset": preset,
-        "mode": _MODE,
+        "mode": mode,
         "visibilityAuthoritative": False,
+        "curveVisibilityAuthoritative": visibility_frame is not None,
+        "surfaceVisibilityAuthoritative": False,
         "family": construction.family.value,
         "supportingKind": construction.supporting_kind.value,
         "showContactCircles": show_contact_circles,
@@ -1337,11 +1719,34 @@ def _finalize_group(
         "objectCount": len(objects),
         "sectionPlaneSphereCircles": False,
     }
+    if visibility_frame is not None:
+        metadata.update(
+            {
+                "visibilityFrameSchema": visibility_frame.schema,
+                "hiddenSpanCount": visibility_frame.hidden_span_count,
+                "tangentContactCount": len(visibility_frame.tangent_contacts),
+                "painterGraphSchema": (
+                    visibility_frame.compositing_frame.schema
+                ),
+                "painterItemCount": len(
+                    visibility_frame.compositing_frame.draw_order
+                ),
+                "projectedCrossingCount": len(
+                    visibility_frame.compositing_frame.crossings
+                ),
+            }
+        )
     group.metadata = metadata
     group.dandelin_metadata = metadata
     group.view = view
-    group.mode = _MODE
+    group.mode = mode
     group.visibility_authoritative = False
+    group.curve_visibility_authoritative = visibility_frame is not None
+    group.surface_visibility_authoritative = False
+    group.visibility_frame = visibility_frame
+    group.compositing_frame = (
+        None if visibility_frame is None else visibility_frame.compositing_frame
+    )
     group.semantic_source_refs = metadata["semanticSourceRefs"]
     return group
 
@@ -1352,6 +1757,7 @@ def build_dandelin_fixed_view(
     view: str,
     projection_matrix: Sequence[Sequence[float]] | np.ndarray | None = None,
     preset: str = "classroom",
+    mode: str = _DEFAULT_MODE,
     show_contact_circles: bool | None = None,
     show_directrices: bool | None = None,
     show_foci: bool | None = None,
@@ -1360,8 +1766,10 @@ def build_dandelin_fixed_view(
 
     ``projection_matrix`` is required only for ``view="spatial"``.  It is a
     finite 3x3 parallel-view matrix whose first two independent rows define the
-    screen chart.  The result is deliberately non-authoritative with respect to
-    physical visibility and never mutates a ``Scene``.
+    screen chart. ``mode="depth_aware_diagrammatic"`` is available only for
+    the spatial view; it certifies hidden-line visibility while keeping
+    translucent fill order diagrammatic.  The function never mutates a
+    ``Scene``.
 
     Optional visibility flags use view-specific defaults when left as ``None``:
     spatial enables all three, meridian enables contact circles and foci, and
@@ -1378,6 +1786,14 @@ def build_dandelin_fixed_view(
         )
     if not isinstance(preset, str) or preset not in _PRESETS:
         raise DandelinFixedViewError("preset must be 'classroom'")
+    if not isinstance(mode, str) or mode not in _MODES:
+        raise DandelinFixedViewError(
+            "mode must be 'diagrammatic' or 'depth_aware_diagrammatic'"
+        )
+    if mode == "depth_aware_diagrammatic" and view != "spatial":
+        raise DandelinFixedViewError(
+            "depth_aware_diagrammatic mode is only valid for the spatial view"
+        )
     contact_default, directrix_default, focus_default = _VIEW_FLAG_DEFAULTS[view]
     contact_flag = _resolved_flag(
         show_contact_circles,
@@ -1416,16 +1832,26 @@ def build_dandelin_fixed_view(
             )
         matrix = None
 
+    visibility_frame: DandelinVisibilityFrame | None = None
     try:
         if view == "spatial":
             assert matrix is not None
-            objects = _spatial_view(
-                construction,
-                matrix,
-                show_contact_circles=contact_flag,
-                show_directrices=directrix_flag,
-                show_foci=focus_flag,
-            )
+            if mode == "depth_aware_diagrammatic":
+                objects, visibility_frame = _depth_aware_spatial_view(
+                    construction,
+                    matrix,
+                    show_contact_circles=contact_flag,
+                    show_directrices=directrix_flag,
+                    show_foci=focus_flag,
+                )
+            else:
+                objects = _diagrammatic_spatial_view(
+                    construction,
+                    matrix,
+                    show_contact_circles=contact_flag,
+                    show_directrices=directrix_flag,
+                    show_foci=focus_flag,
+                )
         elif view == "meridian":
             objects = _meridian_view(
                 construction,
@@ -1459,6 +1885,8 @@ def build_dandelin_fixed_view(
         show_contact_circles=contact_flag,
         show_directrices=directrix_flag,
         show_foci=focus_flag,
+        mode=mode,
+        visibility_frame=visibility_frame,
     )
 
 

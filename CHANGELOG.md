@@ -4,6 +4,17 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+- add opt-in `depth_aware_diagrammatic` hidden-line visibility to static TikZ
+  Dandelin spatial views by reusing the analytic quadric boundary kernel;
+  certify each sphere's one-dimensional tangent contact with the exact cone
+  nappe, split the cutting-plane outline too, and feed all painted fragments
+  through the existing painter graph;
+- add `DandelinOcclusion3D`, a fixed-capacity Cairo binding that recomputes the
+  same `DandelinVisibilityFrame` under a live parallel camera while exposing
+  separate curve/surface authority flags and keeping translucent fill ordering
+  explicitly diagrammatic;
+- restore legacy `tikz-native-dandelin-static-diagram/v1` payloads by
+  recomputing them into the current v2 contract;
 - extend the parallel-camera section Rig with fixed isolated-point slots and
   renderer-neutral `PointMarker3D` visibility, so tangent sections activate a
   real point Mobject without allocating during playback or fabricating a short

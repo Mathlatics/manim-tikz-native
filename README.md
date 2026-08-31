@@ -271,6 +271,18 @@ python -m pip install --upgrade pip
 python -m pip install -e ".[test]"
 ```
 
+On macOS, a `.venv` created inside a folder carrying the Finder hidden flag can
+pass that flag to setuptools' editable `.pth` file. Python 3.12 then skips the
+file, so `manim path/to/example.py` can lose this project after changing its
+import directory. If the health commands work only from the repository root,
+repair the isolated environment and verify an import from outside the checkout:
+
+```bash
+chflags -R nohidden .venv
+(cd /tmp && "$OLDPWD/.venv/bin/python" -c \
+  'import polyhedron_visibility, tikz_native')
+```
+
 Check the compiler and its component identities:
 
 ```bash

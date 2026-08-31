@@ -15,6 +15,7 @@ import tikz_native.dandelin_contract as contract_module
 from tikz_native.dandelin_contract import (
     TIKZ_DANDELIN_CONSTRUCTION_3D_SCHEMA,
     TIKZ_DANDELIN_SPATIAL_VIEW_SCHEMA,
+    TIKZ_DANDELIN_STATIC_DIAGRAM_V1_SCHEMA,
     TIKZ_DANDELIN_STATIC_DIAGRAM_SCHEMA,
     TIKZ_SPACE_RIGHT_CONE_3D_SCHEMA,
     TikzDandelinContractError,
@@ -447,6 +448,63 @@ class TikzDandelinContractTests(unittest.TestCase):
             )
         )
 
+    def test_depth_aware_mode_round_trips_only_for_spatial_view(self) -> None:
+        construction = self.construction_contract.construction
+        diagram = build_dandelin_static_diagram_contract(
+            construction,
+            view="spatial",
+            mode="depth_aware_diagrammatic",
+        )
+        payload = diagram.to_dict()
+        self.assertEqual(payload["mode"], "depth_aware_diagrammatic")
+        self.assertIs(payload["visibilityAuthoritative"], False)
+        self.assertIs(payload["curveVisibilityAuthoritative"], True)
+        self.assertIs(payload["surfaceVisibilityAuthoritative"], False)
+        self.assertEqual(
+            restore_dandelin_static_diagram_contract(payload, construction),
+            diagram,
+        )
+        for view in ("meridian", "section-plane"):
+            with self.subTest(view=view):
+                with self.assertRaisesRegex(
+                    TikzDandelinContractError,
+                    "only valid for the spatial view",
+                ):
+                    build_dandelin_static_diagram_contract(
+                        construction,
+                        view=view,
+                        mode="depth_aware_diagrammatic",
+                    )
+
+    def test_legacy_v1_diagram_payload_restores_to_current_contract(self) -> None:
+        construction = self.construction_contract.construction
+        current = build_dandelin_static_diagram_contract(
+            construction,
+            view="spatial",
+        )
+        legacy = current.to_dict()
+        legacy["schema"] = TIKZ_DANDELIN_STATIC_DIAGRAM_V1_SCHEMA
+        del legacy["curveVisibilityAuthoritative"]
+        del legacy["surfaceVisibilityAuthoritative"]
+
+        restored = restore_dandelin_static_diagram_contract(
+            legacy,
+            construction,
+        )
+        self.assertEqual(restored, current)
+        self.assertEqual(
+            restored.to_dict()["schema"],
+            TIKZ_DANDELIN_STATIC_DIAGRAM_SCHEMA,
+        )
+
+        forged = copy.deepcopy(legacy)
+        forged["mode"] = "depth_aware_diagrammatic"
+        with self.assertRaisesRegex(
+            TikzDandelinContractError,
+            "v1 requires mode=diagrammatic",
+        ):
+            restore_dandelin_static_diagram_contract(forged, construction)
+
     def test_flags_filter_drawables_without_changing_certified_view_geometry(
         self,
     ) -> None:
@@ -530,6 +588,14 @@ class TikzDandelinContractTests(unittest.TestCase):
         authoritative = copy.deepcopy(payload)
         authoritative["visibilityAuthoritative"] = True
         cases.append(authoritative)
+
+        curve_authority = copy.deepcopy(payload)
+        curve_authority["curveVisibilityAuthoritative"] = True
+        cases.append(curve_authority)
+
+        surface_authority = copy.deepcopy(payload)
+        surface_authority["surfaceVisibilityAuthoritative"] = True
+        cases.append(surface_authority)
 
         not_static = copy.deepcopy(payload)
         not_static["static"] = False

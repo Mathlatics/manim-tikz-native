@@ -105,7 +105,11 @@ Preview、Final、Release/Evidence 三档的准确区别，以及一行容量扫
 同一份认证构造还能分别生成“轴截面真圆图”和“截面平面圆锥曲线图”；后者不会把
 焦点误画成球心，也不会伪造并不存在的球截面圆。
 对应的受控 TikZ 三视图命令与可编译示例见
-[TikZ-native 丹德林三视图](examples/tikz_dandelin_views/README.md)。
+[TikZ-native 丹德林三视图](examples/tikz_dandelin_views/README.md)。其中空间图可启用
+`mode=depth_aware_diagrammatic`：圆锥轮廓、球轮廓、相切圆、截线、截平面边界和
+准线会按同一投影自动分成实线与遮挡虚线，并进入同一个片段级 painter graph
+（绘制先后关系图）。`DandelinOcclusion3D` 还可在平行相机变化时用固定槽位实时重算
+同一份证据；半透明曲面填充仍按教学图层绘制，不冒充完整的物理透明合成。
 
 ## 显式三维平面、圆和椭圆
 
@@ -291,6 +295,17 @@ python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
 python -m pip install -e ".[test]"
+```
+
+macOS 上有一个容易误判成“项目坏了”的环境坑：如果 `.venv` 目录带 Finder 的
+hidden 标志，setuptools 生成的 editable `.pth` 文件也可能继承该标志；Python
+3.12 会跳过它。结果是仓库根目录内可以导入，但 Manim 切换到示例文件目录后却
+提示找不到本项目。遇到这种情况只修复隔离虚拟环境的标志，并从仓库外复核导入：
+
+```bash
+chflags -R nohidden .venv
+(cd /tmp && "$OLDPWD/.venv/bin/python" -c \
+  'import polyhedron_visibility, tikz_native')
 ```
 
 另外需要安装 XeLaTeX、TikZ、Fandol 字体、Latin Modern 字体和 FFmpeg。

@@ -7,7 +7,7 @@ from unittest.mock import patch as mock_patch
 
 import numpy as np
 
-from polyhedron_visibility.geometry import GeometryContext
+from polyhedron_visibility.geometry import GeometryContext, resolve_geometry_context
 from polyhedron_visibility.parallel_solver import ParallelView
 from polyhedron_visibility.topology import ParameterInterval, assert_exact_partition
 from polyhedron_visibility.visibility import VisibilityKind
@@ -650,6 +650,20 @@ class QuadricCurveVisibilityTests(unittest.TestCase):
         self.assertFalse(hidden.visible)
         self.assertEqual(hidden.occluders, ("sphere",))
         self.assertEqual(hidden.to_dict()["pointId"], "back")
+
+        resolved = resolve_geometry_context(
+            GeometryContext(),
+            positions=(*sphere.characteristic_points, (0.0, 0.0, -1.0)),
+        )
+        self.assertEqual(
+            compute_point_visibility(
+                PointMarker3D("resolved-back", (0.0, 0.0, -1.0)),
+                (sphere,),
+                IDENTITY_VIEW,
+                context=resolved,
+            ).occluders,
+            ("sphere",),
+        )
 
 
 if __name__ == "__main__":

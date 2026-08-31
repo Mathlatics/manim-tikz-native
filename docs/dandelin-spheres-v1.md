@@ -6,13 +6,31 @@ renderer-neutral solver derives analytic sphere, focus, cone-contact-circle,
 directrix, and finite-fit evidence. It does not resize, clip, or visually fit a
 sphere when the authored finite cone cannot contain the mathematical result.
 
-The accompanying Manim facade is deliberately narrower: it is a static Cairo
-**diagrammatic teaching overlay**. The ordinary cone/section controller still
-computes the supported cone, cutting-plane, and section-curve relationships,
-but the auxiliary spheres are painted in a separate teaching band. Their
-front/behind relationship with the tangent cone is not physically composited.
-The public evidence makes this explicit with
+The accompanying scene-owning Manim facade is deliberately narrower: it is a
+static Cairo **diagrammatic teaching overlay**. The ordinary cone/section
+controller still computes the supported cone, cutting-plane, and section-curve
+relationships, but the auxiliary spheres are painted in a separate teaching
+band. Their front/behind relationship with the tangent cone is not physically
+composited. The public evidence makes this explicit with
 `visibility_authoritative=False` and `overlay_mode="diagrammatic"`.
+
+The static TikZ spatial renderer has a separate opt-in hidden-line path. With
+`mode=depth_aware_diagrammatic`, it reuses the analytic quadric visibility
+kernel to split cone boundaries, sphere silhouettes, contact circles, the
+section curve, the finite cutting-plane outline, and optional directrices into
+exact visible and hidden parameter intervals. Projected crossings split those
+intervals again before the existing fragment painter graph fixes their draw
+order. Visible intervals are solid and hidden intervals are dashed. This makes
+**curve visibility** authoritative, while translucent cone, plane, and sphere
+fill order remains diagrammatic.
+
+`DandelinOcclusion3D` is the corresponding live Cairo binding. It owns the same
+immutable construction and fixed boundary/point slot pool, accepts a callable
+parallel projection, and commits the exact `DandelinVisibilityFrame` consumed by
+its Manim display on every successful camera update. A failed projection,
+visibility partition, crossing solve, capacity check, or painter graph restores
+the preceding display and evidence. It intentionally does not add a physical
+cutting-plane fill or claim physical transparent-surface compositing.
 
 ## Certified geometry
 
@@ -179,7 +197,8 @@ For a custom teaching renderer,
 surfaces, contact curves, clipped directrices, focus identities, and a stable
 diagrammatic draw order. It accepts only `mode="diagrammatic"`; requests for
 `physical` or `depth_aware_diagrammatic` fail instead of making an unsupported
-visibility claim.
+visibility claim. This restriction belongs to the Manim teaching-overlay
+contract; it does not disable the separate fixed-view TikZ hidden-line path.
 
 ## Certified two-dimensional views
 
@@ -280,9 +299,34 @@ separated entities.
 - `OPEN_DOUBLE` hyperbola display also retains the existing shared-apex-only
   projected-contact requirement of `CompositeQuadricSection3D`.
 
-Physical cone-sphere occlusion would require a dedicated tangent-surface
-compositor. Adding that compositor is a future capability, not an implied part
-of the certified geometry or this diagrammatic overlay.
+Full physical ordering and splitting of the translucent cone and sphere fills
+would require a dedicated tangent-surface compositor. The ordinary global
+multi-quadric compositor cannot supply that proof because its surface-order
+contract requires strictly separated convex entities, whereas each Dandelin
+sphere has one-dimensional equal-depth contact with the cone.
+
+Exact hidden-line visibility is narrower and is now supported without inventing
+a second solver. `compute_dandelin_visibility_frame(construction, view, ...)`
+records the tangent sphere/nappe/contact-circle evidence, lowers every semantic
+stroke to the existing analytic boundary contract, delegates interval
+classification to `compute_boundary_visibility()`, certifies projected
+crossings, and returns the resulting `QuadricBoundaryCompositingFrame` inside
+the Dandelin frame. Its result therefore fixes these two independent facts:
+
+- `curve_visibility_authoritative=True`: visible/hidden curve intervals are
+  certified for the frozen parallel camera;
+- `surface_visibility_authoritative=False`: translucent fill order is still a
+  teaching presentation, not a physical transparency proof.
+
+Unsupported contact ownership, a missing finite plane/directrix patch, or any
+uncertifiable visibility partition fails closed instead of reverting to an
+uncertified draw order.
+
+The remaining unimplemented step is physical subdivision of the translucent
+cone/sphere fill regions themselves. Whole-surface ordering cannot prove that
+case because a Dandelin sphere and cone share an entire equal-depth contact
+circle. Until those depth cells exist, `surfaceVisibilityAuthoritative` remains
+false by contract.
 
 ## TikZ semantic boundary
 
@@ -293,7 +337,11 @@ sphere-like drawing. The source must name all three relationships explicitly:
 \DeclareSpaceRightCone{cone}{A/Z/R}{30}{0/9}{open_single};
 \DeclareSpacePlane{cut}{O/U/V};
 \DeclareDandelinConstruction{dan}{cone}{cut};
-\DrawDandelinDiagram[view=spatial,preset=classroom]{dan};
+\DrawDandelinDiagram[
+  view=spatial,
+  preset=classroom,
+  mode=depth_aware_diagrammatic
+]{dan};
 ```
 
 The diagram view may be `spatial`, `meridian`, or `section-plane`. Each payload
@@ -304,11 +352,21 @@ Meridian sphere circles are unconditional true great-circle sections;
 `show-contact-circles` controls only their certified generator-contact points,
 and meridian directrices are rejected as cutting-plane geometry.
 
-This TikZ path is static fixed-view v1. It permits one Dandelin diagram and no
-other drawable object in the picture, persists
-`visibilityAuthoritative=false`, and rejects physical mode. The
-section-plane view also rejects a request for sphere/contact circles instead
+This TikZ path is static fixed-view. It permits one Dandelin diagram and no
+other drawable object in the picture. Every view accepts the legacy
+`mode=diagrammatic`; only `view=spatial` additionally accepts
+`mode=depth_aware_diagrammatic`. In that mode the payload records
+`curveVisibilityAuthoritative=true`,
+`surfaceVisibilityAuthoritative=false`, and the conservative aggregate
+`visibilityAuthoritative=false`. Full `physical` mode remains unsupported.
+The section-plane view also rejects a request for sphere/contact circles instead
 of drawing circles around the foci. Motion, camera shots, geometry Bridge
 requests, and source-v3 generation are outside this contract and must fail
 before derived output is published. See
 [the complete three-view source](../examples/tikz_dandelin_views/README.md).
+
+Previously persisted `tikz-native-dandelin-static-diagram/v1` payloads remain
+readable. Restore recomputes their diagrammatic geometry and semantic objects
+from the authoritative construction, rejects tampering, and returns the current
+v2 contract. V1 cannot be relabelled as depth-aware because it carried no
+separate curve/surface authority evidence.

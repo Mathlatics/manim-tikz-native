@@ -14,7 +14,11 @@ import json
 from math import isfinite
 from typing import Sequence
 
-from ..geometry import GeometryQuantity, resolve_geometry_context
+from ..geometry import (
+    GeometryQuantity,
+    ResolvedGeometryContext,
+    resolve_geometry_context,
+)
 from ..parallel_solver import ParallelView
 from ..topology import (
     ParameterInterval,
@@ -376,7 +380,11 @@ def compute_point_visibility(
         marker.point,
         *(point for surface in surface_items for point in surface.characteristic_points),
     )
-    resolved = resolve_geometry_context(context, positions=positions)
+    resolved = (
+        context
+        if isinstance(context, ResolvedGeometryContext)
+        else resolve_geometry_context(context, positions=positions)
+    )
     depth_epsilon = resolved.epsilon(GeometryQuantity.DEPTH)
     occluders = tuple(
         surface.surface_id
