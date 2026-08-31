@@ -69,40 +69,40 @@ ROOT = Path(__file__).resolve().parents[1]
 PACKAGE_ROOT = ROOT / "tikz_native"
 VISIBILITY_ROOT = ROOT / "polyhedron_visibility"
 ASSET_REVISION = (
-    "source-sha256:47e72918791518076d0d6b0c2857c1b3162c29217265e218b2f5a44433c6dd7d"
+    "source-sha256:d8bccecebb4dd5f2576a5be8ec2d2ef93a2239025dd38f7cceaddd93bd5f3dbf"
 )
 GEOMETRY_RIG_2D_REVISION = (
-    "source-sha256:55b5fe153e05e572f146556f69ca2652741071fa813bdde5df150258b4142080"
+    "source-sha256:b636ca65e16c86c141f631b4a1f85ad4068fcad529714f406a455a2420338f25"
 )
 NATIVE_SOURCE_2D_REVISION = (
-    "source-sha256:8e0067c597c086c046bc3dc0eb97795ac491815bf390ad35de40b63c5d40c5d1"
+    "source-sha256:db6cf5ff98a610362cbe8ac95dae1bd4d355377102abddd2e20b294214503e49"
 )
 NATIVE_RIG_2D_REVISION = (
-    "source-sha256:70201c67a2703cecf3b210834977a25508b4aff972b8627443a250978f113870"
+    "source-sha256:d2f940f00b0773ada5fc7a61ba46f56ed9a28181c00b8b7675243ef31985869a"
 )
 MOTION_PREVIEW_2D_REVISION = (
-    "source-sha256:d61945b9d99fa962288cc566de55849df42b71b640a620a7aa7cb89d7ed5c267"
+    "source-sha256:6212ce463352772d3e536b0bbef4b527b067ac83e3e5330f9fc2d0be8f40bf9a"
 )
 GEOMETRY_RIG_3D_REVISION = (
-    "source-sha256:9b0de81c87e32a599c145a2fb78b32403e264a98d34494c277e58d7154b1bb60"
+    "source-sha256:129d7642d8af338bde6cb05de4ec40aa1578f258072356c367142f6e8f271050"
 )
 NATIVE_SOURCE_3D_REVISION = (
-    "source-sha256:1ba17fb69e455e3694ae477ebd69de321043555af05c8e7712c3ee22d20307c1"
+    "source-sha256:44cad71905b005ef3db03d83edbc19dad2aec910df5113afe8328d56e4349c04"
 )
 NATIVE_SOURCE_3D_V2_REVISION = (
-    "source-sha256:9fb59765ba981108a73a0a4a340de5a32ce4c03707d4925cdb729b9a7ecdcb9c"
+    "source-sha256:5cd9503f5ce2b8573374ec427b2303636529166177ee8220d55f3aae0a2490b4"
 )
 NATIVE_SOURCE_3D_V3_REVISION = (
-    "source-sha256:513935788725e3c72b74905268695a90c443df208a4f321229f05efcdd3ef5aa"
+    "source-sha256:cad0e538aac6d18a173bf65de29a75bf2a5adf6d01cd7597bd464e3fcc5c850e"
 )
 PARALLEL_CAMERA_CORE_REVISION = (
     "source-sha256:a6ca69204f5d7cbdaf0eaeff9c47fa8a2cc26d1f6c30436e04eb0aeaa717ab15"
 )
 EMBEDDED_MOTION_3D_REVISION = (
-    "source-sha256:b2da641f19baa9c0691d017f80c3389ac7911d60bf9eea28d7519209fb99c2df"
+    "source-sha256:2d1ca33b562f6ae8b4cdac6e8309422e4a987dbb93e8c6fef8ad4d41f1da6be9"
 )
 MOTION_PREVIEW_3D_REVISION = (
-    "source-sha256:67fe4d97c1220cc4e638e6e0b400fc8b600f1524edad641e81207a192eb31060"
+    "source-sha256:6028ea5d0b04d8b2ea78297de219162e23d8dd985e7e876cce7f26bd95e3d5b0"
 )
 POLYHEDRON_VISIBILITY_REVISION = (
     "source-sha256:8fff612f011f5b67cecaa66dc251af3126fe091cfe6b753e7fd5e9301cfcc53f"
@@ -111,7 +111,7 @@ FACE_DEPTH_CUE_3D_REVISION = (
     "source-sha256:499495b399f1078f0532413690821764208bbb87695f1f40019ce396f2ac347a"
 )
 TIKZ_POLYHEDRON_VISIBILITY_3D_REVISION = (
-    "source-sha256:b17799b6605896e53da89b59d692944848bda0ce634a792933f318abf45eba12"
+    "source-sha256:d002c9ce3a9fdbb518c6277e07afc8b358e5b63c209edb13cf9beb23e19c2252"
 )
 OPEN_FACE_VISIBILITY_REVISION = (
     "source-sha256:583f95c7e3a9056b306d90e14f85e580442cf0c2cfd9d0043795f1670dfc43ae"
@@ -120,31 +120,31 @@ OPEN_FACE_UNIFIED_COMPOSITING_REVISION = (
     "source-sha256:5b2bdd7146a0e548f395637653b61b16cb5cf4a8758399030df934c071b72832"
 )
 MANAGED_PAINTER_BAND_REVISION = (
-    "source-sha256:f48b339673a8daf691e8ad6ec134c77d3ad1a6750c38f1003d42d3d6e41b0a73"
+    "source-sha256:9e9bde612f6fad601c97c47b8d1cce9c9cd03360566135d17e224d1049c3ee7a"
 )
 OPEN_FACE_UNIFIED_MANIM_REVISION = (
-    "source-sha256:d9cbe232fba7dfdfb2f62e0d0ffb503a1bf096a2f9632922914b49457f1e8d7e"
+    "source-sha256:6ea6cf42d61d2cc8c4331b6da5f25ea3b61b659c75ae4c7a493425f0efddd934"
 )
 TIKZ_OPEN_FACE_VISIBILITY_3D_REVISION = (
-    "source-sha256:cdf237694a76c8c6c7869bfa9bf391cedbab410f56409d10c8808a21ecc8710d"
+    "source-sha256:220e611d1aaccacc2c4795c3c426148533f92b6fb55fa3ae1feefc944b182832"
 )
 TIKZ_OPEN_FACE_STATIC_ASSET_3D_REVISION = (
-    "source-sha256:5602140f9269ac819e0f84abebf12c133decce44927e4725c4e05ca5272d9d4c"
+    "source-sha256:ab8c42d0861b45624fd91bef34c21eb1a60d2adbc09ffd759b2587199aeaad0b"
 )
 GENERATED_OPEN_FACE_VISIBILITY_3D_REVISION = (
-    "source-sha256:1125fd1c8b9a6f63b14d421e50315c3e4ccf7f1830b00b310808cdf957c8e94f"
+    "source-sha256:62051cd5422583603dc283efb41901de28f806bad7ab5c3b9294d1fb9c9643ff"
 )
 SOURCE_PROJECT_BUILD_REVISION = (
-    "source-sha256:a99aff62e9f6a80030a55ca72c48997431b5ae15dbbae88df7a4df11edbe8c06"
+    "source-sha256:34980c51d6190e21bcbf5bfbe19e565eff17fddfc0bc2a84f1f379b0da73432b"
 )
 QUADRIC_GEOMETRY_REVISION = (
-    "source-sha256:1c25b35997f967635aa23df9b51a6d33f3199fcac4052c523dd0be2106a14765"
+    "source-sha256:1c840ac5354294313be097c400ded6a83fee6f6263637390e994da972068eb39"
 )
 QUADRIC_VISIBILITY_REVISION = (
-    "source-sha256:490a8eeb87b02c1d4d621901b1d1e7949c9c6154cba5c4514d53c10b646d1b6b"
+    "source-sha256:75f00e94caa6e5a3d77f05a1676456975f3629486ce0f1a428810fe31a994291"
 )
 QUADRIC_MANIM_REVISION = (
-    "source-sha256:0a42e52c318d4735f5e549a0425756b41e2fea4394b122ca0231687c06515fcc"
+    "source-sha256:40b08f2c9ae9ca62cc9ca901ac4050f6b4b09fe3f241eba578d08809cea0fc9c"
 )
 CONVEX_SECTION_3D_REVISION = (
     "source-sha256:a6c71249ce429884b0fcc3341eeea33dacf2d64e14d875d1e0f222c1530637bf"
@@ -153,10 +153,10 @@ COPY_IDENTITY_HANDOFF_REVISION = (
     "source-sha256:bf8aa2d0fe3ec9921320305279f2e23c8ab71d68b5613d19d19f467326d293b7"
 )
 DERIVED_DIHEDRAL_VISIBILITY_REVISION = (
-    "source-sha256:2240dceedbda6c2c2255af11cda9989218d483dfc199d2b611553155b5fa3101"
+    "source-sha256:2b49f6a0bfa4c0a8e850f94af2446dd888a469b0472463c0df5127aec8185ae2"
 )
 TIKZ_CONVEX_SECTION_3D_REVISION = (
-    "source-sha256:b0623617cf182f17eaaa7ef260540c12749b532e0fbf9fe079316cfbc8da166a"
+    "source-sha256:6a0f74bdc564fdd8ca0687edcedd5e9284344a1b2912c31c9fe09c860b03b00b"
 )
 
 QUADRIC_GEOMETRY_RECURSIVE_COMPONENTS = frozenset(
@@ -561,13 +561,10 @@ print(json.dumps({
         baseline = provider_component_revisions()
         mutated = self._probe_copy("parallel_camera.py")
         components = mutated["components"]
-        changed = {
+        changed = set(QUADRIC_GEOMETRY_RECURSIVE_COMPONENTS) | {
             COMPONENT_PARALLEL_CAMERA_CORE,
             COMPONENT_EMBEDDED_MOTION_3D,
             COMPONENT_MOTION_PREVIEW_3D,
-            COMPONENT_QUADRIC_GEOMETRY,
-            COMPONENT_QUADRIC_VISIBILITY,
-            COMPONENT_QUADRIC_MANIM,
         }
         for component in changed:
             self.assertNotEqual(components[component], baseline[component])
@@ -579,13 +576,10 @@ print(json.dumps({
         baseline = provider_component_revisions()
         mutated = self._probe_copy("parallel_viewport.py")
         components = mutated["components"]
-        changed = {
+        changed = set(QUADRIC_GEOMETRY_RECURSIVE_COMPONENTS) | {
             COMPONENT_PARALLEL_CAMERA_CORE,
             COMPONENT_EMBEDDED_MOTION_3D,
             COMPONENT_MOTION_PREVIEW_3D,
-            COMPONENT_QUADRIC_GEOMETRY,
-            COMPONENT_QUADRIC_VISIBILITY,
-            COMPONENT_QUADRIC_MANIM,
         }
         for component in changed:
             self.assertNotEqual(components[component], baseline[component])
@@ -624,11 +618,7 @@ print(json.dumps({
             "@tool/polyhedron_visibility/quadrics/semantic_compositing.py"
         )
         components = mutated["components"]
-        changed = {
-            COMPONENT_QUADRIC_GEOMETRY,
-            COMPONENT_QUADRIC_VISIBILITY,
-            COMPONENT_QUADRIC_MANIM,
-        }
+        changed = set(QUADRIC_GEOMETRY_RECURSIVE_COMPONENTS)
         for component in changed:
             self.assertNotEqual(components[component], baseline[component])
         for component in baseline:
