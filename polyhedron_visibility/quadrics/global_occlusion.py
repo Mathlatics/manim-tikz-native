@@ -25,7 +25,7 @@ from dataclasses import dataclass
 from itertools import combinations
 import json
 from math import isfinite
-from typing import Mapping, Sequence
+from typing import Callable, Mapping, Sequence
 
 import numpy as np
 
@@ -44,7 +44,13 @@ from .compositing import (
     QuadricPaintPolicy,
     compute_quadric_compositing,
 )
-from .contract import ConeModel, ConeSpec, CylinderSpec, SphereSpec
+from .contract import (
+    ConeModel,
+    ConeSpec,
+    CylinderSpec,
+    SphereSpec,
+    _prepare_finite_surface_ray_hits,
+)
 from .critical import AnalyticCurve3D
 from .curve_intersections import (
     ProjectedCurveIntersectionError,
@@ -66,6 +72,8 @@ QuadricSurfaceSpec = SphereSpec | CylinderSpec | ConeSpec
 ContextInput = GeometryContext | ResolvedGeometryContext | None
 StyleInput = Mapping[str, OcclusionStyle] | OcclusionStyle | None
 ConstraintInput = PainterConstraint[str] | tuple[str, str]
+_ScreenRayOrigin = Callable[[tuple[float, float]], np.ndarray]
+_SurfaceRayInterval = Callable[[np.ndarray], tuple[float, float]]
 
 
 class GlobalQuadricOcclusionError(ValueError):
@@ -789,47 +797,62 @@ def _interior_witnesses(
     return tuple((float(point[0]), float(point[1])) for point in result)
 
 
-def _ray_interval(
-    surface: QuadricSurfaceSpec,
-    screen_point: tuple[float, float],
-    view: ParallelView,
-    *,
-    context: ResolvedGeometryContext,
-    depth_epsilon: float,
+def _prepare_screen_ray_origin(
+    screen_matrix: np.ndarray,
     scene_anchor: np.ndarray,
-) -> tuple[float, float]:
-    screen_matrix = view.matrix[:2]
-    screen_target = np.asarray(screen_point, dtype=float)
+    *,
+    screen_epsilon: float,
+) -> _ScreenRayOrigin:
+    """Prepare the rank-two solve shared by every witness in one frame."""
+
+    matrix = np.asarray(screen_matrix, dtype=float).copy()
+    anchor = np.asarray(scene_anchor, dtype=float).copy()
+    matrix.setflags(write=False)
+    anchor.setflags(write=False)
     # A parallel ray only needs the two screen equations.  Solving the full
     # 3x3 view matrix wrongly turns a harmless tiny depth row into a singular
     # reconstruction problem.  Work relative to the scene, then take the
     # minimum-norm solution of the rank-two screen system.
-    screen_delta = screen_target - screen_matrix @ scene_anchor
     left, singular_values, right = np.linalg.svd(
-        screen_matrix,
+        matrix,
         full_matrices=False,
     )
     if len(singular_values) != 2 or float(np.min(singular_values)) <= 0.0:
         raise GlobalQuadricOcclusionError(
             "parallel view screen rows are not independently solvable"
         )
-    offset = right.T @ ((left.T @ screen_delta) / singular_values)
-    origin = scene_anchor + offset
-    residual = float(np.linalg.norm(screen_matrix @ origin - screen_target))
-    residual_floor = 4096.0 * np.finfo(float).eps * max(
-        float(np.linalg.norm(screen_target)),
-        float(np.linalg.norm(screen_matrix @ scene_anchor)),
-        float(np.linalg.norm(screen_delta)),
-        np.finfo(float).tiny,
-    )
-    residual_floor = max(
-        residual_floor,
-        _screen_epsilon(context, screen_matrix),
-    )
-    if not isfinite(residual) or residual > residual_floor:
-        raise GlobalQuadricOcclusionError(
-            "parallel view screen ray reconstruction is numerically ambiguous"
+    anchor_projection = matrix @ anchor
+
+    def ray_origin(screen_point: tuple[float, float]) -> np.ndarray:
+        screen_target = np.asarray(screen_point, dtype=float)
+        screen_delta = screen_target - anchor_projection
+        offset = right.T @ ((left.T @ screen_delta) / singular_values)
+        origin = anchor + offset
+        residual = float(np.linalg.norm(matrix @ origin - screen_target))
+        residual_floor = 4096.0 * np.finfo(float).eps * max(
+            float(np.linalg.norm(screen_target)),
+            float(np.linalg.norm(anchor_projection)),
+            float(np.linalg.norm(screen_delta)),
+            np.finfo(float).tiny,
         )
+        residual_floor = max(residual_floor, screen_epsilon)
+        if not isfinite(residual) or residual > residual_floor:
+            raise GlobalQuadricOcclusionError(
+                "parallel view screen ray reconstruction is numerically ambiguous"
+            )
+        return origin
+
+    return ray_origin
+
+
+def _prepare_surface_ray_interval(
+    surface: QuadricSurfaceSpec,
+    direction: np.ndarray,
+    *,
+    context: ResolvedGeometryContext,
+    depth_epsilon: float,
+) -> _SurfaceRayInterval:
+    """Prepare one localized finite solid for all overlap witnesses."""
 
     # The finite-solid contract remains authoritative, but it is evaluated in
     # a surface-local unit frame.  This removes both large common translations
@@ -838,7 +861,6 @@ def _ray_interval(
     surface_anchor = _surface_center(surface)
     local_scale = _surface_local_scale(surface, surface_anchor)
     local_surface = _localized_surface(surface, surface_anchor, local_scale)
-    local_origin = (origin - surface_anchor) / local_scale
     local_overrides: dict[GeometryQuantity, float] = {}
     for quantity, value in context.overrides.items():
         local_overrides[quantity] = (
@@ -865,38 +887,70 @@ def _ray_interval(
     ray_context = local_context.with_overrides(
         angular=128.0 * np.finfo(float).eps,
     )
-    hits = local_surface.ray_hits(
-        local_origin,
-        view.view_direction,
-        context=ray_context,
+    ray_direction = np.asarray(direction, dtype=float).copy()
+    ray_direction.setflags(write=False)
+    ray_hits = _prepare_finite_surface_ray_hits(
+        local_surface,
+        ray_direction,
+        ray_context,
         include_caps=True,
         forward_only=False,
     )
-    parameters: list[float] = []
-    for hit in hits:
-        world_parameter = hit.parameter * local_scale
-        if not parameters or all(
-            abs(world_parameter - existing) > depth_epsilon
-            for existing in parameters
-        ):
-            parameters.append(world_parameter)
-    parameters.sort()
-    if len(parameters) < 2:
-        raise GlobalQuadricOcclusionError(
-            f"overlap witness ray did not cross closed surface {surface.surface_id!r} twice"
-        )
-    interval = (parameters[0], parameters[-1])
-    local_midpoint = local_origin + (
-        0.5 * (interval[0] + interval[1]) / local_scale
-    ) * np.asarray(
-        view.view_direction,
-        dtype=float,
+
+    def ray_interval(origin: np.ndarray) -> tuple[float, float]:
+        local_origin = (np.asarray(origin, dtype=float) - surface_anchor) / local_scale
+        parameters: list[float] = []
+        for hit in ray_hits(local_origin):
+            world_parameter = hit.parameter * local_scale
+            if not parameters or all(
+                abs(world_parameter - existing) > depth_epsilon
+                for existing in parameters
+            ):
+                parameters.append(world_parameter)
+        parameters.sort()
+        if len(parameters) < 2:
+            raise GlobalQuadricOcclusionError(
+                "overlap witness ray did not cross closed surface "
+                f"{surface.surface_id!r} twice"
+            )
+        interval = (parameters[0], parameters[-1])
+        local_midpoint = local_origin + (
+            0.5 * (interval[0] + interval[1]) / local_scale
+        ) * ray_direction
+        if not local_surface.contains(local_midpoint, context=local_context):
+            raise GlobalQuadricOcclusionError(
+                "ray-hit endpoints for surface "
+                f"{surface.surface_id!r} do not bound its solid interior"
+            )
+        return interval
+
+    return ray_interval
+
+
+def _ray_interval(
+    surface: QuadricSurfaceSpec,
+    screen_point: tuple[float, float],
+    view: ParallelView,
+    *,
+    context: ResolvedGeometryContext,
+    depth_epsilon: float,
+    scene_anchor: np.ndarray,
+) -> tuple[float, float]:
+    """Compatibility entry for one independently prepared witness query."""
+
+    screen_matrix = view.matrix[:2]
+    ray_origin = _prepare_screen_ray_origin(
+        screen_matrix,
+        scene_anchor,
+        screen_epsilon=_screen_epsilon(context, screen_matrix),
     )
-    if not local_surface.contains(local_midpoint, context=local_context):
-        raise GlobalQuadricOcclusionError(
-            f"ray-hit endpoints for surface {surface.surface_id!r} do not bound its solid interior"
-        )
-    return interval
+    ray_interval = _prepare_surface_ray_interval(
+        surface,
+        view.view_direction,
+        context=context,
+        depth_epsilon=depth_epsilon,
+    )
+    return ray_interval(ray_origin(screen_point))
 
 
 @dataclass(frozen=True, slots=True)
@@ -992,6 +1046,8 @@ def _automatic_surface_order(
         if surfaces
         else np.zeros(3, dtype=float)
     )
+    screen_ray_origin: _ScreenRayOrigin | None = None
+    surface_ray_intervals: dict[str, _SurfaceRayInterval] = {}
     evidence_items: list[SurfaceDepthEvidence] = []
     constraints: list[SurfaceOrderConstraint] = []
 
@@ -1091,6 +1147,12 @@ def _automatic_surface_order(
 
         witnesses: list[SurfaceDepthWitness] = []
         relation: tuple[str, str] | None = None
+        if screen_ray_origin is None:
+            screen_ray_origin = _prepare_screen_ray_origin(
+                screen_matrix,
+                scene_anchor,
+                screen_epsilon=screen_epsilon,
+            )
         for local_screen_point in _interior_witnesses(overlap_local):
             screen_point_array = (
                 np.asarray(local_screen_point, dtype=float) + polygon_anchor
@@ -1099,22 +1161,47 @@ def _automatic_surface_order(
                 float(screen_point_array[0]),
                 float(screen_point_array[1]),
             )
-            first_interval = _ray_interval(
-                first,
-                screen_point,
-                view,
-                context=context,
-                depth_epsilon=depth_epsilon,
-                scene_anchor=scene_anchor,
-            )
-            second_interval = _ray_interval(
-                second,
-                screen_point,
-                view,
-                context=context,
-                depth_epsilon=depth_epsilon,
-                scene_anchor=scene_anchor,
-            )
+            world_origin = screen_ray_origin(screen_point)
+            if type(first) in (SphereSpec, CylinderSpec, ConeSpec):
+                first_solver = surface_ray_intervals.get(first_id)
+                if first_solver is None:
+                    first_solver = _prepare_surface_ray_interval(
+                        first,
+                        view.view_direction,
+                        context=context,
+                        depth_epsilon=depth_epsilon,
+                    )
+                    surface_ray_intervals[first_id] = first_solver
+                first_interval = first_solver(world_origin)
+            else:
+                first_interval = _ray_interval(
+                    first,
+                    screen_point,
+                    view,
+                    context=context,
+                    depth_epsilon=depth_epsilon,
+                    scene_anchor=scene_anchor,
+                )
+            if type(second) in (SphereSpec, CylinderSpec, ConeSpec):
+                second_solver = surface_ray_intervals.get(second_id)
+                if second_solver is None:
+                    second_solver = _prepare_surface_ray_interval(
+                        second,
+                        view.view_direction,
+                        context=context,
+                        depth_epsilon=depth_epsilon,
+                    )
+                    surface_ray_intervals[second_id] = second_solver
+                second_interval = second_solver(world_origin)
+            else:
+                second_interval = _ray_interval(
+                    second,
+                    screen_point,
+                    view,
+                    context=context,
+                    depth_epsilon=depth_epsilon,
+                    scene_anchor=scene_anchor,
+                )
             if first_interval[1] < second_interval[0] - depth_epsilon:
                 current = (first_id, second_id)
             elif second_interval[1] < first_interval[0] - depth_epsilon:

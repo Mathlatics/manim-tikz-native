@@ -36,7 +36,13 @@ from .critical import (
     _resolved_context,
     compute_curve_critical_events,
 )
-from .contract import ConeSpec, CylinderSpec, SphereSpec
+from .contract import (
+    ConeSpec,
+    CylinderSpec,
+    SphereSpec,
+    _FiniteSurfaceRayHits,
+    _prepare_finite_surface_ray_hits,
+)
 from .curves import (
     EllipseArcCurve,
     ParametricConicBranch,
@@ -259,20 +265,12 @@ def _validated_surfaces(
 
 
 def _occludes_midpoint(
-    surface: QuadricSurfaceSpec,
+    ray_hits: _FiniteSurfaceRayHits,
     point: tuple[float, float, float],
-    view: ParallelView,
     *,
-    context: object,
     depth_epsilon: float,
 ) -> bool:
-    hits = surface.ray_hits(
-        point,
-        view.view_direction,
-        context=context,
-        include_caps=True,
-        forward_only=True,
-    )
+    hits = ray_hits(point)
     return any(
         hit.parameter > depth_epsilon and not hit.tangential
         for hit in hits
@@ -314,15 +312,26 @@ def compute_curve_visibility(
         (event.parameter for event in events),
         tolerance=parameter_epsilon,
     )
+    prepared_surfaces = tuple(
+        (
+            surface,
+            _prepare_finite_surface_ray_hits(
+                surface,
+                view.view_direction,
+                resolved,
+                include_caps=True,
+                forward_only=True,
+            ),
+        )
+        for surface in surface_items
+    )
     hidden: list[OcclusionInterval[str]] = []
     for cell in cells:
         point = curve.point(cell.midpoint)
-        for surface in surface_items:
+        for surface, ray_hits in prepared_surfaces:
             if _occludes_midpoint(
-                surface,
+                ray_hits,
                 point,
-                view,
-                context=resolved,
                 depth_epsilon=depth_epsilon,
             ):
                 hidden.append(OcclusionInterval(cell, surface.surface_id))
@@ -372,12 +381,15 @@ def compute_point_visibility(
     occluders = tuple(
         surface.surface_id
         for surface in surface_items
-        if _occludes_midpoint(
-            surface,
-            marker.point,
-            view,
-            context=resolved,
-            depth_epsilon=depth_epsilon,
+        if any(
+            hit.parameter > depth_epsilon and not hit.tangential
+            for hit in surface.ray_hits(
+                marker.point,
+                view.view_direction,
+                context=resolved,
+                include_caps=True,
+                forward_only=True,
+            )
         )
     )
     return PointVisibilityRecord(
