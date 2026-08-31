@@ -21,6 +21,9 @@
     "motionJson": {
       "$ref": "#/$defs/relativePath"
     },
+    "cameraShots": {
+      "$ref": "#/$defs/relativePath"
+    },
     "hooksSource": {
       "$ref": "#/$defs/relativePath"
     },
@@ -93,6 +96,13 @@
     "hooksSource": ["bridgeRequestTemplate"],
     "selection": ["bridgeRequestTemplate"]
   },
+  "allOf": [
+    {
+      "not": {
+        "required": ["motionJson", "cameraShots"]
+      }
+    }
+  ],
   "additionalProperties": false,
   "$defs": {
     "authorObject": {

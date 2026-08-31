@@ -28,6 +28,13 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import Any, Callable, Iterable, Iterator, Mapping, MutableMapping, Sequence
 
+from .parallel_shots import (
+    PARALLEL_CAMERA_SHOT_SEQUENCE_SCHEMA,
+    ParallelCameraShotSequence,
+    canonical_parallel_camera_shot_sequence_json,
+    parallel_camera_shot_sequence_from_dict,
+)
+
 SOURCE_PROJECT_SCHEMA_VERSION = "tikz-native-source-project/v1"
 BUILD_MANIFEST_SCHEMA_VERSION = "tikz-native-build-manifest/v1"
 SHAPE_ASSET_SCHEMA_VERSION = "tikz-native-shape-asset/v1"
@@ -47,6 +54,7 @@ _KNOWN_OUTPUT_NAMES = frozenset(
         BUILD_MANIFEST_NAME,
         "shape-asset.json",
         "motion-asset.json",
+        "camera-shots.json",
         "unified-compositing.json",
         "generated_scene.py",
     }
@@ -87,6 +95,7 @@ class SourceProject:
     root: Path
     tikz_source: Path
     motion_json: Path | None
+    camera_shots: Path | None
     hooks_source: Path | None
     bridge_request_template: Path | None
     output_directory: Path
@@ -720,6 +729,7 @@ def load_source_project(manifest_path: str | os.PathLike[str]) -> SourceProject:
             "schemaVersion",
             "tikzSource",
             "motionJson",
+            "cameraShots",
             "hooksSource",
             "bridgeRequestTemplate",
             "derivedOutput",
@@ -738,6 +748,7 @@ def load_source_project(manifest_path: str | os.PathLike[str]) -> SourceProject:
 
     tikz_raw = _one_of(raw, ("tikzSource",), required=True)
     motion_raw = _one_of(raw, ("motionJson",))
+    camera_shots_raw = _one_of(raw, ("cameraShots",))
     hooks_raw = _one_of(raw, ("hooksSource",))
     bridge_raw = _one_of(raw, ("bridgeRequestTemplate",))
     output_raw = _one_of(raw, ("derivedOutput",))
@@ -774,6 +785,16 @@ def load_source_project(manifest_path: str | os.PathLike[str]) -> SourceProject:
         if motion_raw is not None
         else None
     )
+    camera_shots = (
+        _resolve_project_path(
+            root,
+            camera_shots_raw,
+            label="cameraShots",
+            must_exist=True,
+        )
+        if camera_shots_raw is not None
+        else None
+    )
     hooks_source = (
         _resolve_project_path(root, hooks_raw, label="hooksSource", must_exist=True)
         if hooks_raw is not None
@@ -794,7 +815,13 @@ def load_source_project(manifest_path: str | os.PathLike[str]) -> SourceProject:
 
     authored_paths = tuple(
         path
-        for path in (tikz_source, motion_json, hooks_source, bridge_template)
+        for path in (
+            tikz_source,
+            motion_json,
+            camera_shots,
+            hooks_source,
+            bridge_template,
+        )
         if path is not None
     )
     for authored in authored_paths:
@@ -819,12 +846,18 @@ def load_source_project(manifest_path: str | os.PathLike[str]) -> SourceProject:
         raise SourceProjectError("hooksSource requires bridgeRequestTemplate")
     if "selection" in raw and bridge_template is None:
         raise SourceProjectError("selection requires bridgeRequestTemplate")
+    if motion_json is not None and camera_shots is not None:
+        raise SourceProjectError(
+            "cameraShots and motionJson cannot both be present until one "
+            "coordinated timeline owns the scene camera"
+        )
 
     return SourceProject(
         manifest_path=manifest,
         root=root,
         tikz_source=tikz_source,
         motion_json=motion_json,
+        camera_shots=camera_shots,
         hooks_source=hooks_source,
         bridge_request_template=bridge_template,
         output_directory=output_directory,
@@ -980,6 +1013,10 @@ def _provider_revision_defaults() -> dict[str, str | int]:
             "COMPONENT_GENERATED_OPEN_FACE_VISIBILITY_3D",
             version.COMPONENT_NATIVE_MANIM_SOURCE_3D_V3,
         ),
+        "embedded_motion_3d": version.COMPONENT_EMBEDDED_MOTION_3D,
+        "parallel_camera_core": getattr(
+            version, "COMPONENT_PARALLEL_CAMERA_CORE", "parallel_camera_core"
+        ),
         "open_face_unified_compositing": version.COMPONENT_OPEN_FACE_UNIFIED_COMPOSITING,
         "managed_painter_band": getattr(
             version, "COMPONENT_MANAGED_PAINTER_BAND", "managed_painter_band"
@@ -1008,11 +1045,13 @@ def _normalise_revisions(
     revisions: Mapping[str, str | int] | None,
 ) -> dict[str, str | int]:
     result = _provider_revision_defaults()
+    supplied_names: set[str] = set()
     if revisions is not None:
         for supplied_name, revision in revisions.items():
             if not isinstance(supplied_name, str) or not supplied_name:
                 raise SourceProjectError("component revision names must be non-empty strings")
             name = _REVISION_ALIASES.get(supplied_name, supplied_name)
+            supplied_names.add(name)
             if name not in result:
                 raise SourceProjectError(f"unknown Provider component revision {supplied_name!r}")
             if isinstance(revision, bool) or not isinstance(revision, (str, int)):
@@ -1028,6 +1067,15 @@ def _normalise_revisions(
                     f"component revision {supplied_name!r} must not be empty"
                 )
             result[name] = revision
+    # Before the parallel-camera core acquired its own component identity,
+    # callers injected ``embedded_motion_3d`` for camera-shot cache tests.  Keep
+    # that override fail-closed: unless the new identity is supplied explicitly,
+    # the legacy value invalidates both components.
+    if (
+        "embedded_motion_3d" in supplied_names
+        and "parallel_camera_core" not in supplied_names
+    ):
+        result["parallel_camera_core"] = result["embedded_motion_3d"]
     return dict(sorted(result.items()))
 
 
@@ -1060,6 +1108,7 @@ def _capture_input_snapshot(project: SourceProject) -> InputSnapshot:
         for path in (
             project.tikz_source,
             project.motion_json,
+            project.camera_shots,
             project.hooks_source,
             project.bridge_request_template,
         )
@@ -1107,6 +1156,7 @@ def _source_inputs(snapshot: InputSnapshot) -> dict[str, Any]:
     }
     for key, path in (
         ("motionJson", project.motion_json),
+        ("cameraShots", project.camera_shots),
         ("hooksSource", project.hooks_source),
         ("bridgeRequestTemplate", project.bridge_request_template),
     ):
@@ -1208,6 +1258,46 @@ def _local_bridge_metadata(request: MutableMapping[str, Any]) -> tuple[str, ...]
 
 _HOOKS_BEGIN = "# >>> TIKZ_NATIVE_USER_HOOKS_V1"
 _HOOKS_END = "# <<< TIKZ_NATIVE_USER_HOOKS_V1"
+_CAMERA_SHOTS_BEGIN = "# >>> TIKZ_NATIVE_CAMERA_SHOTS_V1"
+_CAMERA_SHOTS_END = "# <<< TIKZ_NATIVE_CAMERA_SHOTS_V1"
+
+
+def _append_camera_shots_binding(
+    source: str,
+    camera_shots_json: str | None,
+) -> str:
+    prefix = source if source.endswith("\n") else source + "\n"
+    if camera_shots_json is None:
+        return prefix
+    if any(
+        reserved in source
+        for reserved in (
+            _CAMERA_SHOTS_BEGIN,
+            _CAMERA_SHOTS_END,
+            "TIKZ_NATIVE_CAMERA_SHOTS",
+            "_tikz_native_camera_shots_from_json",
+        )
+    ):
+        raise SourceProjectBuildError(
+            "Bridge generated source contains a reserved cameraShots binding"
+        )
+    block = (
+        "\n"
+        + _CAMERA_SHOTS_BEGIN
+        + "\n"
+        + "from tikz_native.parallel_shots import (\n"
+        + "    parallel_camera_shot_sequence_from_json as "
+        + "_tikz_native_camera_shots_from_json,\n"
+        + ")\n"
+        + "TIKZ_NATIVE_CAMERA_SHOTS = "
+        + "_tikz_native_camera_shots_from_json("
+        + project_literal(camera_shots_json)
+        + ")\n"
+        + "del _tikz_native_camera_shots_from_json\n"
+        + _CAMERA_SHOTS_END
+        + "\n"
+    )
+    return prefix.rstrip() + "\n" + block
 
 
 def _append_authored_hooks(source: str, hooks_source: str | None) -> str:
@@ -1958,6 +2048,7 @@ def _generate_scene_source(
     snapshot_source_path: Path,
     template_value: Mapping[str, Any],
     motion_value: Any,
+    camera_shots_json: str | None,
     hooks_source: str | None,
     painter_z_band: PainterZBand,
     revisions: Mapping[str, str | int],
@@ -2022,6 +2113,7 @@ def _generate_scene_source(
         painter_z_band=painter_z_band,
         whole_figure_targets=whole_figure_targets,
     )
+    rewritten = _append_camera_shots_binding(rewritten, camera_shots_json)
     rewritten = _append_authored_hooks(rewritten, hooks_source)
     try:
         compile(rewritten, "<generated_scene.py>", "exec")
@@ -2151,6 +2243,65 @@ def _plan_nodes(
             )
         )
 
+    camera_shots_sequence: ParallelCameraShotSequence | None = None
+    camera_shots_json: str | None = None
+    camera_shots_key: str | None = None
+    if project.camera_shots is not None:
+        camera_shots_source = snapshot.text(
+            project.camera_shots,
+            label="cameraShots JSON",
+        )
+        try:
+            camera_shots_value = _strict_json_loads(camera_shots_source)
+        except json.JSONDecodeError as exc:
+            raise SourceProjectError(
+                f"invalid cameraShots JSON {project.camera_shots}: "
+                f"line {exc.lineno}, column {exc.colno}: {exc.msg}"
+            ) from exc
+        except ValueError as exc:
+            raise SourceProjectError(
+                f"invalid cameraShots JSON {project.camera_shots}: {exc}"
+            ) from exc
+        try:
+            camera_shots_sequence = parallel_camera_shot_sequence_from_dict(
+                camera_shots_value
+            )
+        except (TypeError, ValueError) as exc:
+            raise SourceProjectError(
+                f"invalid cameraShots sequence {project.camera_shots}: {exc}"
+            ) from exc
+        camera_shots_json = canonical_parallel_camera_shot_sequence_json(
+            camera_shots_sequence
+        )
+        camera_shots_revision = {
+            name: revisions[name]
+            for name in ("source_project_build", "parallel_camera_core")
+        }
+        camera_shots_key = _build_key(
+            {
+                "node": "camera_shots",
+                "schemaVersion": PARALLEL_CAMERA_SHOT_SEQUENCE_SCHEMA,
+                "cameraShotsSha256": _sha256_bytes(
+                    snapshot.payloads[project.camera_shots]
+                ),
+                "componentRevisions": camera_shots_revision,
+            }
+        )
+
+        def build_camera_shots(_context: _BuildContext) -> bytes:
+            assert camera_shots_json is not None
+            return camera_shots_json.encode("utf-8")
+
+        plans.append(
+            NodePlan(
+                name="camera_shots",
+                output_name="camera-shots.json",
+                key=camera_shots_key,
+                component_revisions=camera_shots_revision,
+                build_payload=build_camera_shots,
+            )
+        )
+
     compositing_revision = {
         name: revisions[name]
         for name in (
@@ -2159,20 +2310,21 @@ def _plan_nodes(
             "managed_painter_band",
         )
     }
-    compositing_key = _build_key(
-        {
-            "node": "compositing",
-            "schemaVersion": COMPOSITING_SCHEMA_VERSION,
-            "shapeKey": shape_key,
-            "motionKey": motion_key,
-            "paintPolicy": project.paint_policy,
-            "projectionSha256": projection_digest,
-            "painterZBand": painter_z_band.as_list(),
-            "componentRevisions": compositing_revision,
-        }
-    )
+    compositing_key_value: dict[str, Any] = {
+        "node": "compositing",
+        "schemaVersion": COMPOSITING_SCHEMA_VERSION,
+        "shapeKey": shape_key,
+        "motionKey": motion_key,
+        "paintPolicy": project.paint_policy,
+        "projectionSha256": projection_digest,
+        "painterZBand": painter_z_band.as_list(),
+        "componentRevisions": compositing_revision,
+    }
+    if camera_shots_key is not None:
+        compositing_key_value["cameraShotsKey"] = camera_shots_key
+    compositing_key = _build_key(compositing_key_value)
     def build_compositing(context: _BuildContext) -> bytes:
-        return _canonical_json({
+        value = {
             "schemaVersion": COMPOSITING_SCHEMA_VERSION,
             "buildKey": compositing_key,
             "compositingMode": "unified",
@@ -2185,7 +2337,10 @@ def _plan_nodes(
                 "name": "unified_compositor",
                 "revision": revisions["open_face_unified_compositing"],
             },
-        })
+        }
+        if camera_shots_key is not None:
+            value["cameraShotsAssetSha256"] = context.digests["camera_shots"]
+        return _canonical_json(value)
     plans.append(
         NodePlan(
             name="compositing",
@@ -2216,12 +2371,14 @@ def _plan_nodes(
             ) from exc
         if not isinstance(template_value, Mapping):
             raise SourceProjectError("Bridge request template root must be an object")
+        generated_revision_names = [
+            "source_project_build",
+            "generated_open_face_visibility_3d",
+        ]
+        if camera_shots_sequence is not None:
+            generated_revision_names.append("parallel_camera_core")
         generated_revision = {
-            name: revisions[name]
-            for name in (
-                "source_project_build",
-                "generated_open_face_visibility_3d",
-            )
+            name: revisions[name] for name in generated_revision_names
         }
         generated_key = _build_key(
             {
@@ -2246,6 +2403,7 @@ def _plan_nodes(
                 snapshot_source_path=context.source_path(),
                 template_value=template_value,
                 motion_value=motion_value,
+                camera_shots_json=camera_shots_json,
                 hooks_source=hooks_source,
                 painter_z_band=painter_z_band,
                 revisions=revisions,

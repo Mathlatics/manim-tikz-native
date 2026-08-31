@@ -16,7 +16,11 @@ from manim import Mobject
 
 from .camera_3d import MultiProjectionCamera
 from .parallel_camera import ParallelCameraState
-from .parallel_shots import ParallelCameraShot, ParallelCameraShotSequence
+from .parallel_shots import (
+    ParallelCameraShot,
+    ParallelCameraShotSequence,
+    parallel_camera_shot_progress,
+)
 
 
 ParallelCameraTargetProvider: TypeAlias = Callable[[], Sequence[float]]
@@ -165,7 +169,11 @@ def play_parallel_camera_shot(
             transition=shot.transition,
             arc_height=shot.arc_height,
         )
-        play(animation, run_time=shot.duration)
+        play(
+            animation,
+            run_time=shot.duration,
+            rate_func=parallel_camera_shot_progress,
+        )
         camera.set_parallel_state(shot.state)
         if shot.hold > 0.0:
             wait(shot.hold)

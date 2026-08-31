@@ -71,6 +71,7 @@
       "properties": {
         "tikzSource": {"$ref": "#/$defs/input"},
         "motionJson": {"$ref": "#/$defs/input"},
+        "cameraShots": {"$ref": "#/$defs/input"},
         "hooksSource": {"$ref": "#/$defs/input"},
         "bridgeRequestTemplate": {"$ref": "#/$defs/input"}
       },
@@ -159,6 +160,12 @@
             {"properties": {"output": {"const": "motion-asset.json"}}}
           ]
         },
+        "camera_shots": {
+          "allOf": [
+            {"$ref": "#/$defs/node"},
+            {"properties": {"output": {"const": "camera-shots.json"}}}
+          ]
+        },
         "compositing": {
           "allOf": [
             {"$ref": "#/$defs/node"},
@@ -176,6 +183,20 @@
     }
   },
   "allOf": [
+    {
+      "not": {
+        "properties": {
+          "inputs": {"required": ["motionJson", "cameraShots"]}
+        }
+      }
+    },
+    {
+      "not": {
+        "properties": {
+          "nodes": {"required": ["motion", "camera_shots"]}
+        }
+      }
+    },
     {
       "if": {
         "properties": {
@@ -196,6 +217,30 @@
       },
       "then": {
         "properties": {"nodes": {"required": ["motion"]}}
+      }
+    },
+    {
+      "if": {
+        "properties": {"inputs": {"required": ["cameraShots"]}}
+      },
+      "then": {
+        "properties": {"nodes": {"required": ["camera_shots"]}}
+      }
+    },
+    {
+      "if": {
+        "properties": {"nodes": {"required": ["camera_shots"]}}
+      },
+      "then": {
+        "properties": {
+          "inputs": {"required": ["cameraShots"]},
+          "componentRevisions": {
+            "anyOf": [
+              {"required": ["parallel_camera_core"]},
+              {"required": ["embedded_motion_3d"]}
+            ]
+          }
+        }
       }
     },
     {

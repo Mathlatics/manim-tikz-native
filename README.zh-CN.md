@@ -35,6 +35,20 @@ TikZ 图压成一张 SVG 或图片。转换后的直线、面、点、标签仍�
 同一帧更新；失败时自动拆除 updater、清除 Cairo 静态缓存并恢复镜头。三个可直接
 渲染的验收动画见
 [语义相机镜头示例](examples/parallel_camera_shots/README.md)。
+相机、移动截平面、拓扑双 bank、有限平面片和真实自动遮挡控制器的一体化契约，
+见[平行相机与截面序列](docs/parallel-camera-section-sequence.md)；三段完整 Cairo
+验收场景位于
+[parallel_camera_section_rig_demo.py](examples/parallel_camera_section_rig_demo.py)。
+
+这条一体化路径现在又补齐了五项基础之上的合成能力：相切截线会使用固定的点
+对象，不会伪造一小段线；球、圆柱、圆锥的轮廓、端盖圆周和指定母线会进入真实
+遮挡求解；“画多深”“是否参加遮挡”“采用哪种深度表达”是三个彼此独立的逐帧
+开关；语义相机、继承缩放、画面中心和最终偏移会作为一个完整视口事务一起切换；
+多个未挂载的截面 Rig 还可以汇总到唯一的全局控制器，让甲物体的曲线、点和轮廓
+真正被乙物体遮挡。全局 v1 暂不接受多个可见截平面片，因为那需要把多个平面和
+多个实体共同切分，不能用简单调整图层顺序代替。相切点、三轴控制和跨 Rig 遮挡
+的三段短动画位于
+[parallel_camera_advanced_compositor_demo.py](examples/parallel_camera_advanced_compositor_demo.py)。
 
 ## 圆锥截口 Quick Start
 

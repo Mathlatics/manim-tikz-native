@@ -4,11 +4,39 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+- extend the parallel-camera section Rig with fixed isolated-point slots and
+  renderer-neutral `PointMarker3D` visibility, so tangent sections activate a
+  real point Mobject without allocating during playback or fabricating a short
+  curve segment;
+- make certified sphere/cylinder/cone silhouettes, finite cap rims, and
+  explicitly reserved generators the default Rig surface-boundary path, with
+  stable semantic identities through `2 -> 1 -> 0` cone-generator changes;
+  retain the older surface-stroke outline only as an explicit paint-only
+  compatibility mode;
+- add renderer-neutral per-slot compositing frames with three independent axes:
+  dynamic display opacity, certified versus paint-only occlusion participation,
+  and physical/diagrammatic/depth-aware presentation; classify opacity-only
+  changes as draw-only while participation or depth-policy changes rebuild the
+  certified geometry;
+- add atomic `ParallelViewportState` playback for the complete semantic camera,
+  inherited positive zoom, XY frame center, and final display offset; support
+  non-identity first frames and later viewport motion while preserving exact
+  target-anchor semantics and full rollback;
+- aggregate two or more compatible unattached section Rigs into one global
+  `QuadricOcclusion3D` and managed painter band, allowing cross-Rig curve,
+  isolated-point, silhouette, rim, and generator occlusion; fail closed on
+  visible multi-plane patches until a true multi-plane partition contract is
+  available;
 - add a renderer-neutral `ParallelCameraState` with arbitrary view direction,
   target, final-screen anchor, zoom, and semantic normal/relative/along-plane
   constructors; integrate it additively with `MultiProjectionCamera` through
   safe invertible transitions while preserving legacy projection presets, and
   let the quadric Manim controllers consume that same complete animated state;
+- publish camera state, semantic shots, preflight, and frame transactions under
+  an independent `parallel_camera_core` component identity, so ordinary TikZ
+  compiler changes do not invalidate the quadric geometry chain; retain the
+  older `embedded_motion_3d` source-project revision as a fail-closed cache
+  override during migration;
 - add the strict `parallel-shot-sequence/v1` authoring layer with semantic
   look-at/normal/relative/along-plane shots, fixed-envelope zoom fitting,
   transactional Manim playback, and an explicit zero-allocation dynamic-target
@@ -16,6 +44,18 @@ All notable changes to this project will be documented in this file.
   consumers so automatic occlusion samples the new target in the same frame,
   with transactional updater/cache cleanup; include three short Cairo
   acceptance scenes;
+- compile semantic camera shots and a source-authoritative `SectionTimeline`
+  onto one renderer frame grid with analytic critical times, two fixed topology
+  banks, finite plane patches, semantic display slots, painter evidence, safe
+  framing, and channel digests; commit the resulting frame atomically in a
+  fixed participant order and roll every participant back on failure;
+- bind that certified camera/section sequence to one real
+  `QuadricOcclusion3D` controller and one managed painter band: perform a
+  two-pass preflight against the controller's numeric painter order, keep both
+  topology banks and finite cap chords in fixed slots, support constant
+  surface/plane display multipliers, and reach an exact rank-one side view
+  without replacing Mobjects; make camera and controller transaction snapshots
+  owner-bound, fully validated, and atomic;
 - give one finite single-surface cutting-plane patch an explicit `AREA`/`LINE`
   projection contract: exact side views omit fill and plane occlusion, retain
   one certified finite near-side outline without duplicate strokes, reuse the

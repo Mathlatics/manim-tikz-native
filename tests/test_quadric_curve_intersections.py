@@ -13,6 +13,8 @@ from polyhedron_visibility.quadrics.conics import ConicKind, ConicParameterizati
 from polyhedron_visibility.quadrics.contract import ConeModel, ConeSpec
 from polyhedron_visibility.quadrics.curve_intersections import (
     ProjectedCurveIntersectionError,
+    _projected_model,
+    _target_parameters,
     canonical_projected_curve_crossings_json,
     compute_projected_curve_crossings,
 )
@@ -30,6 +32,12 @@ from polyhedron_visibility.topology import ParameterInterval
 
 IDENTITY_VIEW = ParallelView.from_matrix(
     ((1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0))
+)
+UNEQUAL_SCREEN_UNITS_VIEW = ParallelView.from_matrix(
+    ((1.0e-16, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0))
+)
+EXTREME_SCREEN_UNITS_VIEW = ParallelView.from_matrix(
+    ((1.0e-300, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0))
 )
 OBLIQUE_VIEW = ParallelView.from_matrix(
     ((1.0, 0.0, 0.35), (0.0, 1.0, 0.2), (0.0, 0.0, 1.0))
@@ -335,6 +343,47 @@ class ProjectedConicCrossingTests(unittest.TestCase):
         center = np.asarray((12.3, -45.6, 0.7), dtype=float) * scale
         return center, 0.7 * scale * first_direction, 1.3 * scale * second_direction
 
+    @staticmethod
+    def _ellipse_representations(
+        label: str,
+        first_axis: tuple[float, float, float],
+        second_axis: tuple[float, float, float],
+    ) -> tuple[EllipseArcCurve, ParametricConicBranch]:
+        first = np.asarray(first_axis, dtype=float)
+        second = np.asarray(second_axis, dtype=float)
+        first_length = float(np.linalg.norm(first))
+        second_length = float(np.linalg.norm(second))
+        first_direction = first / first_length
+        second_direction = second / second_length
+        embedding = tuple(
+            (
+                float(first_direction[index]),
+                float(second_direction[index]),
+                0.0,
+            )
+            for index in range(3)
+        ) + ((0.0, 0.0, 1.0),)
+        return (
+            EllipseArcCurve(
+                f"{label}-arc",
+                (0.0, 0.0, 0.0),
+                first_axis,
+                second_axis,
+            ),
+            ParametricConicBranch(
+                f"{label}-branch",
+                ConicParameterization(
+                    ConicKind.ELLIPSE,
+                    label,
+                    (0.0, 0.0),
+                    (first_length, 0.0),
+                    (0.0, second_length),
+                ),
+                embedding,
+                ParameterInterval(0.0, tau),
+            ),
+        )
+
     def test_circle_and_line_have_two_exact_crossings(self) -> None:
         circle = CircleArcCurve(
             "circle",
@@ -408,6 +457,369 @@ class ProjectedConicCrossingTests(unittest.TestCase):
         self.assertAlmostEqual(crossings[0].first_parameter, 0.0)
         self.assertAlmostEqual(crossings[0].second_parameter, 0.5)
         self.assertTrue(crossings[0].tangential)
+
+    def test_exact_side_view_ellipse_accepts_sub_epsilon_residual_axis(
+        self,
+    ) -> None:
+        residual = 3.9233137504691923e-19
+        visible_scale = 0.6436790448060975
+        curves = self._ellipse_representations(
+            "side-view-residual-ellipse",
+            (residual, 0.0, visible_scale),
+            (0.0, visible_scale, 0.0),
+        )
+
+        for curve in curves:
+            with self.subTest(curve_type=type(curve).__name__):
+                model = _projected_model(curve, IDENTITY_VIEW)
+                self.assertEqual(model.parameter_kind, "ellipse_rank_one")
+                self.assertIsNotNone(model.line)
+
+    def test_near_side_view_ellipse_remains_two_dimensional(self) -> None:
+        angle = np.deg2rad(90.0 - 88.0)
+        curves = self._ellipse_representations(
+            "near-side-view-ellipse",
+            (float(np.sin(angle)), 0.0, float(np.cos(angle))),
+            (0.0, 1.0, 0.0),
+        )
+
+        for curve in curves:
+            with self.subTest(curve_type=type(curve).__name__):
+                model = _projected_model(curve, IDENTITY_VIEW)
+                self.assertEqual(model.parameter_kind, "ellipse")
+                self.assertIsNone(model.line)
+
+    def test_genuinely_thin_ellipse_remains_two_dimensional(self) -> None:
+        curves = self._ellipse_representations(
+            "genuinely-thin-ellipse",
+            (1.0e-18, 0.0, 0.0),
+            (0.0, 1.0, 0.0),
+        )
+
+        for curve in curves:
+            with self.subTest(curve_type=type(curve).__name__):
+                model = _projected_model(curve, IDENTITY_VIEW)
+                self.assertEqual(model.parameter_kind, "ellipse")
+                self.assertIsNone(model.line)
+
+    def test_unequal_screen_units_do_not_create_rank_one_conics(self) -> None:
+        finite_domain = ParameterInterval(-2.0, 2.0)
+        angular_domain = ParameterInterval(0.0, tau)
+        curves_and_kinds = (
+            (
+                CircleArcCurve(
+                    "unit-scaled-circle-arc",
+                    (0.0, 0.0, 0.0),
+                    1.0,
+                    (0.0, 0.0, 1.0),
+                    radial_axis=(1.0, 0.0, 0.0),
+                ),
+                "ellipse",
+            ),
+            (
+                EllipseArcCurve(
+                    "unit-scaled-ellipse-arc",
+                    (0.0, 0.0, 0.0),
+                    (2.0, 0.0, 0.0),
+                    (0.0, 0.5, 0.0),
+                ),
+                "ellipse",
+            ),
+            (
+                ParametricConicBranch(
+                    "unit-scaled-circle-branch",
+                    ConicParameterization(
+                        ConicKind.CIRCLE,
+                        "unit-scaled-circle",
+                        (0.0, 0.0),
+                        (1.0, 0.0),
+                        (0.0, 1.0),
+                    ),
+                    PLANE_EMBEDDING,
+                    angular_domain,
+                ),
+                "ellipse",
+            ),
+            (
+                ParametricConicBranch(
+                    "unit-scaled-ellipse-branch",
+                    ConicParameterization(
+                        ConicKind.ELLIPSE,
+                        "unit-scaled-ellipse",
+                        (0.0, 0.0),
+                        (2.0, 0.0),
+                        (0.0, 0.5),
+                    ),
+                    PLANE_EMBEDDING,
+                    angular_domain,
+                ),
+                "ellipse",
+            ),
+            (
+                ParametricConicBranch(
+                    "unit-scaled-hyperbola-branch",
+                    ConicParameterization(
+                        ConicKind.HYPERBOLA,
+                        "unit-scaled-hyperbola",
+                        (0.0, 0.0),
+                        (1.0, 0.0),
+                        (0.0, 1.0),
+                    ),
+                    PLANE_EMBEDDING,
+                    finite_domain,
+                ),
+                "hyperbola",
+            ),
+            (
+                ParametricConicBranch(
+                    "unit-scaled-parabola-branch",
+                    ConicParameterization(
+                        ConicKind.PARABOLA,
+                        "unit-scaled-parabola",
+                        (0.0, 0.0),
+                        (1.0, 0.0),
+                        (0.0, 1.0),
+                    ),
+                    PLANE_EMBEDDING,
+                    finite_domain,
+                ),
+                "parabola",
+            ),
+        )
+
+        for curve, expected_kind in curves_and_kinds:
+            with self.subTest(curve_id=curve.curve_id):
+                model = _projected_model(curve, UNEQUAL_SCREEN_UNITS_VIEW)
+                self.assertEqual(model.parameter_kind, expected_kind)
+                self.assertIsNone(model.line)
+
+    def test_unequal_screen_units_keep_exact_side_view_support_in_raw_coordinates(
+        self,
+    ) -> None:
+        axis_aligned = EllipseArcCurve(
+            "unit-scaled-exact-side-axis",
+            (0.0, 0.0, 0.0),
+            (1.0, 0.0, 0.0),
+            (0.0, 0.0, 1.0),
+        )
+        axis_model = _projected_model(axis_aligned, UNEQUAL_SCREEN_UNITS_VIEW)
+        self.assertEqual(axis_model.parameter_kind, "ellipse_rank_one")
+        self.assertIsNotNone(axis_model.line)
+
+        diagonal = float(np.sqrt(0.5))
+        oblique = EllipseArcCurve(
+            "unit-scaled-exact-side-oblique",
+            (0.0, 0.0, 0.0),
+            (diagonal, diagonal, 0.0),
+            (0.0, 0.0, 1.0),
+        )
+        model = _projected_model(oblique, UNEQUAL_SCREEN_UNITS_VIEW)
+        self.assertEqual(model.parameter_kind, "ellipse_rank_one")
+        self.assertIsNotNone(model.line)
+
+        expected_direction = (
+            UNEQUAL_SCREEN_UNITS_VIEW.matrix[:2]
+            @ np.asarray(oblique.first_axis, dtype=float)
+        )
+        expected_direction /= float(np.linalg.norm(expected_direction))
+        actual_direction = np.asarray(model.screen_first, dtype=float)
+        actual_direction /= float(np.linalg.norm(actual_direction))
+        self.assertAlmostEqual(
+            abs(float(np.dot(actual_direction, expected_direction))),
+            1.0,
+            places=14,
+        )
+
+        parameter = pi / 3.0
+        screen_point = (
+            UNEQUAL_SCREEN_UNITS_VIEW.matrix[:2]
+            @ np.asarray(oblique.point(parameter), dtype=float)
+        )
+        line_value = float(
+            np.dot(
+                np.asarray(model.line, dtype=float),
+                np.asarray((screen_point[0], screen_point[1], 1.0)),
+            )
+        )
+        self.assertAlmostEqual(line_value, 0.0, places=14)
+        recovered = _target_parameters(
+            model,
+            screen_point,
+            parameter_epsilon=1.0e-12,
+            screen_epsilon=1.0e-14,
+        )
+        self.assertEqual(len(recovered), 2)
+        self.assertAlmostEqual(recovered[0], parameter, places=12)
+        self.assertAlmostEqual(recovered[1], tau - parameter, places=12)
+
+    def test_subnormal_screen_unit_keeps_nondegenerate_conics_two_dimensional(
+        self,
+    ) -> None:
+        curves_and_kinds = (
+            (
+                EllipseArcCurve(
+                    "subnormal-unit-ellipse",
+                    (0.0, 0.0, 0.0),
+                    (1.0, 0.0, 0.0),
+                    (0.0, 1.0, 0.0),
+                ),
+                "ellipse",
+            ),
+            (
+                ParametricConicBranch(
+                    "subnormal-unit-hyperbola",
+                    ConicParameterization(
+                        ConicKind.HYPERBOLA,
+                        "subnormal-unit-hyperbola",
+                        (0.0, 0.0),
+                        (1.0, 0.0),
+                        (0.0, 1.0),
+                    ),
+                    PLANE_EMBEDDING,
+                    ParameterInterval(-2.0, 2.0),
+                ),
+                "hyperbola",
+            ),
+            (
+                ParametricConicBranch(
+                    "subnormal-unit-parabola",
+                    ConicParameterization(
+                        ConicKind.PARABOLA,
+                        "subnormal-unit-parabola",
+                        (0.0, 0.0),
+                        (1.0, 0.0),
+                        (0.0, 1.0),
+                    ),
+                    PLANE_EMBEDDING,
+                    ParameterInterval(-2.0, 2.0),
+                ),
+                "parabola",
+            ),
+        )
+
+        for curve, expected_kind in curves_and_kinds:
+            with self.subTest(curve_id=curve.curve_id):
+                model = _projected_model(curve, EXTREME_SCREEN_UNITS_VIEW)
+                self.assertEqual(model.parameter_kind, expected_kind)
+                self.assertIsNone(model.line)
+
+    def test_subnormal_visible_side_view_line_and_parameters_remain_finite(
+        self,
+    ) -> None:
+        ellipse = EllipseArcCurve(
+            "subnormal-unit-side-view",
+            (0.0, 0.0, 0.0),
+            (1.0, 0.0, 0.0),
+            (0.0, 0.0, 1.0),
+        )
+        model = _projected_model(ellipse, EXTREME_SCREEN_UNITS_VIEW)
+        self.assertEqual(model.parameter_kind, "ellipse_rank_one")
+        self.assertIsNotNone(model.line)
+        self.assertGreater(float(np.max(np.abs(model.screen_first))), 0.0)
+        self.assertEqual(tuple(float(item) for item in model.line), (0.0, 1.0, 0.0))
+
+        parameter = pi / 3.0
+        screen_point = (
+            EXTREME_SCREEN_UNITS_VIEW.matrix[:2]
+            @ np.asarray(ellipse.point(parameter), dtype=float)
+        )
+        recovered = _target_parameters(
+            model,
+            screen_point,
+            parameter_epsilon=1.0e-12,
+            screen_epsilon=1.0e-315,
+        )
+        self.assertEqual(len(recovered), 2)
+        self.assertAlmostEqual(recovered[0], parameter, places=12)
+        self.assertAlmostEqual(recovered[1], tau - parameter, places=12)
+
+    def test_rank_one_ellipse_extremum_snaps_only_inside_screen_enclosure(
+        self,
+    ) -> None:
+        ellipse = EllipseArcCurve(
+            "rank-one-extremum-ellipse",
+            (0.0, 0.0, 0.0),
+            (0.0, 0.0, 1.0),
+            (0.0, 1.0, 0.0),
+        )
+        model = _projected_model(ellipse, IDENTITY_VIEW)
+        self.assertEqual(model.parameter_kind, "ellipse_rank_one")
+
+        ulp_below_turn = float(np.nextafter(1.0, 0.0))
+        snapped = _target_parameters(
+            model,
+            np.asarray((0.0, ulp_below_turn), dtype=float),
+            parameter_epsilon=1.0e-12,
+            screen_epsilon=1.0e-12,
+        )
+        self.assertEqual(len(snapped), 1)
+        self.assertAlmostEqual(snapped[0], pi / 2.0, places=15)
+
+        resolvable = _target_parameters(
+            model,
+            np.asarray((0.0, 1.0 - 1.0e-8), dtype=float),
+            parameter_epsilon=1.0e-12,
+            screen_epsilon=1.0e-12,
+        )
+        self.assertEqual(len(resolvable), 2)
+        self.assertLess(resolvable[0], pi / 2.0)
+        self.assertGreater(resolvable[1], pi / 2.0)
+
+    def test_rank_one_cap_rim_source_root_snaps_to_generator_contact(self) -> None:
+        cone = ConeSpec(
+            "rank-one-source-snap-cone",
+            (0.0, 0.0, -1.5),
+            (0.0, 0.0, 1.0),
+            pi / 6.0,
+            (0.0, 4.0),
+            radial_axis=(1.0, 0.0, 0.0),
+            model=ConeModel.CLOSED_SINGLE,
+        )
+        matrix = np.asarray(
+            (
+                (
+                    3.3035042472810605e-1,
+                    0.0,
+                    9.4385835636601745e-1,
+                ),
+                (
+                    -9.4385835636601745e-1,
+                    -1.8312469870923541e-17,
+                    3.3035042472810605e-1,
+                ),
+                (
+                    -1.7258334532358325e-17,
+                    -1.0,
+                    -1.9689441803714197e-17,
+                ),
+            ),
+            dtype=float,
+        )
+        matrix[:2] *= 1.06
+        view = ParallelView.from_matrix(matrix)
+        sources = build_surface_boundary_sources(
+            (cone,),
+            view,
+            (),
+            include_cap_rims=True,
+            include_silhouettes=True,
+        )
+        rim = next(item for item in sources if "cap_max:rim" in item.source_id)
+        generator = next(
+            item
+            for item in sources
+            if item.source_id.endswith("silhouette:generator:0")
+        )
+
+        crossing = compute_projected_curve_crossings(
+            (rim.curve, generator.curve),
+            view,
+        )
+
+        self.assertEqual(len(crossing), 1)
+        self.assertAlmostEqual(crossing[0].first_parameter, 0.0, places=15)
+        self.assertAlmostEqual(crossing[0].second_parameter, 1.0, places=15)
+        self.assertTrue(crossing[0].tangential)
 
     def test_tiny_nondegenerate_circle_projection_is_not_singular(self) -> None:
         scale = 1.0e-7
@@ -1773,6 +2185,79 @@ class ProjectedConicCrossingTests(unittest.TestCase):
             -atanh(0.5),
         )
         self.assertTrue(turn_crossings[0].tangential)
+
+    def test_exact_side_view_hyperbola_accepts_sub_epsilon_residual_axis(
+        self,
+    ) -> None:
+        residual = 3.9233137504691923e-19
+        visible_scale = 0.6436790448060975
+        hyperbola = ParametricConicBranch(
+            "side-view-residual-hyperbola",
+            ConicParameterization(
+                ConicKind.HYPERBOLA,
+                "side-view-residual-hyperbola",
+                (0.0, 0.0),
+                (1.0, 0.0),
+                (0.0, 1.0),
+            ),
+            (
+                (residual, 0.0, 0.0),
+                (0.0, visible_scale, 0.0),
+                (visible_scale, 0.0, 0.0),
+                (0.0, 0.0, 1.0),
+            ),
+            ParameterInterval(-2.0, 2.0),
+        )
+
+        model = _projected_model(hyperbola, IDENTITY_VIEW)
+
+        self.assertEqual(model.parameter_kind, "hyperbola_rank_one")
+        self.assertIsNotNone(model.line)
+
+    def test_near_side_view_hyperbola_remains_two_dimensional(self) -> None:
+        angle = np.deg2rad(90.0 - 88.0)
+        hyperbola = ParametricConicBranch(
+            "near-side-view-hyperbola",
+            ConicParameterization(
+                ConicKind.HYPERBOLA,
+                "near-side-view-hyperbola",
+                (0.0, 0.0),
+                (1.0, 0.0),
+                (0.0, 1.0),
+            ),
+            (
+                (float(np.sin(angle)), 0.0, 0.0),
+                (0.0, 1.0, 0.0),
+                (float(np.cos(angle)), 0.0, 0.0),
+                (0.0, 0.0, 1.0),
+            ),
+            ParameterInterval(-2.0, 2.0),
+        )
+
+        model = _projected_model(hyperbola, IDENTITY_VIEW)
+
+        self.assertEqual(model.parameter_kind, "hyperbola")
+        self.assertIsNone(model.line)
+
+    def test_genuinely_thin_hyperbola_remains_two_dimensional(self) -> None:
+        thin_axis = 1.0e-18
+        hyperbola = ParametricConicBranch(
+            "genuinely-thin-hyperbola",
+            ConicParameterization(
+                ConicKind.HYPERBOLA,
+                "genuinely-thin-hyperbola",
+                (0.0, 0.0),
+                (thin_axis, 0.0),
+                (0.0, 1.0),
+            ),
+            PLANE_EMBEDDING,
+            ParameterInterval(-2.0, 2.0),
+        )
+
+        model = _projected_model(hyperbola, IDENTITY_VIEW)
+
+        self.assertEqual(model.parameter_kind, "hyperbola")
+        self.assertIsNone(model.line)
 
     def test_rank_one_unbounded_same_line_domains_classify_exactly(self) -> None:
         parabola = ParametricConicBranch(

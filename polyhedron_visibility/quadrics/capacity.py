@@ -31,7 +31,7 @@ from .plane_motion import (
 from .profiles import QUADRIC_RENDER_PROFILES, QuadricRenderProfile
 
 
-QUADRIC_CAPACITY_PLAN_SCHEMA = "manim-quadric-capacity-plan/v1"
+QUADRIC_CAPACITY_PLAN_SCHEMA = "manim-quadric-capacity-plan/v2"
 _PROGRESS_TOLERANCE = 1.0e-12
 
 
@@ -210,6 +210,7 @@ class QuadricCapacitySample:
     progress: float
     surface_count: int
     active_curve_count: int
+    active_point_count: int
     active_source_count: int
     active_fragment_count: int
     max_fragments_per_source: int
@@ -226,6 +227,7 @@ class QuadricCapacitySample:
             "progress": self.progress,
             "surfaceCount": self.surface_count,
             "activeCurveCount": self.active_curve_count,
+            "activePointCount": self.active_point_count,
             "activeSourceCount": self.active_source_count,
             "activeFragmentCount": self.active_fragment_count,
             "maxFragmentsPerSource": self.max_fragments_per_source,
@@ -245,6 +247,7 @@ class QuadricCapacityPeaks:
 
     surface_count: int
     active_curve_count: int
+    active_point_count: int
     active_source_count: int
     active_fragment_count: int
     max_fragments_per_source: int
@@ -266,6 +269,7 @@ class QuadricCapacityPeaks:
         fields = (
             "surface_count",
             "active_curve_count",
+            "active_point_count",
             "active_source_count",
             "active_fragment_count",
             "max_fragments_per_source",
@@ -288,6 +292,7 @@ class QuadricCapacityPeaks:
         return {
             "surfaceCount": self.surface_count,
             "activeCurveCount": self.active_curve_count,
+            "activePointCount": self.active_point_count,
             "activeSourceCount": self.active_source_count,
             "activeFragmentCount": self.active_fragment_count,
             "maxFragmentsPerSource": self.max_fragments_per_source,
@@ -311,6 +316,7 @@ class QuadricCapacityPlan:
     peaks: QuadricCapacityPeaks
     fixed_surface_count: int
     allocated_curve_count: int
+    allocated_point_count: int
     allocated_boundary_source_count: int
     slot_source_count: int
     boundary_style_count: int
@@ -352,6 +358,7 @@ class QuadricCapacityPlan:
                 (
                     f"扫描样本：{len(self.samples)} 帧（只认证这些帧）",
                     f"边界源峰值：{peaks.active_source_count}",
+                    f"活动点峰值：{peaks.active_point_count}",
                     f"每源 fragment 峰值：{peaks.max_fragments_per_source}",
                     f"每 fragment dash 峰值：{peaks.max_dashes_per_fragment}",
                     f"平面 fragment 峰值：{peaks.plane_fragment_count}",
@@ -366,6 +373,7 @@ class QuadricCapacityPlan:
             (
                 f"Scanned samples: {len(self.samples)} frames (listed frames only)",
                 f"Peak boundary sources: {peaks.active_source_count}",
+                f"Peak point markers: {peaks.active_point_count}",
                 f"Peak fragments per source: {peaks.max_fragments_per_source}",
                 f"Peak dashes per fragment: {peaks.max_dashes_per_fragment}",
                 f"Peak plane fragments: {peaks.plane_fragment_count}",
@@ -392,6 +400,7 @@ class QuadricCapacityPlan:
             "fixedAllocation": {
                 "surfaceCount": self.fixed_surface_count,
                 "allocatedCurveCount": self.allocated_curve_count,
+                "allocatedPointCount": self.allocated_point_count,
                 "allocatedBoundarySourceCount": (
                     self.allocated_boundary_source_count
                 ),
@@ -481,6 +490,7 @@ def _capacity_sample(
         progress=progress,
         surface_count=len(numeric.frame.surface_items),
         active_curve_count=len(numeric.curve_opacities),
+        active_point_count=len(numeric.point_opacities),
         active_source_count=active_source_count,
         active_fragment_count=len(fragments),
         max_fragments_per_source=max(
@@ -565,6 +575,7 @@ def _recommended_limits(
         source_count=len(controller._slot_source_ids),
         max_fragments_per_curve=fragment_capacity,
         section_enabled=controller._section_enabled,
+        point_count=len(controller._point_ids),
     )
     maximum_mobjects = estimated + headroom.mobject_slots
     return (
@@ -579,6 +590,7 @@ def _recommended_limits(
             max_total_mobjects=maximum_mobjects,
             max_boundary_sources=max(1, len(controller._boundary_source_ids)),
             max_boundary_styles=max(1, len(controller.boundary_styles)),
+            max_points=max(1, len(controller._point_ids)),
         ),
         estimated,
     )
@@ -629,6 +641,7 @@ class QuadricCapacityPlanner:
         payload = {
             "surfaces": list(controller._surface_ids),
             "curves": list(controller._curve_ids),
+            "points": list(controller._point_ids),
             "boundarySources": list(controller._boundary_source_ids),
             "slotSources": list(controller._slot_source_ids),
             "boundaryStyles": sorted(controller.boundary_styles),
@@ -868,6 +881,7 @@ class QuadricCapacityPlanner:
             peaks=peaks,
             fixed_surface_count=len(self.low_level_controller._surface_ids),
             allocated_curve_count=len(self.low_level_controller._curve_ids),
+            allocated_point_count=len(self.low_level_controller._point_ids),
             allocated_boundary_source_count=len(
                 self.low_level_controller._boundary_source_ids
             ),

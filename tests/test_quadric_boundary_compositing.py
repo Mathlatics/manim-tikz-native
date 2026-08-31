@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 import json
-from math import pi, sqrt, tau
+from math import cos, pi, sin, sqrt, tau
 import unittest
 
 import numpy as np
@@ -49,6 +49,7 @@ from polyhedron_visibility.quadrics.surface_boundaries import (
     build_surface_boundary_sources,
     curve_boundary_source,
     plane_outline_sources,
+    surface_boundary_slot_descriptors,
     surface_boundary_source_ids,
 )
 from polyhedron_visibility.topology import ParameterInterval
@@ -1388,6 +1389,118 @@ class QuadricBoundaryContractTests(unittest.TestCase):
                 for item in sources
             )
         )
+
+    def test_surface_boundary_descriptors_are_complete_and_view_independent(
+        self,
+    ) -> None:
+        cylinder = CylinderSpec(
+            "descriptor-cylinder",
+            (0.0, 0.0, -1.0),
+            (0.0, 0.0, 1.0),
+            1.0,
+            (0.0, 2.0),
+            radial_axis=(1.0, 0.0, 0.0),
+        )
+        generator = GeneratorBoundarySpec(
+            "descriptor-generator",
+            cylinder.surface_id,
+            0.3,
+        )
+        descriptors = surface_boundary_slot_descriptors(
+            (cylinder,),
+            (generator,),
+        )
+        self.assertEqual(
+            tuple(item.source_id for item in descriptors),
+            surface_boundary_source_ids((cylinder,), (generator,)),
+        )
+        by_kind = {
+            item.source_kind for item in descriptors
+        }
+        self.assertTrue(
+            {
+                BoundarySourceKind.SURFACE_CAP_RIM,
+                BoundarySourceKind.SURFACE_SILHOUETTE,
+                BoundarySourceKind.SURFACE_GENERATOR,
+            }
+            <= by_kind
+        )
+
+    def test_silhouette_generator_identity_is_continuous_across_azimuth_seam(
+        self,
+    ) -> None:
+        cylinder = CylinderSpec(
+            "seam-cylinder",
+            (0.0, 0.0, -1.0),
+            (0.0, 0.0, 1.0),
+            1.0,
+            (0.0, 2.0),
+            radial_axis=(1.0, 0.0, 0.0),
+        )
+
+        def view(azimuth: float, elevation: float = 0.35) -> ParallelView:
+            direction = np.asarray(
+                (
+                    cos(elevation) * cos(azimuth),
+                    cos(elevation) * sin(azimuth),
+                    sin(elevation),
+                ),
+                dtype=float,
+            )
+            screen_x = np.asarray((-sin(azimuth), cos(azimuth), 0.0))
+            screen_y = np.cross(direction, screen_x)
+            return ParallelView.from_matrix((screen_x, screen_y, direction))
+
+        radial_by_side = []
+        for azimuth in (-1.0e-6, 1.0e-6):
+            source = next(
+                item
+                for item in build_surface_boundary_sources(
+                    (cylinder,),
+                    view(azimuth),
+                    include_cap_rims=False,
+                )
+                if item.source_id.endswith("generator:0")
+            )
+            start = np.asarray(source.curve.start, dtype=float)
+            radial = start - np.asarray(cylinder.origin, dtype=float)
+            radial_by_side.append(radial / np.linalg.norm(radial))
+        np.testing.assert_allclose(
+            radial_by_side[0],
+            radial_by_side[1],
+            atol=3.0e-6,
+        )
+
+    def test_cone_silhouette_has_certified_two_one_zero_transition(self) -> None:
+        cone = ConeSpec(
+            "tangent-cone",
+            (0.0, 0.0, 0.0),
+            (0.0, 0.0, 1.0),
+            pi / 4.0,
+            (0.0, 2.0),
+            radial_axis=(1.0, 0.0, 0.0),
+        )
+
+        def view(elevation: float) -> ParallelView:
+            direction = np.asarray((cos(elevation), 0.0, sin(elevation)))
+            screen_x = np.asarray((0.0, 1.0, 0.0))
+            screen_y = np.cross(direction, screen_x)
+            return ParallelView.from_matrix((screen_x, screen_y, direction))
+
+        counts = []
+        for elevation in (pi / 4.0 - 1.0e-4, pi / 4.0, pi / 4.0 + 1.0e-4):
+            sources = build_surface_boundary_sources(
+                (cone,),
+                view(elevation),
+                include_cap_rims=False,
+            )
+            counts.append(
+                sum(
+                    item.source_kind is BoundarySourceKind.SURFACE_SILHOUETTE
+                    for item in sources
+                )
+            )
+        self.assertEqual(counts, [2, 1, 0])
 
     def test_explicit_generator_is_owner_aware(self) -> None:
         cone = ConeSpec(

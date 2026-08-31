@@ -19,6 +19,7 @@ from .conics import ConicKind, ConicParameterization
 
 
 ANALYTIC_CURVE_SCHEMA = "manim-analytic-curve-3d/v1"
+POINT_MARKER_SCHEMA = "manim-point-marker-3d/v1"
 _ORTHOGONAL_TOLERANCE = 1.0e-10
 _ANGULAR_TOLERANCE = 1.0e-12
 _TRIG_SNAP_TOLERANCE = 64.0 * float(np.finfo(float).eps)
@@ -28,9 +29,39 @@ class CurveContractError(ValueError):
     """Raised when an analytic curve contract is ambiguous or degenerate."""
 
 
-def _identity(value: object) -> str:
+@dataclass(frozen=True, slots=True)
+class PointMarker3D:
+    """One exact isolated world point with a stable renderer identity.
+
+    A point marker is deliberately not an analytic curve: it has no parameter
+    interval or tangent and therefore cannot be approximated by a zero-length
+    ``SegmentCurve``.  Fixed-capacity renderers may reserve ``point_id`` before
+    the marker becomes active during a topology transition.
+    """
+
+    point_id: str
+    point: tuple[float, float, float]
+    schema: str = POINT_MARKER_SCHEMA
+
+    def __post_init__(self) -> None:
+        if self.schema != POINT_MARKER_SCHEMA:
+            raise CurveContractError("invalid point-marker schema")
+        point_id = _identity(self.point_id, "point_id")
+        point = _point3(self.point, "point marker")
+        object.__setattr__(self, "point_id", point_id)
+        object.__setattr__(self, "point", point)
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "schema": self.schema,
+            "pointId": self.point_id,
+            "point": list(self.point),
+        }
+
+
+def _identity(value: object, label: str = "curve_id") -> str:
     if not isinstance(value, str) or not value.strip():
-        raise CurveContractError("curve_id must be a non-empty string")
+        raise CurveContractError(f"{label} must be a non-empty string")
     return value.strip()
 
 
@@ -430,9 +461,11 @@ class ParametricConicBranch:
 
 __all__ = [
     "ANALYTIC_CURVE_SCHEMA",
+    "POINT_MARKER_SCHEMA",
     "CircleArcCurve",
     "CurveContractError",
     "EllipseArcCurve",
     "ParametricConicBranch",
+    "PointMarker3D",
     "SegmentCurve",
 ]

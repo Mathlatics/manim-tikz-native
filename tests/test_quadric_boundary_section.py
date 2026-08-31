@@ -12,6 +12,7 @@ from polyhedron_visibility.parallel_solver import ParallelView
 from polyhedron_visibility.quadrics.boundary_section import (
     BoundaryPlaneRelation,
     QuadricBoundarySectionLimits,
+    _compute_boundary_section_spans_with_contours,
     _projected_segment_intersection_parameters,
     certify_rank_one_section_boundary_sources,
     compute_boundary_section_spans,
@@ -30,6 +31,7 @@ from polyhedron_visibility.quadrics.contract import (
     PlaneDisplayPatchSpec,
     SectionPlane,
     SphereSpec,
+    _prepare_finite_surface_ray_hits,
 )
 from polyhedron_visibility.quadrics.curve_intersections import (
     compute_projected_curve_crossings,
@@ -42,6 +44,7 @@ from polyhedron_visibility.quadrics.curves import (
 from polyhedron_visibility.quadrics.projection import build_opaque_projection_proxy
 from polyhedron_visibility.quadrics.section_compositing import (
     compute_quadric_section_compositing,
+    quadric_plane_fragment_contours,
 )
 from polyhedron_visibility.quadrics.sections import (
     QuadricSectionError,
@@ -119,6 +122,296 @@ def _cylinder_section_case():
 
 
 class BoundarySectionPlacementTests(unittest.TestCase):
+    def test_prepared_finite_surface_ray_hits_match_public_contract(self) -> None:
+        surfaces = (
+            SphereSpec("sphere", (0.2, -0.1, 0.3), 1.25),
+            CylinderSpec(
+                "cylinder",
+                (0.0, 0.0, 0.0),
+                (0.0, 0.0, 1.0),
+                1.0,
+                (-0.5, 1.75),
+                radial_axis=(1.0, 0.0, 0.0),
+            ),
+            ConeSpec(
+                "closed-cone",
+                (0.0, 0.0, 0.0),
+                (0.0, 0.0, 1.0),
+                pi / 5.0,
+                (0.0, 2.0),
+                radial_axis=(1.0, 0.0, 0.0),
+            ),
+            ConeSpec(
+                "open-cone",
+                (0.0, 0.0, 0.0),
+                (0.0, 0.0, 1.0),
+                pi / 5.0,
+                (0.0, 2.0),
+                radial_axis=(1.0, 0.0, 0.0),
+                model="open_single",
+            ),
+            ConeSpec(
+                "analytic-cone",
+                (0.0, 0.0, 0.0),
+                (0.0, 0.0, 1.0),
+                pi / 5.0,
+                (-2.0, 2.0),
+                radial_axis=(1.0, 0.0, 0.0),
+            ),
+        )
+        origins = (
+            np.asarray((0.25, -2.5, 0.75), dtype=float),
+            np.asarray((0.0, 0.0, 0.0), dtype=float),
+            np.asarray((1.0, 0.0, 1.0), dtype=float),
+            np.asarray((-0.4, 0.7, 2.2), dtype=float),
+        )
+        directions = (
+            np.asarray((0.0, 3.0, 0.5), dtype=float),
+            np.asarray((1.7, -0.2, -0.4), dtype=float),
+            np.asarray((0.0, 0.0, 2.5), dtype=float),
+        )
+
+        for surface in surfaces:
+            context = resolve_geometry_context(
+                None,
+                positions=surface.characteristic_points,
+            )
+            for direction in directions:
+                for include_caps in (False, True):
+                    for forward_only in (False, True):
+                        prepared = _prepare_finite_surface_ray_hits(
+                            surface,
+                            direction,
+                            context,
+                            include_caps=include_caps,
+                            forward_only=forward_only,
+                        )
+                        for origin in origins:
+                            with self.subTest(
+                                surface=surface.surface_id,
+                                origin=tuple(origin),
+                                direction=tuple(direction),
+                                include_caps=include_caps,
+                                forward_only=forward_only,
+                            ):
+                                self.assertEqual(
+                                    prepared(origin),
+                                    surface.ray_hits(
+                                        origin,
+                                        direction,
+                                        context=context,
+                                        include_caps=include_caps,
+                                        forward_only=forward_only,
+                                    ),
+                                )
+
+    def test_prepared_ray_hits_preserve_extreme_scale_contracts(self) -> None:
+        for scale in (1.0e-9, 1.0e9):
+            surfaces = (
+                SphereSpec(
+                    f"sphere:{scale:g}",
+                    (0.2 * scale, -0.1 * scale, 0.3 * scale),
+                    1.25 * scale,
+                ),
+                CylinderSpec(
+                    f"cylinder:{scale:g}",
+                    (0.0, 0.0, 0.0),
+                    (0.0, 0.0, 1.0),
+                    1.0 * scale,
+                    (-0.5 * scale, 1.75 * scale),
+                    radial_axis=(1.0, 0.0, 0.0),
+                ),
+                ConeSpec(
+                    f"cone:{scale:g}",
+                    (0.0, 0.0, 0.0),
+                    (0.0, 0.0, 1.0),
+                    pi / 5.0,
+                    (0.0, 2.0 * scale),
+                    radial_axis=(1.0, 0.0, 0.0),
+                    model="open_single",
+                ),
+            )
+            origins = (
+                np.asarray((0.25, -2.5, 0.75), dtype=float) * scale,
+                np.asarray((-0.4, 0.7, 2.2), dtype=float) * scale,
+            )
+            direction = np.asarray((0.0, 3.0, 0.5), dtype=float)
+            for surface in surfaces:
+                context = resolve_geometry_context(
+                    None,
+                    positions=surface.characteristic_points,
+                )
+                prepared = _prepare_finite_surface_ray_hits(
+                    surface,
+                    direction,
+                    context,
+                    include_caps=True,
+                    forward_only=False,
+                )
+                for origin in origins:
+                    with self.subTest(scale=scale, surface=surface.surface_id):
+                        self.assertEqual(
+                            prepared(origin),
+                            surface.ray_hits(
+                                origin,
+                                direction,
+                                context=context,
+                                include_caps=True,
+                                forward_only=False,
+                            ),
+                        )
+
+    def test_prepared_ray_hits_preserve_rim_and_generator_semantics(self) -> None:
+        cylinder = CylinderSpec(
+            "rim-cylinder",
+            (0.0, 0.0, 0.0),
+            (0.0, 0.0, 1.0),
+            1.0,
+            (0.0, 2.0),
+            radial_axis=(1.0, 0.0, 0.0),
+        )
+        direction = np.asarray((-1.0, 0.0, 1.0), dtype=float)
+        origin = np.asarray((1.0, 0.0, 0.0), dtype=float)
+        context = resolve_geometry_context(
+            None,
+            positions=cylinder.characteristic_points,
+        )
+        expected = cylinder.ray_hits(
+            origin,
+            direction,
+            context=context,
+            include_caps=True,
+            forward_only=False,
+        )
+        actual = _prepare_finite_surface_ray_hits(
+            cylinder,
+            direction,
+            context,
+            include_caps=True,
+            forward_only=False,
+        )(origin)
+        self.assertEqual(actual, expected)
+        zero_roles = {
+            hit.role
+            for hit in actual
+            if abs(hit.parameter)
+            <= context.epsilon("boundary")
+        }
+        self.assertEqual(zero_roles, {"cap_min", "support"})
+
+        ruling_origin = np.asarray((1.0, 0.0, 1.0), dtype=float)
+        ruling_direction = np.asarray((0.0, 0.0, 2.5), dtype=float)
+        expected = cylinder.ray_hits(
+            ruling_origin,
+            ruling_direction,
+            context=context,
+            include_caps=True,
+            forward_only=False,
+        )
+        actual = _prepare_finite_surface_ray_hits(
+            cylinder,
+            ruling_direction,
+            context,
+            include_caps=True,
+            forward_only=False,
+        )(ruling_origin)
+        self.assertEqual(actual, expected)
+        self.assertEqual(
+            tuple(hit.role for hit in actual),
+            ("cap_min", "cap_max"),
+        )
+
+    def test_prepared_ray_hits_preserve_subclass_override(self) -> None:
+        calls: list[tuple[tuple[object, ...], dict[str, object]]] = []
+
+        class AuthoredSphere(SphereSpec):
+            def ray_hits(self, *args, **kwargs):
+                calls.append((args, dict(kwargs)))
+                return super().ray_hits(*args, **kwargs)
+
+        sphere = AuthoredSphere("authored-sphere", (0.0, 0.0, 0.0), 1.0)
+        context = resolve_geometry_context(
+            None,
+            positions=sphere.characteristic_points,
+        )
+        direction = np.asarray((0.0, 2.0, 0.0), dtype=float)
+        origin = np.asarray((0.0, -2.0, 0.0), dtype=float)
+
+        actual = _prepare_finite_surface_ray_hits(
+            sphere,
+            direction,
+            context,
+            include_caps=True,
+            forward_only=False,
+        )(origin)
+
+        self.assertEqual(len(calls), 1)
+        self.assertIs(calls[0][0][1], direction)
+        self.assertIs(calls[0][1]["context"], context)
+        self.assertIs(calls[0][1]["include_caps"], True)
+        self.assertIs(calls[0][1]["forward_only"], False)
+        self.assertEqual(
+            actual,
+            SphereSpec.ray_hits(
+                sphere,
+                origin,
+                direction,
+                context=context,
+                include_caps=True,
+                forward_only=False,
+            ),
+        )
+
+    def test_boundary_spans_do_not_rebuild_public_surface_ray_solver(self) -> None:
+        sources, section = _cylinder_section_case()
+        surface = CylinderSpec(
+            "cylinder",
+            (0.0, 0.0, 0.0),
+            (0.0, 0.0, 1.0),
+            1.0,
+            (0.0, 2.0),
+            radial_axis=(1.0, 0.0, 0.0),
+        )
+        expected = compute_boundary_section_spans(
+            sources,
+            section,
+            SIDE_VIEW,
+            surface=surface,
+        )
+
+        with mock_patch.object(
+            CylinderSpec,
+            "ray_hits",
+            side_effect=AssertionError("public ray solver was rebuilt"),
+        ):
+            actual = compute_boundary_section_spans(
+                sources,
+                section,
+                SIDE_VIEW,
+                surface=surface,
+            )
+
+        self.assertEqual(actual, expected)
+
+    def test_precomputed_plane_contours_preserve_public_span_results(self) -> None:
+        sources, section = _cylinder_section_case()
+        expected = compute_boundary_section_spans(sources, section, SIDE_VIEW)
+        contours = quadric_plane_fragment_contours(section)
+
+        with mock_patch(
+            "polyhedron_visibility.quadrics.boundary_section."
+            "quadric_plane_fragment_contours",
+            side_effect=AssertionError("contours were recomputed"),
+        ):
+            actual = _compute_boundary_section_spans_with_contours(
+                sources,
+                section,
+                SIDE_VIEW,
+                plane_fragment_contours=contours,
+            )
+
+        self.assertEqual(actual, expected)
+
     def test_rank_one_plane_has_no_boundary_placement_or_occlusion(self) -> None:
         sphere = SphereSpec("line-sphere", (0.0, 0.0, 0.0), 1.0)
         plane = SectionPlane(
@@ -562,6 +855,41 @@ class BoundarySectionPlacementTests(unittest.TestCase):
                 ("between_surface_sheets", "in_front_of_surface"),
             },
         )
+
+    def test_parametric_section_subdomain_retains_authoritative_provenance(
+        self,
+    ) -> None:
+        sphere = SphereSpec("subdomain-sphere", (0.0, 0.0, 0.0), 1.0)
+        plane = SectionPlane(
+            "subdomain-plane",
+            (0.0, 0.0, 0.0),
+            (0.0, 0.0, 1.0),
+            u_axis=(1.0, 0.0, 0.0),
+        )
+        authoritative = compute_quadric_section_boundary_curves(
+            "subdomain-section",
+            sphere,
+            plane,
+        )
+        full = next(
+            item for item in authoritative if isinstance(item, ParametricConicBranch)
+        )
+        half = replace(
+            full,
+            curve_id="subdomain-section:bank-half",
+            domain=ParameterInterval(full.domain.start, full.domain.midpoint),
+        )
+        source = section_curve_boundary_source(
+            half,
+            sphere,
+            plane,
+            section_id="subdomain-section",
+            authoritative_curves=authoritative,
+        )
+        self.assertIs(source.source_kind, BoundarySourceKind.SECTION_CURVE)
+        self.assertEqual(source.owner_id, "subdomain-section")
+        self.assertEqual(source.section_surface_id, sphere.surface_id)
+        self.assertEqual(source.section_plane_id, plane.plane_id)
 
     def test_cap_chord_is_certified_as_an_exact_section_boundary(self) -> None:
         cone = ConeSpec(

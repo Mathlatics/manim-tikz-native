@@ -21,6 +21,7 @@ from typing import Callable, Iterator, Mapping, Protocol, Sequence
 import numpy as np
 from manim import (
     BLUE_D,
+    Dot,
     WHITE,
     Line,
     Mobject,
@@ -73,7 +74,12 @@ from .curve_intersections import (
     ProjectedCurveIntersectionError,
     compute_projected_curve_crossings,
 )
-from .curves import EllipseArcCurve, ParametricConicBranch, SegmentCurve
+from .curves import (
+    EllipseArcCurve,
+    ParametricConicBranch,
+    PointMarker3D,
+    SegmentCurve,
+)
 from .global_occlusion import (
     GlobalQuadricFrame,
     GlobalQuadricOcclusionError,
@@ -105,12 +111,12 @@ from .section_compositing import (
     quadric_plane_fragment_contours,
     repaint_quadric_section_compositing,
 )
-from .visibility import compute_quadric_visibility
+from .visibility import compute_point_visibility, compute_quadric_visibility
 from .boundary_section import (
     QUADRIC_BOUNDARY_SECTION_LIMITS,
     QuadricBoundarySectionLimits,
+    _compute_boundary_section_spans_with_contours,
     certify_rank_one_section_boundary_sources,
-    compute_boundary_section_spans,
 )
 from .surface_boundaries import (
     GeneratorBoundarySpec,
@@ -132,6 +138,7 @@ from .manim_runtime import (
     _CurveSlots,
     _DirtyFrameKind,
     _ManagedQuadricDisplayGroup,
+    _MobjectState,
     _PreparedBoundaryFragment,
     _PreparedConeFill,
     _PreparedDash,
@@ -182,6 +189,24 @@ CurveInput = Sequence[AnalyticCurve3D] | Callable[[], Sequence[AnalyticCurve3D]]
 CurveOpacityInput = (
     Mapping[str, float] | Callable[[], Mapping[str, float]] | None
 )
+PointInput = Sequence[PointMarker3D] | Callable[[], Sequence[PointMarker3D]]
+PointOpacityInput = (
+    Mapping[str, float] | Callable[[], Mapping[str, float]] | None
+)
+BoundaryOpacityInput = (
+    Mapping[str, float] | Callable[[], Mapping[str, float]] | None
+)
+SurfaceOpacityInput = (
+    Mapping[str, float] | Callable[[], Mapping[str, float]] | None
+)
+SurfaceStrokeOpacityInput = SurfaceOpacityInput
+ScalarOpacityInput = float | Callable[[], float] | None
+OccludingSurfaceInput = Sequence[str] | Callable[[], Sequence[str]] | None
+PaintPolicyInput = (
+    QuadricPaintPolicy
+    | str
+    | Callable[[], QuadricPaintPolicy | str]
+)
 SectionPlaneInput = SectionPlane | Callable[[], SectionPlane] | None
 PlanePatchInput = (
     PlaneDisplayPatchSpec | Callable[[], PlaneDisplayPatchSpec] | None
@@ -198,10 +223,16 @@ class _ParallelCameraSnapshotSource(Protocol):
     def snapshot_parallel_state(self) -> _SemanticParallelProjection: ...
 
 
+class _SemanticParallelViewport(Protocol):
+    camera: _SemanticParallelProjection
+    screen_transform: object
+
+
 ProjectionValue = (
     ParallelView
     | Sequence[Sequence[float]]
     | _SemanticParallelProjection
+    | _SemanticParallelViewport
     | _ParallelCameraSnapshotSource
 )
 ProjectionInput = ProjectionValue | Callable[[object], ProjectionValue]
@@ -232,6 +263,11 @@ class QuadricManimStyle:
     hidden_curve_color: object = WHITE
     hidden_curve_width: float = 2.4
     hidden_curve_opacity: float = 0.78
+    point_color: object = WHITE
+    point_radius: float = 0.055
+    point_opacity: float = 1.0
+    hidden_point_color: object = WHITE
+    hidden_point_opacity: float = 0.45
     dash_length: float = 0.08
     dash_gap: float = 0.06
     background_color: object = WHITE
@@ -260,6 +296,9 @@ class QuadricManimStyle:
             "visible_curve_opacity",
             "hidden_curve_width",
             "hidden_curve_opacity",
+            "point_radius",
+            "point_opacity",
+            "hidden_point_opacity",
             "background_width",
             "background_opacity",
             "section_plane_fill_opacity",
@@ -270,12 +309,17 @@ class QuadricManimStyle:
         object.__setattr__(
             self, "dash_length", _positive(self.dash_length, "dash_length")
         )
+        object.__setattr__(
+            self, "point_radius", _positive(self.point_radius, "point_radius")
+        )
         object.__setattr__(self, "dash_gap", _non_negative(self.dash_gap, "dash_gap"))
         for name in (
             "surface_fill_opacity",
             "surface_stroke_opacity",
             "visible_curve_opacity",
             "hidden_curve_opacity",
+            "point_opacity",
+            "hidden_point_opacity",
             "background_opacity",
             "section_plane_fill_opacity",
             "section_plane_stroke_opacity",
@@ -361,6 +405,7 @@ class QuadricManimLimits:
     max_total_mobjects: int = 100000
     max_boundary_sources: int = 64
     max_boundary_styles: int = 64
+    max_points: int = 32
 
     def __post_init__(self) -> None:
         for name in (
@@ -373,6 +418,7 @@ class QuadricManimLimits:
             "max_total_mobjects",
             "max_boundary_sources",
             "max_boundary_styles",
+            "max_points",
         ):
             value = getattr(self, name)
             if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
@@ -390,6 +436,7 @@ def estimate_quadric_mobject_count(
     source_count: int,
     max_fragments_per_curve: int,
     section_enabled: bool,
+    point_count: int = 0,
 ) -> int:
     """Return the exact fixed-family estimate checked by this binding.
 
@@ -402,6 +449,7 @@ def estimate_quadric_mobject_count(
         ("surface_count", surface_count),
         ("source_count", source_count),
         ("max_fragments_per_curve", max_fragments_per_curve),
+        ("point_count", point_count),
     ):
         if isinstance(value, bool) or not isinstance(value, int) or value < 0:
             raise ValueError(f"{name} must be a non-negative integer")
@@ -414,6 +462,7 @@ def estimate_quadric_mobject_count(
         + source_count
         * _curve_slots_family_capacity(max_fragments_per_curve)
         + 4
+        + (1 + point_count if point_count else 0)
     )
 
 
@@ -452,6 +501,15 @@ class _PreparedSurface:
 
 
 @dataclass(frozen=True, slots=True)
+class _PreparedPoint:
+    item_id: str
+    point_id: str
+    screen_point: np.ndarray
+    visible: bool
+    occluders: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class _PreparedSectionLayers:
     frame: QuadricSectionCompositingFrame
     surface_points: np.ndarray
@@ -467,6 +525,8 @@ class _PreparedNumericFrame:
     surfaces: tuple[_PreparedSurface, ...]
     fragments: Mapping[str, tuple[_PreparedCurveFragment, ...]]
     curve_opacities: Mapping[str, float]
+    points: tuple[_PreparedPoint, ...]
+    point_opacities: Mapping[str, float]
     fragment_slot_maps: Mapping[str, Mapping[str, int]]
     item_mobjects: Mapping[str, Mobject]
     painter_draw_order: tuple[str, ...]
@@ -476,6 +536,10 @@ class _PreparedNumericFrame:
         str, tuple[_PreparedBoundaryFragment, ...]
     ] | None = None
     boundary_opacities: Mapping[str, float] | None = None
+    surface_opacities: Mapping[str, float] = field(default_factory=dict)
+    surface_stroke_opacities: Mapping[str, float] = field(default_factory=dict)
+    section_plane_fill_opacity: float = 1.0
+    section_plane_stroke_opacity: float = 1.0
     projected_source_segment_counts: Mapping[str, int] = field(
         default_factory=dict
     )
@@ -484,8 +548,17 @@ class _PreparedNumericFrame:
 @dataclass(frozen=True, slots=True)
 class _ResolvedQuadricFrameInputs:
     surfaces: tuple[QuadricSurfaceSpec, ...]
+    occluding_surfaces: tuple[QuadricSurfaceSpec, ...]
+    surface_opacities: Mapping[str, float]
+    surface_stroke_opacities: Mapping[str, float]
     curves: tuple[AnalyticCurve3D, ...]
     curve_opacities: Mapping[str, float]
+    points: tuple[PointMarker3D, ...]
+    point_opacities: Mapping[str, float]
+    boundary_opacities: Mapping[str, float]
+    section_plane_fill_opacity: float
+    section_plane_stroke_opacity: float
+    paint_policy: QuadricPaintPolicy
     view: ParallelView
     display_offset: tuple[float, float]
     section_plane: SectionPlane | None
@@ -545,6 +618,80 @@ class _CommittedControllerState:
     last_prepared_performance_counts: dict[str, int]
 
 
+@dataclass(frozen=True, slots=True, eq=False)
+class QuadricOcclusionTransactionSnapshot:
+    """Opaque, controller-bound snapshot of one attached display frame.
+
+    Instances are created by :meth:`QuadricOcclusion3D.snapshot_transaction_state`.
+    They deliberately retain the fixed Mobject identities owned by that
+    controller, so a snapshot cannot be applied to another controller even
+    when both controllers were authored from equivalent geometry.
+    """
+
+    _owner_token: object = field(repr=False)
+    _root_state: tuple[_MobjectState, ...] = field(repr=False)
+    _painter_band_state: Mapping[str, float] = field(repr=False)
+    _fragment_slot_maps: dict[str, dict[str, int]] = field(repr=False)
+    _last_frame: QuadricCompositingFrame | None = field(repr=False)
+    _last_global_frame: GlobalQuadricFrame | None = field(repr=False)
+    _last_section_frame: QuadricSectionCompositingFrame | None = field(
+        repr=False
+    )
+    _last_boundary_frame: QuadricBoundaryCompositingFrame | None = field(
+        repr=False
+    )
+    _display_slot_state: dict[str, _CommittedDisplaySlot] = field(repr=False)
+    _last_painter_band_signature: tuple[tuple[str, int, float], ...] = field(
+        repr=False
+    )
+    _last_input_geometry_signature: bytes | None = field(repr=False)
+    _last_input_draw_signature: bytes | None = field(repr=False)
+    _last_input_opacity: float | None = field(repr=False)
+    _last_prepared_frame: PreparedQuadricManimFrame | None = field(repr=False)
+    _last_prepared_performance_counts: dict[str, int] = field(repr=False)
+    _performance_frame_index: int = field(repr=False)
+    _last_performance_snapshot: QuadricPerformanceSnapshot | None = field(
+        repr=False
+    )
+
+
+_TRANSACTION_NUMERIC_STYLE_ATTRIBUTES = frozenset(
+    {
+        "fill_rgbas",
+        "stroke_rgbas",
+        "background_stroke_rgbas",
+        "fill_opacity",
+        "stroke_opacity",
+        "background_stroke_opacity",
+        "stroke_width",
+        "background_stroke_width",
+        "sheen_direction",
+        "sheen_factor",
+    }
+)
+_TRANSACTION_ENUM_STYLE_ATTRIBUTES = frozenset({"cap_style", "joint_type"})
+
+
+def _capture_transaction_root(root: Mobject) -> tuple[_MobjectState, ...]:
+    """Capture every Cairo-visible style field in addition to base state."""
+
+    states = _capture_root(root)
+    for state in states:
+        for name in (
+            "stroke_width",
+            "background_stroke_width",
+            "cap_style",
+            "joint_type",
+        ):
+            if not hasattr(state.mobject, name):
+                continue
+            value = getattr(state.mobject, name)
+            state.attributes[name] = (
+                value.copy() if isinstance(value, np.ndarray) else value
+            )
+    return states
+
+
 def _surface_items(
     value: Sequence[QuadricSurfaceSpec],
 ) -> tuple[QuadricSurfaceSpec, ...]:
@@ -579,6 +726,16 @@ def _curve_items(value: Sequence[AnalyticCurve3D]) -> tuple[AnalyticCurve3D, ...
     return tuple(sorted(result, key=lambda item: item.curve_id))
 
 
+def _point_items(value: Sequence[PointMarker3D]) -> tuple[PointMarker3D, ...]:
+    result = tuple(value)
+    if not all(isinstance(item, PointMarker3D) for item in result):
+        raise TypeError("points must contain PointMarker3D values")
+    identities = tuple(item.point_id for item in result)
+    if len(set(identities)) != len(identities):
+        raise QuadricManimError("point identities must be unique")
+    return tuple(sorted(result, key=lambda item: item.point_id))
+
+
 class QuadricOcclusion3D:
     """One fixed-topology, fixed-capacity quadric Cairo controller.
 
@@ -590,7 +747,12 @@ class QuadricOcclusion3D:
     ``curve_opacities`` then supplies the opacity for every active identity.
     ``surface_order_mode='automatic'`` recomputes and consumes one complete
     global painter frame on every update.  ``'explicit'`` keeps the legacy
-    caller-supplied surface-order path.
+    caller-supplied surface-order path.  ``automatic_updates=False`` retains
+    the time-aware Cairo driver that keeps the display out of the static
+    background, but leaves every update to an external frame coordinator.
+    ``legacy_surface_stroke_fallback=True`` is a narrow opt-in for one
+    unoccluded teaching outline when unified intrinsic surface boundaries are
+    explicitly excluded; the default remains off.
     """
 
     def __init__(
@@ -599,10 +761,15 @@ class QuadricOcclusion3D:
         *,
         surfaces: SurfaceInput,
         curves: CurveInput,
+        points: PointInput = (),
         projection: ProjectionInput | None = None,
-        paint_policy: QuadricPaintPolicy | str = QuadricPaintPolicy.DIAGRAMMATIC,
+        paint_policy: PaintPolicyInput = QuadricPaintPolicy.DIAGRAMMATIC,
         style: QuadricManimStyle = QuadricManimStyle(),
+        surface_opacities: SurfaceOpacityInput = None,
+        surface_stroke_opacities: SurfaceStrokeOpacityInput = None,
+        occluding_surface_ids: OccludingSurfaceInput = None,
         boundary_styles: Mapping[str, QuadricBoundaryStyle] | None = None,
+        boundary_opacities: BoundaryOpacityInput = None,
         limits: QuadricManimLimits = QUADRIC_MANIM_LIMITS,
         max_chord_error: float = 1.0e-3,
         context: GeometryContext | ResolvedGeometryContext | None = None,
@@ -611,10 +778,14 @@ class QuadricOcclusion3D:
         surface_order_mode: str = "automatic",
         allocated_curve_ids: Sequence[str] | None = None,
         curve_opacities: CurveOpacityInput = None,
+        allocated_point_ids: Sequence[str] | None = None,
+        point_opacities: PointOpacityInput = None,
         section_id: str | None = None,
         section_coefficient_tolerance: float | None = None,
         section_plane: SectionPlaneInput = None,
         section_patch: PlanePatchInput = None,
+        section_plane_fill_opacity: ScalarOpacityInput = None,
+        section_plane_stroke_opacity: ScalarOpacityInput = None,
         section_patch_margin: float = 0.08,
         section_max_screen_error: float = 0.08,
         section_compositing_limits: QuadricSectionCompositingLimits = (
@@ -629,6 +800,8 @@ class QuadricOcclusion3D:
         allocated_boundary_ids: Sequence[str] | None = None,
         geometry_prototype: QuadricGeometryPrototype | None = None,
         display_offset: Sequence[float] = (0.0, 0.0),
+        automatic_updates: bool = True,
+        legacy_surface_stroke_fallback: bool = False,
     ) -> None:
         if not isinstance(style, QuadricManimStyle):
             raise TypeError("style must be a QuadricManimStyle")
@@ -646,19 +819,25 @@ class QuadricOcclusion3D:
             raise TypeError(
                 "context must be a GeometryContext or ResolvedGeometryContext"
             )
-        try:
-            policy = QuadricPaintPolicy(paint_policy)
-        except (TypeError, ValueError) as exc:
-            raise QuadricManimError(
-                "paint_policy must be 'physical', 'diagrammatic', or "
-                "'depth_aware_diagrammatic'"
-            ) from exc
+        self._paint_policy_input = paint_policy
+        policy = self._resolve_paint_policy()
         if boundary_visibility_mode not in ("legacy", "unified"):
             raise QuadricManimError(
                 "boundary_visibility_mode must be 'legacy' or 'unified'"
             )
         if not isinstance(include_surface_boundaries, bool):
             raise TypeError("include_surface_boundaries must be a bool")
+        if not isinstance(automatic_updates, bool):
+            raise TypeError("automatic_updates must be a bool")
+        if not isinstance(legacy_surface_stroke_fallback, bool):
+            raise TypeError("legacy_surface_stroke_fallback must be a bool")
+        if legacy_surface_stroke_fallback and (
+            boundary_visibility_mode != "unified" or include_surface_boundaries
+        ):
+            raise QuadricManimError(
+                "legacy_surface_stroke_fallback requires unified boundary "
+                "visibility with surface boundaries excluded"
+            )
         generators = tuple(generator_boundaries)
         if not all(isinstance(item, GeneratorBoundarySpec) for item in generators):
             raise TypeError(
@@ -697,8 +876,14 @@ class QuadricOcclusion3D:
         self.scene = scene
         self.geometry_prototype = geometry_prototype
         self.display_offset = display_offset
+        self._automatic_updates = automatic_updates
+        self._legacy_surface_stroke_fallback = legacy_surface_stroke_fallback
         self._surface_input = surfaces
+        self._surface_opacity_input = surface_opacities
+        self._surface_stroke_opacity_input = surface_stroke_opacities
+        self._occluding_surface_input = occluding_surface_ids
         self._curve_input = curves
+        self._point_input = points
         self._projection_input = (
             DEFAULT_QUADRIC_VIEW if projection is None else projection
         )
@@ -710,6 +895,7 @@ class QuadricOcclusion3D:
             boundary_styles,
             limits,
         )
+        self._boundary_opacity_input = boundary_opacities
         if boundary_visibility_mode == "unified":
             unknown_generator_styles = sorted(
                 {
@@ -733,10 +919,13 @@ class QuadricOcclusion3D:
         self._generator_boundaries = generators
         self._allocated_boundary_ids_input = allocated_boundary_ids
         self._curve_opacity_input = curve_opacities
+        self._point_opacity_input = point_opacities
         self.section_id = None if section_id is None else section_id.strip()
         self.section_coefficient_tolerance = section_coefficient_tolerance
         self._section_plane_input = section_plane
         self._section_patch_input = section_patch
+        self._section_plane_fill_opacity_input = section_plane_fill_opacity
+        self._section_plane_stroke_opacity_input = section_plane_stroke_opacity
         self.section_patch_margin = _non_negative(
             section_patch_margin, "section_patch_margin"
         )
@@ -764,6 +953,7 @@ class QuadricOcclusion3D:
         self._last_input_opacity: float | None = None
         self._last_prepared_frame: PreparedQuadricManimFrame | None = None
         self._last_prepared_performance_counts: dict[str, int] = {}
+        self._transaction_snapshot_owner_token = object()
         self._owns_surface_view_cache = geometry_prototype is None
         self._surface_view_cache = (
             _SurfaceViewCache()
@@ -773,8 +963,10 @@ class QuadricOcclusion3D:
 
         initial_surfaces = self._resolve_surfaces()
         initial_curves = self._resolve_curves()
+        initial_points = self._resolve_points()
         self._surface_ids = tuple(item.surface_id for item in initial_surfaces)
         initial_curve_ids = tuple(item.curve_id for item in initial_curves)
+        initial_point_ids = tuple(item.point_id for item in initial_points)
         if self._section_enabled and len(initial_surfaces) != 1:
             raise QuadricManimError(
                 "section compositing requires exactly one finite convex quadric"
@@ -809,6 +1001,28 @@ class QuadricOcclusion3D:
             if unknown:
                 raise QuadricManimCapacityError(
                     "initial curves were not preallocated: " + ", ".join(unknown)
+                )
+        self._allow_point_subset = allocated_point_ids is not None
+        if allocated_point_ids is None:
+            self._point_ids = initial_point_ids
+        else:
+            if isinstance(allocated_point_ids, (str, bytes)):
+                raise TypeError("allocated_point_ids must be a sequence of identities")
+            canonical_point_ids: list[str] = []
+            for raw in allocated_point_ids:
+                if not isinstance(raw, str) or not raw.strip():
+                    raise QuadricManimError(
+                        "allocated_point_ids must contain non-empty strings"
+                    )
+                canonical_point_ids.append(raw.strip())
+            if len(set(canonical_point_ids)) != len(canonical_point_ids):
+                raise QuadricManimError("allocated_point_ids must be unique")
+            self._point_ids = tuple(sorted(canonical_point_ids))
+            unknown_points = sorted(set(initial_point_ids) - set(self._point_ids))
+            if unknown_points:
+                raise QuadricManimCapacityError(
+                    "initial points were not preallocated: "
+                    + ", ".join(unknown_points)
                 )
         auto_boundary_ids: tuple[str, ...] = ()
         if self.boundary_visibility_mode == "unified":
@@ -863,12 +1077,17 @@ class QuadricOcclusion3D:
             raise QuadricManimCapacityError(
                 f"curve count exceeds fixed limit {limits.max_curves}"
             )
+        if len(self._point_ids) > limits.max_points:
+            raise QuadricManimCapacityError(
+                f"point count exceeds fixed limit {limits.max_points}"
+            )
 
         estimated_mobjects = estimate_quadric_mobject_count(
             surface_count=len(self._surface_ids),
             source_count=len(self._slot_source_ids),
             max_fragments_per_curve=limits.max_fragments_per_curve,
             section_enabled=self._section_enabled,
+            point_count=len(self._point_ids),
         )
         if estimated_mobjects > limits.max_total_mobjects:
             raise QuadricManimCapacityError(
@@ -892,6 +1111,13 @@ class QuadricOcclusion3D:
             )
             for curve_id in self._slot_source_ids
         }
+        self._point_slots = {
+            point_id: Dot(radius=self.style.point_radius)
+            for point_id in self._point_ids
+        }
+        for slot in self._point_slots.values():
+            slot.set_fill(opacity=0.0)
+            slot.set_stroke(opacity=0.0)
         self._fragment_slot_maps: dict[str, dict[str, int]] = {
             curve_id: {} for curve_id in self._slot_source_ids
         }
@@ -915,12 +1141,18 @@ class QuadricOcclusion3D:
         curve_root = VGroup(
             *(self._curve_slots[key].root for key in self._slot_source_ids)
         )
+        point_root = (
+            VGroup(*(self._point_slots[key] for key in self._point_ids))
+            if self._point_ids
+            else None
+        )
         self._opacity_sentinel = Line((0, 0, 0), (1.0e-9, 0, 0), buff=0)
         self._opacity_sentinel.set_stroke(width=0.0, opacity=1.0)
+        roots = [surface_root, section_root, curve_root]
+        if point_root is not None:
+            roots.append(point_root)
         self.root = _ManagedQuadricDisplayGroup(
-            surface_root,
-            section_root,
-            curve_root,
+            *roots,
             opacity_sentinel=self._opacity_sentinel,
         )
         self._update_driver = Mobject()
@@ -929,7 +1161,7 @@ class QuadricOcclusion3D:
         # Manim recognizes time-aware updaters by the literal ``dt`` name.
         def update_display(mobject: Mobject, dt: float) -> None:
             del mobject
-            if self._attached:
+            if self._attached and self.automatic_updates:
                 self.update(dt)
 
         self._update_driver.add_updater(update_display)
@@ -997,11 +1229,126 @@ class QuadricOcclusion3D:
         )
         return _surface_items(value)
 
+    def _resolve_paint_policy(self) -> QuadricPaintPolicy:
+        source = self._paint_policy_input
+        value = source() if callable(source) else source
+        try:
+            return QuadricPaintPolicy(value)
+        except (TypeError, ValueError) as exc:
+            raise QuadricManimError(
+                "paint_policy must resolve to 'physical', 'diagrammatic', or "
+                "'depth_aware_diagrammatic'"
+            ) from exc
+
+    def _resolve_occluding_surfaces(
+        self,
+        surfaces: tuple[QuadricSurfaceSpec, ...],
+    ) -> tuple[QuadricSurfaceSpec, ...]:
+        source = self._occluding_surface_input
+        if source is None:
+            return surfaces
+        raw = source() if callable(source) else source
+        if isinstance(raw, (str, bytes)) or not isinstance(raw, Sequence):
+            raise QuadricManimError(
+                "occluding_surface_ids must resolve to a sequence"
+            )
+        identities: list[str] = []
+        for value in raw:
+            if not isinstance(value, str) or not value.strip():
+                raise QuadricManimError(
+                    "occluding_surface_ids must contain non-empty strings"
+                )
+            identities.append(value.strip())
+        if len(set(identities)) != len(identities):
+            raise QuadricManimError("occluding_surface_ids must be unique")
+        by_id = {item.surface_id: item for item in surfaces}
+        unknown = sorted(set(identities) - set(by_id))
+        if unknown:
+            raise QuadricManimCapacityError(
+                "occluding_surface_ids reference unallocated surfaces: "
+                + ", ".join(unknown)
+            )
+        if self.boundary_visibility_mode != "unified" and set(identities) != set(by_id):
+            raise QuadricManimError(
+                "selective occlusion participation requires unified boundary visibility"
+            )
+        return tuple(by_id[item] for item in sorted(identities))
+
+    def _resolve_surface_opacity_mapping(
+        self,
+        source: SurfaceOpacityInput,
+        *,
+        input_label: str,
+        item_label: str,
+    ) -> dict[str, float]:
+        expected = tuple(self._surface_ids)
+        if source is None:
+            return {surface_id: 1.0 for surface_id in expected}
+        raw = source() if callable(source) else source
+        if not isinstance(raw, Mapping):
+            raise QuadricManimError(
+                f"{input_label} must resolve to a mapping"
+            )
+        result: dict[str, float] = {}
+        for key, value in raw.items():
+            if not isinstance(key, str) or not key.strip():
+                raise QuadricManimError(
+                    f"{input_label} keys must be non-empty surface identities"
+                )
+            surface_id = key.strip()
+            if surface_id not in expected:
+                raise QuadricManimCapacityError(
+                    f"{item_label} references unallocated surface {surface_id!r}"
+                )
+            opacity = _non_negative(value, f"{item_label} for {surface_id!r}")
+            if opacity > 1.0:
+                raise QuadricManimError(f"{item_label} must not exceed 1")
+            result[surface_id] = opacity
+        missing = sorted(set(expected) - set(result))
+        if missing:
+            raise QuadricManimError(
+                f"{input_label} omitted allocated surfaces: " + ", ".join(missing)
+            )
+        return {surface_id: result[surface_id] for surface_id in expected}
+
+    def _resolve_surface_opacities(self) -> dict[str, float]:
+        return self._resolve_surface_opacity_mapping(
+            self._surface_opacity_input,
+            input_label="surface_opacities",
+            item_label="surface opacity",
+        )
+
+    def _resolve_surface_stroke_opacities(self) -> dict[str, float]:
+        return self._resolve_surface_opacity_mapping(
+            self._surface_stroke_opacity_input,
+            input_label="surface_stroke_opacities",
+            item_label="surface stroke opacity",
+        )
+
+    @staticmethod
+    def _resolve_scalar_opacity(
+        source: ScalarOpacityInput,
+        label: str,
+    ) -> float:
+        if source is None:
+            return 1.0
+        value = source() if callable(source) else source
+        opacity = _non_negative(value, label)
+        if opacity > 1.0:
+            raise QuadricManimError(f"{label} must not exceed 1")
+        return opacity
+
     def _resolve_curves(self) -> tuple[AnalyticCurve3D, ...]:
         value = (
             self._curve_input() if callable(self._curve_input) else self._curve_input
         )
         return _curve_items(value)
+
+    def _resolve_points(self) -> tuple[PointMarker3D, ...]:
+        value = (
+            self._point_input() if callable(self._point_input) else self._point_input
+        )
+        return _point_items(value)
 
     def _resolve_section_plane(self) -> SectionPlane:
         source = self._section_plane_input
@@ -1163,12 +1510,99 @@ class QuadricOcclusion3D:
             )
         return {curve_id: result[curve_id] for curve_id in active}
 
+    def _resolve_point_opacities(
+        self, active_point_ids: Sequence[str]
+    ) -> dict[str, float]:
+        active = tuple(active_point_ids)
+        if self._point_opacity_input is None:
+            return {point_id: 1.0 for point_id in active}
+        raw = (
+            self._point_opacity_input()
+            if callable(self._point_opacity_input)
+            else self._point_opacity_input
+        )
+        if not isinstance(raw, Mapping):
+            raise QuadricManimError("point_opacities must resolve to a mapping")
+        result: dict[str, float] = {}
+        for key, value in raw.items():
+            if not isinstance(key, str) or not key.strip():
+                raise QuadricManimError(
+                    "point_opacities keys must be non-empty point identities"
+                )
+            point_id = key.strip()
+            if point_id not in self._point_ids:
+                raise QuadricManimCapacityError(
+                    f"point opacity references unallocated point {point_id!r}"
+                )
+            opacity = _non_negative(value, f"point opacity for {point_id!r}")
+            if opacity > 1.0:
+                raise QuadricManimError("point opacity must not exceed 1")
+            result[point_id] = opacity
+        missing = sorted(set(active) - set(result))
+        if missing:
+            raise QuadricManimError(
+                "point_opacities omitted active points: " + ", ".join(missing)
+            )
+        return {point_id: result[point_id] for point_id in active}
+
+    def _resolve_boundary_opacities(self) -> dict[str, float]:
+        expected = set(self._boundary_source_ids)
+        if self._boundary_opacity_input is None:
+            return {source_id: 1.0 for source_id in self._boundary_source_ids}
+        raw = (
+            self._boundary_opacity_input()
+            if callable(self._boundary_opacity_input)
+            else self._boundary_opacity_input
+        )
+        if not isinstance(raw, Mapping):
+            raise QuadricManimError("boundary_opacities must resolve to a mapping")
+        result: dict[str, float] = {}
+        for key, value in raw.items():
+            if not isinstance(key, str) or not key.strip():
+                raise QuadricManimError(
+                    "boundary_opacities keys must be non-empty source identities"
+                )
+            source_id = key.strip()
+            if source_id not in expected:
+                raise QuadricManimCapacityError(
+                    f"boundary opacity references unallocated source {source_id!r}"
+                )
+            opacity = _non_negative(
+                value,
+                f"boundary opacity for {source_id!r}",
+            )
+            if opacity > 1.0:
+                raise QuadricManimError("boundary opacity must not exceed 1")
+            result[source_id] = opacity
+        missing = sorted(expected - set(result))
+        if missing:
+            raise QuadricManimError(
+                "boundary_opacities omitted allocated sources: " + ", ".join(missing)
+            )
+        return {source_id: result[source_id] for source_id in self._boundary_source_ids}
+
     def _resolve_frame_inputs(self) -> _ResolvedQuadricFrameInputs:
         surfaces = self._resolve_surfaces()
+        occluding_surfaces = self._resolve_occluding_surfaces(surfaces)
+        surface_opacities = self._resolve_surface_opacities()
+        surface_stroke_opacities = self._resolve_surface_stroke_opacities()
         curves = self._resolve_curves()
-        self._validate_fixed_topology(surfaces, curves)
+        points = self._resolve_points()
+        self._validate_fixed_topology(surfaces, curves, points)
         active_curve_ids = tuple(item.curve_id for item in curves)
         curve_opacities = self._resolve_curve_opacities(active_curve_ids)
+        active_point_ids = tuple(item.point_id for item in points)
+        point_opacities = self._resolve_point_opacities(active_point_ids)
+        boundary_opacities = self._resolve_boundary_opacities()
+        section_plane_fill_opacity = self._resolve_scalar_opacity(
+            self._section_plane_fill_opacity_input,
+            "section plane fill opacity",
+        )
+        section_plane_stroke_opacity = self._resolve_scalar_opacity(
+            self._section_plane_stroke_opacity_input,
+            "section plane stroke opacity",
+        )
+        paint_policy = self._resolve_paint_policy()
         projection_frame = self._resolve_projection_frame()
         view = self._resolve_view(projection_frame)
         display_offset = _projection_display_offset(
@@ -1187,6 +1621,7 @@ class QuadricOcclusion3D:
         surface_view_signature = _display_digest(
             "quadric-surface-view-v1",
             surfaces,
+            tuple(item.surface_id for item in occluding_surfaces),
             view.matrix,
             self.context,
             self.surface_constraints,
@@ -1198,14 +1633,18 @@ class QuadricOcclusion3D:
             "quadric-frame-inputs-v1",
             surface_view_signature,
             curves,
+            points,
             section_plane,
             section_patch,
-            self.paint_policy,
+            paint_policy,
             self.style,
             self.boundary_visibility_mode,
             self.include_surface_boundaries,
+            self.legacy_surface_stroke_fallback,
             self._generator_boundaries,
             self.boundary_styles,
+            self.section_id,
+            self.section_coefficient_tolerance,
             self.max_chord_error,
             self.section_max_screen_error,
             self.section_compositing_limits,
@@ -1216,11 +1655,26 @@ class QuadricOcclusion3D:
         draw_signature = _display_digest(
             "quadric-frame-draw-v1",
             curve_opacities,
+            point_opacities,
+            boundary_opacities,
+            surface_opacities,
+            surface_stroke_opacities,
+            section_plane_fill_opacity,
+            section_plane_stroke_opacity,
         )
         return _ResolvedQuadricFrameInputs(
             surfaces,
+            occluding_surfaces,
+            surface_opacities,
+            surface_stroke_opacities,
             curves,
             curve_opacities,
+            points,
+            point_opacities,
+            boundary_opacities,
+            section_plane_fill_opacity,
+            section_plane_stroke_opacity,
+            paint_policy,
             view,
             display_offset,
             section_plane,
@@ -1240,13 +1694,38 @@ class QuadricOcclusion3D:
     def display_offset(self, value: Sequence[float]) -> None:
         self._display_offset = _display_offset(value)
 
+    @property
+    def automatic_updates(self) -> bool:
+        """Whether the time-aware driver owns frame updates.
+
+        The mode is immutable after construction.  Coordinated bindings use a
+        no-op time-aware driver so Cairo still treats the display as dynamic
+        while exactly one external transaction commits each output frame.
+        """
+
+        return self._automatic_updates
+
+    @property
+    def legacy_surface_stroke_fallback(self) -> bool:
+        """Whether unified rendering draws one uncertified legacy outline.
+
+        The opt-in exists for adapters that deliberately exclude intrinsic
+        surface boundaries but still need a static teaching-outline style.
+        It is immutable after construction and defaults to ``False`` so
+        ``include_surface_boundaries=False`` keeps its historical meaning.
+        """
+
+        return self._legacy_surface_stroke_fallback
+
     def _validate_fixed_topology(
         self,
         surfaces: Sequence[QuadricSurfaceSpec],
         curves: Sequence[AnalyticCurve3D],
+        points: Sequence[PointMarker3D],
     ) -> None:
         surface_ids = tuple(item.surface_id for item in surfaces)
         curve_ids = tuple(item.curve_id for item in curves)
+        point_ids = tuple(item.point_id for item in points)
         if surface_ids != self._surface_ids:
             raise QuadricManimCapacityError(
                 "surface identities changed after fixed-capacity allocation"
@@ -1260,6 +1739,17 @@ class QuadricOcclusion3D:
         elif curve_ids != self._curve_ids:
             raise QuadricManimCapacityError(
                 "curve identities changed after fixed-capacity allocation"
+            )
+        if self._allow_point_subset:
+            unknown_points = sorted(set(point_ids) - set(self._point_ids))
+            if unknown_points:
+                raise QuadricManimCapacityError(
+                    "point identities were not preallocated: "
+                    + ", ".join(unknown_points)
+                )
+        elif point_ids != self._point_ids:
+            raise QuadricManimCapacityError(
+                "point identities changed after fixed-capacity allocation"
             )
 
     def _assign_fragment_slots(
@@ -1396,6 +1886,7 @@ class QuadricOcclusion3D:
                 self._generator_boundaries,
                 include_cap_rims=True,
                 include_silhouettes=True,
+                context=self.context,
             )
         if self._generator_boundaries:
             return build_surface_boundary_sources(
@@ -1404,6 +1895,7 @@ class QuadricOcclusion3D:
                 self._generator_boundaries,
                 include_cap_rims=False,
                 include_silhouettes=False,
+                context=self.context,
             )
         return ()
 
@@ -1459,6 +1951,7 @@ class QuadricOcclusion3D:
         spans: Mapping[str, Sequence[QuadricBoundaryVisibilitySpan]],
         view: ParallelView,
         *,
+        paint_policy: QuadricPaintPolicy,
         cached_source_ids: frozenset[str] = frozenset(),
         cached_crossings: Sequence[object] = (),
         rank_one_section_source_group: (
@@ -1523,7 +2016,7 @@ class QuadricOcclusion3D:
             if pair_is_certified_rank_one_overlap(first, second):
                 continue
             active_intervals = None
-            if self.paint_policy is QuadricPaintPolicy.PHYSICAL:
+            if paint_policy is QuadricPaintPolicy.PHYSICAL:
                 active_intervals = {
                     source.source_id: tuple(
                         span.interval
@@ -1564,7 +2057,9 @@ class QuadricOcclusion3D:
     def _prepare_static_surface_boundaries(
         self,
         surfaces: Sequence[QuadricSurfaceSpec],
+        occluding_surfaces: Sequence[QuadricSurfaceSpec],
         view: ParallelView,
+        paint_policy: QuadricPaintPolicy,
         surface_view_signature: bytes,
         performance_attempt: _PerformanceAttempt | None,
     ) -> tuple[
@@ -1577,9 +2072,9 @@ class QuadricOcclusion3D:
             surface_view_signature,
             self.include_surface_boundaries,
             self._generator_boundaries,
-            self.paint_policy,
+            paint_policy,
         )
-        cache_name = f"static_boundaries:{self.paint_policy.value}"
+        cache_name = f"static_boundaries:{paint_policy.value}"
         hit, cached = self._surface_view_cache.lookup(
             cache_name,
             signature,
@@ -1594,12 +2089,17 @@ class QuadricOcclusion3D:
         with _performance_stage(performance_attempt, "boundary_visibility"):
             spans = compute_boundary_visibility(
                 sources,
-                surfaces,
+                occluding_surfaces,
                 view,
                 context=self.context,
             )
         with _performance_stage(performance_attempt, "curve_crossings"):
-            crossings = self._boundary_crossings(sources, spans, view)
+            crossings = self._boundary_crossings(
+                sources,
+                spans,
+                view,
+                paint_policy=paint_policy,
+            )
         prepared = (sources, dict(spans), crossings)
         self._surface_view_cache.store(
             cache_name,
@@ -1611,9 +2111,12 @@ class QuadricOcclusion3D:
     def _prepare_unified_numeric(
         self,
         surfaces: tuple[QuadricSurfaceSpec, ...],
+        occluding_surfaces: tuple[QuadricSurfaceSpec, ...],
         curves: tuple[AnalyticCurve3D, ...],
         view: ParallelView,
+        paint_policy: QuadricPaintPolicy,
         curve_opacities: Mapping[str, float],
+        boundary_opacities: Mapping[str, float],
         section_plane: SectionPlane | None,
         section_patch: PlaneDisplayPatchSpec | None,
         surface_view_signature: bytes,
@@ -1846,7 +2349,9 @@ class QuadricOcclusion3D:
         static_sources, static_spans, static_crossings = (
             self._prepare_static_surface_boundaries(
                 surfaces,
+                occluding_surfaces,
                 view,
+                paint_policy,
                 surface_view_signature,
                 performance_attempt,
             )
@@ -1882,7 +2387,7 @@ class QuadricOcclusion3D:
                     spans.update(
                         compute_boundary_visibility(
                             dynamic_non_plane,
-                            surfaces,
+                            occluding_surfaces,
                             view,
                             context=self.context,
                         )
@@ -1925,6 +2430,7 @@ class QuadricOcclusion3D:
                 sources,
                 spans,
                 view,
+                paint_policy=paint_policy,
                 cached_source_ids=static_source_ids,
                 cached_crossings=static_crossings,
                 rank_one_section_source_group=rank_one_section_source_group,
@@ -1966,13 +2472,14 @@ class QuadricOcclusion3D:
                         performance_attempt.cache_miss(
                             "shared_boundary_section_spans"
                         )
-                    section_spans = compute_boundary_section_spans(
+                    section_spans = _compute_boundary_section_spans_with_contours(
                         sources,
                         section_frame,
                         view,
                         crossings,
                         surface=surfaces[0],
                         visibility_spans_by_source=spans,
+                        plane_fragment_contours=contours,
                         context=self.context,
                         limits=self.boundary_section_limits,
                     )
@@ -1988,7 +2495,7 @@ class QuadricOcclusion3D:
                 boundary_frame = compute_quadric_boundary_compositing(
                     sources,
                     spans,
-                    paint_policy=self.paint_policy,
+                    paint_policy=paint_policy,
                     parent_item_ids=parent_ids,
                     parent_relations=parent_relations,
                     surface_item_by_id=surface_item_by_id,
@@ -2021,8 +2528,12 @@ class QuadricOcclusion3D:
             performance_attempt=performance_attempt,
         )
         item_mobjects.update(boundary_batch.item_mobjects)
-        boundary_opacities = {
-            item.source_id: curve_opacities.get(item.source_id, 1.0)
+        resolved_boundary_opacities = {
+            item.source_id: (
+                curve_opacities[item.source_id]
+                if item.source_id in curve_opacities
+                else boundary_opacities.get(item.source_id, 1.0)
+            )
             for item in sources
         }
         if set(item_mobjects) != set(boundary_frame.draw_order):
@@ -2054,13 +2565,17 @@ class QuadricOcclusion3D:
             surfaces=tuple(surface_plans),
             fragments={},
             curve_opacities=curve_opacities,
+            points=(),
+            point_opacities={},
             fragment_slot_maps=boundary_batch.fragment_slot_maps,
             item_mobjects=item_mobjects,
             painter_draw_order=boundary_frame.draw_order,
             section_layers=section_layers,
             boundary_frame=boundary_frame,
             boundary_fragments=boundary_batch.fragments,
-            boundary_opacities=boundary_opacities,
+            boundary_opacities=resolved_boundary_opacities,
+            surface_opacities={},
+            surface_stroke_opacities={},
             projected_source_segment_counts=(
                 boundary_batch.projected_source_segment_counts
             ),
@@ -2184,18 +2699,35 @@ class QuadricOcclusion3D:
         if self.boundary_visibility_mode == "unified":
             numeric = self._prepare_unified_numeric(
                 surfaces,
+                resolved_inputs.occluding_surfaces,
                 curves,
                 view,
+                resolved_inputs.paint_policy,
                 curve_opacities,
+                resolved_inputs.boundary_opacities,
                 resolved_inputs.section_plane,
                 resolved_inputs.section_patch,
                 resolved_inputs.surface_view_signature,
                 performance_attempt,
             )
-            return self._translate_prepared_numeric(
+            numeric = replace(
+                numeric,
+                surface_opacities=dict(resolved_inputs.surface_opacities),
+                surface_stroke_opacities=dict(
+                    resolved_inputs.surface_stroke_opacities
+                ),
+                section_plane_fill_opacity=(
+                    resolved_inputs.section_plane_fill_opacity
+                ),
+                section_plane_stroke_opacity=(
+                    resolved_inputs.section_plane_stroke_opacity
+                ),
+            )
+            translated = self._translate_prepared_numeric(
                 numeric,
                 resolved_inputs.display_offset,
             )
+            return self._prepare_point_markers(translated, resolved_inputs)
         component_fills = self._prepare_surface_component_fills(
             surfaces,
             view,
@@ -2213,7 +2745,7 @@ class QuadricOcclusion3D:
                         surfaces,
                         view,
                         context=self.context,
-                        paint_policy=self.paint_policy,
+                        paint_policy=resolved_inputs.paint_policy,
                         curve_styles=(compositor_style if curves else None),
                         max_chord_error=self.max_chord_error,
                         max_segments=self.limits.max_surface_segments,
@@ -2255,7 +2787,7 @@ class QuadricOcclusion3D:
                     context=self.context,
                 )
             active_intervals = None
-            if self.paint_policy is QuadricPaintPolicy.PHYSICAL:
+            if resolved_inputs.paint_policy is QuadricPaintPolicy.PHYSICAL:
                 active_intervals = {
                     record.curve_id: tuple(
                         span.interval
@@ -2282,7 +2814,7 @@ class QuadricOcclusion3D:
                     frame = compute_quadric_compositing(
                         visibility,
                         proxies,
-                        paint_policy=self.paint_policy,
+                        paint_policy=resolved_inputs.paint_policy,
                         curve_styles=(compositor_style if curves else None),
                         surface_constraints=self.surface_constraints,
                         curve_crossings=crossings,
@@ -2521,15 +3053,109 @@ class QuadricOcclusion3D:
             surfaces=tuple(surface_plans),
             fragments=prepared_by_curve,
             curve_opacities=curve_opacities,
+            points=(),
+            point_opacities={},
             fragment_slot_maps=next_maps,
             item_mobjects=item_mobjects,
             painter_draw_order=tuple(painter_draw_order),
             section_layers=section_layers,
+            surface_opacities=dict(resolved_inputs.surface_opacities),
+            surface_stroke_opacities=dict(
+                resolved_inputs.surface_stroke_opacities
+            ),
+            section_plane_fill_opacity=(
+                resolved_inputs.section_plane_fill_opacity
+            ),
+            section_plane_stroke_opacity=(
+                resolved_inputs.section_plane_stroke_opacity
+            ),
             projected_source_segment_counts=projected_source_segment_counts,
         )
-        return self._translate_prepared_numeric(
+        translated = self._translate_prepared_numeric(
             numeric,
             resolved_inputs.display_offset,
+        )
+        return self._prepare_point_markers(translated, resolved_inputs)
+
+    def _prepare_point_markers(
+        self,
+        numeric: _PreparedNumericFrame,
+        resolved_inputs: _ResolvedQuadricFrameInputs,
+    ) -> _PreparedNumericFrame:
+        """Add exact point items to the already certified painter order.
+
+        The marker remains a true fixed ``Dot`` slot.  A hidden point is placed
+        immediately before the nearest owning surface sheet; a visible point is
+        a diagrammatic section marker painted after the certified parent graph.
+        No zero-length curve or artificial parameter interval is introduced.
+        """
+
+        if not resolved_inputs.points:
+            return replace(
+                numeric,
+                points=(),
+                point_opacities=resolved_inputs.point_opacities,
+            )
+        order = list(numeric.painter_draw_order)
+        item_mobjects = dict(numeric.item_mobjects)
+        surface_item_by_id = {
+            item.surface_id: item.item_id for item in numeric.surfaces
+        }
+        section_front: str | None = None
+        if numeric.section_layers is not None:
+            section_front = numeric.section_layers.frame.paint_items.surface_front
+
+        prepared_points: list[_PreparedPoint] = []
+        for marker in resolved_inputs.points:
+            visibility = compute_point_visibility(
+                marker,
+                resolved_inputs.occluding_surfaces,
+                resolved_inputs.view,
+                context=self.context,
+            )
+            screen = (
+                resolved_inputs.view.matrix[:2]
+                @ np.asarray(marker.point, dtype=float)
+                + np.asarray(resolved_inputs.display_offset, dtype=float)
+            )
+            item_id = f"point:{marker.point_id}"
+            prepared = _PreparedPoint(
+                item_id,
+                marker.point_id,
+                np.asarray((screen[0], screen[1], 0.0), dtype=float),
+                visibility.visible,
+                visibility.occluders,
+            )
+            prepared_points.append(prepared)
+            item_mobjects[item_id] = self._point_slots[marker.point_id]
+
+            if visibility.visible:
+                order.append(item_id)
+                continue
+            occluder_items = [
+                surface_item_by_id[surface_id]
+                for surface_id in visibility.occluders
+                if surface_id in surface_item_by_id
+            ]
+            if section_front is not None and visibility.occluders:
+                occluder_items.append(section_front)
+            positions = [order.index(item) for item in occluder_items if item in order]
+            if not positions:
+                raise QuadricManimError(
+                    f"hidden point {marker.point_id!r} has no painter surface item"
+                )
+            order.insert(min(positions), item_id)
+
+        if set(item_mobjects) != set(order):
+            raise QuadricManimError(
+                "prepared point items do not cover the augmented painter order"
+            )
+        return replace(
+            numeric,
+            points=tuple(prepared_points),
+            point_opacities=resolved_inputs.point_opacities,
+            item_mobjects=item_mobjects,
+            painter_draw_order=tuple(order),
         )
 
     def _prepare_painter(
@@ -2630,13 +3256,28 @@ class QuadricOcclusion3D:
         boundary_opacities = numeric.boundary_opacities
         if boundary_opacities is not None:
             boundary_opacities = {
-                source_id: resolved.curve_opacities.get(source_id, 1.0)
+                source_id: (
+                    resolved.curve_opacities[source_id]
+                    if source_id in resolved.curve_opacities
+                    else resolved.boundary_opacities.get(source_id, 1.0)
+                )
                 for source_id in boundary_opacities
             }
         reused_numeric = replace(
             numeric,
             curve_opacities=dict(resolved.curve_opacities),
+            point_opacities=dict(resolved.point_opacities),
             boundary_opacities=boundary_opacities,
+            surface_opacities=dict(resolved.surface_opacities),
+            surface_stroke_opacities=dict(
+                resolved.surface_stroke_opacities
+            ),
+            section_plane_fill_opacity=(
+                resolved.section_plane_fill_opacity
+            ),
+            section_plane_stroke_opacity=(
+                resolved.section_plane_stroke_opacity
+            ),
         )
         return PreparedQuadricManimFrame(
             reused_numeric,
@@ -2672,7 +3313,8 @@ class QuadricOcclusion3D:
     def _apply_surface(
         self,
         prepared: _PreparedSurface,
-        opacity: float,
+        fill_opacity: float,
+        stroke_opacity: float,
         *,
         draw_stroke: bool = True,
     ) -> None:
@@ -2682,14 +3324,18 @@ class QuadricOcclusion3D:
             prepared.points,
             prepared.cone_fill,
             self.style,
-            opacity,
+            fill_opacity,
             draw_stroke=draw_stroke,
+            stroke_opacity=stroke_opacity,
         )
 
     def _apply_section_layers(
         self,
         prepared: _PreparedSectionLayers,
-        opacity: float,
+        surface_fill_opacity: float,
+        surface_stroke_opacity: float,
+        plane_fill_opacity: float,
+        plane_stroke_opacity: float,
         *,
         draw_legacy_strokes: bool = True,
         draw_plane_outline: bool | None = None,
@@ -2713,9 +3359,10 @@ class QuadricOcclusion3D:
             prepared.surface_points,
             prepared.cone_fill,
             self.style,
-            opacity,
+            surface_fill_opacity,
             configure_front_stroke=True,
             draw_front_stroke=draw_legacy_strokes,
+            stroke_opacity=surface_stroke_opacity,
         )
 
         if draw_plane_outline is None:
@@ -2732,7 +3379,10 @@ class QuadricOcclusion3D:
             _set_closed_subpaths(slot, prepared.plane_polygons[role])
             slot.set_fill(
                 color=self.style.section_plane_fill_color,
-                opacity=self.style.section_plane_fill_opacity * opacity,
+                opacity=(
+                    self.style.section_plane_fill_opacity
+                    * plane_fill_opacity
+                ),
             )
             slot.set_stroke(opacity=0.0)
 
@@ -2749,7 +3399,8 @@ class QuadricOcclusion3D:
                 color=self.style.section_plane_stroke_color,
                 width=self.style.section_plane_stroke_width,
                 opacity=(
-                    self.style.section_plane_stroke_opacity * opacity
+                    self.style.section_plane_stroke_opacity
+                    * plane_stroke_opacity
                     if draw_plane_outline
                     else 0.0
                 ),
@@ -2829,6 +3480,26 @@ class QuadricOcclusion3D:
         if joint is not None:
             slot.dashed.joint_type = joint
 
+    def _apply_point_marker(
+        self,
+        prepared: _PreparedPoint,
+        opacity: float,
+    ) -> None:
+        slot = self._point_slots[prepared.point_id]
+        slot.move_to(prepared.screen_point)
+        color = (
+            self.style.point_color
+            if prepared.visible
+            else self.style.hidden_point_color
+        )
+        visibility_opacity = (
+            self.style.point_opacity
+            if prepared.visible
+            else self.style.hidden_point_opacity
+        )
+        slot.set_fill(color=color, opacity=visibility_opacity * opacity)
+        slot.set_stroke(opacity=0.0)
+
     def _prepare_display_actions(
         self,
         prepared: PreparedQuadricManimFrame,
@@ -2838,8 +3509,25 @@ class QuadricOcclusion3D:
 
         actions: list[_PreparedDisplayAction] = []
         unified = prepared.numeric.boundary_frame is not None
+        draw_legacy_surface_stroke = (
+            not unified or self.legacy_surface_stroke_fallback
+        )
         for surface in prepared.numeric.surfaces:
             slot = self._surface_paint_slots[surface.slot_index]
+            surface_fill_opacity = (
+                opacity
+                * prepared.numeric.surface_opacities.get(
+                    surface.surface_id,
+                    1.0,
+                )
+            )
+            surface_stroke_opacity = (
+                opacity
+                * prepared.numeric.surface_stroke_opacities.get(
+                    surface.surface_id,
+                    1.0,
+                )
+            )
             actions.append(
                 _PreparedDisplayAction(
                     f"surface:{surface.slot_index}",
@@ -2849,20 +3537,42 @@ class QuadricOcclusion3D:
                         surface.points,
                         surface.cone_fill,
                         self.style,
-                        opacity,
-                        not unified,
+                        surface_fill_opacity,
+                        surface_stroke_opacity,
+                        draw_legacy_surface_stroke,
                     ),
                     partial(
                         self._apply_surface,
                         surface,
-                        opacity,
-                        draw_stroke=not unified,
+                        surface_fill_opacity,
+                        surface_stroke_opacity,
+                        draw_stroke=draw_legacy_surface_stroke,
                     ),
                 )
             )
 
         section = prepared.numeric.section_layers
         if section is not None:
+            surface_fill_opacity = (
+                opacity
+                * prepared.numeric.surface_opacities.get(
+                    section.frame.surface_id,
+                    1.0,
+                )
+            )
+            surface_stroke_opacity = (
+                opacity
+                * prepared.numeric.surface_stroke_opacities.get(
+                    section.frame.surface_id,
+                    1.0,
+                )
+            )
+            plane_fill_opacity = (
+                opacity * prepared.numeric.section_plane_fill_opacity
+            )
+            plane_stroke_opacity = (
+                opacity * prepared.numeric.section_plane_stroke_opacity
+            )
             draw_plane_outline = (
                 not unified
                 or section.frame.projection_kind is PlanePatchProjectionKind.LINE
@@ -2879,15 +3589,21 @@ class QuadricOcclusion3D:
                         section.cone_fill,
                         section.frame.paint_items.ordered,
                         self.style,
-                        opacity,
-                        not unified,
+                        surface_fill_opacity,
+                        surface_stroke_opacity,
+                        plane_fill_opacity,
+                        plane_stroke_opacity,
+                        draw_legacy_surface_stroke,
                         draw_plane_outline,
                     ),
                     partial(
                         self._apply_section_layers,
                         section,
-                        opacity,
-                        draw_legacy_strokes=not unified,
+                        surface_fill_opacity,
+                        surface_stroke_opacity,
+                        plane_fill_opacity,
+                        plane_stroke_opacity,
+                        draw_legacy_strokes=draw_legacy_surface_stroke,
                         draw_plane_outline=draw_plane_outline,
                     ),
                 )
@@ -2917,6 +3633,29 @@ class QuadricOcclusion3D:
                         ),
                     )
                 )
+
+        for point in prepared.numeric.points:
+            point_opacity = opacity * prepared.numeric.point_opacities[point.point_id]
+            slot = self._point_slots[point.point_id]
+            actions.append(
+                _PreparedDisplayAction(
+                    f"point:{point.point_id}",
+                    (slot,),
+                    _display_digest(
+                        "point",
+                        point.screen_point,
+                        point.visible,
+                        point.occluders,
+                        self.style.point_color,
+                        self.style.point_radius,
+                        self.style.point_opacity,
+                        self.style.hidden_point_color,
+                        self.style.hidden_point_opacity,
+                        point_opacity,
+                    ),
+                    partial(self._apply_point_marker, point, point_opacity),
+                )
+            )
 
         boundary_opacities = prepared.numeric.boundary_opacities or {}
         for source_id, fragments in (
@@ -3084,6 +3823,356 @@ class QuadricOcclusion3D:
             raise
         self._finish_performance_attempt(attempt, status="committed")
 
+    def snapshot_transaction_state(
+        self,
+    ) -> QuadricOcclusionTransactionSnapshot:
+        """Capture the complete committed state of one attached Cairo frame.
+
+        The returned value is intentionally opaque and controller-bound.  It
+        is suitable for a higher-level coordinator that must atomically roll
+        back several already-attached quadric controllers after one of them
+        fails to commit.
+        """
+
+        if not self._attached:
+            raise QuadricManimError(
+                "quadric transaction state requires an attached controller"
+            )
+        return QuadricOcclusionTransactionSnapshot(
+            _owner_token=self._transaction_snapshot_owner_token,
+            _root_state=_capture_transaction_root(self.root),
+            _painter_band_state=self._band.capture_active_state(),
+            _fragment_slot_maps={
+                source_id: dict(values)
+                for source_id, values in self._fragment_slot_maps.items()
+            },
+            _last_frame=self._last_frame,
+            _last_global_frame=self._last_global_frame,
+            _last_section_frame=self._last_section_frame,
+            _last_boundary_frame=self._last_boundary_frame,
+            _display_slot_state=dict(self._display_slot_state),
+            _last_painter_band_signature=self._last_painter_band_signature,
+            _last_input_geometry_signature=self._last_input_geometry_signature,
+            _last_input_draw_signature=self._last_input_draw_signature,
+            _last_input_opacity=self._last_input_opacity,
+            _last_prepared_frame=self._last_prepared_frame,
+            _last_prepared_performance_counts=dict(
+                self._last_prepared_performance_counts
+            ),
+            _performance_frame_index=self._performance_frame_index,
+            _last_performance_snapshot=self._last_performance_snapshot,
+        )
+
+    def _validate_transaction_snapshot(
+        self,
+        snapshot: QuadricOcclusionTransactionSnapshot,
+    ) -> None:
+        if snapshot._owner_token is not self._transaction_snapshot_owner_token:
+            raise QuadricManimError(
+                "quadric transaction snapshot belongs to another controller"
+            )
+
+        family = tuple(self.root.get_family())
+        family_ids = {id(member) for member in family}
+        if len(snapshot._root_state) != len(family) or any(
+            state.mobject is not member
+            for state, member in zip(snapshot._root_state, family)
+        ):
+            raise QuadricManimError(
+                "quadric transaction snapshot has incompatible display slots"
+            )
+        allowed_attributes = (
+            _TRANSACTION_NUMERIC_STYLE_ATTRIBUTES
+            | _TRANSACTION_ENUM_STYLE_ATTRIBUTES
+        )
+        for state in snapshot._root_state:
+            if not isinstance(state, _MobjectState):
+                raise QuadricManimError(
+                    "quadric transaction snapshot has invalid display state"
+                )
+            if state.points is not None and (
+                not isinstance(state.points, np.ndarray)
+                or not np.all(np.isfinite(state.points))
+            ):
+                raise QuadricManimError(
+                    "quadric transaction snapshot has invalid display points"
+                )
+            if state.z_index is not None and not np.isfinite(state.z_index):
+                raise QuadricManimError(
+                    "quadric transaction snapshot has invalid display z-index"
+                )
+            if not isinstance(state.attributes, dict) or not set(
+                state.attributes
+            ).issubset(allowed_attributes):
+                raise QuadricManimError(
+                    "quadric transaction snapshot has invalid display styles"
+                )
+            for name, value in state.attributes.items():
+                if name in _TRANSACTION_ENUM_STYLE_ATTRIBUTES:
+                    current = getattr(state.mobject, name, None)
+                    if current is None or not isinstance(value, type(current)):
+                        raise QuadricManimError(
+                            "quadric transaction snapshot has invalid display styles"
+                        )
+                    continue
+                try:
+                    numeric = np.asarray(value, dtype=float)
+                except (TypeError, ValueError, OverflowError) as exc:
+                    raise QuadricManimError(
+                        "quadric transaction snapshot has invalid display styles"
+                    ) from exc
+                if not np.all(np.isfinite(numeric)):
+                    raise QuadricManimError(
+                        "quadric transaction snapshot has invalid display styles"
+                    )
+
+        band_state = snapshot._painter_band_state
+        if not isinstance(band_state, Mapping) or any(
+            not isinstance(item_id, str)
+            or not item_id
+            or not np.isfinite(float(value))
+            for item_id, value in band_state.items()
+        ):
+            raise QuadricManimError(
+                "quadric transaction snapshot has invalid painter-band state"
+            )
+        band_mobject_ids = getattr(band_state, "mobject_ids", None)
+        if (
+            not isinstance(band_mobject_ids, dict)
+            or set(band_mobject_ids) != set(band_state)
+            or any(
+                isinstance(value, bool)
+                or not isinstance(value, int)
+                or value not in family_ids
+                for value in band_mobject_ids.values()
+            )
+        ):
+            raise QuadricManimError(
+                "quadric transaction snapshot has invalid painter-band identities"
+            )
+
+        signature = snapshot._last_painter_band_signature
+        if not isinstance(signature, tuple) or any(
+            not isinstance(item, tuple)
+            or len(item) != 3
+            or not isinstance(item[0], str)
+            or not item[0]
+            or isinstance(item[1], bool)
+            or not isinstance(item[1], int)
+            or item[1] not in family_ids
+            or not np.isfinite(float(item[2]))
+            for item in signature
+        ):
+            raise QuadricManimError(
+                "quadric transaction snapshot has invalid painter signature"
+            )
+        expected_band = {item_id: z_index for item_id, _root, z_index in signature}
+        expected_band_mobject_ids = {
+            item_id: root_id for item_id, root_id, _z_index in signature
+        }
+        if (
+            dict(band_state) != expected_band
+            or band_mobject_ids != expected_band_mobject_ids
+        ):
+            raise QuadricManimError(
+                "quadric transaction snapshot painter evidence is inconsistent"
+            )
+
+        slot_maps = snapshot._fragment_slot_maps
+        if not isinstance(slot_maps, dict) or set(slot_maps) != set(
+            self._slot_source_ids
+        ):
+            raise QuadricManimError(
+                "quadric transaction snapshot has invalid fragment-slot maps"
+            )
+        for source_id, mapping in slot_maps.items():
+            if not isinstance(source_id, str) or not isinstance(mapping, dict):
+                raise QuadricManimError(
+                    "quadric transaction snapshot has invalid fragment-slot maps"
+                )
+            if any(
+                not isinstance(fragment_id, str)
+                or not fragment_id
+                or isinstance(slot_index, bool)
+                or not isinstance(slot_index, int)
+                or not 0 <= slot_index < self.limits.max_fragments_per_curve
+                for fragment_id, slot_index in mapping.items()
+            ) or len(set(mapping.values())) != len(mapping):
+                raise QuadricManimError(
+                    "quadric transaction snapshot has invalid fragment-slot maps"
+                )
+
+        for name, value, expected_type in (
+            ("last frame", snapshot._last_frame, QuadricCompositingFrame),
+            ("last global frame", snapshot._last_global_frame, GlobalQuadricFrame),
+            (
+                "last section frame",
+                snapshot._last_section_frame,
+                QuadricSectionCompositingFrame,
+            ),
+            (
+                "last boundary frame",
+                snapshot._last_boundary_frame,
+                QuadricBoundaryCompositingFrame,
+            ),
+        ):
+            if value is not None and not isinstance(value, expected_type):
+                raise QuadricManimError(
+                    f"quadric transaction snapshot has invalid {name}"
+                )
+
+        display_state = snapshot._display_slot_state
+        if not isinstance(display_state, dict):
+            raise QuadricManimError(
+                "quadric transaction snapshot has invalid display-slot state"
+            )
+        for slot_id, state in display_state.items():
+            if (
+                not isinstance(slot_id, str)
+                or not slot_id
+                or not isinstance(state, _CommittedDisplaySlot)
+                or not isinstance(state.digest, bytes)
+                or any(id(root) not in family_ids for root in state.roots)
+            ):
+                raise QuadricManimError(
+                    "quadric transaction snapshot has invalid display-slot state"
+                )
+
+        for name, value in (
+            ("geometry", snapshot._last_input_geometry_signature),
+            ("draw", snapshot._last_input_draw_signature),
+        ):
+            if value is not None and not isinstance(value, bytes):
+                raise QuadricManimError(
+                    f"quadric transaction snapshot has invalid {name} signature"
+                )
+        if snapshot._last_input_opacity is not None and (
+            not np.isfinite(snapshot._last_input_opacity)
+            or snapshot._last_input_opacity < 0.0
+        ):
+            raise QuadricManimError(
+                "quadric transaction snapshot has invalid input opacity"
+            )
+        prepared = snapshot._last_prepared_frame
+        if prepared is not None and not isinstance(
+            prepared, PreparedQuadricManimFrame
+        ):
+            raise QuadricManimError(
+                "quadric transaction snapshot has invalid prepared frame"
+            )
+        if prepared is not None:
+            prepared_maps = {
+                source_id: dict(values)
+                for source_id, values in prepared.numeric.fragment_slot_maps.items()
+            }
+            if prepared_maps != slot_maps:
+                raise QuadricManimError(
+                    "quadric transaction snapshot fragment evidence is inconsistent"
+                )
+            if (
+                prepared.frame is not snapshot._last_frame
+                or prepared.global_frame is not snapshot._last_global_frame
+                or prepared.section_frame is not snapshot._last_section_frame
+                or prepared.boundary_frame is not snapshot._last_boundary_frame
+            ):
+                raise QuadricManimError(
+                    "quadric transaction snapshot frame evidence is inconsistent"
+                )
+        counts = snapshot._last_prepared_performance_counts
+        if not isinstance(counts, dict) or any(
+            not isinstance(key, str)
+            or not key
+            or isinstance(value, bool)
+            or not isinstance(value, int)
+            or value < 0
+            for key, value in counts.items()
+        ):
+            raise QuadricManimError(
+                "quadric transaction snapshot has invalid performance counts"
+            )
+        if (
+            isinstance(snapshot._performance_frame_index, bool)
+            or not isinstance(snapshot._performance_frame_index, int)
+            or snapshot._performance_frame_index < 0
+        ):
+            raise QuadricManimError(
+                "quadric transaction snapshot has invalid performance frame index"
+            )
+        if snapshot._last_performance_snapshot is not None and not isinstance(
+            snapshot._last_performance_snapshot,
+            QuadricPerformanceSnapshot,
+        ):
+            raise QuadricManimError(
+                "quadric transaction snapshot has invalid performance evidence"
+            )
+
+    def _restore_transaction_state_unchecked(
+        self,
+        snapshot: QuadricOcclusionTransactionSnapshot,
+    ) -> None:
+        _restore_root(snapshot._root_state)
+        self._band.restore_active_state(snapshot._painter_band_state)
+        self._fragment_slot_maps = {
+            source_id: dict(values)
+            for source_id, values in snapshot._fragment_slot_maps.items()
+        }
+        self._last_frame = snapshot._last_frame
+        self._last_global_frame = snapshot._last_global_frame
+        self._last_section_frame = snapshot._last_section_frame
+        self._last_boundary_frame = snapshot._last_boundary_frame
+        self._display_slot_state = dict(snapshot._display_slot_state)
+        self._last_painter_band_signature = (
+            snapshot._last_painter_band_signature
+        )
+        self._last_input_geometry_signature = (
+            snapshot._last_input_geometry_signature
+        )
+        self._last_input_draw_signature = snapshot._last_input_draw_signature
+        self._last_input_opacity = snapshot._last_input_opacity
+        self._last_prepared_frame = snapshot._last_prepared_frame
+        self._last_prepared_performance_counts = dict(
+            snapshot._last_prepared_performance_counts
+        )
+        self._performance_frame_index = snapshot._performance_frame_index
+        self._last_performance_snapshot = snapshot._last_performance_snapshot
+
+    def restore_transaction_state(
+        self,
+        snapshot: QuadricOcclusionTransactionSnapshot,
+    ) -> "QuadricOcclusion3D":
+        """Restore one attached frame without changing Scene ownership.
+
+        Validation completes before any Mobject is touched.  If an unexpected
+        restore error still occurs, the current frame is restored before the
+        error is reported, so invalid input cannot leave a half-applied frame.
+        """
+
+        if not self._attached:
+            raise QuadricManimError(
+                "quadric transaction restore requires an attached controller"
+            )
+        if not isinstance(snapshot, QuadricOcclusionTransactionSnapshot):
+            raise TypeError(
+                "snapshot must be a QuadricOcclusionTransactionSnapshot"
+            )
+        self._validate_transaction_snapshot(snapshot)
+        current = self.snapshot_transaction_state()
+        try:
+            self._restore_transaction_state_unchecked(snapshot)
+            self._invalidate_cairo_static_image()
+        except Exception as exc:
+            try:
+                self._restore_transaction_state_unchecked(current)
+                self._invalidate_cairo_static_image()
+            except Exception as rollback_exc:
+                raise QuadricManimError(
+                    "quadric transaction restore and rollback both failed"
+                ) from rollback_exc
+            raise QuadricManimError(
+                "quadric transaction snapshot could not be restored"
+            ) from exc
+        return self
+
     @property
     def attached(self) -> bool:
         return self._attached
@@ -3128,6 +4217,12 @@ class QuadricOcclusion3D:
         """Return the immutable authored curve identities."""
 
         return self._curve_ids
+
+    @property
+    def allocated_point_ids(self) -> tuple[str, ...]:
+        """Return the immutable authored point-marker identities."""
+
+        return self._point_ids
 
     @property
     def allocated_boundary_ids(self) -> tuple[str, ...]:
@@ -3352,6 +4447,9 @@ class QuadricOcclusion3D:
         for slots in self._curve_slots.values():
             for slot in slots.fragments:
                 slot.hide()
+        for slot in self._point_slots.values():
+            slot.set_fill(opacity=0.0)
+            slot.set_stroke(opacity=0.0)
         self._fragment_slot_maps = {
             source_id: {} for source_id in self._slot_source_ids
         }
@@ -3412,5 +4510,6 @@ __all__ = [
     "QuadricManimLimits",
     "QuadricManimStyle",
     "QuadricOcclusion3D",
+    "QuadricOcclusionTransactionSnapshot",
     "estimate_quadric_mobject_count",
 ]

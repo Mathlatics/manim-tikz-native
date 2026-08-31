@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from math import asinh, cos, pi, sin, sqrt, tau
 import unittest
+from unittest.mock import patch as mock_patch
 
 import numpy as np
 
@@ -16,6 +17,7 @@ from polyhedron_visibility.quadrics.contract import (
     CylinderSpec,
     SectionPlane,
     SphereSpec,
+    _prepare_finite_surface_ray_hits,
 )
 from polyhedron_visibility.quadrics.critical import (
     CriticalEventKind,
@@ -25,10 +27,12 @@ from polyhedron_visibility.quadrics.curves import (
     CircleArcCurve,
     EllipseArcCurve,
     ParametricConicBranch,
+    PointMarker3D,
     SegmentCurve,
 )
 from polyhedron_visibility.quadrics.visibility import (
     compute_curve_visibility,
+    compute_point_visibility,
     compute_quadric_visibility,
 )
 from polyhedron_visibility.quadrics.sections import (
@@ -166,6 +170,65 @@ class QuadricCriticalEventTests(unittest.TestCase):
 
 
 class QuadricCurveVisibilityTests(unittest.TestCase):
+    def test_visibility_preserves_authored_surface_direction_input(self) -> None:
+        directions: list[object] = []
+
+        class AuthoredSphere(SphereSpec):
+            def ray_hits(self, origin, direction, **kwargs):
+                directions.append(direction)
+                return super().ray_hits(origin, direction, **kwargs)
+
+        surface = AuthoredSphere("authored", (0.0, 0.0, 0.0), 1.25)
+        curve = SegmentCurve("line", (-3.0, 0.0, -3.0), (3.0, 0.0, -3.0))
+
+        record = compute_curve_visibility(curve, (surface,), IDENTITY_VIEW)
+
+        _assert_complete(self, record)
+        self.assertGreater(len(directions), 1)
+        self.assertTrue(
+            all(direction is IDENTITY_VIEW.view_direction for direction in directions)
+        )
+
+    def test_midpoint_classification_prepares_each_builtin_surface_once(
+        self,
+    ) -> None:
+        curve = SegmentCurve("line", (-3.0, 0.0, -3.0), (3.0, 0.0, -3.0))
+        surfaces = (
+            SphereSpec("left", (-1.0, 0.0, 0.0), 1.25),
+            SphereSpec("right", (1.0, 0.0, 0.0), 1.25),
+        )
+        prepared_queries: list[int] = []
+
+        def prepare(*args, **kwargs):
+            ray_hits = _prepare_finite_surface_ray_hits(*args, **kwargs)
+            prepared_queries.append(0)
+            index = len(prepared_queries) - 1
+
+            def counted_ray_hits(point):
+                prepared_queries[index] += 1
+                return ray_hits(point)
+
+            return counted_ray_hits
+
+        with (
+            mock_patch(
+                "polyhedron_visibility.quadrics.visibility."
+                "_prepare_finite_surface_ray_hits",
+                side_effect=prepare,
+            ) as prepared,
+            mock_patch.object(
+                SphereSpec,
+                "ray_hits",
+                side_effect=AssertionError("public ray_hits rebuilt per midpoint"),
+            ),
+        ):
+            record = compute_curve_visibility(curve, surfaces, IDENTITY_VIEW)
+
+        _assert_complete(self, record)
+        self.assertEqual(prepared.call_count, len(surfaces))
+        self.assertEqual(len(prepared_queries), len(surfaces))
+        self.assertTrue(all(count > 1 for count in prepared_queries))
+
     def test_near_parabolic_ellipse_uses_only_its_authored_tan_chart(self) -> None:
         normal_angle = 59.5 * pi / 180.0
         cases = (
@@ -540,6 +603,24 @@ class QuadricCurveVisibilityTests(unittest.TestCase):
         second_payload = json.dumps(second.to_dict(), sort_keys=True, allow_nan=False)
         self.assertEqual(first_payload, second_payload)
         self.assertEqual(tuple(first.record_map), ("a-section", "z-line"))
+
+    def test_isolated_point_visibility_uses_exact_forward_ray_hits(self) -> None:
+        sphere = SphereSpec("sphere", (0.0, 0.0, 0.0), 1.0)
+        visible = compute_point_visibility(
+            PointMarker3D("front", (0.0, 0.0, 1.0)),
+            (sphere,),
+            IDENTITY_VIEW,
+        )
+        hidden = compute_point_visibility(
+            PointMarker3D("back", (0.0, 0.0, -1.0)),
+            (sphere,),
+            IDENTITY_VIEW,
+        )
+        self.assertTrue(visible.visible)
+        self.assertEqual(visible.occluders, ())
+        self.assertFalse(hidden.visible)
+        self.assertEqual(hidden.occluders, ("sphere",))
+        self.assertEqual(hidden.to_dict()["pointId"], "back")
 
 
 if __name__ == "__main__":

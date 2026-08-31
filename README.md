@@ -31,6 +31,14 @@ before the follow driver, while explicitly marked quadric/composite consumers
 are kept after it, giving deterministic same-frame camera/occlusion updates.
 See the [semantic parallel-camera shots](examples/parallel_camera_shots/README.md).
 
+For moving conic sections, one source-authoritative sequence can now coordinate
+those camera shots with the cutting plane, two fixed topology banks, a finite
+plane patch, semantic display state, and one real automatic-occlusion painter
+graph.  See the
+[parallel camera/section contract](docs/parallel-camera-section-sequence.md)
+and its three
+[Cairo acceptance scenes](examples/parallel_camera_section_rig_demo.py).
+
 This project does **not** convert arbitrary TikZ and does not silently fall back
 to SVG. Unsupported syntax is reported explicitly.
 
@@ -42,6 +50,7 @@ to SVG. Unsupported syntax is reported explicitly.
 [Fast and extended Cairo acceptance](docs/extended-quadric-ci.md) ·
 [Classroom cone-section gallery](examples/classroom_cone_sections/README.md) ·
 [Parallel camera example](examples/parallel_camera_views/README.md) ·
+[Parallel camera/section sequences](docs/parallel-camera-section-sequence.md) ·
 [Supported TikZ subset](docs/supported-tikz.md) ·
 [Source-authoritative projects](docs/source-authoritative-projects.md)
 

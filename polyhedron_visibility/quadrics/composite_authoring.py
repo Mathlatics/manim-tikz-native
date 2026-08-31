@@ -929,6 +929,7 @@ class CompositeQuadricSection3D:
                 self._generator_boundaries,
                 include_cap_rims=True,
                 include_silhouettes=True,
+                context=self.context,
             )
         if self._generator_boundaries:
             return build_surface_boundary_sources(
@@ -937,6 +938,7 @@ class CompositeQuadricSection3D:
                 self._generator_boundaries,
                 include_cap_rims=False,
                 include_silhouettes=False,
+                context=self.context,
             )
         return ()
 

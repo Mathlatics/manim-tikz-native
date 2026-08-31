@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from math import acos, atan2, cos, isfinite, sin, tau
+from math import cos, isfinite, sin, sqrt, tau
 from typing import Sequence
 
 import numpy as np
@@ -77,6 +77,37 @@ class GeneratorBoundarySpec:
         object.__setattr__(self, "azimuth", value % tau)
 
 
+@dataclass(frozen=True, slots=True)
+class SurfaceBoundarySlotDescriptor:
+    """View-independent semantic metadata for one preallocated boundary slot."""
+
+    source_id: str
+    owner_id: str
+    owner_surface_id: str
+    source_kind: BoundarySourceKind
+    semantic_kind: BoundarySemanticKind
+    occlusion_scope: BoundaryOcclusionScope
+    style_id: str
+
+    def __post_init__(self) -> None:
+        for name in ("source_id", "owner_id", "owner_surface_id", "style_id"):
+            value = getattr(self, name)
+            if not isinstance(value, str) or not value.strip():
+                raise ValueError(f"{name} must be a non-empty string")
+            object.__setattr__(self, name, value.strip())
+        object.__setattr__(self, "source_kind", BoundarySourceKind(self.source_kind))
+        object.__setattr__(
+            self,
+            "semantic_kind",
+            BoundarySemanticKind(self.semantic_kind),
+        )
+        object.__setattr__(
+            self,
+            "occlusion_scope",
+            BoundaryOcclusionScope(self.occlusion_scope),
+        )
+
+
 def curve_boundary_source(
     curve,
     *,
@@ -105,7 +136,13 @@ def curve_boundary_source(
     )
 
 
-def _same_curve_geometry(first, second) -> bool:
+def _same_curve_geometry(
+    first,
+    second,
+    *,
+    allow_parametric_subdomain: bool = False,
+    parameter_tolerance: float = 0.0,
+) -> bool:
     """Compare authored analytic structure without consulting curve identity."""
 
     if isinstance(first, SegmentCurve) and isinstance(second, SegmentCurve):
@@ -128,10 +165,17 @@ def _same_curve_geometry(first, second) -> bool:
     if isinstance(first, ParametricConicBranch) and isinstance(
         second, ParametricConicBranch
     ):
-        return (
-            first.parameterization == second.parameterization
-            and first.plane_embedding == second.plane_embedding
-            and first.domain == second.domain
+        if (
+            first.parameterization != second.parameterization
+            or first.plane_embedding != second.plane_embedding
+        ):
+            return False
+        if first.domain == second.domain:
+            return True
+        return bool(
+            allow_parametric_subdomain
+            and first.domain.start >= second.domain.start - parameter_tolerance
+            and first.domain.end <= second.domain.end + parameter_tolerance
         )
     return False
 
@@ -225,7 +269,14 @@ def section_curve_boundary_source(
                 "authoritative section curves must have unique identities"
             )
     matching = tuple(
-        item for item in expected_curves if _same_curve_geometry(curve, item)
+        item
+        for item in expected_curves
+        if _same_curve_geometry(
+            curve,
+            item,
+            allow_parametric_subdomain=True,
+            parameter_tolerance=resolved.epsilon(GeometryQuantity.PARAMETER),
+        )
     )
     if len(matching) > 1:
         raise QuadricBoundaryCompositingError(
@@ -335,12 +386,17 @@ def _surface_rim_sources(
 def _sphere_silhouette_source(
     surface: SphereSpec,
     view: ParallelView,
+    context: ResolvedGeometryContext,
 ) -> QuadricBoundarySource:
     normal = np.asarray(view.view_direction, dtype=float)
-    radial = np.asarray(surface.frame.x_axis, dtype=float)
+    radial = np.asarray(view.matrix[0], dtype=float)
     radial = radial - float(np.dot(radial, normal)) * normal
-    if float(np.linalg.norm(radial)) <= 1.0e-12:
-        radial = np.asarray(surface.frame.y_axis, dtype=float)
+    radial_length = float(np.linalg.norm(radial))
+    if radial_length <= context.epsilon(GeometryQuantity.ANGULAR):
+        raise QuadricBoundaryCompositingError(
+            "sphere silhouette has no stable screen-horizontal phase"
+        )
+    radial /= radial_length
     source_id = f"boundary:{surface.surface_id}:silhouette"
     return curve_boundary_source(
         CircleArcCurve(
@@ -412,6 +468,7 @@ def _axial_generator_source(
 def _silhouette_generators(
     surface: CylinderSpec | ConeSpec,
     view: ParallelView,
+    context: ResolvedGeometryContext,
 ) -> tuple[QuadricBoundarySource, ...]:
     frame = surface.frame
     direction = np.asarray(view.view_direction, dtype=float)
@@ -419,27 +476,39 @@ def _silhouette_generators(
     dy = float(np.dot(direction, frame.y_axis))
     dz = float(np.dot(direction, frame.z_axis))
     radial_norm = float(np.hypot(dx, dy))
-    if radial_norm <= 1.0e-12:
+    angular_epsilon = context.epsilon(GeometryQuantity.ANGULAR)
+    if radial_norm <= angular_epsilon:
         return ()
-    angles: tuple[float, ...]
+    radial_direction = np.asarray((dx, dy), dtype=float) / radial_norm
+    perpendicular = np.asarray(
+        (-radial_direction[1], radial_direction[0]),
+        dtype=float,
+    )
+    radial_branches: tuple[np.ndarray, ...]
     if isinstance(surface, CylinderSpec):
-        base = atan2(dy, dx) + 0.5 * np.pi
-        angles = (base % tau, (base + np.pi) % tau)
+        radial_branches = (perpendicular, -perpendicular)
     else:
         midpoint = 0.5 * (surface.axial_range[0] + surface.axial_range[1])
         nappe_sign = 1.0 if midpoint >= 0.0 else -1.0
         cosine = surface.slope * nappe_sign * dz / radial_norm
-        if cosine < -1.0 - 1.0e-12 or cosine > 1.0 + 1.0e-12:
+        if cosine < -1.0 - angular_epsilon or cosine > 1.0 + angular_epsilon:
             return ()
         cosine = min(1.0, max(-1.0, cosine))
-        base = atan2(dy, dx)
-        offset = acos(cosine)
-        angles = ((base - offset) % tau, (base + offset) % tau)
-    ordered = tuple(sorted(angles))
+        sine = (
+            0.0
+            if 1.0 - abs(cosine) <= angular_epsilon
+            else sqrt(max(0.0, 1.0 - cosine * cosine))
+        )
+        positive = cosine * radial_direction + sine * perpendicular
+        if sine <= angular_epsilon:
+            radial_branches = (positive,)
+        else:
+            negative = cosine * radial_direction - sine * perpendicular
+            radial_branches = (positive, negative)
     return tuple(
         _axial_generator_source(
             surface,
-            np.asarray((cos(angle), sin(angle)), dtype=float),
+            radial,
             index,
             semantic_kind=BoundarySemanticKind.TRUE_SILHOUETTE,
             source_kind=BoundarySourceKind.SURFACE_SILHOUETTE,
@@ -447,8 +516,87 @@ def _silhouette_generators(
             source_id=f"boundary:{surface.surface_id}:silhouette:generator:{index}",
             style_id="style:surface-silhouette",
         )
-        for index, angle in enumerate(ordered)
+        for index, radial in enumerate(radial_branches)
     )
+
+
+def surface_boundary_slot_descriptors(
+    surfaces: Sequence[QuadricSurfaceSpec],
+    generators: Sequence[GeneratorBoundarySpec] = (),
+    *,
+    include_cap_rims: bool = True,
+    include_silhouettes: bool = True,
+) -> tuple[SurfaceBoundarySlotDescriptor, ...]:
+    """Return the complete view-independent fixed boundary-slot catalog."""
+
+    surface_items = tuple(sorted(surfaces, key=lambda item: item.surface_id))
+    by_id = {item.surface_id: item for item in surface_items}
+    result: list[SurfaceBoundarySlotDescriptor] = []
+    for surface in surface_items:
+        if include_cap_rims:
+            for cap in surface.end_caps:
+                result.append(
+                    SurfaceBoundarySlotDescriptor(
+                        f"boundary:{surface.surface_id}:{cap.role}:rim",
+                        cap.cap_id,
+                        surface.surface_id,
+                        BoundarySourceKind.SURFACE_CAP_RIM,
+                        BoundarySemanticKind.SURFACE_BOUNDARY,
+                        BoundaryOcclusionScope.OWNER_AND_EXTERNAL,
+                        "style:surface-boundary",
+                    )
+                )
+            if isinstance(surface, ConeSpec):
+                for rim in surface.trim_rims:
+                    result.append(
+                        SurfaceBoundarySlotDescriptor(
+                            f"boundary:{surface.surface_id}:{rim.role}:rim",
+                            rim.rim_id,
+                            surface.surface_id,
+                            BoundarySourceKind.SURFACE_TRIM_RIM,
+                            BoundarySemanticKind.SURFACE_BOUNDARY,
+                            BoundaryOcclusionScope.OWNER_AND_EXTERNAL,
+                            "style:surface-boundary",
+                        )
+                    )
+        if include_silhouettes:
+            count = 1 if isinstance(surface, SphereSpec) else 2
+            for index in range(count):
+                suffix = "silhouette" if count == 1 else f"silhouette:generator:{index}"
+                result.append(
+                    SurfaceBoundarySlotDescriptor(
+                        f"boundary:{surface.surface_id}:{suffix}",
+                        surface.surface_id,
+                        surface.surface_id,
+                        BoundarySourceKind.SURFACE_SILHOUETTE,
+                        BoundarySemanticKind.TRUE_SILHOUETTE,
+                        BoundaryOcclusionScope.EXTERNAL_ONLY,
+                        "style:surface-silhouette",
+                    )
+                )
+    for spec in sorted(generators, key=lambda item: item.boundary_id):
+        surface = by_id.get(spec.surface_id)
+        if not isinstance(surface, (CylinderSpec, ConeSpec)):
+            raise QuadricBoundaryCompositingError(
+                f"generator {spec.boundary_id!r} requires a cylinder or cone"
+            )
+        result.append(
+            SurfaceBoundarySlotDescriptor(
+                spec.boundary_id,
+                surface.surface_id,
+                surface.surface_id,
+                BoundarySourceKind.SURFACE_GENERATOR,
+                BoundarySemanticKind.TEACHING_FEATURE,
+                BoundaryOcclusionScope.OWNER_AND_EXTERNAL,
+                spec.style_id or "style:teaching-boundary",
+            )
+        )
+    result.sort(key=lambda item: item.source_id)
+    if len({item.source_id for item in result}) != len(result):
+        raise QuadricBoundaryCompositingError(
+            "surface boundary slot identities must be unique"
+        )
+    return tuple(result)
 
 
 def _explicit_generator_source(
@@ -475,27 +623,15 @@ def surface_boundary_source_ids(
     include_cap_rims: bool = True,
     include_silhouettes: bool = True,
 ) -> tuple[str, ...]:
-    result: set[str] = {item.boundary_id for item in generators}
-    for surface in surfaces:
-        if include_cap_rims:
-            result.update(
-                f"boundary:{surface.surface_id}:{cap.role}:rim"
-                for cap in surface.end_caps
-            )
-            if isinstance(surface, ConeSpec):
-                result.update(
-                    f"boundary:{surface.surface_id}:{rim.role}:rim"
-                    for rim in surface.trim_rims
-                )
-        if include_silhouettes:
-            if isinstance(surface, SphereSpec):
-                result.add(f"boundary:{surface.surface_id}:silhouette")
-            else:
-                result.update(
-                    f"boundary:{surface.surface_id}:silhouette:generator:{index}"
-                    for index in range(2)
-                )
-    return tuple(sorted(result))
+    return tuple(
+        item.source_id
+        for item in surface_boundary_slot_descriptors(
+            surfaces,
+            generators,
+            include_cap_rims=include_cap_rims,
+            include_silhouettes=include_silhouettes,
+        )
+    )
 
 
 def build_surface_boundary_sources(
@@ -505,18 +641,27 @@ def build_surface_boundary_sources(
     *,
     include_cap_rims: bool = True,
     include_silhouettes: bool = True,
+    context=None,
 ) -> tuple[QuadricBoundarySource, ...]:
     surface_items = tuple(sorted(surfaces, key=lambda item: item.surface_id))
     by_id = {item.surface_id: item for item in surface_items}
+    resolved = resolve_geometry_context(
+        context,
+        positions=tuple(
+            point
+            for surface in surface_items
+            for point in surface.characteristic_points
+        ),
+    )
     result: list[QuadricBoundarySource] = []
     for surface in surface_items:
         if include_cap_rims:
             result.extend(_surface_rim_sources(surface))
         if include_silhouettes:
             if isinstance(surface, SphereSpec):
-                result.append(_sphere_silhouette_source(surface, view))
+                result.append(_sphere_silhouette_source(surface, view, resolved))
             else:
-                result.extend(_silhouette_generators(surface, view))
+                result.extend(_silhouette_generators(surface, view, resolved))
     for spec in sorted(generators, key=lambda item: item.boundary_id):
         surface = by_id.get(spec.surface_id)
         if not isinstance(surface, (CylinderSpec, ConeSpec)):
@@ -534,9 +679,11 @@ def build_surface_boundary_sources(
 
 __all__ = [
     "GeneratorBoundarySpec",
+    "SurfaceBoundarySlotDescriptor",
     "build_surface_boundary_sources",
     "curve_boundary_source",
     "plane_outline_sources",
     "section_curve_boundary_source",
+    "surface_boundary_slot_descriptors",
     "surface_boundary_source_ids",
 ]

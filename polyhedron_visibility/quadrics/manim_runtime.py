@@ -853,10 +853,14 @@ def _apply_opaque_surface_slot(
     opacity: float,
     *,
     draw_stroke: bool,
+    stroke_opacity: float | None = None,
 ) -> None:
     """Apply one opaque projection proxy to a fixed surface slot."""
 
     representative_opacity = style.surface_fill_opacity * opacity
+    resolved_stroke_opacity = (
+        opacity if stroke_opacity is None else stroke_opacity
+    )
     slot.root.set_fill(
         color=style.surface_fill_color,
         opacity=representative_opacity,
@@ -866,7 +870,11 @@ def _apply_opaque_surface_slot(
     slot.base.set_stroke(
         color=style.surface_stroke_color,
         width=style.surface_stroke_width,
-        opacity=style.surface_stroke_opacity * opacity if draw_stroke else 0.0,
+        opacity=(
+            style.surface_stroke_opacity * resolved_stroke_opacity
+            if draw_stroke
+            else 0.0
+        ),
     )
     if cone_fill is None:
         slot.base.set_fill(
@@ -930,12 +938,16 @@ def _apply_surface_sheet_pair(
     *,
     configure_front_stroke: bool,
     draw_front_stroke: bool,
+    stroke_opacity: float | None = None,
 ) -> None:
     """Apply matching back/front sheets without duplicating component styling."""
 
     back.base.set_points_as_corners(points)
     front.base.set_points_as_corners(points)
     combined = min(1.0, style.surface_fill_opacity * opacity)
+    resolved_stroke_opacity = (
+        opacity if stroke_opacity is None else stroke_opacity
+    )
     sheet_opacity = 1.0 - sqrt(max(0.0, 1.0 - combined))
     for slot in (back, front):
         slot.root.set_fill(
@@ -949,7 +961,7 @@ def _apply_surface_sheet_pair(
             color=style.surface_stroke_color,
             width=style.surface_stroke_width,
             opacity=(
-                style.surface_stroke_opacity * opacity
+                style.surface_stroke_opacity * resolved_stroke_opacity
                 if draw_front_stroke
                 else 0.0
             ),
@@ -1092,6 +1104,11 @@ def _coerce_projection_frame(
     if isinstance(value, ParallelView):
         return _ResolvedParallelCameraFrame(value)
 
+    viewport_transform: object | None = None
+    if hasattr(value, "camera") and hasattr(value, "screen_transform"):
+        viewport_transform = getattr(value, "screen_transform")
+        value = getattr(value, "camera")
+
     camera_source = value if isinstance(value, ThreeDCamera) else None
     snapshotter = getattr(value, "snapshot_parallel_state", None)
     if callable(snapshotter):
@@ -1136,13 +1153,44 @@ def _coerce_projection_frame(
         )
 
     inherited_zoom = 1.0
-    camera = camera_source or getattr(scene, "camera", None)
-    if isinstance(camera, ThreeDCamera):
-        inherited_zoom = float(ThreeDCamera.get_zoom(camera))
-        if not np.isfinite(inherited_zoom) or inherited_zoom <= 0.0:
-            raise QuadricManimError(
-                "scene camera zoom must be finite and positive"
+    viewport_offset = np.zeros(2, dtype=float)
+    if viewport_transform is not None:
+        try:
+            inherited_zoom = float(
+                getattr(viewport_transform, "inherited_zoom")
             )
+            frame_center = np.asarray(
+                getattr(viewport_transform, "frame_center"),
+                dtype=float,
+            )
+            display_offset = np.asarray(
+                getattr(viewport_transform, "display_offset"),
+                dtype=float,
+            )
+        except (AttributeError, TypeError, ValueError, OverflowError) as exc:
+            raise QuadricManimError(
+                "parallel viewport transform must contain finite scalar/XY values"
+            ) from exc
+        if (
+            not np.isfinite(inherited_zoom)
+            or inherited_zoom <= 0.0
+            or frame_center.shape != (2,)
+            or display_offset.shape != (2,)
+            or not np.all(np.isfinite(frame_center))
+            or not np.all(np.isfinite(display_offset))
+        ):
+            raise QuadricManimError(
+                "parallel viewport transform must contain finite scalar/XY values"
+            )
+        viewport_offset = frame_center + display_offset
+    else:
+        camera = camera_source or getattr(scene, "camera", None)
+        if isinstance(camera, ThreeDCamera):
+            inherited_zoom = float(ThreeDCamera.get_zoom(camera))
+            if not np.isfinite(inherited_zoom) or inherited_zoom <= 0.0:
+                raise QuadricManimError(
+                    "scene camera zoom must be finite and positive"
+                )
 
     effective = np.array(matrix, dtype=float, copy=True)
     effective[:2] *= zoom * inherited_zoom
@@ -1150,11 +1198,11 @@ def _coerce_projection_frame(
         view = ParallelView.from_matrix(effective)
     except (SolverError, TypeError, ValueError) as exc:
         raise QuadricManimError(f"invalid semantic parallel camera: {exc}") from exc
-    offset = anchor - effective[:2] @ target
+    offset = anchor - effective[:2] @ target + viewport_offset
     return _ResolvedParallelCameraFrame(
         view,
         (float(offset[0]), float(offset[1])),
-        True,
+        viewport_transform is None,
     )
 
 
