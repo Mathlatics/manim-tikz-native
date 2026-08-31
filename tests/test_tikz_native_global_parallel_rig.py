@@ -425,6 +425,8 @@ class GlobalParallelRigTests(unittest.TestCase):
 
     def test_plane_roles_fail_closed_before_any_scene_ownership(self) -> None:
         scene = ThreeDScene(camera_class=MultiProjectionCamera)
+        # This test targets plane-role preflight, so keep the helper's axial
+        # camera and avoid exercising unrelated projected-crossing roots first.
         far = _sphere_binding(
             scene,
             "global-plane-far",
@@ -432,7 +434,6 @@ class GlobalParallelRigTests(unittest.TestCase):
             radius=0.8,
             tangent_end=False,
             include_plane=True,
-            camera_direction=(1.0, 1.0, 1.0),
         )
         near = _sphere_binding(
             scene,
@@ -440,7 +441,6 @@ class GlobalParallelRigTests(unittest.TestCase):
             center_z=3.0,
             radius=1.4,
             tangent_end=False,
-            camera_direction=(1.0, 1.0, 1.0),
         )
         self.assertIn(
             SectionDisplayRole.PLANE_FILL,

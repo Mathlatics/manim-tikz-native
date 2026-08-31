@@ -485,7 +485,7 @@ class TikzNative3DTests(unittest.TestCase):
                 picture = compile_document(source_text=source).pictures[0]
                 self.assertFalse([item for item in picture.objects if item.kind == kind])
                 self.assertTrue(picture.unsupported)
-                self.assertIn("explicit semantic plane", picture.unsupported[0])
+                self.assertIn("explicit supporting plane", picture.unsupported[0])
 
         dot_source = r"""
 \begin{tikzpicture}[space view={(-0.35,-0.35),(1,0),(0,1)}]
@@ -511,7 +511,7 @@ class TikzNative3DTests(unittest.TestCase):
                 picture = compile_document(source_text=source).pictures[0]
                 self.assertFalse(picture.named_paths)
                 self.assertTrue(picture.unsupported)
-                self.assertIn("explicit semantic plane", picture.unsupported[0])
+                self.assertIn("explicit supporting plane", picture.unsupported[0])
 
     def test_unknown_semantic_prefix_is_not_silently_skipped(self) -> None:
         source = r"""
