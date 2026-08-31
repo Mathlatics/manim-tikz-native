@@ -166,6 +166,47 @@ class TikzNativeCompatibilityTests(unittest.TestCase):
                 self.assertIn("explicit supporting plane", finding["message"])
                 self.assertIn(replacement, finding["message"])
 
+    def test_static_dandelin_diagram_is_explicitly_b_level(self) -> None:
+        document = compile_document(
+            source_text=r"""
+\begin{tikzpicture}[3d view={38}{24}]
+  \coordinate (A) at (0,0,0);
+  \coordinate (Z) at (0,0,1);
+  \coordinate (R) at (1,0,0);
+  \coordinate (O) at (0,0,2);
+  \coordinate (U) at (0,1,2);
+  \coordinate (V) at (-0.8,0,2.6);
+  \DeclareSpacePlane{cut}{O/U/V};
+  \DeclareSpaceRightCone{cone}{A/Z/R}{30}{0/9}{open_single};
+  \DeclareDandelinConstruction{dan}{cone}{cut};
+  \DrawDandelinDiagram[view=spatial]{dan};
+\end{tikzpicture}
+"""
+        )
+        report = audit_document_compatibility(document)
+        picture = report["pictures"][0]
+
+        self.assertEqual(report["static_status"], "pass")
+        self.assertEqual(picture["overall_level"], "B")
+        self.assertEqual(report["c_findings"], [])
+        self.assertEqual(
+            {
+                key: picture["feature_counts"][key]
+                for key in (
+                    "geometry.planar_frame_3d",
+                    "geometry.space_right_cone_3d",
+                    "geometry.dandelin_construction_3d",
+                    "object.dandelin_diagram_static",
+                )
+            },
+            {
+                "geometry.planar_frame_3d": 1,
+                "geometry.space_right_cone_3d": 1,
+                "geometry.dandelin_construction_3d": 1,
+                "object.dandelin_diagram_static": 1,
+            },
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

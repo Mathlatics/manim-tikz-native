@@ -121,6 +121,8 @@ _COMPONENT_DEFINITIONS: Final[dict[str, dict[str, tuple[str, ...]]]] = {
             "bridge.py",
             "compatibility.py",
             "compiler.py",
+            "dandelin_contract.py",
+            "dandelin_fixed_view.py",
             "fixed_view_renderer.py",
             "macro_frontend.py",
             "manim_renderer.py",

@@ -270,12 +270,28 @@ of the certified geometry or this diagrammatic overlay.
 ## TikZ semantic boundary
 
 V1 does not infer a Dandelin relation from an arbitrary authored circle or
-sphere-like drawing. The derived construction is currently requested through
-the Python relation `cone + section plane -> DandelinConstruction3D`; its real
-contact circles already reuse the same explicit `Circle3DSpec` contract as the
-TikZ-native three-dimensional planar-circle work.
+sphere-like drawing. The source must name all three relationships explicitly:
 
-A future source-authoritative TikZ directive should reference stable cone and
-plane identities and request this derived relation explicitly. It must not
-guess that an unrelated `circle` is a contact circle merely because it looks
-plausible in one projection.
+```tex
+\DeclareSpaceRightCone{cone}{A/Z/R}{30}{0/9}{open_single};
+\DeclareSpacePlane{cut}{O/U/V};
+\DeclareDandelinConstruction{dan}{cone}{cut};
+\DrawDandelinDiagram[view=spatial,preset=classroom]{dan};
+```
+
+The diagram view may be `spatial`, `meridian`, or `section-plane`. Each payload
+recomputes the cone, section plane, construction, and selected view from the
+authoritative named coordinates before rendering. Visible objects use
+view-local IDs and retain their shared geometry through `sourceRef`.
+Meridian sphere circles are unconditional true great-circle sections;
+`show-contact-circles` controls only their certified generator-contact points,
+and meridian directrices are rejected as cutting-plane geometry.
+
+This TikZ path is static fixed-view v1. It permits one Dandelin diagram and no
+other drawable object in the picture, persists
+`visibilityAuthoritative=false`, and rejects physical mode. The
+section-plane view also rejects a request for sphere/contact circles instead
+of drawing circles around the foci. Motion, camera shots, geometry Bridge
+requests, and source-v3 generation are outside this contract and must fail
+before derived output is published. See
+[the complete three-view source](../examples/tikz_dandelin_views/README.md).

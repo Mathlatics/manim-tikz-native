@@ -10,6 +10,14 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from .macro_frontend import MacroFrontendError, materialize_entry_macro
+from .dandelin_contract import (
+    TikzDandelinContractError,
+    build_dandelin_construction_contract,
+    build_dandelin_static_diagram_contract,
+    build_space_right_cone_contract,
+    restore_dandelin_construction_contract,
+    restore_space_right_cone_contract,
+)
 from .projection_3d import (
     Basis2,
     Matrix3,
@@ -192,6 +200,11 @@ class PictureSpec:
     symbols: dict[str, float | Length] = field(default_factory=dict)
     named_paths: dict[str, NamedPathSpec] = field(default_factory=dict)
     planar_frames_3d: dict[str, dict[str, Any]] = field(default_factory=dict)
+    space_right_cones_3d: dict[str, dict[str, Any]] = field(default_factory=dict)
+    dandelin_constructions_3d: dict[str, dict[str, Any]] = field(
+        default_factory=dict
+    )
+    dandelin_diagrams: dict[str, dict[str, Any]] = field(default_factory=dict)
     intersections: list[IntersectionSpec] = field(default_factory=list)
     objects: list[ObjectSpec] = field(default_factory=list)
     occlusion_relations: list[OcclusionRelationSpec] = field(default_factory=list)
@@ -1123,6 +1136,15 @@ class TikzNativeCompiler:
                 picture.objects.extend(objects)
             except TikzNativeError as error:
                 picture.unsupported.append(f"{statement[:180]} :: {error}")
+        if picture.dandelin_diagrams and (
+            len(picture.dandelin_diagrams) != 1
+            or len(picture.objects) != 1
+            or picture.objects[0].kind != "dandelin_diagram"
+        ):
+            picture.unsupported.append(
+                "Dandelin static v1 requires exactly one diagram object and "
+                "cannot share a picture with ordinary drawable objects"
+            )
         return picture
 
     @staticmethod
@@ -1192,6 +1214,9 @@ class TikzNativeCompiler:
             "DrawSpacePlaneInteraction": (6, 2),
             "DeclareSpaceHinge": (0, 4),
             "DeclareSpacePlane": (0, 2),
+            "DeclareSpaceRightCone": (0, 5),
+            "DeclareDandelinConstruction": (0, 3),
+            "DrawDandelinDiagram": (1, 1),
             "DrawSpaceCircle": (1, 4),
             "DrawSpaceEllipse": (1, 5),
             "setSpaceOcclusionProjection": (0, 6),
@@ -1273,7 +1298,8 @@ class TikzNativeCompiler:
             r"\\(coordinate|path|draw|filldraw|fill|node|pic|"
             r"DrawSpaceLineBehindHorizontalFace|DrawSpaceLineBehindTriFace|"
             r"DrawSpaceLineBehindParallelogramFace|DrawSpacePlaneInteraction|"
-            r"DeclareSpaceHinge|DeclareSpacePlane|"
+            r"DeclareSpaceHinge|DeclareSpacePlane|DeclareSpaceRightCone|"
+            r"DeclareDandelinConstruction|DrawDandelinDiagram|"
             r"DrawSpaceCircle|DrawSpaceEllipse|"
             r"setSpaceOcclusionProjection)\b",
             statement,
@@ -1296,6 +1322,22 @@ class TikzNativeCompiler:
                 picture,
             )
             return []
+        if command == "DeclareSpaceRightCone":
+            self._compile_space_right_cone_declaration(statement, picture)
+            return []
+        if command == "DeclareDandelinConstruction":
+            self._compile_dandelin_construction_declaration(statement, picture)
+            return []
+        if command == "DrawDandelinDiagram":
+            return [
+                self._compile_dandelin_diagram(
+                    statement,
+                    picture,
+                    defaults,
+                    z_index,
+                    source_line,
+                )
+            ]
         if command in {"DrawSpaceCircle", "DrawSpaceEllipse"}:
             return [
                 self._compile_space_planar_curve(
@@ -1422,6 +1464,7 @@ class TikzNativeCompiler:
             payload = planar_frame_geometry_payload(
                 frame,
                 point_names,
+                picture.coordinates,
             )
         except PlanarTikz3DError as exc:
             raise TikzNativeError(str(exc)) from exc
@@ -1430,6 +1473,279 @@ class TikzNativeCompiler:
             "DeclareSpacePlane plane ID",
         )
         picture.planar_frames_3d[plane_id] = payload
+
+    def _compile_space_right_cone_declaration(
+        self,
+        statement: str,
+        picture: PictureSpec,
+    ) -> None:
+        if picture.dimension != 3 or picture.projection_3d is None:
+            raise TikzNativeError(
+                "DeclareSpaceRightCone requires a three-dimensional TikZ picture"
+            )
+        _optional, required = self._parse_semantic_arguments(
+            statement,
+            "DeclareSpaceRightCone",
+            [],
+            5,
+        )
+        cone_ref = self._portable_space_identity(
+            required[0],
+            "DeclareSpaceRightCone cone ID",
+        )
+        point_names = tuple(item.strip() for item in required[1].split("/"))
+        if (
+            len(point_names) != 3
+            or any(not item for item in point_names)
+            or len(set(point_names)) != 3
+        ):
+            raise TikzNativeError(
+                "DeclareSpaceRightCone requires three distinct coordinate names A/Z/R"
+            )
+        missing = [name for name in point_names if name not in picture.coordinates]
+        if missing:
+            raise TikzNativeError(
+                "DeclareSpaceRightCone references unknown coordinates: "
+                + ", ".join(missing)
+            )
+        range_parts = tuple(item.strip() for item in required[3].split("/"))
+        if len(range_parts) != 2 or any(not item for item in range_parts):
+            raise TikzNativeError(
+                "DeclareSpaceRightCone axial range must contain min/max"
+            )
+        try:
+            contract = build_space_right_cone_contract(
+                cone_ref,
+                point_names,
+                picture.coordinates,
+                self._eval_expr(required[2], picture.symbols),
+                tuple(
+                    self._eval_expr(item, picture.symbols)
+                    for item in range_parts
+                ),
+                required[4].strip(),
+            )
+        except (TikzDandelinContractError, TypeError, ValueError) as exc:
+            raise TikzNativeError(str(exc)) from exc
+        self._reserve_explicit_semantic_id(
+            cone_ref,
+            "DeclareSpaceRightCone cone ID",
+        )
+        picture.space_right_cones_3d[cone_ref] = contract.to_dict()
+
+    @staticmethod
+    def _dandelin_payload_ref(
+        payload: dict[str, Any],
+        key: str,
+        label: str,
+    ) -> str:
+        value = payload.get(key)
+        if not isinstance(value, str) or not value.strip():
+            raise TikzNativeError(f"{label} has no valid {key}")
+        return value.strip()
+
+    def _restore_dandelin_construction(
+        self,
+        construction_ref: str,
+        picture: PictureSpec,
+    ):
+        payload = picture.dandelin_constructions_3d.get(construction_ref)
+        if payload is None:
+            raise TikzNativeError(
+                "unknown Dandelin construction ID: " + construction_ref
+            )
+        cone_ref = self._dandelin_payload_ref(
+            payload,
+            "coneRef",
+            "Dandelin construction",
+        )
+        plane_ref = self._dandelin_payload_ref(
+            payload,
+            "planeRef",
+            "Dandelin construction",
+        )
+        cone_payload = picture.space_right_cones_3d.get(cone_ref)
+        plane_payload = picture.planar_frames_3d.get(plane_ref)
+        if cone_payload is None or plane_payload is None:
+            raise TikzNativeError(
+                "Dandelin construction references unavailable cone or plane geometry"
+            )
+        try:
+            cone_contract = restore_space_right_cone_contract(
+                cone_payload,
+                picture.coordinates,
+                expected_cone_ref=cone_ref,
+            )
+            plane_frame = restore_planar_frame_geometry(
+                plane_payload,
+                coordinates=picture.coordinates,
+                expected_plane_id=plane_ref,
+            ).frame
+            return restore_dandelin_construction_contract(
+                payload,
+                cone=cone_contract.cone,
+                plane_frame=plane_frame,
+                expected_construction_ref=construction_ref,
+                expected_cone_ref=cone_ref,
+                expected_plane_ref=plane_ref,
+            )
+        except (PlanarTikz3DError, TikzDandelinContractError, TypeError, ValueError) as exc:
+            raise TikzNativeError(str(exc)) from exc
+
+    def _compile_dandelin_construction_declaration(
+        self,
+        statement: str,
+        picture: PictureSpec,
+    ) -> None:
+        if picture.dimension != 3 or picture.projection_3d is None:
+            raise TikzNativeError(
+                "DeclareDandelinConstruction requires a three-dimensional TikZ picture"
+            )
+        _optional, required = self._parse_semantic_arguments(
+            statement,
+            "DeclareDandelinConstruction",
+            [],
+            3,
+        )
+        construction_ref = self._portable_space_identity(
+            required[0],
+            "DeclareDandelinConstruction ID",
+        )
+        cone_ref = required[1].strip()
+        plane_ref = required[2].strip()
+        cone_payload = picture.space_right_cones_3d.get(cone_ref)
+        plane_payload = picture.planar_frames_3d.get(plane_ref)
+        if cone_payload is None:
+            raise TikzNativeError(
+                f"DeclareDandelinConstruction references unknown cone ID: {cone_ref}"
+            )
+        if plane_payload is None:
+            raise TikzNativeError(
+                f"DeclareDandelinConstruction references unknown plane ID: {plane_ref}"
+            )
+        try:
+            cone_contract = restore_space_right_cone_contract(
+                cone_payload,
+                picture.coordinates,
+                expected_cone_ref=cone_ref,
+            )
+            plane_frame = restore_planar_frame_geometry(
+                plane_payload,
+                coordinates=picture.coordinates,
+                expected_plane_id=plane_ref,
+            ).frame
+            contract = build_dandelin_construction_contract(
+                construction_ref,
+                cone_ref=cone_ref,
+                cone=cone_contract.cone,
+                plane_ref=plane_ref,
+                plane_frame=plane_frame,
+            )
+        except (PlanarTikz3DError, TikzDandelinContractError, TypeError, ValueError) as exc:
+            raise TikzNativeError(str(exc)) from exc
+        self._reserve_explicit_semantic_id(
+            construction_ref,
+            "DeclareDandelinConstruction ID",
+        )
+        picture.dandelin_constructions_3d[construction_ref] = contract.to_dict()
+
+    @staticmethod
+    def _dandelin_bool(value: str, label: str) -> bool:
+        normalized = value.strip().lower()
+        if normalized == "true":
+            return True
+        if normalized == "false":
+            return False
+        raise TikzNativeError(f"{label} must be true or false")
+
+    def _compile_dandelin_diagram(
+        self,
+        statement: str,
+        picture: PictureSpec,
+        defaults: StyleSpec,
+        z_index: int,
+        source_line: int,
+    ) -> ObjectSpec:
+        if picture.dimension != 3 or picture.projection_3d is None:
+            raise TikzNativeError(
+                "DrawDandelinDiagram requires a three-dimensional TikZ picture"
+            )
+        optional, required = self._parse_semantic_arguments(
+            statement,
+            "DrawDandelinDiagram",
+            [""],
+            1,
+        )
+        if picture.dandelin_diagrams:
+            raise TikzNativeError(
+                "Dandelin static v1 allows only one diagram per picture"
+            )
+        if picture.objects:
+            raise TikzNativeError(
+                "Dandelin static v1 cannot share a picture with drawable objects"
+            )
+        construction_ref = required[0].strip()
+        construction_contract = self._restore_dandelin_construction(
+            construction_ref,
+            picture,
+        )
+        values: dict[str, object] = {
+            "view": "spatial",
+            "preset": "classroom",
+            "show-contact-circles": None,
+            "show-foci": None,
+            "show-directrices": None,
+            "mode": "diagrammatic",
+        }
+        seen: set[str] = set()
+        for item in _split_top_level(optional[0]):
+            key, separator, raw_value = item.partition("=")
+            key = key.strip()
+            raw_value = raw_value.strip()
+            if key not in values or not separator or not raw_value:
+                raise TikzNativeError(
+                    f"unsupported DrawDandelinDiagram option: {item.strip()}"
+                )
+            if key in seen:
+                raise TikzNativeError(
+                    f"duplicate DrawDandelinDiagram option: {key}"
+                )
+            seen.add(key)
+            if key.startswith("show-"):
+                values[key] = self._dandelin_bool(raw_value, key)
+            else:
+                values[key] = raw_value
+        if values["mode"] != "diagrammatic":
+            raise TikzNativeError(
+                "DrawDandelinDiagram v1 supports only mode=diagrammatic"
+            )
+        try:
+            contract = build_dandelin_static_diagram_contract(
+                construction_contract.construction,
+                view=str(values["view"]),
+                preset=str(values["preset"]),
+                show_contact_circles=values["show-contact-circles"],
+                show_foci=values["show-foci"],
+                show_directrices=values["show-directrices"],
+            )
+        except (TikzDandelinContractError, TypeError, ValueError) as exc:
+            raise TikzNativeError(str(exc)) from exc
+        diagram_id = contract.diagram_id
+        self._reserve_explicit_semantic_id(
+            diagram_id,
+            "DrawDandelinDiagram diagram ID",
+        )
+        geometry = contract.to_dict()
+        picture.dandelin_diagrams[diagram_id] = geometry
+        return self._object(
+            diagram_id,
+            "dandelin_diagram",
+            geometry,
+            self._parse_style("", "draw", defaults, picture),
+            z_index,
+            source_line,
+            statement,
+        )
 
     def _compile_space_planar_curve(
         self,

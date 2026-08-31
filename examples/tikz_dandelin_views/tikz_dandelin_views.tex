@@ -1,0 +1,61 @@
+% One authoritative ellipse construction shown in three distinct static views.
+
+% 1. Fixed spatial teaching view.
+\begin{tikzpicture}[3d view={38}{24},scale=0.58]
+  \coordinate (A) at (0,0,0);
+  \coordinate (Z) at (0,0,1);
+  \coordinate (R) at (1,0,0);
+  \coordinate (O) at (0,0,2);
+  \coordinate (U) at (0,1,2);
+  \coordinate (V) at (-0.8,0,2.6);
+  \DeclareSpacePlane{cut}{O/U/V};
+  \DeclareSpaceRightCone{cone}{A/Z/R}{30}{0/9}{open_single};
+  \DeclareDandelinConstruction{dan}{cone}{cut};
+  \DrawDandelinDiagram[
+    view=spatial,
+    preset=classroom,
+    show-contact-circles=true,
+    show-foci=true,
+    show-directrices=false
+  ]{dan};
+\end{tikzpicture}
+
+% 2. True meridian section: the two sphere circles are genuine great circles.
+\begin{tikzpicture}[3d view={38}{24},scale=0.58]
+  \coordinate (A) at (0,0,0);
+  \coordinate (Z) at (0,0,1);
+  \coordinate (R) at (1,0,0);
+  \coordinate (O) at (0,0,2);
+  \coordinate (U) at (0,1,2);
+  \coordinate (V) at (-0.8,0,2.6);
+  \DeclareSpacePlane{cut}{O/U/V};
+  \DeclareSpaceRightCone{cone}{A/Z/R}{30}{0/9}{open_single};
+  \DeclareDandelinConstruction{dan}{cone}{cut};
+  \DrawDandelinDiagram[
+    view=meridian,
+    preset=classroom,
+    show-contact-circles=true,
+    show-foci=true,
+    show-directrices=false
+  ]{dan};
+\end{tikzpicture}
+
+% 3. Cutting-plane conic: no sphere circle is invented in this plane.
+\begin{tikzpicture}[3d view={38}{24},scale=0.58]
+  \coordinate (A) at (0,0,0);
+  \coordinate (Z) at (0,0,1);
+  \coordinate (R) at (1,0,0);
+  \coordinate (O) at (0,0,2);
+  \coordinate (U) at (0,1,2);
+  \coordinate (V) at (-0.8,0,2.6);
+  \DeclareSpacePlane{cut}{O/U/V};
+  \DeclareSpaceRightCone{cone}{A/Z/R}{30}{0/9}{open_single};
+  \DeclareDandelinConstruction{dan}{cone}{cut};
+  \DrawDandelinDiagram[
+    view=section-plane,
+    preset=classroom,
+    show-contact-circles=false,
+    show-foci=true,
+    show-directrices=true
+  ]{dan};
+\end{tikzpicture}

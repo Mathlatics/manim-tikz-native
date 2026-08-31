@@ -26,6 +26,8 @@ is classified as dynamic-safe (A), static-safe (B), or unsupported (C).
 - explicit 3D supporting planes and full planar circles/ellipses through
   `\DeclareSpacePlane`, `\DrawSpaceCircle`, and `\DrawSpaceEllipse`, with the
   narrower solid-stroke v1 contract below;
+- explicit finite right cones, Dandelin constructions, and one fixed
+  diagrammatic spatial/meridian/section-plane view per picture;
 - one proven redundant `scope` case with `draw=none`.
 
 ## Explicit planar 3D curves (static-safe v1)
@@ -80,6 +82,54 @@ meaning. In a 3D picture, an ordinary circle or ellipse path (including a
 named path) is rejected and points the author to the explicit plane syntax.
 The existing physical-size circle used as a point marker, such as
 `\fill (P) circle (1pt)`, remains a dot rather than a spatial circle.
+
+## Explicit Dandelin diagrams (static-safe v1)
+
+The compiler never infers a Dandelin sphere from a visually plausible circle.
+Declare a finite right cone, reuse one certified `DeclareSpacePlane`, and name
+the derived relation explicitly:
+
+```tex
+\coordinate (A) at (0,0,0);
+\coordinate (Z) at (0,0,1);
+\coordinate (R) at (1,0,0);
+\coordinate (O) at (0,0,2);
+\coordinate (U) at (0,1,2);
+\coordinate (V) at (-0.8,0,2.6);
+\DeclareSpacePlane{cut}{O/U/V};
+\DeclareSpaceRightCone{cone}{A/Z/R}{30}{0/9}{open_single};
+\DeclareDandelinConstruction{dan}{cone}{cut};
+\DrawDandelinDiagram[
+  view=spatial,
+  preset=classroom,
+  show-contact-circles=true,
+  show-foci=true,
+  show-directrices=false
+]{dan};
+```
+
+`A` is the apex, `Z-A` fixes the positive axis, and the component of `R-A`
+orthogonal to that axis fixes the radial phase. The half angle is expressed in
+degrees; `0/9` is the finite axial range. Supported models are
+`closed_single`, `open_single`, and `open_double`; `analytic_double` is not a
+finite display object and is rejected.
+
+`view` is `spatial`, `meridian`, or `section-plane`. The meridian view contains
+true great-circle sections of the spheres, and those sphere circles are always
+present. In that view `show-contact-circles` controls only the certified
+generator-contact points; requesting directrices fails because they belong to
+the cutting plane. The section-plane view contains the finite conic, foci, and
+optional directrices but no sphere circles; explicitly requesting contact
+circles there fails. Every visible item has a view-local ID
+and a `sourceRef` back to the shared cone, plane, sphere, focus, contact circle,
+or directrix.
+
+V1 allows one Dandelin diagram and no other drawable object in the picture.
+It is always `static=true`, `mode=diagrammatic`, and
+`visibilityAuthoritative=false`. It uses the fixed-view Provider path only;
+motion, camera shots, physical cone/sphere occlusion, Bridge geometry rigs, and
+source-v3 generation fail closed. A complete three-view source is in
+[`examples/tikz_dandelin_views`](../examples/tikz_dandelin_views/README.md).
 
 ## Unsupported examples
 

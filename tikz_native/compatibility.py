@@ -24,6 +24,7 @@ OBJECT_FEATURES = {
     "right_angle": "marker.right_angle",
     "planar_circle_3d": "object.planar_circle_3d",
     "planar_ellipse_3d": "object.planar_ellipse_3d",
+    "dandelin_diagram": "object.dandelin_diagram_static",
 }
 
 DEPENDENCY_FEATURES = {
@@ -144,6 +145,16 @@ def audit_picture_compatibility(
         counts,
         "geometry.planar_frame_3d",
         len(getattr(picture, "planar_frames_3d", {})),
+    )
+    _add(
+        counts,
+        "geometry.space_right_cone_3d",
+        len(getattr(picture, "space_right_cones_3d", {})),
+    )
+    _add(
+        counts,
+        "geometry.dandelin_construction_3d",
+        len(getattr(picture, "dandelin_constructions_3d", {})),
     )
     for relation in picture.intersections:
         kinds = {

@@ -71,6 +71,8 @@ def semantic_layer_name(spec: ObjectSpec) -> str:
             if spec.style.dash_pattern_pt
             else "solid_geometry"
         )
+    if spec.kind == "dandelin_diagram":
+        return "solid_geometry"
     if spec.kind in MARKER_KINDS:
         return "markers"
     if spec.kind == "dot":

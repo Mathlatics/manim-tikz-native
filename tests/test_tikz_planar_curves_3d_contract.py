@@ -26,12 +26,14 @@ class TikzPlanarCurves3DContractTests(unittest.TestCase):
     def setUp(self) -> None:
         picture = compile_document(source_text=SOURCE).pictures[0]
         self.assertFalse(picture.unsupported)
+        self.coordinates = copy.deepcopy(picture.coordinates)
         self.frame_payload = copy.deepcopy(picture.planar_frames_3d["plane-a"])
         self.curve_payload = copy.deepcopy(picture.objects[0].geometry)
 
     def test_registry_and_curve_payloads_round_trip_canonically(self) -> None:
         frame = restore_planar_frame_geometry(
             self.frame_payload,
+            coordinates=self.coordinates,
             expected_plane_id="plane-a",
         )
         curve = restore_planar_curve_geometry(
@@ -42,6 +44,10 @@ class TikzPlanarCurves3DContractTests(unittest.TestCase):
         self.assertEqual(frame.to_dict(), self.frame_payload)
         self.assertEqual(curve.to_dict(), self.curve_payload)
         self.assertEqual(curve.frame, frame.frame)
+        self.assertEqual(
+            self.frame_payload["plane_points"],
+            [[1.0, 2.0, 3.0], [4.0, 2.0, 3.0], [1.0, 6.0, 3.0]],
+        )
 
     def test_missing_extra_and_noncanonical_fields_fail_closed(self) -> None:
         cases: list[tuple[dict[str, object], str]] = []
@@ -105,6 +111,28 @@ class TikzPlanarCurves3DContractTests(unittest.TestCase):
         tampered["frame"]["uAxisSeed"] = [0.0, 1.0, 0.0]
         with self.assertRaisesRegex(PlanarTikz3DError, "canonical"):
             restore_planar_frame_geometry(tampered)
+
+    def test_registry_rejects_any_named_point_change_even_if_the_frame_is_unchanged(
+        self,
+    ) -> None:
+        changes = {
+            "O": (2.0, 2.0, 3.0),
+            # Same +x ray as the original U, so frame-only comparison would miss it.
+            "U": (7.0, 2.0, 3.0),
+            "V": (1.0, 9.0, 3.0),
+        }
+        for name, point in changes.items():
+            with self.subTest(name=name):
+                coordinates = copy.deepcopy(self.coordinates)
+                coordinates[name] = point
+                with self.assertRaisesRegex(
+                    PlanarTikz3DError,
+                    "point evidence|named coordinates",
+                ):
+                    restore_planar_frame_geometry(
+                        self.frame_payload,
+                        coordinates=coordinates,
+                    )
 
 
 if __name__ == "__main__":

@@ -18,6 +18,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from math import isfinite, tau
+import struct
 from typing import Mapping, Sequence
 
 import numpy as np
@@ -34,7 +35,7 @@ from polyhedron_visibility.quadrics.planar_curves import (
 _PLANE_POINT_COUNT = 3
 _DIRECTION_RELATIVE_TOLERANCE = float(np.sqrt(np.finfo(float).eps))
 _FRAME_GEOMETRY_FIELDS = frozenset(
-    {"plane_id", "plane_point_names", "frame", "static"}
+    {"plane_id", "plane_point_names", "plane_points", "frame", "static"}
 )
 _GEOMETRY_FIELDS = frozenset(
     {"plane_id", "plane_point_names", "frame", "curve", "static"}
@@ -43,6 +44,42 @@ _GEOMETRY_FIELDS = frozenset(
 
 class PlanarTikz3DError(ValueError):
     """Raised when explicit TikZ 3D planar semantics cannot be certified."""
+
+
+def _strict_json_equal(expected: object, actual: object) -> bool:
+    if isinstance(expected, Mapping):
+        return (
+            isinstance(actual, Mapping)
+            and all(isinstance(key, str) for key in actual)
+            and set(expected) == set(actual)
+            and all(
+                _strict_json_equal(expected[key], actual[key])
+                for key in expected
+            )
+        )
+    if isinstance(expected, list):
+        return (
+            isinstance(actual, list)
+            and len(expected) == len(actual)
+            and all(
+                _strict_json_equal(left, right)
+                for left, right in zip(expected, actual, strict=True)
+            )
+        )
+    if type(expected) is float:
+        return type(actual) is float and struct.pack(">d", expected) == struct.pack(
+            ">d",
+            actual,
+        )
+    if type(expected) is int:
+        return type(actual) is int and expected == actual
+    if type(expected) is bool:
+        return type(actual) is bool and expected is actual
+    if expected is None:
+        return actual is None
+    if type(expected) is str:
+        return type(actual) is str and expected == actual
+    return False
 
 
 def _identity(value: object, label: str) -> str:
@@ -98,6 +135,30 @@ def _point3(value: object, label: str) -> np.ndarray:
     ):
         raise PlanarTikz3DError(f"{label} must contain three finite numbers")
     return result
+
+
+def _plane_points(
+    value: object,
+    *,
+    canonical_payload: bool = False,
+) -> tuple[tuple[float, float, float], ...]:
+    if canonical_payload and not isinstance(value, list):
+        raise PlanarTikz3DError("canonical plane_points must be a JSON array")
+    if isinstance(value, (str, bytes)) or not isinstance(value, Sequence):
+        raise PlanarTikz3DError("plane_points must contain the authored O/U/V points")
+    if len(value) != _PLANE_POINT_COUNT:
+        raise PlanarTikz3DError("plane_points must contain exactly three O/U/V points")
+    result: list[tuple[float, float, float]] = []
+    for index, item in enumerate(value):
+        if canonical_payload and not isinstance(item, list):
+            raise PlanarTikz3DError(
+                "canonical plane_points entries must be JSON arrays"
+            )
+        point = _point3(item, f"plane point {index}")
+        result.append(
+            tuple(0.0 if coordinate == 0.0 else float(coordinate) for coordinate in point)
+        )
+    return tuple(result)
 
 
 def _named_point(
@@ -246,11 +307,13 @@ class PlanarFrameGeometry3D:
     plane_id: str
     plane_point_names: tuple[str, str, str]
     frame: PlanarFrame3D
+    plane_points: tuple[tuple[float, float, float], ...]
     static: bool = True
 
     def __post_init__(self) -> None:
         plane_id = _identity(self.plane_id, "plane_id")
         names = _plane_point_names(self.plane_point_names)
+        points = _plane_points(self.plane_points)
         if not isinstance(self.frame, PlanarFrame3D):
             raise TypeError("frame must be a PlanarFrame3D")
         if self.static is not True:
@@ -261,13 +324,24 @@ class PlanarFrameGeometry3D:
             raise PlanarTikz3DError(
                 "plane_id disagrees with the restored supporting frame identity"
             )
+        rebuilt = frame_from_named_points(
+            plane_id,
+            names,
+            dict(zip(names, points, strict=True)),
+        )
+        if not _strict_json_equal(rebuilt.to_dict(), self.frame.to_dict()):
+            raise PlanarTikz3DError(
+                "planar frame disagrees with its authored O/U/V point evidence"
+            )
         object.__setattr__(self, "plane_id", plane_id)
         object.__setattr__(self, "plane_point_names", names)
+        object.__setattr__(self, "plane_points", points)
 
     def to_dict(self) -> dict[str, object]:
         return {
             "plane_id": self.plane_id,
             "plane_point_names": list(self.plane_point_names),
+            "plane_points": [list(point) for point in self.plane_points],
             "frame": self.frame.to_dict(),
             "static": True,
         }
@@ -276,22 +350,25 @@ class PlanarFrameGeometry3D:
 def planar_frame_geometry_payload(
     frame: PlanarFrame3D,
     plane_point_names: Sequence[str],
+    coordinates: Mapping[str, Sequence[float]],
 ) -> dict[str, object]:
     """Return canonical compiler evidence for a named supporting plane."""
 
-    return PlanarFrameGeometry3D(
-        frame.frame_id,
-        _plane_point_names(plane_point_names),
-        frame,
-    ).to_dict()
+    names = _plane_point_names(plane_point_names)
+    points = tuple(
+        tuple(float(item) for item in _named_point(coordinates, name))
+        for name in names
+    )
+    return PlanarFrameGeometry3D(frame.frame_id, names, frame, points).to_dict()
 
 
 def restore_planar_frame_geometry(
     payload: Mapping[str, object],
     *,
+    coordinates: Mapping[str, Sequence[float]] | None = None,
     expected_plane_id: str | None = None,
 ) -> PlanarFrameGeometry3D:
-    """Strictly restore one named supporting-plane declaration."""
+    """Strictly restore, and optionally rederive, a named supporting plane."""
 
     if not isinstance(payload, Mapping):
         raise PlanarTikz3DError("planar TikZ 3D frame geometry must be an object")
@@ -319,6 +396,7 @@ def restore_planar_frame_geometry(
         payload["plane_point_names"],
         canonical_payload=True,
     )
+    points = _plane_points(payload["plane_points"], canonical_payload=True)
     raw_frame = payload["frame"]
     if not isinstance(raw_frame, Mapping):
         raise PlanarTikz3DError("canonical planar frame must be an object")
@@ -328,10 +406,43 @@ def restore_planar_frame_geometry(
         raise PlanarTikz3DError(
             f"canonical planar frame geometry cannot be restored: {exc}"
         ) from exc
-    result = PlanarFrameGeometry3D(plane_id, names, frame)
-    if result.to_dict() != dict(payload):
+    result = PlanarFrameGeometry3D(plane_id, names, frame, points)
+    if not _strict_json_equal(result.to_dict(), payload):
         raise PlanarTikz3DError(
             "planar frame payload must already be in canonical form"
+        )
+    if coordinates is not None:
+        authoritative_points = tuple(
+            tuple(
+                0.0 if coordinate == 0.0 else float(coordinate)
+                for coordinate in _named_point(coordinates, name)
+            )
+            for name in names
+        )
+        if not _strict_json_equal(
+            [list(point) for point in points],
+            [list(point) for point in authoritative_points],
+        ):
+            raise PlanarTikz3DError(
+                "planar frame point evidence is stale or forged relative to its named coordinates"
+            )
+        authoritative_frame = frame_from_named_points(
+            plane_id,
+            names,
+            coordinates,
+        )
+        if not _strict_json_equal(
+            authoritative_frame.to_dict(),
+            frame.to_dict(),
+        ):
+            raise PlanarTikz3DError(
+                "planar frame payload is stale or forged relative to its named coordinates"
+            )
+        result = PlanarFrameGeometry3D(
+            plane_id,
+            names,
+            authoritative_frame,
+            authoritative_points,
         )
     if expected_plane_id is not None and result.plane_id != _identity(
         expected_plane_id,
@@ -450,16 +561,11 @@ def restore_planar_curve_geometry(
         raise PlanarTikz3DError(
             "planar TikZ 3D geometry must explicitly declare static=true"
         )
-    frame_geometry = restore_planar_frame_geometry(
-        {
-            "plane_id": payload["plane_id"],
-            "plane_point_names": payload["plane_point_names"],
-            "frame": payload["frame"],
-            "static": payload["static"],
-        }
+    plane_id = _identity(payload["plane_id"], "plane_id")
+    names = _plane_point_names(
+        payload["plane_point_names"],
+        canonical_payload=True,
     )
-    plane_id = frame_geometry.plane_id
-    names = frame_geometry.plane_point_names
     raw_frame = payload["frame"]
     raw_curve = payload["curve"]
     if not isinstance(raw_frame, Mapping):
@@ -467,7 +573,7 @@ def restore_planar_curve_geometry(
     if not isinstance(raw_curve, Mapping):
         raise PlanarTikz3DError("canonical planar curve must be an object")
     try:
-        frame = frame_geometry.frame
+        frame = PlanarFrame3D.from_dict(raw_frame)
         kind = raw_curve.get("kind")
         if kind == "circle":
             curve: PlanarCurve3DSpec = Circle3DSpec.from_dict(raw_curve, frame)
@@ -487,8 +593,8 @@ def restore_planar_curve_geometry(
         ) from exc
     try:
         payload_is_canonical = (
-            frame.to_dict() == dict(raw_frame)
-            and curve.to_dict() == dict(raw_curve)
+            _strict_json_equal(frame.to_dict(), raw_frame)
+            and _strict_json_equal(curve.to_dict(), raw_curve)
         )
     except (TypeError, ValueError):
         payload_is_canonical = False

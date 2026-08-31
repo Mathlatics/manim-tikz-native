@@ -104,6 +104,8 @@ Preview、Final、Release/Evidence 三档的准确区别，以及一行容量扫
 双曲线三幕示例见[丹德林球课堂场景](examples/classroom_dandelin_spheres/README.md)。
 同一份认证构造还能分别生成“轴截面真圆图”和“截面平面圆锥曲线图”；后者不会把
 焦点误画成球心，也不会伪造并不存在的球截面圆。
+对应的受控 TikZ 三视图命令与可编译示例见
+[TikZ-native 丹德林三视图](examples/tikz_dandelin_views/README.md)。
 
 ## 显式三维平面、圆和椭圆
 

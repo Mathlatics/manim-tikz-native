@@ -61,7 +61,20 @@
           "kind": {"type": "string"},
           "z_index": {"type": "integer"},
           "source_line": {"type": "integer"},
-          "label": {"type": ["string", "null"]}
+          "label": {"type": ["string", "null"]},
+          "semantic_objects": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["id", "role", "sourceRef"],
+              "properties": {
+                "id": {"type": "string"},
+                "role": {"type": "string"},
+                "sourceRef": {"type": "string"}
+              },
+              "additionalProperties": false
+            }
+          }
         }
       }
     },

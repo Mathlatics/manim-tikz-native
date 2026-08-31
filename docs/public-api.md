@@ -939,6 +939,23 @@ transitions are outside v1. Full formulas, the support/rejection matrix, and
 the finite-fit rule are in
 [Dandelin spheres v1](dandelin-spheres-v1.md).
 
+The static TikZ-facing path declares the source relation rather than inferring
+it from arbitrary circles:
+
+```tex
+\DeclareSpaceRightCone{cone}{A/Z/R}{30}{0/9}{open_single};
+\DeclareSpacePlane{cut}{O/U/V};
+\DeclareDandelinConstruction{dan}{cone}{cut};
+\DrawDandelinDiagram[view=spatial,preset=classroom]{dan};
+```
+
+`view` may be `spatial`, `meridian`, or `section-plane`. The resulting
+`dandelin_diagram` is a fixed-view, diagrammatic object whose nested semantic
+items retain view-local IDs and cross-view `sourceRef` values. Physical mode,
+mixed drawable objects, a fake section-plane sphere circle, motion, camera
+shots, and source-v3 generation are rejected explicitly. The complete example
+is in [`examples/tikz_dandelin_views`](../examples/tikz_dandelin_views/README.md).
+
 The Manim binding accepts immutable surface/curve sequences or callbacks that
 return a new sequence for the current frame.  IDs and counts remain fixed for
 the lifetime of an attached controller.  `paint_policy="physical"` omits
