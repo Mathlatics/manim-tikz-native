@@ -435,6 +435,45 @@ class ProjectedConicCrossingTests(unittest.TestCase):
             },
         )
 
+    def test_rank_one_chart_pole_keeps_depth_distinct_parameters_in_both_orders(
+        self,
+    ) -> None:
+        phase = 0.4
+        expected = (pi, pi + 2.0 * phase)
+        for circle_id, line_id in (
+            ("circle", "line"),
+            ("z-circle", "a-line"),
+        ):
+            with self.subTest(circle_id=circle_id, line_id=line_id):
+                circle = CircleArcCurve(
+                    circle_id,
+                    (0.0, 0.0, 0.0),
+                    1.0,
+                    (0.0, 1.0, 0.0),
+                    radial_axis=(cos(phase), 0.0, sin(phase)),
+                )
+                line = SegmentCurve(
+                    line_id,
+                    (-cos(phase), -2.0, 2.0),
+                    (-cos(phase), 2.0, 2.0),
+                )
+
+                crossings = compute_projected_curve_crossings(
+                    (circle, line),
+                    IDENTITY_VIEW,
+                )
+
+                self.assertEqual(len(crossings), 2)
+                parameters = tuple(
+                    item.first_parameter
+                    if item.first_curve_id == circle_id
+                    else item.second_parameter
+                    for item in crossings
+                )
+                self.assertEqual(len(set(parameters)), 2)
+                for actual, target in zip(sorted(parameters), expected):
+                    self.assertAlmostEqual(actual, target, places=12)
+
     def test_edge_on_circle_support_endpoint_is_a_certified_turn(self) -> None:
         circle = CircleArcCurve(
             "edge-on-circle",
@@ -863,34 +902,62 @@ class ProjectedConicCrossingTests(unittest.TestCase):
                 self.assertTrue(crossings[0].tangential)
 
     def test_tangency_just_beside_chart_pole_is_not_split_at_seam(self) -> None:
-        circle = CircleArcCurve(
-            "circle",
-            (0.0, 0.0, 0.0),
-            1.0,
-            (0.0, 0.0, 1.0),
-            radial_axis=(1.0, 0.0, 0.0),
-        )
-        parameter = pi + 5.0e-5
-        point = np.asarray(circle.point(parameter), dtype=float)
-        tangent = np.asarray(circle.tangent(parameter), dtype=float)
-        # Keep the true contact away from the segment midpoint so the general
-        # tan-half-angle crossing path, rather than the midpoint shortcut,
-        # owns this regression.
-        line = SegmentCurve(
-            "line",
-            tuple(point - tangent + (0.0, 0.0, 1.0)),
-            tuple(point + 3.0 * tangent + (0.0, 0.0, 1.0)),
-        )
+        parameter = pi + 5.0e-9
+        recovered_by_order: list[tuple[float, float]] = []
+        for circle_id, line_id in (
+            ("circle", "line"),
+            ("z-circle", "a-line"),
+        ):
+            with self.subTest(circle_id=circle_id, line_id=line_id):
+                circle = CircleArcCurve(
+                    circle_id,
+                    (0.0, 0.0, 0.0),
+                    1.0,
+                    (0.0, 0.0, 1.0),
+                    radial_axis=(1.0, 0.0, 0.0),
+                )
+                point = np.asarray(circle.point(parameter), dtype=float)
+                tangent = np.asarray(circle.tangent(parameter), dtype=float)
+                # Keep the true contact away from the segment midpoint.  The
+                # direct harmonic stationary point, rather than an authored
+                # midpoint shortcut or a tan-half root pair, owns this case.
+                line = SegmentCurve(
+                    line_id,
+                    tuple(point - tangent + (0.0, 0.0, 1.0)),
+                    tuple(point + 3.0 * tangent + (0.0, 0.0, 1.0)),
+                )
 
-        crossings = compute_projected_curve_crossings(
-            (circle, line),
-            IDENTITY_VIEW,
-        )
+                crossing = compute_projected_curve_crossings(
+                    (circle, line),
+                    IDENTITY_VIEW,
+                )
 
-        self.assertEqual(len(crossings), 1)
-        self.assertAlmostEqual(crossings[0].first_parameter, parameter, places=10)
-        self.assertAlmostEqual(crossings[0].second_parameter, 0.25, places=10)
-        self.assertTrue(crossings[0].tangential)
+                self.assertEqual(len(crossing), 1)
+                item = crossing[0]
+                parameters = {
+                    item.first_curve_id: item.first_parameter,
+                    item.second_curve_id: item.second_parameter,
+                }
+                self.assertEqual(parameters[circle_id], pi)
+                self.assertAlmostEqual(
+                    parameters[line_id],
+                    0.25,
+                    delta=1.0e-8,
+                )
+                self.assertTrue(item.tangential)
+                recovered_by_order.append(
+                    (parameters[circle_id], parameters[line_id])
+                )
+        self.assertAlmostEqual(
+            recovered_by_order[0][0],
+            recovered_by_order[1][0],
+            places=15,
+        )
+        self.assertAlmostEqual(
+            recovered_by_order[0][1],
+            recovered_by_order[1][1],
+            places=15,
+        )
 
     def test_near_pole_genuine_secant_keeps_two_crossings(self) -> None:
         circle = CircleArcCurve(
@@ -900,7 +967,7 @@ class ProjectedConicCrossingTests(unittest.TestCase):
             (0.0, 0.0, 1.0),
             radial_axis=(1.0, 0.0, 0.0),
         )
-        parameter = pi + 5.0e-5
+        parameter = pi + 5.0e-9
         radial = np.asarray(circle.point(parameter), dtype=float)
         tangent = np.asarray(circle.tangent(parameter), dtype=float)
         secant_point = (1.0 - 1.0e-10) * radial

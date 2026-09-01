@@ -26,6 +26,7 @@ from math import (
     floor,
     isfinite,
     log,
+    pi,
     sqrt,
     tau,
 )
@@ -871,7 +872,14 @@ def _target_parameters(
 
     result: list[float] = []
     for candidate in sorted(float(item) for item in candidates):
-        if world_point is not None and view is not None:
+        if (
+            world_point is not None
+            and view is not None
+            and (
+                not getattr(curve, "closed", False)
+                or model.parameter_kind.endswith("_rank_one")
+            )
+        ):
             matching_endpoints = tuple(
                 endpoint
                 for endpoint in (curve.domain.start, curve.domain.end)
@@ -900,6 +908,17 @@ def _target_parameters(
         if candidate > curve.domain.end + parameter_epsilon:
             continue
         candidate = min(curve.domain.end, max(curve.domain.start, candidate))
+        if (
+            view is not None
+            and not model.parameter_kind.endswith("_rank_one")
+        ):
+            candidate = _canonical_projected_curve_parameter(
+                curve,
+                candidate,
+                view,
+                parameter_epsilon=parameter_epsilon,
+                screen_epsilon=screen_epsilon,
+            )
         if not result or candidate - result[-1] > parameter_epsilon:
             result.append(candidate)
     return tuple(result)
@@ -997,6 +1016,22 @@ def _pair_screen_epsilon(
         )
     machine = 4.0 * ulp
     return max(relative, absolute, machine, explicit_screen)
+
+
+def _curve_pair_screen_epsilon(
+    first: AnalyticCurve3D,
+    second: AnalyticCurve3D,
+    view: ParallelView,
+    context: ResolvedGeometryContext,
+) -> float:
+    """Return the canonical screen tolerance for two authored curves."""
+
+    return _pair_screen_epsilon(
+        _projected_model(first, view),
+        _projected_model(second, view),
+        view,
+        context,
+    )
 
 
 def _pair_tangency_epsilon(
@@ -1523,6 +1558,56 @@ def _canonical_curve_parameter(
         ):
             return float(curve.domain.start)
     return value
+
+
+def _canonical_projected_curve_parameter(
+    curve: AnalyticCurve3D,
+    parameter: float,
+    view: ParallelView,
+    *,
+    parameter_epsilon: float,
+    screen_epsilon: float,
+) -> float:
+    """Snap an unresolved closed-curve event to one stable chart anchor."""
+
+    value = _canonical_curve_parameter(
+        curve,
+        parameter,
+        parameter_epsilon,
+    )
+    if not getattr(curve, "closed", False):
+        return value
+    anchors = {
+        float(curve.domain.start),
+        *(
+            float(item)
+            for item in _curve_chart(curve).chart_poles
+            if curve.domain.contains(item, tolerance=parameter_epsilon)
+        ),
+    }
+    world_point = np.asarray(curve.point(value), dtype=float)
+    screen = view.matrix[:2]
+    candidates = tuple(
+        (
+            float(
+                np.linalg.norm(
+                    screen
+                    @ (
+                        world_point
+                        - np.asarray(curve.point(anchor), dtype=float)
+                    )
+                )
+            ),
+            anchor,
+        )
+        for anchor in sorted(anchors)
+    )
+    within = tuple(
+        item for item in candidates if item[0] <= screen_epsilon
+    )
+    if not within:
+        return value
+    return min(within, key=lambda item: (item[0], item[1]))[1]
 
 
 def _crossing_identity(first_curve_id: str, second_curve_id: str, index: int) -> str:
@@ -2133,6 +2218,115 @@ def _direct_line_midpoint_tangency_parameters(
     return tuple(result)
 
 
+def _direct_ellipse_line_tangency_parameters(
+    source: AnalyticCurve3D,
+    source_model: _ProjectedModel,
+    target: _ProjectedModel,
+    view: ParallelView,
+    *,
+    parameter_epsilon: float,
+    screen_epsilon: float,
+) -> tuple[float, ...]:
+    """Recover an ellipse/segment tangency without a rational chart root.
+
+    For a projected ellipse ``o + a*cos(t) + b*sin(t)``, its signed line
+    equation is one harmonic.  A tangency can occur only where the harmonic
+    is stationary, so ``atan2(line·b, line·a)`` and its antipode are the only
+    candidates.  Certifying those points against the original projected
+    curves avoids splitting one exact tangency into two roots near a
+    ``tan(t / 2)`` chart pole.
+    """
+
+    if isinstance(source, EllipseArcCurve) and isinstance(
+        target.curve,
+        SegmentCurve,
+    ):
+        ellipse = source
+        ellipse_model = source_model
+        line_model = target
+        source_is_ellipse = True
+    elif isinstance(source, SegmentCurve) and isinstance(
+        target.curve,
+        EllipseArcCurve,
+    ):
+        ellipse = target.curve
+        ellipse_model = target
+        line_model = source_model
+        source_is_ellipse = False
+    else:
+        return ()
+    if (
+        ellipse_model.line is not None
+        or ellipse_model.screen_second is None
+        or line_model.line is None
+    ):
+        return ()
+
+    normal = np.asarray(line_model.line[:2], dtype=float)
+    first_coefficient = float(np.dot(normal, ellipse_model.screen_first))
+    second_coefficient = float(np.dot(normal, ellipse_model.screen_second))
+    if first_coefficient == 0.0 and second_coefficient == 0.0:
+        return ()
+    base = atan2(second_coefficient, first_coefficient)
+    ellipse_parameters = tuple(
+        parameter
+        for candidate in (base, base + pi)
+        for parameter in _parameters_in_angular_domain(
+            candidate,
+            ellipse,
+            parameter_epsilon,
+        )
+    )
+    certified_ellipse_parameters = tuple(
+        _canonical_projected_curve_parameter(
+            ellipse,
+            parameter,
+            view,
+            parameter_epsilon=parameter_epsilon,
+            screen_epsilon=screen_epsilon,
+        )
+        for parameter in ellipse_parameters
+        if _stationary_is_projected_tangency(
+            ellipse,
+            ellipse_model,
+            line_model,
+            view,
+            parameter,
+            parameter_epsilon=parameter_epsilon,
+            screen_epsilon=screen_epsilon,
+        )
+    )
+    if not certified_ellipse_parameters:
+        return ()
+    if source_is_ellipse:
+        candidates = certified_ellipse_parameters
+    else:
+        screen = view.matrix[:2]
+        recovered: list[float] = []
+        for parameter in certified_ellipse_parameters:
+            world_point = np.asarray(ellipse.point(parameter), dtype=float)
+            recovered.extend(
+                _target_parameters(
+                    source_model,
+                    screen @ world_point,
+                    parameter_epsilon=parameter_epsilon,
+                    screen_epsilon=screen_epsilon,
+                    world_point=world_point,
+                    view=view,
+                )
+            )
+        candidates = tuple(recovered)
+
+    result: list[float] = []
+    for parameter in sorted(
+        _canonical_curve_parameter(source, item, parameter_epsilon)
+        for item in candidates
+    ):
+        if not result or parameter - result[-1] > parameter_epsilon:
+            result.append(parameter)
+    return tuple(result)
+
+
 def _candidate_source_parameters(
     source: AnalyticCurve3D,
     source_model: _ProjectedModel,
@@ -2158,6 +2352,19 @@ def _candidate_source_parameters(
                 parameter_epsilon=parameter_epsilon,
                 screen_epsilon=screen_epsilon,
             )
+        )
+    direct_ellipse_line_tangency = _direct_ellipse_line_tangency_parameters(
+        source,
+        source_model,
+        target,
+        view,
+        parameter_epsilon=parameter_epsilon,
+        screen_epsilon=screen_epsilon,
+    )
+    if direct_ellipse_line_tangency:
+        return tuple(
+            _SourceParameterCandidate(parameter, tangential_certified=True)
+            for parameter in direct_ellipse_line_tangency
         )
     direct_tangency = _direct_line_midpoint_tangency_parameters(
         source,

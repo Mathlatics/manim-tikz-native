@@ -15,6 +15,9 @@ from polyhedron_visibility.quadrics.boundary_compositing import (
     BoundaryOcclusionScope,
     BoundarySemanticKind,
     BoundarySourceKind,
+    QuadricBoundaryCompositingError,
+    compute_boundary_visibility,
+    compute_quadric_boundary_crossings,
 )
 from polyhedron_visibility.quadrics.compositing import QuadricPaintPolicy
 from polyhedron_visibility.quadrics.contract import (
@@ -215,7 +218,10 @@ class QuadricSceneOcclusionTests(unittest.TestCase):
     def test_canonical_nested_silhouettes_emit_geometric_critical_evidence(
         self,
     ) -> None:
-        request, silhouettes = _request_with_intrinsic_silhouettes(0.9999)
+        # This is close enough to the cylinder endpoint that the generic
+        # tan-half crossing polynomial used to split one exact tangency into
+        # two roots on macOS as well as Linux.
+        request, silhouettes = _request_with_intrinsic_silhouettes(0.99999999)
         frame = compute_scene_occlusion_frame(request)
         context = frame.global_frame.geometry_context
         certificates = _nested_silhouette_support_tangencies(
@@ -237,7 +243,39 @@ class QuadricSceneOcclusionTests(unittest.TestCase):
         boundary_epsilon = context.epsilon(
             GeometryQuantity.BOUNDARY
         )
+        parameter_epsilon = context.epsilon(
+            GeometryQuantity.PARAMETER
+        )
+        source_by_id = {
+            source.source_id: source for source in request.boundary_sources
+        }
         mother_id = frame.nested_parent_frame.mother_surface_id
+        certified_pairs: set[tuple[str, str]] = set()
+        all_certificates = tuple(
+            item
+            for source_id in sorted(certificates)
+            for item in certificates[source_id]
+        )
+        mother_source_ids = {
+            source.source_id
+            for source in silhouettes
+            if source.owner_surface_id == mother_id
+        }
+        self.assertEqual(
+            {
+                (item.curve_id, item.witness_curve_id)
+                for item in all_certificates
+            },
+            {
+                (sphere_source.source_id, mother_source_id)
+                for sphere_source in sphere_sources
+                for mother_source_id in mother_source_ids
+            },
+        )
+        self.assertEqual(
+            len({item.crossing_id for item in all_certificates}),
+            4,
+        )
         for source in sphere_sources:
             with self.subTest(source_id=source.source_id):
                 items = certificates[source.source_id]
@@ -249,6 +287,64 @@ class QuadricSceneOcclusionTests(unittest.TestCase):
                 self.assertTrue(
                     all(item.world_residual <= boundary_epsilon for item in items)
                 )
+                for item in items:
+                    self.assertEqual(
+                        item.contact_curve_id,
+                        f"contact:{source.owner_surface_id.removeprefix('sphere:')}",
+                    )
+                    contact_curve = source_by_id[item.contact_curve_id].curve
+                    self.assertTrue(
+                        contact_curve.domain.contains(
+                            item.contact_parameter,
+                            tolerance=parameter_epsilon,
+                        )
+                    )
+                    self.assertLessEqual(
+                        float(
+                            np.linalg.norm(
+                                np.asarray(
+                                    contact_curve.point(item.contact_parameter)
+                                )
+                                - np.asarray(item.world_point)
+                            )
+                        ),
+                        boundary_epsilon,
+                    )
+                    self.assertLessEqual(
+                        float(
+                            np.linalg.norm(
+                                np.asarray(source.curve.point(item.parameter))
+                                - np.asarray(item.world_point)
+                            )
+                        ),
+                        boundary_epsilon,
+                    )
+                    witness_curve = source_by_id[item.witness_curve_id].curve
+                    self.assertLessEqual(
+                        float(
+                            np.linalg.norm(
+                                np.asarray(
+                                    witness_curve.point(item.witness_parameter)
+                                )
+                                - np.asarray(item.world_point)
+                            )
+                        ),
+                        boundary_epsilon,
+                    )
+                    triple = sorted(
+                        {
+                            item.curve_id,
+                            item.witness_curve_id,
+                            item.contact_curve_id,
+                        }
+                    )
+                    certified_pairs.update(
+                        {
+                            (triple[0], triple[1]),
+                            (triple[0], triple[2]),
+                            (triple[1], triple[2]),
+                        }
+                    )
                 self.assertGreater(
                     float(
                         np.linalg.norm(
@@ -312,6 +408,106 @@ class QuadricSceneOcclusionTests(unittest.TestCase):
                     "ray_linear_coefficient",
                     {item.equation for item in evidence},
                 )
+
+                self.assertTrue(
+                    all(
+                        fragment.interval.length > 100.0 * parameter_epsilon
+                        for fragment in frame.boundary_frame.fragments
+                        if fragment.source_id == source.source_id
+                    )
+                )
+
+        crossing_pairs = {
+            (item.first_curve_id, item.second_curve_id)
+            for item in frame.boundary_frame.crossings
+        }
+        self.assertTrue(certified_pairs.isdisjoint(crossing_pairs))
+
+    def test_nested_nonordering_pair_map_rejects_incomplete_lineage(
+        self,
+    ) -> None:
+        request, _silhouettes = _request_with_intrinsic_silhouettes(0.9999)
+        frame = compute_scene_occlusion_frame(request)
+        certificates = _nested_silhouette_support_tangencies(
+            request.boundary_sources,
+            request.surfaces,
+            frame.nested_parent_frame,
+            request.view,
+            context=frame.global_frame.geometry_context,
+        )
+        source_id = sorted(certificates)[0]
+        items = certificates[source_id]
+        forged = {
+            **certificates,
+            source_id: (
+                items[0],
+                replace(
+                    items[1],
+                    witness_curve_id=items[0].witness_curve_id,
+                ),
+            ),
+        }
+        spans = compute_boundary_visibility(
+            request.boundary_sources,
+            request.surfaces,
+            request.view,
+            context=frame.global_frame.geometry_context,
+            _nested_silhouette_tangencies_by_source=certificates,
+        )
+
+        with self.assertRaisesRegex(
+            QuadricBoundaryCompositingError,
+            "requires two certified support tangencies",
+        ):
+            compute_quadric_boundary_crossings(
+                request.boundary_sources,
+                spans,
+                request.view,
+                paint_policy=request.paint_policy,
+                context=frame.global_frame.geometry_context,
+                _nested_silhouette_tangencies_by_source=forged,
+            )
+
+    def test_nested_silhouette_certificate_rechecks_its_contact_circle(
+        self,
+    ) -> None:
+        request, _silhouettes = _request_with_intrinsic_silhouettes(0.9999)
+        frame = compute_scene_occlusion_frame(request)
+        target = next(
+            source
+            for source in request.boundary_sources
+            if source.source_id == "contact:+1"
+        )
+        curve = target.curve
+        self.assertIsInstance(curve, EllipseArcCurve)
+        shifted = EllipseArcCurve(
+            curve.curve_id,
+            (
+                curve.center[0] + 1.0e-4,
+                curve.center[1],
+                curve.center[2],
+            ),
+            curve.first_axis,
+            curve.second_axis,
+            domain=curve.domain,
+        )
+
+        with self.assertRaisesRegex(
+            SceneOcclusionError,
+            "does not reconstruct the nested tangency witness",
+        ):
+            _nested_silhouette_support_tangencies(
+                tuple(
+                    replace(target, curve=shifted)
+                    if source.source_id == target.source_id
+                    else source
+                    for source in request.boundary_sources
+                ),
+                request.surfaces,
+                frame.nested_parent_frame,
+                request.view,
+                context=frame.global_frame.geometry_context,
+            )
 
     def test_tampered_canonical_nested_silhouette_fails_closed(self) -> None:
         request, silhouettes = _request_with_intrinsic_silhouettes(0.5)

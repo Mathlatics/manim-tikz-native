@@ -22,7 +22,7 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 from enum import Enum
 import json
-from math import isfinite
+from math import atan2, fsum, isfinite, tau
 from typing import Sequence
 
 import numpy as np
@@ -46,7 +46,7 @@ from .boundary_compositing import (
     compute_quadric_boundary_crossings,
 )
 from .critical import _NestedSilhouetteTangencyCertificate
-from .curves import EllipseArcCurve
+from .curves import EllipseArcCurve, SegmentCurve
 from .boundary_section import (
     certify_rank_one_section_boundary_sources,
     compute_boundary_section_spans,
@@ -60,8 +60,8 @@ from .contract import (
     SphereSpec,
 )
 from .curve_intersections import (
-    ProjectedCurveIntersectionError,
-    compute_projected_curve_crossings,
+    _canonical_projected_curve_parameter,
+    _curve_pair_screen_epsilon,
 )
 from .global_occlusion import GlobalQuadricFrame, compute_global_quadric_frame
 from .nested_tangent_compositing import (
@@ -731,9 +731,11 @@ def _nested_silhouette_support_tangencies(
     """Certify sphere/mother support tangencies from registered silhouettes.
 
     The nested parent has already certified each sphere as internally tangent
-    to the mother.  A tangential, coincident-depth crossing between their true
-    projected silhouettes therefore identifies one repeated root of the
-    sphere-outline ray discriminant without expanding the ill-conditioned
+    to the mother along its registered contact circle.  Projecting the sphere
+    center orthogonally onto either canonical mother silhouette generator
+    therefore gives that generator's unique sphere-contact point.  Requiring
+    the point to reconstruct on the contact circle and sphere silhouette gives
+    a geometric repeated-root witness without expanding the ill-conditioned
     near-cylinder quartic.
     """
 
@@ -848,56 +850,230 @@ def _nested_silhouette_support_tangencies(
     result: dict[str, tuple[_NestedSilhouetteTangencyCertificate, ...]] = {}
     parameter_epsilon = context.epsilon(GeometryQuantity.PARAMETER)
     boundary_epsilon = context.epsilon(GeometryQuantity.BOUNDARY)
+    angular_epsilon = context.epsilon(GeometryQuantity.ANGULAR)
+    source_by_id = {source.source_id: source for source in sources}
+    sphere_by_id = {sphere.surface_id: sphere for sphere in spheres}
+    contact_by_sphere_id = {
+        contact.sphere_surface_id: contact
+        for contact in nested_parent.contacts
+    }
+
+    def stable_dot(first: np.ndarray, second: np.ndarray) -> float:
+        return float(
+            fsum(
+                float(left) * float(right)
+                for left, right in zip(first, second)
+            )
+        )
+
+    def ellipse_parameter_at_world_point(
+        curve: EllipseArcCurve,
+        world_point: np.ndarray,
+        *,
+        label: str,
+    ) -> tuple[float, np.ndarray, float]:
+        if not curve.closed:
+            raise SceneOcclusionError(f"{label} must cover one full ellipse")
+        center = np.asarray(curve.center, dtype=float)
+        first = np.asarray(curve.first_axis, dtype=float)
+        second = np.asarray(curve.second_axis, dtype=float)
+        delta = world_point - center
+        first_denominator = stable_dot(first, first)
+        second_denominator = stable_dot(second, second)
+        if first_denominator <= 0.0 or second_denominator <= 0.0:
+            raise SceneOcclusionError(f"{label} has a degenerate ellipse axis")
+        cosine = stable_dot(delta, first) / first_denominator
+        sine = stable_dot(delta, second) / second_denominator
+        base = atan2(sine, cosine)
+        parameter = curve.domain.start + (
+            (base - curve.domain.start) % tau
+        )
+        if parameter > curve.domain.end:
+            if parameter - curve.domain.end > parameter_epsilon:
+                raise SceneOcclusionError(
+                    f"{label} world witness lies outside its angular domain"
+                )
+            parameter = curve.domain.end
+        if (
+            curve.domain.end - parameter <= parameter_epsilon
+            or parameter - curve.domain.start <= parameter_epsilon
+        ):
+            parameter = curve.domain.start
+        reconstructed = np.asarray(curve.point(parameter), dtype=float)
+        residual = float(np.linalg.norm(reconstructed - world_point))
+        if residual > boundary_epsilon:
+            raise SceneOcclusionError(
+                f"{label} does not reconstruct the nested tangency witness"
+            )
+        return float(parameter), reconstructed, residual
+
     for sphere_source in sphere_sources:
+        sphere = sphere_by_id.get(sphere_source.owner_surface_id)
+        contact = contact_by_sphere_id.get(sphere_source.owner_surface_id)
+        if sphere is None or contact is None:
+            raise SceneOcclusionError(
+                f"registered sphere silhouette {sphere_source.source_id!r} "
+                "lost its nested contact evidence"
+            )
+        contact_source = source_by_id.get(contact.contact_source_id)
+        if contact_source is None or not isinstance(
+            contact_source.curve,
+            EllipseArcCurve,
+        ):
+            raise SceneOcclusionError(
+                f"nested contact source {contact.contact_source_id!r} must "
+                "remain a registered ellipse"
+            )
+        if not isinstance(sphere_source.curve, EllipseArcCurve):
+            raise SceneOcclusionError(
+                f"registered sphere silhouette {sphere_source.source_id!r} "
+                "must remain an ellipse"
+            )
+        sphere_center = np.asarray(sphere.center, dtype=float)
         certificates: list[_NestedSilhouetteTangencyCertificate] = []
         for mother_source in mother_sources:
-            try:
-                crossings = compute_projected_curve_crossings(
-                    (sphere_source.curve, mother_source.curve),
-                    view,
-                    context=context,
-                )
-            except ProjectedCurveIntersectionError as exc:
+            if not isinstance(mother_source.curve, SegmentCurve):
                 raise SceneOcclusionError(
-                    "registered sphere/mother silhouette tangency cannot be "
-                    f"certified: {sphere_source.source_id!r}, "
-                    f"{mother_source.source_id!r}: {exc}"
-                ) from exc
-            if len(crossings) != 1:
-                raise SceneOcclusionError(
-                    "each registered mother silhouette generator must have "
-                    "one sphere-silhouette tangency"
+                    f"registered mother silhouette {mother_source.source_id!r} "
+                    "must remain a finite generator"
                 )
-            crossing = crossings[0]
-            if not crossing.tangential or not crossing.coincident_depth:
+            mother_curve = mother_source.curve
+            start = np.asarray(mother_curve.start, dtype=float)
+            displacement = np.asarray(mother_curve.displacement, dtype=float)
+            denominator = stable_dot(displacement, displacement)
+            if denominator <= 0.0:  # pragma: no cover - SegmentCurve guards it
                 raise SceneOcclusionError(
-                    "registered sphere/mother silhouette crossing is not a "
-                    "coincident-depth tangency"
+                    "registered mother silhouette generator is degenerate"
                 )
-            if crossing.first_curve_id == sphere_source.curve.curve_id:
-                sphere_parameter = crossing.first_parameter
-                witness_parameter = crossing.second_parameter
-            elif crossing.second_curve_id == sphere_source.curve.curve_id:
-                sphere_parameter = crossing.second_parameter
-                witness_parameter = crossing.first_parameter
-            else:  # pragma: no cover - crossing input owns both identities
+            ratio = stable_dot(sphere_center - start, displacement) / denominator
+            witness_parameter = (
+                mother_curve.domain.start + ratio * mother_curve.domain.length
+            )
+            if (
+                witness_parameter
+                < mother_curve.domain.start - parameter_epsilon
+                or witness_parameter
+                > mother_curve.domain.end + parameter_epsilon
+            ):
                 raise SceneOcclusionError(
-                    "sphere silhouette crossing lost its source identity"
+                    "registered nested tangency lies outside the finite mother "
+                    "silhouette generator"
                 )
-            sphere_point = np.asarray(
+            witness_parameter = min(
+                mother_curve.domain.end,
+                max(mother_curve.domain.start, witness_parameter),
+            )
+            witness_point = np.asarray(
+                mother_curve.point(witness_parameter),
+                dtype=float,
+            )
+            radius_residual = abs(
+                float(np.linalg.norm(witness_point - sphere_center))
+                - sphere.radius
+            )
+            orthogonality_residual = abs(
+                stable_dot(witness_point - sphere_center, displacement)
+            ) / float(np.sqrt(denominator))
+            if max(radius_residual, orthogonality_residual) > boundary_epsilon:
+                raise SceneOcclusionError(
+                    "registered mother silhouette generator is not tangent to "
+                    "its nested sphere"
+                )
+            contact_parameter, contact_point, contact_residual = (
+                ellipse_parameter_at_world_point(
+                    contact_source.curve,
+                    witness_point,
+                    label=f"nested contact source {contact_source.source_id!r}",
+                )
+            )
+            sphere_parameter, sphere_point, sphere_residual = (
+                ellipse_parameter_at_world_point(
+                    sphere_source.curve,
+                    witness_point,
+                    label=(
+                        "registered sphere silhouette "
+                        f"{sphere_source.source_id!r}"
+                    ),
+                )
+            )
+            silhouette_residual = abs(
+                stable_dot(
+                    witness_point - sphere_center,
+                    np.asarray(view.view_direction, dtype=float),
+                )
+            )
+            sphere_screen_tangent = view.matrix[:2] @ np.asarray(
+                sphere_source.curve.tangent(sphere_parameter),
+                dtype=float,
+            )
+            mother_screen_tangent = view.matrix[:2] @ np.asarray(
+                mother_curve.tangent(witness_parameter),
+                dtype=float,
+            )
+            sphere_screen_norm = float(np.linalg.norm(sphere_screen_tangent))
+            mother_screen_norm = float(np.linalg.norm(mother_screen_tangent))
+            if sphere_screen_norm <= 0.0 or mother_screen_norm <= 0.0:
+                raise SceneOcclusionError(
+                    "registered nested silhouette tangency has a degenerate "
+                    "screen tangent"
+                )
+            tangent_residual = abs(
+                float(
+                    sphere_screen_tangent[0] * mother_screen_tangent[1]
+                    - sphere_screen_tangent[1] * mother_screen_tangent[0]
+                )
+            ) / (sphere_screen_norm * mother_screen_norm)
+            if silhouette_residual > boundary_epsilon:
+                raise SceneOcclusionError(
+                    "registered nested contact is not on the sphere silhouette"
+                )
+            if tangent_residual > angular_epsilon:
+                raise SceneOcclusionError(
+                    "registered sphere/mother silhouettes are not tangent at "
+                    "their nested contact"
+                )
+            world_residual = max(
+                radius_residual,
+                orthogonality_residual,
+                contact_residual,
+                sphere_residual,
+                silhouette_residual,
+                float(np.linalg.norm(contact_point - sphere_point)),
+            )
+            pair_screen_epsilon = _curve_pair_screen_epsilon(
+                sphere_source.curve,
+                mother_curve,
+                view,
+                context,
+            )
+            sphere_parameter = _canonical_projected_curve_parameter(
+                sphere_source.curve,
+                sphere_parameter,
+                view,
+                parameter_epsilon=parameter_epsilon,
+                screen_epsilon=pair_screen_epsilon,
+            )
+            certified_sphere_point = np.asarray(
                 sphere_source.curve.point(sphere_parameter),
                 dtype=float,
             )
-            witness_point = np.asarray(
-                mother_source.curve.point(witness_parameter),
-                dtype=float,
+            world_residual = max(
+                world_residual,
+                float(
+                    np.linalg.norm(certified_sphere_point - witness_point)
+                ),
             )
-            world_residual = float(np.linalg.norm(sphere_point - witness_point))
             if world_residual > boundary_epsilon:
                 raise SceneOcclusionError(
-                    "registered coincident-depth silhouette crossing does not "
-                    "identify one world point"
+                    "registered nested silhouette tangency does not identify "
+                    "one world point"
                 )
+            crossing_id = (
+                "nested-support:"
+                f"{len(sphere_source.source_id)}:{sphere_source.source_id}:"
+                f"{len(contact_source.source_id)}:{contact_source.source_id}:"
+                f"{len(mother_source.source_id)}:{mother_source.source_id}"
+            )
             certificates.append(
                 _NestedSilhouetteTangencyCertificate(
                     sphere_source.source_id,
@@ -905,8 +1081,10 @@ def _nested_silhouette_support_tangencies(
                     sphere_parameter,
                     mother_source.source_id,
                     witness_parameter,
-                    crossing.crossing_id,
-                    tuple(float(item) for item in sphere_point),
+                    contact_source.source_id,
+                    contact_parameter,
+                    crossing_id,
+                    tuple(float(item) for item in witness_point),
                     world_residual,
                 )
             )
@@ -996,6 +1174,9 @@ def _attach_boundaries(
         context=context,
         rank_one_section_source_groups=(
             () if rank_one_group is None else (rank_one_group,)
+        ),
+        _nested_silhouette_tangencies_by_source=(
+            nested_silhouette_tangencies
         ),
     )
     section_spans = None

@@ -302,12 +302,9 @@ class DandelinConeCylinderSwitchOcclusionTests(unittest.TestCase):
                     delta=1.0e-3,
                 )
 
-    def test_near_cylinder_sphere_and_mother_silhouettes_keep_four_tangencies(
+    def test_near_cylinder_nested_tangencies_create_no_crossing_slivers(
         self,
     ) -> None:
-        boundary = compute_switch_occlusion_frame(
-            0.9999
-        ).scene_frame.boundary_frame
         sphere_ids = {
             "boundary:switch-sphere:-1:silhouette",
             "boundary:switch-sphere:+1:silhouette",
@@ -316,30 +313,43 @@ class DandelinConeCylinderSwitchOcclusionTests(unittest.TestCase):
             "boundary:switch-surface:silhouette:generator:0",
             "boundary:switch-surface:silhouette:generator:1",
         }
-        crossings = tuple(
-            item
-            for item in boundary.crossings
-            if {
-                item.first_curve_id,
-                item.second_curve_id,
-            }
-            & sphere_ids
-            and {
-                item.first_curve_id,
-                item.second_curve_id,
-            }
-            & mother_ids
-        )
-
-        self.assertEqual(len(crossings), 4)
-        self.assertTrue(all(item.tangential for item in crossings))
-        self.assertTrue(all(item.coincident_depth for item in crossings))
-        self.assertTrue(
-            all(
-                item.far_curve_id is None and item.near_curve_id is None
-                for item in crossings
-            )
-        )
+        contact_by_sphere = {
+            "boundary:switch-sphere:-1:silhouette": "switch-contact:-1",
+            "boundary:switch-sphere:+1:silhouette": "switch-contact:+1",
+        }
+        certified_pairs = {
+            tuple(sorted((sphere_id, other_id)))
+            for sphere_id, contact_id in contact_by_sphere.items()
+            for other_id in (*mother_ids, contact_id)
+        } | {
+            tuple(sorted((contact_id, mother_id)))
+            for contact_id in contact_by_sphere.values()
+            for mother_id in mother_ids
+        }
+        for progress in (0.9999, 0.99999999, 1.0):
+            with self.subTest(progress=progress):
+                scene_frame = compute_switch_occlusion_frame(
+                    progress
+                ).scene_frame
+                boundary = scene_frame.boundary_frame
+                crossing_pairs = {
+                    (item.first_curve_id, item.second_curve_id)
+                    for item in boundary.crossings
+                }
+                self.assertTrue(certified_pairs.isdisjoint(crossing_pairs))
+                parameter_epsilon = (
+                    scene_frame.global_frame.geometry_context.epsilon(
+                        "parameter"
+                    )
+                )
+                self.assertTrue(
+                    all(
+                        fragment.interval.length
+                        > 100.0 * parameter_epsilon
+                        for fragment in boundary.fragments
+                        if fragment.source_id in sphere_ids
+                    )
+                )
 
     def test_smooth_animation_tail_has_no_uncertified_intermediate_frame(
         self,

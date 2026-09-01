@@ -67,10 +67,10 @@ class _NestedSilhouetteTangencyCertificate:
     """One internal geometric witness for a nested silhouette tangency.
 
     This certificate is deliberately private.  It is constructed only after
-    the scene coordinator has validated canonical sphere/mother silhouette
-    sources and an isolated coincident-depth projected tangency.  Keeping the
-    witness geometry here prevents a bare curve parameter from bypassing the
-    ordinary polynomial critical-event solver.
+    the scene coordinator has validated canonical sphere/mother silhouettes
+    and reconstructed their common point on an already certified contact
+    circle.  Keeping the three-curve witness here prevents a bare curve
+    parameter from bypassing the ordinary polynomial critical-event solver.
     """
 
     curve_id: str
@@ -78,6 +78,8 @@ class _NestedSilhouetteTangencyCertificate:
     parameter: float
     witness_curve_id: str
     witness_parameter: float
+    contact_curve_id: str
+    contact_parameter: float
     crossing_id: str
     world_point: tuple[float, float, float]
     world_residual: float
@@ -87,6 +89,7 @@ class _NestedSilhouetteTangencyCertificate:
             "curve_id",
             "surface_id",
             "witness_curve_id",
+            "contact_curve_id",
             "crossing_id",
         ):
             value = getattr(self, name)
@@ -96,11 +99,22 @@ class _NestedSilhouetteTangencyCertificate:
                     "non-empty string"
                 )
             object.__setattr__(self, name, value.strip())
-        if self.curve_id == self.witness_curve_id:
+        if len(
+            {
+                self.curve_id,
+                self.witness_curve_id,
+                self.contact_curve_id,
+            }
+        ) != 3:
             raise CriticalEventError(
-                "nested silhouette certificate requires a distinct witness curve"
+                "nested silhouette certificate requires three distinct curves"
             )
-        for name in ("parameter", "witness_parameter", "world_residual"):
+        for name in (
+            "parameter",
+            "witness_parameter",
+            "contact_parameter",
+            "world_residual",
+        ):
             raw = getattr(self, name)
             if isinstance(raw, (bool, np.bool_)):
                 raise CriticalEventError(
