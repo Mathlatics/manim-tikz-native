@@ -318,7 +318,11 @@ def section_curve_boundary_source(
 def plane_outline_sources(
     plane: SectionPlane,
     patch: PlaneDisplayPatchSpec,
+    *,
+    occlusion_scope: BoundaryOcclusionScope = BoundaryOcclusionScope.NONE,
 ) -> tuple[QuadricBoundarySource, ...]:
+    if not isinstance(occlusion_scope, BoundaryOcclusionScope):
+        raise TypeError("occlusion_scope must be a BoundaryOcclusionScope")
     corners = patch.corners(plane)
     ends = (*corners[1:], corners[0])
     result = []
@@ -329,7 +333,7 @@ def plane_outline_sources(
                 SegmentCurve(source_id, start, end),
                 source_kind=BoundarySourceKind.PLANE_PATCH_EDGE,
                 semantic_kind=BoundarySemanticKind.DISPLAY_FRAME,
-                occlusion_scope=BoundaryOcclusionScope.NONE,
+                occlusion_scope=occlusion_scope,
                 owner_id=patch.patch_id,
                 style_id="style:section-outline",
             )
@@ -354,7 +358,7 @@ def _surface_rim_sources(
                 style_id="style:surface-boundary",
             )
         )
-    if isinstance(surface, ConeSpec):
+    if isinstance(surface, (CylinderSpec, ConeSpec)):
         for rim in surface.trim_rims:
             source_id = f"boundary:{surface.surface_id}:{rim.role}:rim"
             result.append(
@@ -534,7 +538,7 @@ def surface_boundary_slot_descriptors(
                         "style:surface-boundary",
                     )
                 )
-            if isinstance(surface, ConeSpec):
+            if isinstance(surface, (CylinderSpec, ConeSpec)):
                 for rim in surface.trim_rims:
                     result.append(
                         SurfaceBoundarySlotDescriptor(

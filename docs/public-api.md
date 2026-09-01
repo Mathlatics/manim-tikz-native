@@ -755,7 +755,7 @@ combined managed band.
 renderer-neutral contracts and solvers does not import Manim.  Its main entry
 points are:
 
-- `SphereSpec`, `CylinderSpec`, `ConeSpec`, `ConeModel`,
+- `SphereSpec`, `CylinderSpec`, `CylinderModel`, `ConeSpec`, `ConeModel`,
   `CircularTrimRimSpec`, and `SectionPlane`;
 - `PlanarFrame3D`, `PlanarPoint3D`, `Circle3DSpec`, `Ellipse3DSpec`,
   and `PlanarCurveScene3D`;
@@ -1162,6 +1162,12 @@ depth slots as the view crosses a side view. An exact edge-on cap has no
 certifiable display area, so its fill path is empty while its real terminal-rim
 boundary remains available. The implementation never invents a positive-area
 cap to hide that degeneracy.
+
+`CylinderSpec(model=CylinderModel.OPEN)` automatically uses the same
+far/near-sheet principle with cylinder-specific terminal masks: both endpoint
+disks remain holes and never become unpainted cap occluders. The cone palettes
+remain cone-only; an open cylinder keeps `surface_fill_color`. The default
+`CLOSED` cylinder continues to use the historical single opaque-proxy fill.
 
 `QuadricSectionTransition3D` is the topology-changing companion to
 `QuadricOcclusion3D`.  It consumes a `ScheduledSectionAnimation` and a

@@ -30,7 +30,7 @@ from .boundary_compositing import (
 )
 from .curves import EllipseArcCurve, ParametricConicBranch, SegmentCurve
 from .performance import _PerformanceAttempt, _performance_stage
-from .projection import ConeProjectionLayers
+from .projection import ConeProjectionLayers, _CylinderProjectionLayers
 
 
 AnalyticCurve3D = SegmentCurve | EllipseArcCurve | ParametricConicBranch
@@ -289,6 +289,7 @@ class _PreparedConeFill:
     back_cap_paths: tuple[np.ndarray, ...]
     front_lateral_paths: tuple[np.ndarray, ...]
     front_cap_paths: tuple[np.ndarray, ...]
+    use_cone_palette: bool = True
 
 
 @dataclass(frozen=True, slots=True)
@@ -777,9 +778,13 @@ def _projection_paths_3d(
     )
 
 
-def _prepared_cone_fill(layers: ConeProjectionLayers) -> _PreparedConeFill:
-    if not isinstance(layers, ConeProjectionLayers):
-        raise TypeError("layers must be ConeProjectionLayers")
+def _prepared_cone_fill(
+    layers: ConeProjectionLayers | _CylinderProjectionLayers,
+) -> _PreparedConeFill:
+    if not isinstance(layers, (ConeProjectionLayers, _CylinderProjectionLayers)):
+        raise TypeError(
+            "layers must be ConeProjectionLayers or internal cylinder layers"
+        )
     return _PreparedConeFill(
         _projection_paths_3d(layers.opaque_lateral_paths),
         _projection_paths_3d(layers.opaque_cap_paths),
@@ -787,6 +792,7 @@ def _prepared_cone_fill(layers: ConeProjectionLayers) -> _PreparedConeFill:
         _projection_paths_3d(layers.back.cap_paths),
         _projection_paths_3d(layers.front.lateral_paths),
         _projection_paths_3d(layers.front.cap_paths),
+        use_cone_palette=isinstance(layers, ConeProjectionLayers),
     )
 
 
@@ -886,10 +892,14 @@ def _apply_opaque_surface_slot(
         return
 
     slot.base.set_fill(opacity=0.0)
-    lateral_colors = style.cone_lateral_fill_colors or (
+    lateral_colors = (
+        style.cone_lateral_fill_colors if cone_fill.use_cone_palette else None
+    ) or (
         style.surface_fill_color,
     )
-    cap_colors = style.cone_cap_fill_colors or lateral_colors
+    cap_colors = (
+        style.cone_cap_fill_colors if cone_fill.use_cone_palette else None
+    ) or lateral_colors
     sheet_opacity = 1.0 - sqrt(
         max(0.0, 1.0 - min(1.0, representative_opacity))
     )
@@ -981,10 +991,14 @@ def _apply_surface_sheet_pair(
 
     back.base.set_fill(opacity=0.0)
     front.base.set_fill(opacity=0.0)
-    lateral_colors = style.cone_lateral_fill_colors or (
+    lateral_colors = (
+        style.cone_lateral_fill_colors if cone_fill.use_cone_palette else None
+    ) or (
         style.surface_fill_color,
     )
-    cap_colors = style.cone_cap_fill_colors or lateral_colors
+    cap_colors = (
+        style.cone_cap_fill_colors if cone_fill.use_cone_palette else None
+    ) or lateral_colors
     for slot, lateral, cap, lateral_paths, cap_paths in (
         (
             back,

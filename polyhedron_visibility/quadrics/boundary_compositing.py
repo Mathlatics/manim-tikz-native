@@ -35,7 +35,7 @@ from .compositing import (
 )
 from .contract import ConeSpec, CylinderSpec, SphereSpec
 from .conics import ConicKind
-from .critical import AnalyticCurve3D
+from .critical import AnalyticCurve3D, _NestedSilhouetteTangencyCertificate
 from .curve_intersections import (
     ProjectedCurveCrossing,
     ProjectedCurveIntersectionError,
@@ -837,11 +837,28 @@ def compute_boundary_visibility(
     view: ParallelView,
     *,
     context: ContextInput = None,
+    _nested_silhouette_tangencies_by_source: Mapping[
+        str,
+        Sequence[_NestedSilhouetteTangencyCertificate],
+    ] | None = None,
 ) -> dict[str, tuple[QuadricBoundaryVisibilitySpan, ...]]:
     """Run the exact analytic visibility kernel with source-specific scope."""
 
     source_items = tuple(sorted(sources, key=lambda item: item.source_id))
     surface_items = tuple(sorted(surfaces, key=lambda item: item.surface_id))
+    certified = (
+        {}
+        if _nested_silhouette_tangencies_by_source is None
+        else dict(_nested_silhouette_tangencies_by_source)
+    )
+    unknown_certified_sources = sorted(
+        set(certified) - {item.source_id for item in source_items}
+    )
+    if unknown_certified_sources:
+        raise QuadricBoundaryCompositingError(
+            "certified support tangencies reference unknown boundary sources: "
+            + ", ".join(unknown_certified_sources)
+        )
     result: dict[str, tuple[QuadricBoundaryVisibilitySpan, ...]] = {}
     for source in source_items:
         record: CurveVisibilityRecord = compute_curve_visibility(
@@ -849,6 +866,7 @@ def compute_boundary_visibility(
             _selected_surfaces(source, surface_items),
             view,
             context=context,
+            _nested_silhouette_tangencies=certified.get(source.source_id),
         )
         result[source.source_id] = tuple(
             QuadricBoundaryVisibilitySpan(
@@ -886,6 +904,10 @@ def compute_quadric_boundary_crossings(
     rank_one_section_source_groups: Sequence[
         QuadricRankOneSectionSourceGroup
     ] = (),
+    _nested_silhouette_tangencies_by_source: Mapping[
+        str,
+        Sequence[_NestedSilhouetteTangencyCertificate],
+    ] | None = None,
 ) -> tuple[ProjectedCurveCrossing, ...]:
     """Certify every finite projected crossing used by the painter graph.
 
@@ -895,6 +917,10 @@ def compute_quadric_boundary_crossings(
     independently certified visibility spans already own that ordering, so
     the generic isolated-crossing solver is deliberately not asked to invent
     finitely many roots for an infinite overlap.
+
+    Private nested-silhouette certificates similarly identify three curves
+    meeting tangentially at one world point.  Those pairs add no painter edge
+    and are omitted instead of manufacturing tolerance-sized fragments.
     """
 
     try:
@@ -920,6 +946,58 @@ def compute_quadric_boundary_crossings(
             "cached crossing sources are unknown: "
             + ", ".join(unknown_cached)
         )
+    certified = (
+        {}
+        if _nested_silhouette_tangencies_by_source is None
+        else dict(_nested_silhouette_tangencies_by_source)
+    )
+    unknown_certified_sources = sorted(set(certified) - set(source_ids))
+    if unknown_certified_sources:
+        raise QuadricBoundaryCompositingError(
+            "certified support tangencies reference unknown boundary sources: "
+            + ", ".join(unknown_certified_sources)
+        )
+    certified_pair_id_set: set[tuple[str, str]] = set()
+    for source_id, raw_items in sorted(certified.items()):
+        items = tuple(raw_items)
+        if (
+            len(items) != 2
+            or not all(
+                isinstance(item, _NestedSilhouetteTangencyCertificate)
+                and item.curve_id == source_id
+                for item in items
+            )
+            or len({item.crossing_id for item in items}) != 2
+            or len({item.witness_curve_id for item in items}) != 2
+            or len({item.contact_curve_id for item in items}) != 1
+            or len({item.surface_id for item in items}) != 1
+        ):
+            raise QuadricBoundaryCompositingError(
+                "nested silhouette pair suppression requires two certified "
+                "support tangencies"
+            )
+        for item in items:
+            triple = tuple(
+                sorted(
+                    {
+                        item.curve_id,
+                        item.witness_curve_id,
+                        item.contact_curve_id,
+                    }
+                )
+            )
+            if len(triple) != 3 or not set(triple).issubset(source_ids):
+                raise QuadricBoundaryCompositingError(
+                    "nested silhouette pair suppression references unknown "
+                    "or repeated sources"
+                )
+            certified_pair_id_set.update(
+                {
+                    (triple[0], triple[1]),
+                    (triple[0], triple[2]),
+                    (triple[1], triple[2]),
+                }
+            )
     groups = _canonical_rank_one_groups(rank_one_section_source_groups)
     group_by_source_id: dict[str, QuadricRankOneSectionSourceGroup] = {}
     point_source_ids: set[str] = set()
@@ -966,6 +1044,8 @@ def compute_quadric_boundary_crossings(
     result = list(cached_crossings)
     for first, second in combinations(source_items, 2):
         if first.source_id in cached_ids and second.source_id in cached_ids:
+            continue
+        if (first.source_id, second.source_id) in certified_pair_id_set:
             continue
         if pair_is_certified_rank_one_overlap(first, second):
             continue
@@ -1715,35 +1795,38 @@ def compute_quadric_boundary_compositing(
         )
         fragment_anchors = anchors_for_source(source)
         is_plane_edge = source.source_kind is BoundarySourceKind.PLANE_PATCH_EDGE
-        if (
-            is_plane_edge
-            and fragment.effective_visibility_kind is VisibilityKind.VISIBLE
-        ):
+        if is_plane_edge:
             if fragment_anchors is None:
                 raise QuadricBoundaryCompositingError(
                     "plane-edge fragments require section anchors"
                 )
-            role = fragment.depth_role
-            if role == "outside_projection":
-                _add_bracket(
-                    relations,
-                    fragment.item_id,
+            bracket = {
+                "behind_surface": (
+                    fragment_anchors.plane_behind,
+                    fragment_anchors.outline_behind,
+                    "plane_outline_behind",
+                ),
+                "outside_projection": (
                     fragment_anchors.plane_outside,
                     fragment_anchors.outline_outside,
                     "plane_outline_outside",
-                )
-            elif role == "in_front_of_surface":
-                _add_bracket(
-                    relations,
-                    fragment.item_id,
+                ),
+                "between_surface_sheets": (
+                    fragment_anchors.plane_between,
+                    fragment_anchors.outline_between,
+                    "plane_outline_between",
+                ),
+                "in_front_of_surface": (
                     fragment_anchors.plane_front,
                     fragment_anchors.outline_front,
                     "plane_outline_front",
-                )
-            else:
+                ),
+            }.get(fragment.depth_role)
+            if bracket is None:
                 raise QuadricBoundaryCompositingError(
-                    "visible plane outline fragment has a hidden depth role"
+                    "plane outline fragment has no certified depth role"
                 )
+            _add_bracket(relations, fragment.item_id, *bracket)
             continue
 
         if fragment.effective_visibility_kind is VisibilityKind.VISIBLE:
@@ -1839,32 +1922,7 @@ def compute_quadric_boundary_compositing(
                 "painted hidden fragment requires a diagrammatic policy"
             )
 
-        if is_plane_edge:
-            if fragment_anchors is None:
-                raise QuadricBoundaryCompositingError(
-                    "plane-edge fragments require section anchors"
-                )
-            if fragment.depth_role == "behind_surface":
-                _add_bracket(
-                    relations,
-                    fragment.item_id,
-                    fragment_anchors.plane_behind,
-                    fragment_anchors.outline_behind,
-                    "plane_outline_behind",
-                )
-            elif fragment.depth_role == "between_surface_sheets":
-                _add_bracket(
-                    relations,
-                    fragment.item_id,
-                    fragment_anchors.plane_between,
-                    fragment_anchors.outline_between,
-                    "plane_outline_between",
-                )
-            else:
-                raise QuadricBoundaryCompositingError(
-                    "hidden plane outline fragment has a visible depth role"
-                )
-        elif fragment_anchors is not None:
+        if fragment_anchors is not None:
             if (
                 fragment.surface_visibility_kind is VisibilityKind.VISIBLE
                 and fragment.plane_occluded
@@ -1888,16 +1946,47 @@ def compute_quadric_boundary_compositing(
                     fragment_anchors.surface_front,
                     "depth_aware_hidden_owner_boundary",
                 )
-            else:
-                far_anchor = (
-                    fragment_anchors.surface_back
-                    if fragment.plane_relation == "boundary_behind_plane"
-                    else fragment_anchors.outline_between
+            elif (
+                fragment.plane_relation == "boundary_behind_plane"
+                and "behind_surface" in fragment.plane_depth_roles
+            ):
+                # The certified plane relation already places this fragment
+                # before every overlapping plane role.  Some of those roles
+                # are themselves behind ``surface_back``; adding the usual
+                # ``surface_back -> fragment`` edge would therefore create a
+                # false cycle.  The surface occlusion only needs the upper
+                # half of the bracket here.
+                relations.append(
+                    QuadricPaintRelation(
+                        fragment.item_id,
+                        fragment_anchors.surface_front,
+                        "depth_aware_hidden_boundary_before_surface_front",
+                    )
                 )
+            elif fragment.plane_relation == "boundary_behind_plane":
                 _add_bracket(
                     relations,
                     fragment.item_id,
-                    far_anchor,
+                    fragment_anchors.surface_back,
+                    fragment_anchors.surface_front,
+                    "depth_aware_hidden_boundary_behind_plane",
+                )
+            elif fragment.plane_relation == "outside_patch":
+                # No finite plane pixels overlap this fragment.  Keep it
+                # between the mother's coincident projection sheets without
+                # tying it to an unrelated plane outline role.
+                _add_bracket(
+                    relations,
+                    fragment.item_id,
+                    fragment_anchors.surface_back,
+                    fragment_anchors.surface_front,
+                    "depth_aware_hidden_boundary_outside_patch",
+                )
+            else:
+                _add_bracket(
+                    relations,
+                    fragment.item_id,
+                    fragment_anchors.outline_between,
                     fragment_anchors.surface_front,
                     "depth_aware_hidden_boundary",
                 )

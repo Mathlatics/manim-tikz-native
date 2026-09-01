@@ -13,6 +13,7 @@ from polyhedron_visibility.open_faces import OpenFaceScene3D
 from polyhedron_visibility.quadrics import (
     Circle3DSpec,
     ConeSpec,
+    CylinderModel,
     CylinderSpec,
     DandelinConicFamily,
     DandelinConstruction3D,
@@ -149,6 +150,7 @@ class PublicPackageTests(unittest.TestCase):
             "SectionTimelineTransitionPlan",
         )
         self.assertEqual(QuadricSectionBoundary.__name__, "QuadricSectionBoundary")
+        self.assertEqual(CylinderModel.OPEN.value, "open")
         self.assertEqual(QuadricSection3D.__name__, "QuadricSection3D")
         self.assertEqual(QuadricSectionRig.__name__, "QuadricSectionRig")
         self.assertEqual(QuadricSectionAction.__name__, "QuadricSectionAction")

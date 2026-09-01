@@ -15,10 +15,12 @@ read as supporting more than the tested v1 combinations.
 
 ## Scope
 
-The public contract targets finite, opaque teaching solids built from:
+The public contract targets finite teaching surfaces, including closed solids
+and explicitly open shells, built from:
 
 - spheres;
-- right circular cylinders, with explicit axial bounds and optional caps;
+- right circular cylinders, with explicit axial bounds and an explicit closed
+  solid or open lateral-shell model;
 - right circular cones, with explicit axial bounds and one of three finite
   teaching models: a closed single cone, an open single shell, or an open
   double shell;
@@ -88,6 +90,22 @@ Finite teaching solids add explicit trim rules.  For cylinders and cones the
 axial interval, nappe selection, and cap policy are therefore part of the
 solid contract and are not encoded by `Q`.  This prevents a non-existent
 infinite extension from hiding a curve.
+
+### Finite cylinder models
+
+`CylinderSpec.model` separates two authored objects that share the same
+infinite quadratic support:
+
+- `CylinderModel.CLOSED` is the historical finite solid with two planar caps;
+- `CylinderModel.OPEN` is only the finite lateral shell. Its two axial endpoint
+  circles are trim rims, not cap disks, and therefore do not participate in
+  volume membership, ray hits, or section cap chords.
+
+Omitting `model` preserves the historical closed-cylinder behavior. As with
+open cones, calling `contains()` on an open cylinder is an error.
+The Manim binding always paints `OPEN` through separate far/near lateral masks;
+each projected terminal disk is a hole in its owning sheet, never an implicit
+cap fill. `CLOSED` keeps the historical single opaque-proxy fill path.
 
 ### Finite cone models
 
@@ -648,6 +666,38 @@ relations and cannot replace or contradict them.  Set
 `surface_order_mode="explicit"` only when deliberately using the legacy manual
 constraint path; that mode does not recompute or recertify supplied relations.
 
+### Registered scene coordinator
+
+`SceneOcclusionCoordinator` sits outside those narrow kernels.  It dispatches
+without first attempting a broad solve and catching failure:
+
+- an ordinary scene with no cutting plane uses the existing global-disjoint
+  path;
+- one mother surface plus one plane uses
+  `compute_quadric_section_compositing()` unchanged;
+- one cone-or-cylinder mother, one tangent plane, and exactly two registered
+  inner tangent spheres uses the nested-tangent section adapter.
+
+The last path is intended for Dandelin-style teaching diagrams.  Each sphere
+must name a full analytic contact circle.  The adapter certifies that the
+circle lies on the sphere and mother, that their normals are parallel, that
+the sphere is tangent to the plane, and that the two spheres are strictly
+separated.  Only the sphere pair is submitted to the global surface sorter;
+the registered mother/sphere contact never weakens that sorter's rejection of
+unregistered touching or nested solids.
+
+Section curves and contact circles then enter the shared boundary visibility,
+plane-relation, crossing, and fragment compositor against the mother and both
+spheres.  The final frame contains one painter graph for the plane roles,
+mother back/front sheets, sphere bodies, and every curve fragment.  Contact
+circles are therefore not bundled into sphere drawing objects, and a section
+fragment hidden by a sphere explicitly precedes that sphere in the graph.
+
+The nested surface fills remain a teaching-transparent layer model, so their
+frame records `physical_surface_visibility_authoritative=false`.  Analytic
+curve visibility and the registered painter order are authoritative.  Other
+multi-surface section arrangements still fail closed.
+
 ## Implemented acceptance boundary
 
 - finite sphere, cylinder, closed-single-cone, open-single-shell, and
@@ -666,6 +716,9 @@ constraint path; that mode does not recompute or recertify supplied relations.
   hyperbola families;
 - automatic plane-display-patch fitting;
 - global ordering for a bounded set of strictly separated convex quadrics;
+- explicit scene dispatch preserving the one-surface section fast path;
+- a cone/cylinder Dandelin-style nested-tangent adapter for two spheres, one
+  plane, contact circles, and finite section curves;
 - component-aware cone projection layers that distinguish lateral paint from
   one or two real caps, keep both frustum terminal disks separate, and leave
   an open mouth as a one-sheet region;
@@ -681,13 +734,15 @@ installs the wheel in an isolated environment.
 
 ## Deliberate limitations
 
-- The global multi-surface solver requires pairwise strict 3D separation,
+- The global multi-surface solver itself requires pairwise strict 3D separation,
   except for the certified shared-apex contact between the two components of
   one `OPEN_DOUBLE` shell. Those siblings are accepted only when their
   projected interiors do not overlap. An oblique view that needs interleaved
   multi-sheet ordering fails explicitly. Other touching/intersecting entities
-  and true surface painter cycles are still rejected; quadratic surface-cell
-  splitting is not implemented yet.
+  and true surface painter cycles are still rejected. Registered
+  Dandelin-style mother/sphere contacts use the separate scene coordinator
+  described above; this is not a general arbitrary-object exception.
+  Quadratic surface-cell splitting is not implemented yet.
 - One local cutting-plane compositor accepts exactly one finite convex surface.
   `OPEN_SINGLE` is supported directly. `CompositeQuadricSection3D` is a narrow
   coordinator for the two canonical components of one `OPEN_DOUBLE`: it keeps

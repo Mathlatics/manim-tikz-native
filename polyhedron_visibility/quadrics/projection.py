@@ -895,18 +895,57 @@ def _signed_path_area(path: Sequence[Sequence[float]]) -> float:
     )
 
 
-ConeTerminalSpec = PlanarCapSpec | CircularTrimRimSpec
+_AxialTerminalSpec = PlanarCapSpec | CircularTrimRimSpec
 
 
 @dataclass(frozen=True, slots=True)
-class _ProjectedConeTerminal:
+class _ProjectedAxialTerminal:
     terminal_id: str
     rim: ProjectionPath | None
     front_facing: bool | None
 
 
-def _cone_terminal_id(terminal: ConeTerminalSpec) -> str:
-    return terminal.cap_id if isinstance(terminal, PlanarCapSpec) else terminal.rim_id
+@dataclass(frozen=True, slots=True)
+class _AxialProjectionParts:
+    """Internal terminal-aware masks shared by cones and cylinders."""
+
+    proxy: OpaqueProjectionProxy
+    back_lateral_paths: tuple[ProjectionPath, ...]
+    back_cap_paths: tuple[ProjectionPath, ...]
+    front_lateral_paths: tuple[ProjectionPath, ...]
+    front_cap_paths: tuple[ProjectionPath, ...]
+    opaque_lateral_paths: tuple[ProjectionPath, ...]
+    opaque_cap_paths: tuple[ProjectionPath, ...]
+    terminal_front_facing: bool | None
+    terminal_front_facing_by_id: tuple[tuple[str, bool | None], ...]
+    projected_terminal_rims: tuple[tuple[str, ProjectionPath | None], ...]
+
+
+@dataclass(frozen=True, slots=True)
+class _CylinderProjectionSheet:
+    lateral_paths: tuple[ProjectionPath, ...]
+    cap_paths: tuple[ProjectionPath, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class _CylinderProjectionLayers:
+    """Private open-cylinder masks consumed by the shared Manim runtime."""
+
+    surface_id: str
+    proxy: OpaqueProjectionProxy
+    back: _CylinderProjectionSheet
+    front: _CylinderProjectionSheet
+    opaque_lateral_paths: tuple[ProjectionPath, ...]
+    opaque_cap_paths: tuple[ProjectionPath, ...]
+    terminal_front_facing_by_id: tuple[tuple[str, bool | None], ...]
+
+
+def _axial_terminal_id(terminal: _AxialTerminalSpec) -> str:
+    return (
+        terminal.cap_id
+        if isinstance(terminal, PlanarCapSpec)
+        else terminal.rim_id
+    )
 
 
 def _ellipse_segment_count(
@@ -939,13 +978,13 @@ def _ellipse_segment_count(
     return count
 
 
-def _project_cone_terminal(
-    terminal: ConeTerminalSpec,
+def _project_axial_terminal(
+    terminal: _AxialTerminalSpec,
     view: ParallelView,
     *,
     tolerance: float,
     segment_limit: int,
-) -> _ProjectedConeTerminal:
+) -> _ProjectedAxialTerminal:
     frame = terminal.frame
     screen = np.asarray(view.matrix[:2], dtype=float)
     center = screen @ np.asarray(terminal.center, dtype=float)
@@ -954,9 +993,9 @@ def _project_cone_terminal(
     basis = np.column_stack((first, second))
     singular_values = np.linalg.svd(basis, compute_uv=False)
     screen_radius = float(singular_values[0])
-    terminal_id = _cone_terminal_id(terminal)
+    terminal_id = _axial_terminal_id(terminal)
     if screen_radius <= tolerance:
-        return _ProjectedConeTerminal(terminal_id, None, None)
+        return _ProjectedAxialTerminal(terminal_id, None, None)
 
     count = _ellipse_segment_count(
         screen_radius,
@@ -985,7 +1024,7 @@ def _project_cone_terminal(
         # An edge-on terminal has a real finite boundary segment, but no area
         # to subtract from a fill mask. Semantic boundary compositing owns the
         # segment; component shading must not invent a thin polygon.
-        return _ProjectedConeTerminal(terminal_id, None, None)
+        return _ProjectedAxialTerminal(terminal_id, None, None)
 
     rim = rim_points if area > 0.0 else tuple(reversed(rim_points))
     facing = float(
@@ -994,7 +1033,146 @@ def _project_cone_terminal(
             np.asarray(view.view_direction, dtype=float),
         )
     )
-    return _ProjectedConeTerminal(terminal_id, rim, facing > 0.0)
+    return _ProjectedAxialTerminal(terminal_id, rim, facing > 0.0)
+
+
+def _convex_projection_intersection(
+    first: ProjectionPath,
+    second: ProjectionPath,
+    *,
+    epsilon: float,
+) -> ProjectionPath | None:
+    """Intersect two counter-clockwise convex display polygons."""
+
+    subject = [np.asarray(item, dtype=float) for item in first]
+    clipper = [np.asarray(item, dtype=float) for item in second]
+
+    def cross(left: np.ndarray, right: np.ndarray) -> float:
+        return float(left[0] * right[1] - left[1] * right[0])
+
+    for clip_start, clip_end in zip(
+        clipper,
+        (*clipper[1:], clipper[0]),
+    ):
+        if not subject:
+            return None
+        edge = clip_end - clip_start
+        output: list[np.ndarray] = []
+        previous = subject[-1]
+        previous_value = cross(edge, previous - clip_start)
+        previous_adjusted = previous_value + epsilon
+        previous_inside = previous_adjusted >= 0.0
+        for current in subject:
+            current_value = cross(edge, current - clip_start)
+            current_adjusted = current_value + epsilon
+            current_inside = current_adjusted >= 0.0
+            if current_inside != previous_inside:
+                denominator = previous_adjusted - current_adjusted
+                if abs(denominator) <= np.finfo(float).tiny:
+                    raise ProjectionProxyError(
+                        "cylinder terminal overlap clipping became ambiguous"
+                    )
+                ratio = previous_adjusted / denominator
+                output.append(previous + ratio * (current - previous))
+            if current_inside:
+                output.append(current)
+            previous = current
+            previous_adjusted = current_adjusted
+            previous_inside = current_inside
+        subject = output
+
+    deduped: list[np.ndarray] = []
+    for point in subject:
+        if not deduped or float(np.linalg.norm(point - deduped[-1])) > epsilon:
+            deduped.append(point)
+    if (
+        len(deduped) > 1
+        and float(np.linalg.norm(deduped[-1] - deduped[0])) <= epsilon
+    ):
+        deduped.pop()
+    if len(deduped) < 3:
+        return None
+    result = tuple(tuple(float(item) for item in point) for point in deduped)
+    if _signed_path_area(result) <= epsilon * epsilon:
+        return None
+    return result
+
+
+def _build_axial_projection_parts(
+    surface: CylinderSpec | ConeSpec,
+    terminals: Sequence[_AxialTerminalSpec],
+    parallel_view: ParallelView,
+    *,
+    tolerance: float,
+    segment_limit: int,
+    inconsistent_facing_message: str,
+) -> _AxialProjectionParts:
+    """Build cap/lateral path masks without assigning a public surface type."""
+
+    proxy = build_opaque_projection_proxy(
+        surface,
+        parallel_view,
+        max_chord_error=tolerance,
+        max_segments=segment_limit,
+    )
+    outer = tuple(proxy.vertices)
+    projected = tuple(
+        _project_axial_terminal(
+            terminal,
+            parallel_view,
+            tolerance=tolerance,
+            segment_limit=segment_limit,
+        )
+        for terminal in terminals
+    )
+    active = tuple(item for item in projected if item.rim is not None)
+    if len(active) == 2 and active[0].front_facing == active[1].front_facing:
+        raise ProjectionProxyError(inconsistent_facing_message)
+
+    back_lateral: list[ProjectionPath] = [outer]
+    front_lateral: list[ProjectionPath] = [outer]
+    back_caps: list[ProjectionPath] = []
+    front_caps: list[ProjectionPath] = []
+    for terminal in active:
+        assert terminal.rim is not None
+        hole = tuple(reversed(terminal.rim))
+        if terminal.front_facing:
+            front_lateral.append(hole)
+            if not surface.is_open_shell:
+                front_caps.append(terminal.rim)
+        else:
+            back_lateral.append(hole)
+            if not surface.is_open_shell:
+                back_caps.append(terminal.rim)
+
+    opaque_lateral: tuple[ProjectionPath, ...] = (
+        (outer,)
+        if surface.is_open_shell
+        else (outer, *(tuple(reversed(rim)) for rim in front_caps))
+    )
+    opaque_caps = () if surface.is_open_shell else tuple(front_caps)
+    terminal_facing = tuple(
+        sorted(
+            ((item.terminal_id, item.front_facing) for item in projected),
+            key=lambda item: item[0],
+        )
+    )
+    return _AxialProjectionParts(
+        proxy=proxy,
+        back_lateral_paths=tuple(back_lateral),
+        back_cap_paths=tuple(back_caps),
+        front_lateral_paths=tuple(front_lateral),
+        front_cap_paths=tuple(front_caps),
+        opaque_lateral_paths=opaque_lateral,
+        opaque_cap_paths=opaque_caps,
+        terminal_front_facing=(
+            projected[0].front_facing if len(projected) == 1 else None
+        ),
+        terminal_front_facing_by_id=terminal_facing,
+        projected_terminal_rims=tuple(
+            (item.terminal_id, item.rim) for item in projected
+        ),
+    )
 
 
 def build_cone_projection_layers(
@@ -1030,12 +1208,6 @@ def build_cone_projection_layers(
     parallel_view = _coerce_view(view)
     tolerance = _positive(max_chord_error, "max_chord_error")
     segment_limit = _segment_limit(max_segments)
-    proxy = build_opaque_projection_proxy(
-        surface,
-        parallel_view,
-        max_chord_error=tolerance,
-        max_segments=segment_limit,
-    )
     terminals = (
         tuple(surface.trim_rims) if surface.is_open_shell else tuple(surface.end_caps)
     )
@@ -1044,63 +1216,108 @@ def build_cone_projection_layers(
             "component-aware cone shading requires one or two non-degenerate "
             "terminals on a finite single-nappe cone"
         )
-    outer = tuple(proxy.vertices)
-    projected = tuple(
-        _project_cone_terminal(
-            terminal,
-            parallel_view,
-            tolerance=tolerance,
-            segment_limit=segment_limit,
-        )
-        for terminal in terminals
-    )
-    active = tuple(item for item in projected if item.rim is not None)
-    if len(active) == 2 and active[0].front_facing == active[1].front_facing:
-        raise ProjectionProxyError(
+    parts = _build_axial_projection_parts(
+        surface,
+        terminals,
+        parallel_view,
+        tolerance=tolerance,
+        segment_limit=segment_limit,
+        inconsistent_facing_message=(
             "frustum terminals do not separate into opposite projection sheets"
-        )
-
-    back_lateral: list[ProjectionPath] = [outer]
-    front_lateral: list[ProjectionPath] = [outer]
-    back_caps: list[ProjectionPath] = []
-    front_caps: list[ProjectionPath] = []
-    for terminal in active:
-        assert terminal.rim is not None
-        hole = tuple(reversed(terminal.rim))
-        if terminal.front_facing:
-            front_lateral.append(hole)
-            if not surface.is_open_shell:
-                front_caps.append(terminal.rim)
-        else:
-            back_lateral.append(hole)
-            if not surface.is_open_shell:
-                back_caps.append(terminal.rim)
-
-    back = ConeProjectionSheet(tuple(back_lateral), tuple(back_caps))
-    front = ConeProjectionSheet(tuple(front_lateral), tuple(front_caps))
-    opaque_lateral: tuple[ProjectionPath, ...] = (
-        (outer,)
-        if surface.is_open_shell
-        else (outer, *(tuple(reversed(rim)) for rim in front_caps))
-    )
-    opaque_caps = () if surface.is_open_shell else tuple(front_caps)
-    terminal_facing = tuple(
-        sorted(
-            ((item.terminal_id, item.front_facing) for item in projected),
-            key=lambda item: item[0],
-        )
+        ),
     )
     return ConeProjectionLayers(
         surface_id=surface.surface_id,
-        proxy=proxy,
-        back=back,
-        front=front,
-        opaque_lateral_paths=opaque_lateral,
-        opaque_cap_paths=opaque_caps,
-        terminal_front_facing=(
-            projected[0].front_facing if len(projected) == 1 else None
+        proxy=parts.proxy,
+        back=ConeProjectionSheet(
+            parts.back_lateral_paths,
+            parts.back_cap_paths,
         ),
-        terminal_front_facing_by_id=terminal_facing,
+        front=ConeProjectionSheet(
+            parts.front_lateral_paths,
+            parts.front_cap_paths,
+        ),
+        opaque_lateral_paths=parts.opaque_lateral_paths,
+        opaque_cap_paths=parts.opaque_cap_paths,
+        terminal_front_facing=parts.terminal_front_facing,
+        terminal_front_facing_by_id=parts.terminal_front_facing_by_id,
+    )
+
+
+def _build_open_cylinder_projection_layers(
+    surface: CylinderSpec,
+    view: ParallelViewInput,
+    *,
+    max_chord_error: float = 1.0e-3,
+    max_segments: int = 4096,
+) -> _CylinderProjectionLayers:
+    """Build private two-sheet masks for a finite open cylinder shell."""
+
+    if not isinstance(surface, CylinderSpec):
+        raise TypeError("surface must be a CylinderSpec")
+    if not surface.is_open_shell:
+        raise ProjectionProxyError(
+            "open-cylinder projection layers require CylinderModel.OPEN"
+        )
+    terminals = tuple(surface.trim_rims)
+    if len(terminals) != 2:
+        raise ProjectionProxyError(
+            "an open cylinder requires exactly two finite trim rims"
+        )
+    parallel_view = _coerce_view(view)
+    tolerance = _positive(max_chord_error, "max_chord_error")
+    segment_limit = _segment_limit(max_segments)
+    parts = _build_axial_projection_parts(
+        surface,
+        terminals,
+        parallel_view,
+        tolerance=tolerance,
+        segment_limit=segment_limit,
+        inconsistent_facing_message=(
+            "cylinder terminals do not separate into opposite projection sheets"
+        ),
+    )
+    projected_rims = tuple(
+        rim for _terminal_id, rim in parts.projected_terminal_rims if rim is not None
+    )
+    opaque_lateral_paths = parts.opaque_lateral_paths
+    if len(projected_rims) == 2:
+        screen_scale = max(
+            1.0,
+            *(
+                abs(float(component))
+                for path in projected_rims
+                for point in path
+                for component in point
+            ),
+        )
+        intersection = _convex_projection_intersection(
+            projected_rims[0],
+            projected_rims[1],
+            epsilon=max(
+                512.0 * np.finfo(float).eps * screen_scale,
+                tolerance * 1.0e-9,
+            ),
+        )
+        if intersection is not None:
+            opaque_lateral_paths = (
+                parts.opaque_lateral_paths[0],
+                tuple(reversed(intersection)),
+            )
+    return _CylinderProjectionLayers(
+        surface_id=surface.surface_id,
+        proxy=parts.proxy,
+        back=_CylinderProjectionSheet(
+            parts.back_lateral_paths,
+            parts.back_cap_paths,
+        ),
+        front=_CylinderProjectionSheet(
+            parts.front_lateral_paths,
+            parts.front_cap_paths,
+        ),
+        opaque_lateral_paths=opaque_lateral_paths,
+        opaque_cap_paths=parts.opaque_cap_paths,
+        terminal_front_facing_by_id=parts.terminal_front_facing_by_id,
     )
 
 

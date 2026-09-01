@@ -26,7 +26,8 @@ versioned JSON bridges                 polyhedron_visibility
                                                ├── open-face / hinge solver
                                                ├── convex-section solver
                                                ├── source/copy identity handoff
-                                               └── derived-dihedral compositor
+                                               ├── derived-dihedral compositor
+                                               └── registered quadric scene coordinator
 
 source-project build ──► disposable ShapeAsset / compositing / Manim source
                      └─► build manifest with node keys + used revision set
@@ -60,6 +61,11 @@ operates on explicit topology and a parallel projection:
 - `BasePlaneRotation3D` for a center-relative rotation template that turns one
   validated source face into the horizontal bottom plane; each entity's local
   placement moves that center with the entity.
+- `SceneOcclusionCoordinator` for explicit dispatch between the unchanged
+  global-disjoint path, the unchanged one-surface section path, and the narrow
+  cone/cylinder plus two registered tangent-sphere path. The latter keeps
+  contact and section curves as independent analytic boundary fragments and
+  never relaxes the global sorter's strict-separation contract.
 
 The solver is NumPy-based. The Cairo binding uses fixed-capacity Manim line
 slots so object identity stays stable across animation frames. Exact

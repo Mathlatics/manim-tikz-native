@@ -91,6 +91,7 @@ from .projection import (
     OpaqueProjectionProxy,
     ProjectionProxyError,
     ProjectionSubdivisionError,
+    _build_open_cylinder_projection_layers,
     build_cone_projection_layers,
     build_opaque_projection_proxy,
 )
@@ -1490,8 +1491,28 @@ class QuadricOcclusion3D:
         surface: QuadricSurfaceSpec,
         view: ParallelView,
     ) -> _PreparedConeFill | None:
+        """Prepare terminal-aware masks; keep the legacy name for tracing hooks."""
+
+        if isinstance(surface, CylinderSpec):
+            if not surface.is_open_shell:
+                return None
+            try:
+                cylinder_layers = _build_open_cylinder_projection_layers(
+                    surface,
+                    view,
+                    max_chord_error=self.max_chord_error,
+                    max_segments=self.limits.max_surface_segments,
+                )
+            except ProjectionSubdivisionError as exc:
+                raise QuadricManimCapacityError(str(exc)) from exc
+            except ProjectionProxyError as exc:
+                raise QuadricManimError(
+                    f"open cylinder component fill failed: {exc}"
+                ) from exc
+            return _prepared_cone_fill(cylinder_layers)
         if not self.style.cone_component_shading or not isinstance(
-            surface, ConeSpec
+            surface,
+            ConeSpec,
         ):
             return None
         try:
@@ -1533,7 +1554,10 @@ class QuadricOcclusion3D:
             if performance_attempt is not None:
                 performance_attempt.cache_miss("surface_component_fill")
             prepared = tuple(
-                (surface.surface_id, self._prepare_cone_fill_for_surface(surface, view))
+                (
+                    surface.surface_id,
+                    self._prepare_cone_fill_for_surface(surface, view),
+                )
                 for surface in surfaces
             )
             self._surface_view_cache.store(

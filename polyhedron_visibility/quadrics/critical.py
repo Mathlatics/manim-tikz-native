@@ -63,8 +63,97 @@ class CriticalEventKind(str, Enum):
 
 
 @dataclass(frozen=True, slots=True)
+class _NestedSilhouetteTangencyCertificate:
+    """One internal geometric witness for a nested silhouette tangency.
+
+    This certificate is deliberately private.  It is constructed only after
+    the scene coordinator has validated canonical sphere/mother silhouettes
+    and reconstructed their common point on an already certified contact
+    circle.  Keeping the three-curve witness here prevents a bare curve
+    parameter from bypassing the ordinary polynomial critical-event solver.
+    """
+
+    curve_id: str
+    surface_id: str
+    parameter: float
+    witness_curve_id: str
+    witness_parameter: float
+    contact_curve_id: str
+    contact_parameter: float
+    crossing_id: str
+    world_point: tuple[float, float, float]
+    world_residual: float
+
+    def __post_init__(self) -> None:
+        for name in (
+            "curve_id",
+            "surface_id",
+            "witness_curve_id",
+            "contact_curve_id",
+            "crossing_id",
+        ):
+            value = getattr(self, name)
+            if not isinstance(value, str) or not value.strip():
+                raise CriticalEventError(
+                    f"nested silhouette certificate {name} must be a "
+                    "non-empty string"
+                )
+            object.__setattr__(self, name, value.strip())
+        if len(
+            {
+                self.curve_id,
+                self.witness_curve_id,
+                self.contact_curve_id,
+            }
+        ) != 3:
+            raise CriticalEventError(
+                "nested silhouette certificate requires three distinct curves"
+            )
+        for name in (
+            "parameter",
+            "witness_parameter",
+            "contact_parameter",
+            "world_residual",
+        ):
+            raw = getattr(self, name)
+            if isinstance(raw, (bool, np.bool_)):
+                raise CriticalEventError(
+                    f"nested silhouette certificate {name} must be finite"
+                )
+            try:
+                value = float(raw)
+            except (TypeError, ValueError, OverflowError) as exc:
+                raise CriticalEventError(
+                    f"nested silhouette certificate {name} must be finite"
+                ) from exc
+            if not isfinite(value):
+                raise CriticalEventError(
+                    f"nested silhouette certificate {name} must be finite"
+                )
+            if name == "world_residual" and value < 0.0:
+                raise CriticalEventError(
+                    "nested silhouette certificate world_residual must be "
+                    "non-negative"
+                )
+            object.__setattr__(self, name, value)
+        try:
+            point = tuple(float(item) for item in self.world_point)
+        except (TypeError, ValueError, OverflowError) as exc:
+            raise CriticalEventError(
+                "nested silhouette certificate world_point must contain three "
+                "finite values"
+            ) from exc
+        if len(point) != 3 or not all(isfinite(item) for item in point):
+            raise CriticalEventError(
+                "nested silhouette certificate world_point must contain three "
+                "finite values"
+            )
+        object.__setattr__(self, "world_point", point)
+
+
+@dataclass(frozen=True, slots=True)
 class CriticalEvidence:
-    """One exact equation responsible for one critical parameter."""
+    """One exact equation or registered geometric certificate for an event."""
 
     kind: CriticalEventKind
     equation: str
@@ -813,6 +902,9 @@ def compute_curve_critical_events(
     view: ParallelView,
     *,
     context: ContextInput = None,
+    _nested_silhouette_tangencies: Sequence[
+        _NestedSilhouetteTangencyCertificate
+    ] | None = None,
 ) -> tuple[CriticalEvent, ...]:
     """Return every analytic parameter where visibility can change."""
 
@@ -829,6 +921,88 @@ def compute_curve_critical_events(
     surface_items = tuple(sorted(surface_items, key=lambda item: item.surface_id))
     resolved = _resolved_context(curve, surface_items, context)
     chart = _curve_chart(curve)
+    parameter_epsilon = resolved.epsilon(GeometryQuantity.PARAMETER)
+    certificate_items = (
+        ()
+        if _nested_silhouette_tangencies is None
+        else tuple(_nested_silhouette_tangencies)
+    )
+    if not all(
+        isinstance(item, _NestedSilhouetteTangencyCertificate)
+        for item in certificate_items
+    ):
+        raise TypeError(
+            "_nested_silhouette_tangencies must contain validated internal "
+            "certificates"
+        )
+    if any(item.curve_id != curve.curve_id for item in certificate_items):
+        raise CriticalEventError(
+            "nested silhouette certificate does not belong to the selected curve"
+        )
+    unknown = sorted(
+        {item.surface_id for item in certificate_items} - set(surface_ids)
+    )
+    if unknown:
+        raise CriticalEventError(
+            "nested silhouette certificates reference unknown surfaces: "
+            + ", ".join(unknown)
+        )
+    crossing_ids = tuple(item.crossing_id for item in certificate_items)
+    if len(set(crossing_ids)) != len(crossing_ids):
+        raise CriticalEventError(
+            "nested silhouette certificates require unique crossing witnesses"
+        )
+    certified_by_surface: dict[
+        str,
+        tuple[_NestedSilhouetteTangencyCertificate, ...],
+    ] = {}
+    for surface_id in sorted({item.surface_id for item in certificate_items}):
+        group = tuple(
+            sorted(
+                (
+                    item
+                    for item in certificate_items
+                    if item.surface_id == surface_id
+                ),
+                key=lambda item: (item.parameter, item.crossing_id),
+            )
+        )
+        if len(group) != 2 or len({item.witness_curve_id for item in group}) != 2:
+            raise CriticalEventError(
+                "nested silhouette certification requires exactly two distinct "
+                "generator witnesses per mother surface"
+            )
+        if any(
+            not curve.domain.contains(
+                item.parameter,
+                tolerance=parameter_epsilon,
+            )
+            for item in group
+        ):
+            raise CriticalEventError(
+                "nested silhouette certificate lies outside the curve domain"
+            )
+        if group[1].parameter - group[0].parameter <= parameter_epsilon:
+            raise CriticalEventError(
+                "nested silhouette certificates require two distinct parameters"
+            )
+        boundary_epsilon = resolved.epsilon(GeometryQuantity.BOUNDARY)
+        if any(item.world_residual > boundary_epsilon for item in group):
+            raise CriticalEventError(
+                "nested silhouette certificate exceeds the world boundary "
+                "tolerance"
+            )
+        if float(
+            np.linalg.norm(
+                np.asarray(group[1].world_point, dtype=float)
+                - np.asarray(group[0].world_point, dtype=float)
+            )
+        ) <= boundary_epsilon:
+            raise CriticalEventError(
+                "nested silhouette certificates do not identify two distinct "
+                "world witnesses"
+            )
+        certified_by_surface[surface_id] = group
     direction = np.asarray(view.view_direction, dtype=float)
     entries: list[tuple[float, CriticalEvidence]] = [
         (
@@ -868,7 +1042,54 @@ def compute_curve_critical_events(
             _normalized_coefficients(c),
             c_scale,
         )
-        if curve_on_support:
+        certified_tangencies = certified_by_surface.get(surface.surface_id)
+        if certified_tangencies is not None:
+            for certificate in certified_tangencies:
+                parameter = min(
+                    curve.domain.end,
+                    max(curve.domain.start, certificate.parameter),
+                )
+                support_equation = (
+                    "nested_tangent_silhouette_support:"
+                    f"{certificate.crossing_id}"
+                )
+                contact_equation = (
+                    "nested_tangent_silhouette_contact:"
+                    f"{certificate.crossing_id}"
+                )
+                entries.append(
+                    (
+                        parameter,
+                        CriticalEvidence(
+                            CriticalEventKind.SUPPORT_TANGENCY,
+                            support_equation,
+                            surface.surface_id,
+                            "geometric_certificate",
+                            (),
+                            parameter,
+                            2,
+                            certificate.world_residual,
+                            False,
+                        ),
+                    )
+                )
+                entries.append(
+                    (
+                        parameter,
+                        CriticalEvidence(
+                            CriticalEventKind.CURVE_SURFACE_INTERSECTION,
+                            contact_equation,
+                            surface.surface_id,
+                            "geometric_certificate",
+                            (),
+                            parameter,
+                            2,
+                            certificate.world_residual,
+                            False,
+                        ),
+                    )
+                )
+        elif curve_on_support:
             # Along a curve already contained in the quadric support, c=0 and
             # the ray discriminant is exactly b**2.  Solving that expanded
             # repeated-root polynomial is needlessly ill-conditioned when a
@@ -916,17 +1137,18 @@ def compute_curve_critical_events(
                     context=resolved,
                 )
             )
-        entries.extend(
-            _equation_events(
-                chart,
-                kind=CriticalEventKind.CURVE_SURFACE_INTERSECTION,
-                equation="curve_on_surface",
-                surface_id=surface.surface_id,
-                polynomial=c,
-                scale=c_scale,
-                context=resolved,
+        if certified_tangencies is None:
+            entries.extend(
+                _equation_events(
+                    chart,
+                    kind=CriticalEventKind.CURVE_SURFACE_INTERSECTION,
+                    equation="curve_on_surface",
+                    surface_id=surface.surface_id,
+                    polynomial=c,
+                    scale=c_scale,
+                    context=resolved,
+                )
             )
-        )
         entries.extend(
             _equation_events(
                 chart,
@@ -952,7 +1174,7 @@ def compute_curve_critical_events(
         entries,
         curve=curve,
         domain=curve.domain,
-        parameter_epsilon=resolved.epsilon(GeometryQuantity.PARAMETER),
+        parameter_epsilon=parameter_epsilon,
         point_epsilon=resolved.epsilon(GeometryQuantity.BOUNDARY),
     )
 

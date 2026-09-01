@@ -70,6 +70,23 @@ class QuadricPolynomialRootTests(unittest.TestCase):
             (),
         )
 
+    def test_descartes_rule_certifies_large_root_free_chart_tail(self) -> None:
+        coefficients = (
+            1.9648918334558033e-08,
+            0.0015214298131578652,
+            29.451337575467303,
+            0.0015214298131561636,
+            1.9648918334514083e-08,
+        )
+
+        self.assertEqual(
+            solve_real_polynomial(
+                coefficients,
+                domain=(0.0, 154861.43178514956),
+            ),
+            (),
+        )
+
     def test_one_sided_chart_root_is_polished_in_original_coordinates(self) -> None:
         coefficients = (
             1.6160254037844395,

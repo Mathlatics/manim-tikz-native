@@ -169,6 +169,7 @@ def _localized_surface(
             surface.radius / scale,
             axial_range,
             radial_axis=surface.radial_axis,
+            model=surface.model,
         )
     return ConeSpec(
         surface.surface_id,

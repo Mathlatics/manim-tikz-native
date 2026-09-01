@@ -24,6 +24,7 @@ _EXPORTS: Final[dict[str, tuple[str, str]]] = {
     "CircularTrimRimSpec": (".contract", "CircularTrimRimSpec"),
     "ConeModel": (".contract", "ConeModel"),
     "ConeSpec": (".contract", "ConeSpec"),
+    "CylinderModel": (".contract", "CylinderModel"),
     "CylinderSpec": (".contract", "CylinderSpec"),
     "PlanarCapSpec": (".contract", "PlanarCapSpec"),
     "PlaneDisplayPatchSpec": (".contract", "PlaneDisplayPatchSpec"),
@@ -827,6 +828,59 @@ _EXPORTS: Final[dict[str, tuple[str, str]]] = {
     "sample_section_transition": (
         ".transition",
         "sample_section_transition",
+    ),
+    "NESTED_TANGENT_CONTACT_EVIDENCE_SCHEMA": (
+        ".nested_tangent_compositing",
+        "NESTED_TANGENT_CONTACT_EVIDENCE_SCHEMA",
+    ),
+    "NESTED_TANGENT_PARENT_FRAME_SCHEMA": (
+        ".nested_tangent_compositing",
+        "NESTED_TANGENT_PARENT_FRAME_SCHEMA",
+    ),
+    "NestedTangentCompositingError": (
+        ".nested_tangent_compositing",
+        "NestedTangentCompositingError",
+    ),
+    "NestedTangentContactEvidence": (
+        ".nested_tangent_compositing",
+        "NestedTangentContactEvidence",
+    ),
+    "NestedTangentParentFrame": (
+        ".nested_tangent_compositing",
+        "NestedTangentParentFrame",
+    ),
+    "NestedTangentSphereSpec": (
+        ".nested_tangent_compositing",
+        "NestedTangentSphereSpec",
+    ),
+    "TangentSpherePlanePosition": (
+        ".nested_tangent_compositing",
+        "TangentSpherePlanePosition",
+    ),
+    "compute_nested_tangent_parent_frame": (
+        ".nested_tangent_compositing",
+        "compute_nested_tangent_parent_frame",
+    ),
+    "SCENE_OCCLUSION_FRAME_SCHEMA": (
+        ".scene_occlusion",
+        "SCENE_OCCLUSION_FRAME_SCHEMA",
+    ),
+    "SceneOcclusionCoordinator": (
+        ".scene_occlusion",
+        "SceneOcclusionCoordinator",
+    ),
+    "SceneOcclusionError": (".scene_occlusion", "SceneOcclusionError"),
+    "SceneOcclusionFrame": (".scene_occlusion", "SceneOcclusionFrame"),
+    "SceneOcclusionPath": (".scene_occlusion", "SceneOcclusionPath"),
+    "SceneOcclusionRequest": (".scene_occlusion", "SceneOcclusionRequest"),
+    "SceneSectionSpec": (".scene_occlusion", "SceneSectionSpec"),
+    "canonical_scene_occlusion_json": (
+        ".scene_occlusion",
+        "canonical_scene_occlusion_json",
+    ),
+    "compute_scene_occlusion_frame": (
+        ".scene_occlusion",
+        "compute_scene_occlusion_frame",
     ),
     "GLOBAL_QUADRIC_FRAME_SCHEMA": (
         ".global_occlusion",
