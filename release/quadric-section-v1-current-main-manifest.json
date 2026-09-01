@@ -1,15 +1,15 @@
 {
   "schema": "manim-quadric-section-release-manifest/v1",
-  "release_id": "quadric-section-v1-current-main-dandelin-cone-cylinder-switch-2026-09-01",
+  "release_id": "quadric-section-v1-current-main-tan-half-tail-fix-2026-09-01",
   "contract_id": "quadric-section-v1",
-  "implementation_base_commit": "5fcceb4a97c8796782f3b1b9f89f001e60b50208",
-  "implementation_head_commit": "42ae3e1de44064cee116d7bc2fbbf7b99b77c3bc",
-  "implementation_tree_sha": "b11f234af8fb338d9ed9bde294895d8c6893cc11",
-  "merged_main_commit": "7b29523e7890fae3b9fef4b4c59b1f112c9d0566",
+  "implementation_base_commit": "9dc878585111c884e6aaecac82b2474fa46b80b8",
+  "implementation_head_commit": "f1ba9c09338da315d0cd70e9c6f941b2a7063e79",
+  "implementation_tree_sha": "ab8ba37cb21f1b68bcb2f5db9021edc8d5e371e8",
+  "merged_main_commit": "dc2659a4a33d96934cee4780f2e34e79efd11ff8",
   "components": {
     "asset_compiler": {
       "contract_revision": "tikz-native-contract:asset_compiler/v2",
-      "render_revision": "source-sha256:60907e2a0c656dc3f2c2944e7d7d9939382d08fe7e347a7792c8956b0107adf2"
+      "render_revision": "source-sha256:20b901494f666c90592cd79f0eadfa592e902a2632bbf5d9234aa358cf40a307"
     },
     "quadric_geometry": {
       "contract_revision": "tikz-native-contract:quadric_geometry/v1",
@@ -17,15 +17,15 @@
     },
     "quadric_visibility": {
       "contract_revision": "tikz-native-contract:quadric_visibility/v2",
-      "render_revision": "source-sha256:63978204830f1c6fd559461f152d496b7b27515235ff922c99e94451f9f539f7"
+      "render_revision": "source-sha256:c43e184d3fec9d3419476ed056b5ed20a57c1242a8b1d9241d2d44805af98b5b"
     },
     "quadric_manim": {
       "contract_revision": "tikz-native-contract:quadric_manim/v1",
-      "render_revision": "source-sha256:f1cf9ba6c56870a2199c3cc129509d41518059dcd2776555873697c63f506629"
+      "render_revision": "source-sha256:d5b28c512d4135dfb5a81cf187b31d1c5f8c2a1a256892b77cd3e110086ef11f"
     }
   },
   "build_artifacts": {
-    "source_date_epoch": 1788258343,
+    "source_date_epoch": 1788270921,
     "builder_python": "3.12.13",
     "build_frontend": "build 1.6.0",
     "build_backend": "setuptools 84.0.0",
@@ -34,11 +34,11 @@
     "twine_check": "twine 7.0.0 passed",
     "wheel": {
       "filename": "manim_tikz_native-0.1.1-py3-none-any.whl",
-      "sha256": "c69692d38b8ab38133d004a3947f97934e1ac4968e5435d93f632ee91a145c8a"
+      "sha256": "f8560843ca50e51f675229677430f23e0581749a56ab57943a2fff6de711d26b"
     },
     "sdist": {
       "filename": "manim_tikz_native-0.1.1.tar.gz",
-      "sha256": "7a5083db8a37a6329e0a7160dc36a9178b232a998889d8bf9246ef13103f726b",
+      "sha256": "540a2b72efd670fcdb1eab14e98787c4e21189a1e25b65fb8c656422b13e946a",
       "normalization": "sorted regular files and links; USTAR; uid/gid 0; root owner/group; SOURCE_DATE_EPOCH mtime; gzip -n -9 equivalent; gzip OS byte 255"
     }
   },
@@ -368,6 +368,31 @@
       "outcome": "pass",
       "test": "tests.test_open_cylinder_component_fill.OpenCylinderManimBindingTests.test_head_on_cairo_keeps_open_center_clear_and_closed_center_filled"
     },
+    "tan_half_clipped_tail_root_domain": {
+      "layer": "renderer_neutral",
+      "outcome": "pass",
+      "test": "tests.test_quadric_curve_intersections.ProjectedConicCrossingTests.test_chart_pole_tail_outside_root_bound_is_a_valid_empty_domain"
+    },
+    "tan_half_right_clipped_tail_root_domain": {
+      "layer": "renderer_neutral",
+      "outcome": "pass",
+      "test": "tests.test_quadric_curve_intersections.ProjectedConicCrossingTests.test_chart_pole_right_tail_outside_root_bound_keeps_left_root"
+    },
+    "tan_half_two_tail_roots": {
+      "layer": "renderer_neutral",
+      "outcome": "pass",
+      "test": "tests.test_quadric_curve_intersections.ProjectedConicCrossingTests.test_chart_pole_two_intersecting_tails_keep_both_roots"
+    },
+    "tan_half_near_pole_authored_endpoint": {
+      "layer": "renderer_neutral",
+      "outcome": "pass",
+      "test": "tests.test_quadric_curve_intersections.ProjectedConicCrossingTests.test_authored_endpoint_near_chart_pole_remains_finite"
+    },
+    "extended_hidden_curve_policy_terminal_keyframe": {
+      "layer": "manim",
+      "outcome": "pass",
+      "test": "tests.test_quadric_extended_generator.ExtendedAcceptanceGeneratorTests.test_hidden_curve_policy_terminal_keyframe_builds"
+    },
     "dandelin_v2_contract_restore": {
       "layer": "renderer_neutral",
       "outcome": "pass",
@@ -618,6 +643,24 @@
         "open_cylinder_lateral_geometry",
         "open_cylinder_lateral_binding",
         "open_cylinder_lateral_cairo"
+      ]
+    },
+    {
+      "id": "tan_half_clipped_chart_pole_tails",
+      "kind": "renderer_neutral_and_manim",
+      "expected": {
+        "pole_infinity_precedes_root_bound_clipping": true,
+        "empty_clipped_tails_are_valid": true,
+        "intersecting_tails_preserve_both_roots": true,
+        "near_pole_authored_endpoint_remains_finite": true,
+        "terminal_hidden_curve_keyframe_builds": true
+      },
+      "evidence_ids": [
+        "tan_half_clipped_tail_root_domain",
+        "tan_half_right_clipped_tail_root_domain",
+        "tan_half_two_tail_roots",
+        "tan_half_near_pole_authored_endpoint",
+        "extended_hidden_curve_policy_terminal_keyframe"
       ]
     }
   ]
