@@ -8,7 +8,9 @@ import unittest
 from unittest.mock import patch
 
 import numpy as np
+from manim import Scene
 
+from examples.quadrics.extended_acceptance_demo import build_acceptance_state
 from scripts import generate_quadric_extended_acceptance as generator
 
 
@@ -45,6 +47,21 @@ class _FakeProcessPoolExecutor:
 
 
 class ExtendedAcceptanceGeneratorTests(unittest.TestCase):
+    def test_hidden_curve_policy_terminal_keyframe_builds(self) -> None:
+        scene = Scene()
+        state = build_acceptance_state(
+            scene,
+            "hidden_curve_policies",
+            progress=1.0,
+            with_labels=False,
+        )
+        try:
+            self.assertEqual(state.scenario_id, "hidden_curve_policies")
+            self.assertEqual(len(state.controllers), 3)
+            self.assertEqual(len(state.authorings), 3)
+        finally:
+            state.restore()
+
     def test_display_probe_coordinates_include_controller_offset(self) -> None:
         controller = type(
             "Controller",

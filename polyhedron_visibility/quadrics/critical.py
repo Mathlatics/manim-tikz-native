@@ -572,21 +572,43 @@ def _tan_half_angle_root_domains(
         if chart.curve_domain.start < value < chart.curve_domain.end
     )
     boundaries = (chart.curve_domain.start, *poles, chart.curve_domain.end)
-    pole_values = chart.chart_poles
+    pole_values = frozenset(chart.chart_poles)
 
     def is_pole(value: float) -> bool:
-        return any(abs(value - pole) <= parameter_epsilon for pole in pole_values)
+        # ``boundaries`` reuses the exact chart-pole values above.  Do not use
+        # the geometric parameter tolerance here: an authored endpoint merely
+        # near a pole still has a finite tan-half value and must not be widened
+        # to infinity.
+        return value in pole_values
 
     result: list[ParameterInterval] = []
     for start, end in zip(boundaries, boundaries[1:]):
-        raw_lower = -root_bound if is_pole(start) else tan(0.5 * start)
-        raw_upper = root_bound if is_pole(end) else tan(0.5 * end)
-        if raw_lower > raw_upper + parameter_epsilon:
+        start_is_pole = is_pole(start)
+        end_is_pole = is_pole(end)
+        raw_lower = None if start_is_pole else tan(0.5 * start)
+        raw_upper = None if end_is_pole else tan(0.5 * end)
+        # A chart pole is a true -/+ infinity endpoint.  ``root_bound`` only
+        # clips the polynomial search and cannot be substituted before this
+        # monotonicity check: a tail wholly outside the finite root bound is a
+        # valid empty interval, not evidence of a broken chart.
+        if (
+            raw_lower is not None
+            and raw_upper is not None
+            and raw_lower > raw_upper + parameter_epsilon
+        ):
             raise CriticalEventError(
                 "tan-half-angle chart interval is not monotone between poles"
             )
-        lower = max(-root_bound, float(raw_lower))
-        upper = min(root_bound, float(raw_upper))
+        lower = (
+            -root_bound
+            if start_is_pole
+            else max(-root_bound, float(raw_lower))
+        )
+        upper = (
+            root_bound
+            if end_is_pole
+            else min(root_bound, float(raw_upper))
+        )
         if lower > upper + parameter_epsilon:
             continue
         if lower > upper:
