@@ -11,43 +11,55 @@ global-overlap demo passes a custom general parallel view because its entities
 are positioned specifically for that overlap test.
 
 ```bash
-manim -pql examples/quadrics/quadric_occlusion_demo.py \
+python -m manim --renderer cairo -ql \
+  examples/quadrics/quadric_occlusion_demo.py \
   MovingSphereSectionDemo ObliqueCylinderSectionDemo \
   ConeSectionFamiliesDemo ConeSectionTopologyTransitionDemo \
   GlobalQuadricOcclusionDemo
 
-manim -r 480,270 --fps 15 \
+python -m manim --renderer cairo -r 480,270 --fps 15 \
   examples/quadrics/quadric_section_quick_start.py ConeSectionQuickStart
 
-manim -r 480,270 --fps 15 \
+python -m manim --renderer cairo -r 480,270 --fps 15 \
   examples/quadrics/quadric_section_rig_quick_start.py \
   ConeSectionRigQuickStart
 
-manim -pql examples/quadrics/unified_boundary_visibility_demo.py \
+python -m manim --renderer cairo -ql \
+  examples/quadrics/unified_boundary_visibility_demo.py \
   UnifiedBoundaryVisibilityComparison
 
-manim -pql examples/quadrics/section_plane_cone_boundary_demo.py \
+python -m manim --renderer cairo -ql \
+  examples/quadrics/section_plane_cone_boundary_demo.py \
   SectionPlaneConeBoundaryDemo
 
-manim -pql examples/quadrics/cone_model_comparison_demo.py \
+python -m manim --renderer cairo -ql \
+  examples/quadrics/cone_model_comparison_demo.py \
   ConeModelComparisonDemo ConeModelPlaneComparisonDemo
 
-manim -ql --fps 8 examples/quadrics/frustum_component_shading_demo.py \
+python -m manim --renderer cairo -ql --fps 8 \
+  examples/quadrics/frustum_component_shading_demo.py \
   FrustumComponentShadingComparison
 
-manim -ql --fps 8 examples/quadrics/composite_open_double_section_demo.py \
+python -m manim --renderer cairo -ql --fps 8 \
+  examples/quadrics/composite_open_double_section_demo.py \
   CompositeOpenDoubleSectionDemo
 
-manim -pql examples/quadrics/extended_acceptance_demo.py \
+python -m manim --renderer cairo -ql \
+  examples/quadrics/extended_acceptance_demo.py \
   ClosedOpenComparisonAcceptance SectionTopologyAcceptance \
   CurvePolicyComparisonAcceptance SideViewTrimRimAcceptance \
   CapChordActivationAcceptance
 
-manim -ql --fps 8 \
+python -m manim --renderer cairo -ql --fps 8 \
   examples/classroom_cone_sections/classroom_cone_sections.py \
   ConicFamilyTransitionLesson ClosedVsOpenConeLesson \
   HiddenCurvePoliciesLesson ProjectionDegenerationLesson \
   CapChordTopologyLesson
+
+python -m manim --renderer cairo --disable_caching -ql --fps 12 \
+  --media_dir media/dandelin-cone-cylinder-switch \
+  examples/dandelin_cone_cylinder_switch/dandelin_cone_cylinder_switch.py \
+  DandelinConeCylinderSwitch
 ```
 
 - `MovingSphereSectionDemo` recomputes a moving circular section and its
@@ -107,6 +119,12 @@ manim -ql --fps 8 \
   paced teaching stops, parameter notes, mathematical conclusions, teacher
   prompts, and a checked-in 15-frame Cairo gallery.  See the
   [classroom guide](../classroom_cone_sections/README.md).
+- `DandelinConeCylinderSwitch` uses the narrow registered scene coordinator:
+  one open cone/cylinder mother surface, one tangent plane, exactly two tangent
+  spheres, and independent analytic boundary sources. Curve visibility and the
+  teaching painter graph are recomputed per frame; translucent fills remain a
+  teaching-layer model rather than physical optical transparency. Its final
+  display assembly is example code, not a general public switch facade.
 
 `QuadricOcclusion3D` remains the fixed-topology controller for ordinary scenes.
 For a topology-changing rotating-plane section, first build the analytic

@@ -102,7 +102,7 @@ painter order.
 The compositor does not decide whether a line is visible. It only orders the
 fragments supplied by the visibility layer.
 
-## Production adoption and migration plan
+## Production adoption and current boundary
 
 The closed-polyhedron production chain was the first migrated slice:
 
@@ -185,16 +185,23 @@ are matched with a parameter-ordered sweep instead of comparing the Cartesian
 product of all fragments.  A separate fragment-pair-candidate limit fails
 closed before an unexpectedly dense arrangement can consume unbounded work.
 
-The next migration should remain a separate product-binding change:
+The production migration described above is complete for the supported
+open-face path:
 
-1. map these renderer-neutral fragments to preallocated generic open-face Cairo
-   slots and one managed painter z-band;
-2. make frame application rollback-safe and cover fade/restore/reattach
-   lifecycles;
-3. route the actual TikZ-native generated-source path through an explicit,
-   persisted unified-compositing mode;
-4. use the same path-fragment contracts for conics and quadrics rather than
-   adding a parallel curved-geometry visibility stack.
+1. renderer-neutral fragments map to preallocated generic open-face Cairo
+   slots inside one managed painter z-band;
+2. frame application is transactional and covers fade, restore, detach, and
+   reattach lifecycles;
+3. source-authoritative projects generate the unified binding and fail closed
+   instead of selecting a legacy fallback; and
+4. quadric semantic boundaries reuse the shared analytic-fragment visibility
+   and deterministic painter-graph approach rather than treating every curve
+   as an unrelated overlay.
+
+This does not make the kernel a general mesh renderer or depth buffer. General
+non-convex faces, arbitrary curved faces, unconstrained intersecting surfaces,
+and several simultaneous cutting planes still require new geometry/topology
+contracts before they can enter these shared visibility and compositor layers.
 
 ## Invariants for future curved geometry
 

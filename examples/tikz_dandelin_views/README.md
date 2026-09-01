@@ -11,7 +11,33 @@ the same source geometry as:
    circles.
 
 Compile picture indices 1, 2, and 3 with the ordinary Provider fixed-view
-path. The source pins a painter mode on every picture instead of relying on a
+path. From the repository root, this copy-ready command writes three PNG files
+under the Git-ignored `media/` directory:
+
+```bash
+python - <<'PY'
+from pathlib import Path
+
+from tikz_native import compile_asset, render_static_png
+
+source = Path("examples/tikz_dandelin_views/tikz_dandelin_views.tex")
+output = Path("media/tikz-dandelin-views")
+for picture_index, name in enumerate(("spatial", "meridian", "section"), 1):
+    compiled = compile_asset(source, picture_index=picture_index)
+    render_static_png(
+        compiled,
+        output / f"{picture_index}-{name}.png",
+        pixel_width=960,
+        pixel_height=540,
+        media_dir=output / "manim-cache",
+    )
+PY
+```
+
+This is a static fixed-view Provider path. It is not a Source v3 request and
+does not produce a camera-motion Scene.
+
+The source pins a painter mode on every picture instead of relying on a
 default. The spatial picture opts into
 `depth_aware_teaching_transparent`. Existing quadric ray tests split cone
 boundaries, sphere silhouettes, contact circles, the conic, the cutting-plane

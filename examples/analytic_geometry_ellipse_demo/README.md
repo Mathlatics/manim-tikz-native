@@ -23,7 +23,7 @@
 ```bash
 MEDIA_DIR=/absolute/path/to/an-empty-output-directory
 
-python -m manim -ql \
+python -m manim --renderer cairo -ql \
   examples/analytic_geometry_ellipse_demo/scene.py \
   EllipseAnalyticGeometryDriverDemo \
   --media_dir "$MEDIA_DIR"

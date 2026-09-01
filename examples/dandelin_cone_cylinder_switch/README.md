@@ -50,8 +50,8 @@ r(z, p) = R + k0 (1 - p) z,    0 <= p <= 1
 ## 低清预览
 
 ```bash
-PYTHONPATH="$PWD" manim --renderer cairo --disable_caching -ql --fps 12 \
-  --media_dir artifacts/dandelin-cone-cylinder-switch/preview \
+python -m manim --renderer cairo --disable_caching -ql --fps 12 \
+  --media_dir media/dandelin-cone-cylinder-switch/preview \
   examples/dandelin_cone_cylinder_switch/dandelin_cone_cylinder_switch.py \
   DandelinConeCylinderSwitch
 ```

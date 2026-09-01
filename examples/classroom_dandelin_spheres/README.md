@@ -29,8 +29,8 @@ renderer-neutral 几何内核与截平面 compositor 计算；橙色球、球—
 在仓库根目录执行：
 
 ```bash
-manim --renderer cairo --disable_caching -ql --fps 12 \
-  --media_dir artifacts/classroom-dandelin-spheres/preview \
+python -m manim --renderer cairo --disable_caching -ql --fps 12 \
+  --media_dir media/classroom-dandelin-spheres/preview \
   examples/classroom_dandelin_spheres/classroom_dandelin_spheres.py \
   DandelinThreeConicsLesson
 ```
@@ -41,8 +41,8 @@ manim --renderer cairo --disable_caching -ql --fps 12 \
 ## 高清发布
 
 ```bash
-manim --renderer cairo --disable_caching -qh --fps 30 \
-  --media_dir artifacts/classroom-dandelin-spheres/release \
+python -m manim --renderer cairo --disable_caching -qh --fps 30 \
+  --media_dir media/classroom-dandelin-spheres/release \
   examples/classroom_dandelin_spheres/classroom_dandelin_spheres.py \
   DandelinThreeConicsLesson
 ```
