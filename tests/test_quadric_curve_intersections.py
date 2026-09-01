@@ -999,6 +999,133 @@ class ProjectedConicCrossingTests(unittest.TestCase):
         self.assertEqual(len(crossings), 1)
         self.assertAlmostEqual(crossings[0].first_parameter, 0.0)
 
+    def test_chart_pole_tail_outside_root_bound_is_a_valid_empty_domain(
+        self,
+    ) -> None:
+        arc = CircleArcCurve(
+            "arc",
+            (0.0, 0.0, 0.0),
+            1.0,
+            (0.0, 0.0, 1.0),
+            radial_axis=(1.0, 0.0, 0.0),
+            domain=ParameterInterval(2.9, 5.0),
+        )
+        line = SegmentCurve("line", (0.0, -2.0, 1.0), (0.0, 2.0, 1.0))
+
+        recovered_by_order: list[tuple[float, float]] = []
+        for curves in ((arc, line), (line, arc)):
+            with self.subTest(order=tuple(curve.curve_id for curve in curves)):
+                crossings = compute_projected_curve_crossings(
+                    curves,
+                    IDENTITY_VIEW,
+                )
+                self.assertEqual(len(crossings), 1)
+                crossing = crossings[0]
+                parameters = {
+                    crossing.first_curve_id: crossing.first_parameter,
+                    crossing.second_curve_id: crossing.second_parameter,
+                }
+                self.assertAlmostEqual(parameters["arc"], 3.0 * pi / 2.0)
+                self.assertAlmostEqual(parameters["line"], 0.25)
+                self.assertFalse(crossing.tangential)
+                recovered_by_order.append((parameters["arc"], parameters["line"]))
+        np.testing.assert_allclose(
+            recovered_by_order[0],
+            recovered_by_order[1],
+            rtol=0.0,
+            atol=1.0e-15,
+        )
+
+    def test_chart_pole_right_tail_outside_root_bound_keeps_left_root(
+        self,
+    ) -> None:
+        arc = CircleArcCurve(
+            "arc",
+            (0.0, 0.0, 0.0),
+            1.0,
+            (0.0, 0.0, 1.0),
+            radial_axis=(1.0, 0.0, 0.0),
+            domain=ParameterInterval(1.2, 3.4),
+        )
+        line = SegmentCurve("line", (0.0, -2.0, 1.0), (0.0, 2.0, 1.0))
+
+        crossings = compute_projected_curve_crossings(
+            (arc, line),
+            IDENTITY_VIEW,
+        )
+        self.assertEqual(len(crossings), 1)
+        crossing = crossings[0]
+        parameters = {
+            crossing.first_curve_id: crossing.first_parameter,
+            crossing.second_curve_id: crossing.second_parameter,
+        }
+        self.assertAlmostEqual(parameters["arc"], pi / 2.0)
+        self.assertAlmostEqual(parameters["line"], 0.75)
+        self.assertFalse(crossing.tangential)
+
+    def test_chart_pole_two_intersecting_tails_keep_both_roots(self) -> None:
+        arc = CircleArcCurve(
+            "arc",
+            (0.0, 0.0, 0.0),
+            1.0,
+            (0.0, 0.0, 1.0),
+            radial_axis=(1.0, 0.0, 0.0),
+            domain=ParameterInterval(1.2, 5.0),
+        )
+        line = SegmentCurve("line", (0.0, -2.0, 1.0), (0.0, 2.0, 1.0))
+
+        crossings = compute_projected_curve_crossings(
+            (arc, line),
+            IDENTITY_VIEW,
+        )
+        self.assertEqual(len(crossings), 2)
+        arc_parameters = sorted(
+            {
+                crossing.first_curve_id: crossing.first_parameter,
+                crossing.second_curve_id: crossing.second_parameter,
+            }["arc"]
+            for crossing in crossings
+        )
+        np.testing.assert_allclose(
+            arc_parameters,
+            (pi / 2.0, 3.0 * pi / 2.0),
+            rtol=0.0,
+            atol=1.0e-12,
+        )
+        line_parameters = sorted(
+            {
+                crossing.first_curve_id: crossing.first_parameter,
+                crossing.second_curve_id: crossing.second_parameter,
+            }["line"]
+            for crossing in crossings
+        )
+        np.testing.assert_allclose(
+            line_parameters,
+            (0.25, 0.75),
+            rtol=0.0,
+            atol=1.0e-12,
+        )
+        self.assertTrue(all(not crossing.tangential for crossing in crossings))
+
+    def test_authored_endpoint_near_chart_pole_remains_finite(self) -> None:
+        start = pi - 0.75e-9
+        excluded_intersection = pi - 1.25e-9
+        arc = CircleArcCurve(
+            "arc",
+            (0.0, 0.0, 0.0),
+            1.0,
+            (0.0, 0.0, 1.0),
+            radial_axis=(1.0, 0.0, 0.0),
+            domain=ParameterInterval(start, pi),
+        )
+        height = sin(excluded_intersection)
+        line = SegmentCurve("line", (-2.0, height, 1.0), (2.0, height, 1.0))
+
+        self.assertEqual(
+            compute_projected_curve_crossings((arc, line), IDENTITY_VIEW),
+            (),
+        )
+
     def test_tangent_line_preserves_even_root_and_tangent_evidence(self) -> None:
         circle = CircleArcCurve(
             "circle",
