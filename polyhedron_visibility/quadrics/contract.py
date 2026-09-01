@@ -1022,7 +1022,17 @@ class ConeSpec:
         axis = np.asarray(frame.z_axis, dtype=float)
         x_axis = np.asarray(frame.x_axis, dtype=float)
         y_axis = np.asarray(frame.y_axis, dtype=float)
-        result = [apex]
+        # Characteristic points resolve tolerances for the finite entity, not
+        # for its infinite supporting cone.  A trimmed frustum may have an
+        # apex arbitrarily far outside its axial range (notably in a
+        # cone-to-cylinder limit), so including that non-entity point would
+        # inflate every scale-dependent tolerance.  Retain the apex exactly
+        # when the finite range actually contains it.
+        result = (
+            [apex]
+            if self.axial_range[0] <= 0.0 <= self.axial_range[1]
+            else []
+        )
         for axial in self.axial_range:
             center = apex + axial * axis
             radius = abs(axial) * self.slope

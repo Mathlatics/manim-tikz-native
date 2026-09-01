@@ -12,7 +12,7 @@ analytically for every frame.
 
 Preview with::
 
-    manim --renderer cairo --disable_caching -ql --fps 12 \
+    PYTHONPATH="$PWD" manim --renderer cairo --disable_caching -ql --fps 12 \
       examples/dandelin_cone_cylinder_switch/dandelin_cone_cylinder_switch.py \
       DandelinConeCylinderSwitch
 """
@@ -20,7 +20,8 @@ Preview with::
 from __future__ import annotations
 
 from dataclasses import dataclass
-from math import cos, isfinite, pi, sin, sqrt
+from functools import lru_cache
+from math import acos, atan, atan2, ceil, cos, isfinite, pi, sin, sqrt
 from typing import Sequence
 
 import numpy as np
@@ -29,6 +30,7 @@ from manim import (
     UP,
     Circle,
     DashedLine,
+    DashedVMobject,
     Dot,
     FadeIn,
     Line,
@@ -41,6 +43,28 @@ from manim import (
     always_redraw,
     config,
     smooth,
+)
+
+from polyhedron_visibility.compositor import (
+    PainterConstraint,
+    stable_topological_sort,
+)
+from polyhedron_visibility.parallel_solver import ParallelView
+from polyhedron_visibility.quadrics.compositing import QuadricPaintPolicy
+from polyhedron_visibility.quadrics.contract import (
+    ConeModel,
+    ConeSpec,
+    CylinderSpec,
+    PlaneDisplayPatchSpec,
+    SectionPlane,
+)
+from polyhedron_visibility.quadrics.global_occlusion import (
+    compute_global_quadric_frame,
+)
+from polyhedron_visibility.quadrics.section_compositing import (
+    PlaneDepthRole,
+    compute_quadric_section_compositing,
+    merge_quadric_plane_fragment_contours,
 )
 
 
@@ -59,6 +83,8 @@ PLANE_OFFSET = 0.20
 SURFACE_COLORS = ("#163653", "#214F70", "#2D6B89", "#397F98")
 SURFACE_STROKE = "#77E3F2"
 PLANE_COLOR = "#31C6AE"
+OCCLUDED_PLANE_FILL = "#6B7C93"
+OCCLUDED_PLANE_STROKE = "#9FB3C8"
 SECTION_COLOR = "#FFD166"
 SPHERE_COLOR = "#F59E7A"
 SPHERE_STROKE = "#FFD0B8"
@@ -72,6 +98,37 @@ _SCREEN_RIGHT = np.asarray((-_DEPTH_AXIS[1], _DEPTH_AXIS[0], 0.0))
 _SCREEN_RIGHT /= np.linalg.norm(_SCREEN_RIGHT)
 _SCREEN_UP = np.cross(_DEPTH_AXIS, _SCREEN_RIGHT)
 _SCREEN_UP /= np.linalg.norm(_SCREEN_UP)
+_PROJECTION_MATRIX = np.vstack(
+    (
+        PROJECTION_SCALE * _SCREEN_RIGHT,
+        PROJECTION_SCALE * _SCREEN_UP,
+        _DEPTH_AXIS,
+    )
+)
+_PARALLEL_VIEW = ParallelView.from_matrix(_PROJECTION_MATRIX)
+_PLANE_POINT = tuple(
+    float(PLANE_OFFSET * component) for component in PLANE_NORMAL
+)
+_SECTION_PLANE = SectionPlane(
+    "switch-plane",
+    _PLANE_POINT,
+    PLANE_NORMAL,
+    (0.0, 1.0, 0.0),
+)
+_PLANE_PATCH = PlaneDisplayPatchSpec(
+    "switch-plane-patch",
+    _SECTION_PLANE.plane_id,
+    3.35,
+    3.55,
+)
+_OCCLUDED_PLANE_ROLES = frozenset(
+    {
+        PlaneDepthRole.BEHIND_SURFACE,
+        PlaneDepthRole.BETWEEN_SURFACE_SHEETS,
+    }
+)
+_SECTION_MAX_SCREEN_ERROR = 0.14
+_SECTION_MAX_SEGMENTS = 2048
 
 
 def _progress(value: object) -> float:
@@ -113,6 +170,62 @@ class DandelinSwitchFrame:
 
     def radius_at(self, z: float) -> float:
         return SURFACE_RADIUS + self.slope * float(z)
+
+
+@dataclass(frozen=True, slots=True)
+class SwitchSphereLayer:
+    """One sphere's certified position relative to the tangent plane."""
+
+    plane_side: int
+    item_id: str
+    plane_ray_parameter: float
+
+    @property
+    def plane_is_in_front(self) -> bool:
+        return self.plane_ray_parameter > 0.0
+
+
+@dataclass(frozen=True, slots=True)
+class SwitchOcclusionFrame:
+    """Renderer-neutral teaching-transparent painter evidence for one frame."""
+
+    progress: float
+    surface_back_item_id: str
+    surface_front_item_id: str
+    plane_item_ids: tuple[tuple[PlaneDepthRole, str, str], ...]
+    plane_contours: tuple[
+        tuple[
+            PlaneDepthRole,
+            tuple[tuple[tuple[float, float], ...], ...],
+        ],
+        ...,
+    ]
+    plane_outline_paths: tuple[
+        tuple[
+            PlaneDepthRole,
+            tuple[tuple[tuple[float, float], ...], ...],
+        ],
+        ...,
+    ]
+    sphere_layers: tuple[SwitchSphereLayer, SwitchSphereLayer]
+    hidden_section_item_id: str
+    visible_section_item_id: str
+    focus_item_id: str
+    draw_order: tuple[str, ...]
+    surface_layering_authoritative: bool = True
+    physical_surface_visibility_authoritative: bool = False
+
+    def contours_for(
+        self,
+        role: PlaneDepthRole,
+    ) -> tuple[tuple[tuple[float, float], ...], ...]:
+        return dict(self.plane_contours)[role]
+
+    def outline_paths_for(
+        self,
+        role: PlaneDepthRole,
+    ) -> tuple[tuple[tuple[float, float], ...], ...]:
+        return dict(self.plane_outline_paths)[role]
 
 
 def compute_switch_frame(progress: object) -> DandelinSwitchFrame:
@@ -174,6 +287,249 @@ def compute_switch_frame(progress: object) -> DandelinSwitchFrame:
         apex_z=(None if apex_z is None else float(apex_z)),
         spheres=(records[0], records[1]),
     )
+
+
+def _surface_spec(frame: DandelinSwitchFrame) -> ConeSpec | CylinderSpec:
+    if frame.slope == 0.0:
+        return CylinderSpec(
+            "switch-surface",
+            (0.0, 0.0, 0.0),
+            (0.0, 0.0, 1.0),
+            SURFACE_RADIUS,
+            AXIAL_RANGE,
+            radial_axis=(1.0, 0.0, 0.0),
+        )
+    if frame.apex_z is None:  # pragma: no cover - guarded by slope above
+        raise ValueError("a non-cylindrical switch frame requires a finite apex")
+    return ConeSpec(
+        "switch-surface",
+        (0.0, 0.0, frame.apex_z),
+        (0.0, 0.0, 1.0),
+        atan(frame.slope),
+        (
+            AXIAL_RANGE[0] - frame.apex_z,
+            AXIAL_RANGE[1] - frame.apex_z,
+        ),
+        radial_axis=(1.0, 0.0, 0.0),
+        model=ConeModel.OPEN_SINGLE,
+    )
+
+
+@lru_cache(maxsize=128)
+def _compute_switch_occlusion_frame(progress: float) -> SwitchOcclusionFrame:
+    geometry = compute_switch_frame(progress)
+    surface = _surface_spec(geometry)
+    base = compute_global_quadric_frame(
+        (),
+        (surface,),
+        _PARALLEL_VIEW,
+        paint_policy=QuadricPaintPolicy.PHYSICAL,
+        max_chord_error=_SECTION_MAX_SCREEN_ERROR,
+        max_segments=_SECTION_MAX_SEGMENTS,
+    ).frame
+    section = compute_quadric_section_compositing(
+        base,
+        surface,
+        _SECTION_PLANE,
+        _PLANE_PATCH,
+        _PARALLEL_VIEW,
+        max_screen_error=_SECTION_MAX_SCREEN_ERROR,
+    )
+    contours = merge_quadric_plane_fragment_contours(
+        _SECTION_PLANE,
+        _PLANE_PATCH,
+        _PARALLEL_VIEW.projection_matrix,
+        section.plane_fragments,
+    )
+    outline_paths: dict[
+        PlaneDepthRole,
+        list[tuple[tuple[float, float], ...]],
+    ] = {role: [] for role in PlaneDepthRole}
+    for fragment in section.plane_outline_fragments:
+        outline_paths[fragment.role].append(
+            (fragment.screen_start, fragment.screen_end)
+        )
+
+    paint_items = section.paint_items
+    fill_ids = {
+        PlaneDepthRole.BEHIND_SURFACE: paint_items.plane_behind,
+        PlaneDepthRole.OUTSIDE_PROJECTION: paint_items.plane_outside,
+        PlaneDepthRole.BETWEEN_SURFACE_SHEETS: paint_items.plane_between,
+        PlaneDepthRole.IN_FRONT_OF_SURFACE: paint_items.plane_front,
+    }
+    outline_ids = paint_items.outline_by_role
+    plane_item_ids = tuple(
+        (role, fill_ids[role], outline_ids[role]) for role in PlaneDepthRole
+    )
+
+    denominator = float(
+        np.dot(
+            np.asarray(_SECTION_PLANE.normal, dtype=float),
+            np.asarray(_PARALLEL_VIEW.view_direction, dtype=float),
+        )
+    )
+    if abs(denominator) <= 1.0e-12:
+        raise ValueError("the cutting plane is edge-on to the fixed view")
+    sphere_layers: list[SwitchSphereLayer] = []
+    for sphere in geometry.spheres:
+        signed_distance = _SECTION_PLANE.signed_distance(sphere.center)
+        tangency_error = abs(abs(signed_distance) - sphere.radius)
+        if tangency_error > max(1.0e-10, 1.0e-10 * sphere.radius):
+            raise ValueError("a switch sphere lost its plane-tangency certificate")
+        parameter = -signed_distance / denominator
+        if abs(parameter) <= 1.0e-12:
+            raise ValueError("a switch sphere has unresolved plane depth")
+        sphere_layers.append(
+            SwitchSphereLayer(
+                sphere.plane_side,
+                f"switch-sphere:{sphere.plane_side:+d}",
+                float(parameter),
+            )
+        )
+    far_spheres = tuple(
+        item for item in sphere_layers if item.plane_is_in_front
+    )
+    near_spheres = tuple(
+        item for item in sphere_layers if not item.plane_is_in_front
+    )
+    if len(far_spheres) != 1 or len(near_spheres) != 1:
+        raise ValueError("the fixed view must separate the two switch spheres")
+    far_sphere = far_spheres[0]
+    near_sphere = near_spheres[0]
+
+    hidden_section_item_id = "switch-section:hidden"
+    visible_section_item_id = "switch-section:visible"
+    focus_item_id = "switch-foci"
+    base_nodes = tuple(section.draw_order)
+    nodes = (
+        *base_nodes,
+        *(item.item_id for item in sphere_layers),
+        hidden_section_item_id,
+        visible_section_item_id,
+        focus_item_id,
+    )
+    relations = [
+        PainterConstraint(item.far_item_id, item.near_item_id)
+        for item in section.order_relations
+    ]
+    surface_back = paint_items.surface_back
+    surface_front = paint_items.surface_front
+    behind_nodes = (
+        fill_ids[PlaneDepthRole.BEHIND_SURFACE],
+        outline_ids[PlaneDepthRole.BEHIND_SURFACE],
+        fill_ids[PlaneDepthRole.OUTSIDE_PROJECTION],
+        outline_ids[PlaneDepthRole.OUTSIDE_PROJECTION],
+        fill_ids[PlaneDepthRole.BETWEEN_SURFACE_SHEETS],
+        outline_ids[PlaneDepthRole.BETWEEN_SURFACE_SHEETS],
+    )
+    front_nodes = (
+        fill_ids[PlaneDepthRole.OUTSIDE_PROJECTION],
+        outline_ids[PlaneDepthRole.OUTSIDE_PROJECTION],
+        fill_ids[PlaneDepthRole.BETWEEN_SURFACE_SHEETS],
+        outline_ids[PlaneDepthRole.BETWEEN_SURFACE_SHEETS],
+        fill_ids[PlaneDepthRole.IN_FRONT_OF_SURFACE],
+        outline_ids[PlaneDepthRole.IN_FRONT_OF_SURFACE],
+    )
+    plane_front_nodes = (
+        fill_ids[PlaneDepthRole.IN_FRONT_OF_SURFACE],
+        outline_ids[PlaneDepthRole.IN_FRONT_OF_SURFACE],
+    )
+    for sphere in sphere_layers:
+        relations.extend(
+            (
+                PainterConstraint(surface_back, sphere.item_id),
+                PainterConstraint(sphere.item_id, surface_front),
+            )
+        )
+        if sphere.plane_is_in_front:
+            relations.extend(
+                PainterConstraint(sphere.item_id, item_id)
+                for item_id in front_nodes
+            )
+            relations.extend(
+                PainterConstraint(item_id, sphere.item_id)
+                for item_id in (
+                    fill_ids[PlaneDepthRole.BEHIND_SURFACE],
+                    outline_ids[PlaneDepthRole.BEHIND_SURFACE],
+                )
+            )
+        else:
+            relations.extend(
+                PainterConstraint(item_id, sphere.item_id)
+                for item_id in behind_nodes
+            )
+            relations.extend(
+                PainterConstraint(sphere.item_id, item_id)
+                for item_id in plane_front_nodes
+            )
+    relations.append(
+        PainterConstraint(far_sphere.item_id, near_sphere.item_id)
+    )
+    relations.extend(
+        (
+            PainterConstraint(surface_back, hidden_section_item_id),
+            PainterConstraint(far_sphere.item_id, hidden_section_item_id),
+            PainterConstraint(
+                fill_ids[PlaneDepthRole.BETWEEN_SURFACE_SHEETS],
+                hidden_section_item_id,
+            ),
+            PainterConstraint(
+                outline_ids[PlaneDepthRole.BETWEEN_SURFACE_SHEETS],
+                hidden_section_item_id,
+            ),
+            PainterConstraint(hidden_section_item_id, near_sphere.item_id),
+            PainterConstraint(hidden_section_item_id, surface_front),
+        )
+    )
+    core_nodes = (*base_nodes, *(item.item_id for item in sphere_layers))
+    relations.extend(
+        PainterConstraint(item_id, visible_section_item_id)
+        for item_id in (*core_nodes, hidden_section_item_id)
+    )
+    relations.extend(
+        PainterConstraint(item_id, focus_item_id)
+        for item_id in (*core_nodes, hidden_section_item_id, visible_section_item_id)
+    )
+
+    preferred: list[str] = []
+    for item_id in base_nodes:
+        preferred.append(item_id)
+        if item_id == surface_back:
+            preferred.append(far_sphere.item_id)
+        if item_id == outline_ids[PlaneDepthRole.BETWEEN_SURFACE_SHEETS]:
+            preferred.extend((hidden_section_item_id, near_sphere.item_id))
+    preferred.extend((visible_section_item_id, focus_item_id))
+    preferred_rank = {
+        item_id: index for index, item_id in enumerate(preferred)
+    }
+    draw_order = stable_topological_sort(
+        nodes,
+        relations,
+        key=lambda item_id: (preferred_rank.get(item_id, len(preferred)), item_id),
+    )
+    return SwitchOcclusionFrame(
+        progress=progress,
+        surface_back_item_id=surface_back,
+        surface_front_item_id=surface_front,
+        plane_item_ids=plane_item_ids,
+        plane_contours=tuple(
+            (role, contours[role]) for role in PlaneDepthRole
+        ),
+        plane_outline_paths=tuple(
+            (role, tuple(outline_paths[role])) for role in PlaneDepthRole
+        ),
+        sphere_layers=(sphere_layers[0], sphere_layers[1]),
+        hidden_section_item_id=hidden_section_item_id,
+        visible_section_item_id=visible_section_item_id,
+        focus_item_id=focus_item_id,
+        draw_order=draw_order,
+    )
+
+
+def compute_switch_occlusion_frame(progress: object) -> SwitchOcclusionFrame:
+    """Certify plane, mother-surface, and sphere order for one progress."""
+
+    return _compute_switch_occlusion_frame(_progress(progress))
 
 
 def section_point(frame: DandelinSwitchFrame, theta: float) -> tuple[float, float, float]:
@@ -274,10 +630,65 @@ def _front_runs(
     return tuple(runs)
 
 
-def _surface_group(frame: DandelinSwitchFrame) -> VGroup:
+def _tag_paint_item(
+    item: VMobject | VGroup,
+    item_id: str,
+    *,
+    kind: str,
+    **metadata: object,
+) -> VMobject | VGroup:
+    payload = {
+        "switchPaintItemId": item_id,
+        "switchPaintKind": kind,
+        **metadata,
+    }
+    item.switch_paint_item_id = item_id
+    item.switch_metadata = payload
+    item.metadata = payload
+    return item
+
+
+def _screen_point(point: Sequence[float]) -> np.ndarray:
+    value = np.asarray(tuple(point), dtype=float)
+    if value.shape != (2,) or not np.all(np.isfinite(value)):
+        raise ValueError("screen point must contain two finite coordinates")
+    return np.asarray(
+        (
+            value[0] + PROJECTION_OFFSET[0],
+            value[1] + PROJECTION_OFFSET[1],
+            0.0,
+        ),
+        dtype=float,
+    )
+
+
+def _compound_screen_fill(
+    paths: Sequence[Sequence[Sequence[float]]],
+    *,
+    color: str,
+    opacity: float,
+) -> VMobject:
+    value = VMobject()
+    for raw_path in paths:
+        points = tuple(_screen_point(point) for point in raw_path)
+        if len(points) < 3:
+            raise ValueError("a plane fill contour requires at least three points")
+        value.start_new_path(points[0])
+        value.add_points_as_corners((*points[1:], points[0]))
+    value.set_fill(color=color, opacity=opacity)
+    value.set_stroke(opacity=0.0)
+    return value
+
+
+def _surface_sheet_groups(
+    frame: DandelinSwitchFrame,
+    back_item_id: str,
+    front_item_id: str,
+) -> tuple[VGroup, VGroup]:
     z_min, z_max = AXIAL_RANGE
     theta_values = np.linspace(0.0, 2.0 * pi, 25)
-    patches: list[tuple[float, Polygon]] = []
+    back_patches: list[tuple[float, Polygon]] = []
+    front_patches: list[tuple[float, Polygon]] = []
     for index, (theta_0, theta_1) in enumerate(
         zip(theta_values, theta_values[1:])
     ):
@@ -296,30 +707,70 @@ def _surface_group(frame: DandelinSwitchFrame) -> VGroup:
             fill_color=color,
             fill_opacity=0.11 + 0.10 * normalized,
         )
-        patches.append((average_depth, polygon))
-    patches.sort(key=lambda item: item[0])
-    group = VGroup()
-    for index, (_, polygon) in enumerate(patches):
-        polygon.set_z_index(10.0 + index * 0.001)
-        group.add(polygon)
+        theta_mid = 0.5 * (theta_0 + theta_1)
+        outward = np.asarray(
+            (cos(theta_mid), sin(theta_mid), -frame.slope),
+            dtype=float,
+        )
+        target = (
+            front_patches
+            if float(np.dot(outward, _DEPTH_AXIS)) > 0.0
+            else back_patches
+        )
+        target.append((average_depth, polygon))
+    back_patches.sort(key=lambda item: item[0])
+    front_patches.sort(key=lambda item: item[0])
+    back = VGroup(*(polygon for _, polygon in back_patches))
+    front = VGroup(*(polygon for _, polygon in front_patches))
 
     for z in AXIAL_RANGE:
         rim = tuple(
             _surface_point(frame, z, float(theta))
             for theta in np.linspace(0.0, 2.0 * pi, 97)[:-1]
         )
-        line = _path(
-            rim,
-            color=SURFACE_STROKE,
-            width=1.45,
-            opacity=0.64,
-            close=True,
+        rim_visible = tuple(
+            float(
+                np.dot(
+                    np.asarray(
+                        (cos(float(theta)), sin(float(theta)), -frame.slope),
+                        dtype=float,
+                    ),
+                    _DEPTH_AXIS,
+                )
+            )
+            > 0.0
+            for theta in np.linspace(0.0, 2.0 * pi, 97)[:-1]
         )
-        line.set_z_index(12.0)
-        group.add(line)
+        for run in _front_runs(rim, tuple(not item for item in rim_visible)):
+            back.add(
+                _path(
+                    run,
+                    color=SURFACE_STROKE,
+                    width=1.15,
+                    opacity=0.30,
+                )
+            )
+        for run in _front_runs(rim, rim_visible):
+            front.add(
+                _path(
+                    run,
+                    color=SURFACE_STROKE,
+                    width=1.55,
+                    opacity=0.74,
+                )
+            )
 
-    silhouette_theta = float(np.arctan2(_SCREEN_RIGHT[1], _SCREEN_RIGHT[0]))
-    for theta in (silhouette_theta, silhouette_theta + pi):
+    radial_view_length = float(np.hypot(_DEPTH_AXIS[0], _DEPTH_AXIS[1]))
+    silhouette_ratio = frame.slope * float(_DEPTH_AXIS[2]) / radial_view_length
+    if abs(silhouette_ratio) > 1.0 + 1.0e-12:
+        raise ValueError("surface silhouette has no finite generator")
+    silhouette_ratio = min(1.0, max(-1.0, silhouette_ratio))
+    silhouette_phase = atan2(float(_DEPTH_AXIS[1]), float(_DEPTH_AXIS[0]))
+    silhouette_offset = acos(silhouette_ratio)
+    for theta in (
+        silhouette_phase - silhouette_offset,
+        silhouette_phase + silhouette_offset,
+    ):
         generator = _path(
             (
                 _surface_point(frame, z_min, theta),
@@ -329,35 +780,93 @@ def _surface_group(frame: DandelinSwitchFrame) -> VGroup:
             width=1.55,
             opacity=0.78,
         )
-        generator.set_z_index(12.1)
-        group.add(generator)
-    return group
-
-
-def _plane_group() -> VGroup:
-    normal = np.asarray(PLANE_NORMAL, dtype=float)
-    center = PLANE_OFFSET * normal
-    u_axis = np.asarray((0.0, 1.0, 0.0), dtype=float)
-    v_axis = np.asarray((normal[2], 0.0, -normal[0]), dtype=float)
-    corners = tuple(
-        center + u_sign * 3.35 * u_axis + v_sign * 3.55 * v_axis
-        for u_sign, v_sign in ((-1, -1), (1, -1), (1, 1), (-1, 1))
+        front.add(generator)
+    return (
+        _tag_paint_item(
+            back,
+            back_item_id,
+            kind="surface_sheet",
+            sheetSide="back",
+        ),
+        _tag_paint_item(
+            front,
+            front_item_id,
+            kind="surface_sheet",
+            sheetSide="front",
+        ),
     )
-    patch = Polygon(
-        *(project_point(item) for item in corners),
-        fill_color=PLANE_COLOR,
-        fill_opacity=0.10,
-        stroke_color="#86F7E4",
-        stroke_width=1.2,
-        stroke_opacity=0.56,
-    )
-    patch.set_z_index(5.0)
-    return VGroup(patch)
 
 
-def _sphere_group(frame: DandelinSwitchFrame) -> VGroup:
-    group = VGroup()
+def _plane_paint_items(
+    occlusion: SwitchOcclusionFrame,
+) -> dict[str, VMobject | VGroup]:
+    result: dict[str, VMobject | VGroup] = {}
+    for role, fill_item_id, outline_item_id in occlusion.plane_item_ids:
+        occluded = role in _OCCLUDED_PLANE_ROLES
+        fill = _compound_screen_fill(
+            occlusion.contours_for(role),
+            color=OCCLUDED_PLANE_FILL if occluded else PLANE_COLOR,
+            opacity=0.18 if occluded else 0.10,
+        )
+        result[fill_item_id] = _tag_paint_item(
+            fill,
+            fill_item_id,
+            kind="plane_fill",
+            planeDepthRole=role.value,
+            planeOccludedBySurface=occluded,
+        )
+
+        outline_members: list[VMobject | DashedVMobject] = []
+        for path in occlusion.outline_paths_for(role):
+            base = VMobject()
+            points = tuple(_screen_point(point) for point in path)
+            base.set_points_as_corners(points)
+            base.set_fill(opacity=0.0)
+            base.set_stroke(
+                color=OCCLUDED_PLANE_STROKE if occluded else "#86F7E4",
+                width=1.0 if occluded else 1.2,
+                opacity=0.52 if occluded else 0.62,
+            )
+            if occluded:
+                length = float(base.get_arc_length())
+                if length <= 0.0:
+                    continue
+                dashed = DashedVMobject(
+                    base,
+                    num_dashes=max(2, min(96, int(ceil(length / 0.24)))),
+                    dashed_ratio=0.52,
+                )
+                dashed.set_stroke(
+                    color=OCCLUDED_PLANE_STROKE,
+                    width=1.0,
+                    opacity=0.52,
+                )
+                outline_members.append(dashed)
+            else:
+                outline_members.append(base)
+        outline = VGroup(*outline_members)
+        result[outline_item_id] = _tag_paint_item(
+            outline,
+            outline_item_id,
+            kind="plane_outline",
+            planeDepthRole=role.value,
+            planeOccludedBySurface=occluded,
+            strokePattern="dashed" if occluded else "solid",
+        )
+    return result
+
+
+def _sphere_paint_items(
+    frame: DandelinSwitchFrame,
+    occlusion: SwitchOcclusionFrame,
+) -> tuple[dict[str, VGroup], VGroup]:
+    item_id_by_side = {
+        layer.plane_side: layer.item_id for layer in occlusion.sphere_layers
+    }
+    items: dict[str, VGroup] = {}
+    foci = VGroup()
     for sphere in frame.spheres:
+        members = VGroup()
         center = project_point(sphere.center)
         screen_radius = PROJECTION_SCALE * sphere.radius
         body = Circle(
@@ -368,15 +877,13 @@ def _sphere_group(frame: DandelinSwitchFrame) -> VGroup:
             stroke_width=1.7,
             stroke_opacity=0.82,
         ).move_to(center)
-        body.set_z_index(20.0)
         glow = Circle(
             radius=0.70 * screen_radius,
             fill_color="#FFC2A6",
             fill_opacity=0.07,
             stroke_opacity=0.0,
         ).move_to(center + np.asarray((-0.12, 0.16, 0.0)) * screen_radius)
-        glow.set_z_index(20.1)
-        group.add(body, glow)
+        members.add(body, glow)
 
         ring_points = tuple(
             (
@@ -403,8 +910,7 @@ def _sphere_group(frame: DandelinSwitchFrame) -> VGroup:
             opacity=0.30,
             close=True,
         )
-        hidden_ring.set_z_index(21.0)
-        group.add(hidden_ring)
+        members.add(hidden_ring)
         for run in _front_runs(ring_points, ring_visible):
             visible_ring = _path(
                 run,
@@ -412,41 +918,64 @@ def _sphere_group(frame: DandelinSwitchFrame) -> VGroup:
                 width=3.0,
                 opacity=1.0,
             )
-            visible_ring.set_z_index(21.1)
-            group.add(visible_ring)
+            members.add(visible_ring)
 
         focus = project_point(sphere.plane_contact)
         halo = Dot(focus, radius=0.10, color=FOCUS_COLOR, fill_opacity=0.18)
         point = Dot(focus, radius=0.048, color=FOCUS_COLOR)
-        halo.set_z_index(23.0)
-        point.set_z_index(23.1)
-        group.add(halo, point)
-    return group
+        foci.add(halo, point)
+        item_id = item_id_by_side[sphere.plane_side]
+        items[item_id] = _tag_paint_item(
+            members,
+            item_id,
+            kind="sphere",
+            planeSide=sphere.plane_side,
+        )
+    return items, _tag_paint_item(
+        foci,
+        occlusion.focus_item_id,
+        kind="focus",
+    )
 
 
-def _section_group(frame: DandelinSwitchFrame) -> VGroup:
+def _section_paint_items(
+    frame: DandelinSwitchFrame,
+    occlusion: SwitchOcclusionFrame,
+) -> tuple[VMobject, VGroup]:
     theta_values = np.linspace(0.0, 2.0 * pi, 145)[:-1]
     points = tuple(section_point(frame, float(theta)) for theta in theta_values)
-    visible = tuple(
-        float(
+    near_layer = next(
+        layer for layer in occlusion.sphere_layers if not layer.plane_is_in_front
+    )
+    near_sphere = next(
+        sphere
+        for sphere in frame.spheres
+        if sphere.plane_side == near_layer.plane_side
+    )
+    near_center = project_point(near_sphere.center)
+    near_radius = PROJECTION_SCALE * near_sphere.radius
+    visible: list[bool] = []
+    for theta, point in zip(theta_values, points):
+        surface_facing = float(
             np.dot(
                 np.asarray((cos(float(theta)), sin(float(theta)), -frame.slope)),
                 _DEPTH_AXIS,
             )
+        ) > 0.0
+        projected = project_point(point)
+        outside_near_sphere = (
+            float(np.linalg.norm(projected[:2] - near_center[:2]))
+            >= near_radius + 0.018
         )
-        > 0.0
-        for theta in theta_values
-    )
-    group = VGroup()
+        visible.append(surface_facing and outside_near_sphere)
     hidden = _path(
         points,
         color=SECTION_COLOR,
-        width=2.1,
-        opacity=0.34,
+        width=1.9,
+        opacity=0.30,
         close=True,
     )
-    hidden.set_z_index(24.0)
-    group.add(hidden)
+    visible_group = VGroup()
     for run in _front_runs(points, visible):
         front = _path(
             run,
@@ -454,15 +983,27 @@ def _section_group(frame: DandelinSwitchFrame) -> VGroup:
             width=4.0,
             opacity=1.0,
         )
-        front.set_z_index(24.1)
-        group.add(front)
-    return group
+        visible_group.add(front)
+    return (
+        _tag_paint_item(
+            hidden,
+            occlusion.hidden_section_item_id,
+            kind="section_hidden",
+        ),
+        _tag_paint_item(
+            visible_group,
+            occlusion.visible_section_item_id,
+            kind="section_visible",
+            sphereOcclusionAware=True,
+        ),
+    )
 
 
 def build_switch_diagram(progress: object) -> VGroup:
     """Build one deterministic visual frame for playback or test capture."""
 
     frame = compute_switch_frame(progress)
+    occlusion = compute_switch_occlusion_frame(frame.progress)
     axis = DashedLine(
         project_point((0.0, 0.0, AXIAL_RANGE[0] - 0.15)),
         project_point((0.0, 0.0, AXIAL_RANGE[1] + 0.15)),
@@ -471,14 +1012,39 @@ def build_switch_diagram(progress: object) -> VGroup:
         stroke_width=1.15,
         stroke_opacity=0.30,
     )
-    axis.set_z_index(4.0)
-    return VGroup(
-        axis,
-        _plane_group(),
-        _surface_group(frame),
-        _sphere_group(frame),
-        _section_group(frame),
+    axis.set_z_index(1.0)
+
+    surface_back, surface_front = _surface_sheet_groups(
+        frame,
+        occlusion.surface_back_item_id,
+        occlusion.surface_front_item_id,
     )
+    paint_items: dict[str, VMobject | VGroup] = {
+        occlusion.surface_back_item_id: surface_back,
+        occlusion.surface_front_item_id: surface_front,
+        **_plane_paint_items(occlusion),
+    }
+    spheres, foci = _sphere_paint_items(frame, occlusion)
+    paint_items.update(spheres)
+    hidden_section, visible_section = _section_paint_items(frame, occlusion)
+    paint_items[occlusion.hidden_section_item_id] = hidden_section
+    paint_items[occlusion.visible_section_item_id] = visible_section
+    paint_items[occlusion.focus_item_id] = foci
+    if set(paint_items) != set(occlusion.draw_order):
+        missing = sorted(set(occlusion.draw_order) - set(paint_items))
+        unexpected = sorted(set(paint_items) - set(occlusion.draw_order))
+        raise ValueError(
+            "switch painter items disagree with certified draw order: "
+            f"missing={missing}, unexpected={unexpected}"
+        )
+    ordered: list[VMobject | VGroup] = []
+    for rank, item_id in enumerate(occlusion.draw_order):
+        item = paint_items[item_id]
+        item.set_z_index(10.0 + rank, family=True)
+        ordered.append(item)
+    result = VGroup(axis, *ordered)
+    result.switch_occlusion_frame = occlusion
+    return result
 
 
 def _header() -> VGroup:
@@ -553,10 +1119,14 @@ __all__: Sequence[str] = (
     "DandelinConeCylinderSwitch",
     "DandelinSphereFrame",
     "DandelinSwitchFrame",
+    "SwitchOcclusionFrame",
+    "SwitchSphereLayer",
     "PLANE_NORMAL",
     "PLANE_OFFSET",
+    "PlaneDepthRole",
     "SURFACE_RADIUS",
     "build_switch_diagram",
+    "compute_switch_occlusion_frame",
     "compute_switch_frame",
     "project_point",
     "section_point",

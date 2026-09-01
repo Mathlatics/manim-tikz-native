@@ -24,13 +24,18 @@ r(z, p) = R + k0 (1 - p) z,    0 <= p <= 1
 3. 橙色接触圆始终同时落在球面和当前母面上；
 4. 两个黄色切点始终位于截平面上。
 
-画面采用固定正交投影。半透明填充是教学展示层，不宣称已经进行了逐像素的物理
-球面—母面遮挡；解析切线、接触圆和切点关系本身是精确计算的。
+画面采用固定正交投影。每一帧都会通过仓库的解析截面合成器，把截平面拆成
+`behind_surface`、`outside_projection`、`between_surface_sheets` 和
+`in_front_of_surface` 四种深度区域，再把远球、近球和母面的前后层级合成到同一
+绘制顺序中。灰蓝色/虚线表示被母面遮住的平面片段，青色/实线表示当前可见片段。
+
+半透明填充仍是有几何证据的教学展示层，不宣称逐像素模拟了真实透明材质；解析
+切触关系、平面分区和教学绘制顺序是每帧重新计算的。
 
 ## 低清预览
 
 ```bash
-manim --renderer cairo --disable_caching -ql --fps 12 \
+PYTHONPATH="$PWD" manim --renderer cairo --disable_caching -ql --fps 12 \
   --media_dir artifacts/dandelin-cone-cylinder-switch/preview \
   examples/dandelin_cone_cylinder_switch/dandelin_cone_cylinder_switch.py \
   DandelinConeCylinderSwitch

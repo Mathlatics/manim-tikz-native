@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from hashlib import sha256
 import json
-from math import cos, pi, sin, sqrt
+from math import atan, cos, pi, sin, sqrt
 from typing import Sequence
 import unittest
 from unittest.mock import patch
@@ -19,6 +19,7 @@ from polyhedron_visibility.quadrics.compositing import (
     compute_quadric_compositing,
 )
 from polyhedron_visibility.quadrics.contract import (
+    ConeModel,
     ConeSpec,
     PlaneDisplayPatchSpec,
     SectionPlane,
@@ -1881,6 +1882,93 @@ class QuadricSectionCompositingTests(unittest.TestCase):
         self.assertEqual(
             canonical_quadric_section_compositing_json(first),
             canonical_quadric_section_compositing_json(second),
+        )
+
+    def test_near_cylinder_frustum_keeps_a_finite_section_scale(self) -> None:
+        radius = 1.45
+        slope = (radius / 3.0) * 1.0e-6
+        apex_z = -radius / slope
+        cone = ConeSpec(
+            "near-cylinder",
+            (0.0, 0.0, apex_z),
+            (0.0, 0.0, 1.0),
+            atan(slope),
+            (-3.0 - apex_z, 5.8 - apex_z),
+            radial_axis=(1.0, 0.0, 0.0),
+            model=ConeModel.OPEN_SINGLE,
+        )
+        cylinder = CylinderSpec(
+            "near-cylinder",
+            (0.0, 0.0, 0.0),
+            (0.0, 0.0, 1.0),
+            radius,
+            (-3.0, 5.8),
+            radial_axis=(1.0, 0.0, 0.0),
+        )
+        depth = _unit((0.75, -1.25, 0.55))
+        screen_right = _unit((-depth[1], depth[0], 0.0))
+        screen_up = _unit(np.cross(depth, screen_right))
+        view = ParallelView.from_matrix((screen_right, screen_up, depth))
+        normal = _unit((0.25, 0.0, sqrt(1.0 - 0.25**2)))
+        plane = SectionPlane(
+            "near-cylinder-plane",
+            tuple(float(value) for value in 0.20 * normal),
+            tuple(float(value) for value in normal),
+            u_axis=(0.0, 1.0, 0.0),
+        )
+        patch = PlaneDisplayPatchSpec(
+            "near-cylinder-patch",
+            plane.plane_id,
+            3.35,
+            3.55,
+        )
+
+        def section_frame(surface: QuadricSurface):
+            proxy = build_opaque_projection_proxy(
+                surface,
+                view,
+                max_chord_error=0.01,
+            )
+            visibility = compute_quadric_visibility((), (surface,), view)
+            base = compute_quadric_compositing(visibility, (proxy,))
+            return compute_quadric_section_compositing(
+                base,
+                surface,
+                plane,
+                patch,
+                view,
+                max_screen_error=0.08,
+            )
+
+        cone_frame = section_frame(cone)
+        cylinder_frame = section_frame(cylinder)
+        self.assertIs(cone_frame.projection_kind, PlanePatchProjectionKind.AREA)
+        self.assertEqual(
+            {fragment.role for fragment in cone_frame.plane_fragments},
+            set(PlaneDepthRole),
+        )
+        restored_area = sum(
+            _triangle_area(fragment.world_vertices)
+            for fragment in cone_frame.plane_fragments
+        )
+        self.assertAlmostEqual(
+            restored_area,
+            4.0 * patch.half_width * patch.half_height,
+            places=8,
+        )
+
+        def contour_areas(frame) -> tuple[float, ...]:
+            contours = quadric_plane_fragment_contours(frame)
+            return tuple(
+                sum(abs(_screen_signed_area(path)) for path in contours[role])
+                for role in PlaneDepthRole
+            )
+
+        np.testing.assert_allclose(
+            contour_areas(cone_frame),
+            contour_areas(cylinder_frame),
+            rtol=0.0,
+            atol=1.0e-4,
         )
 
     def test_formal_transition_tangent_frame_preserves_disjoint_role_components(

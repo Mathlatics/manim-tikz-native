@@ -13,8 +13,10 @@ from examples.dandelin_cone_cylinder_switch.dandelin_cone_cylinder_switch import
     DandelinConeCylinderSwitch,
     PLANE_NORMAL,
     PLANE_OFFSET,
+    PlaneDepthRole,
     SURFACE_RADIUS,
     build_switch_diagram,
+    compute_switch_occlusion_frame,
     compute_switch_frame,
     section_point,
 )
@@ -112,6 +114,95 @@ class DandelinConeCylinderSwitchGeometryTests(unittest.TestCase):
                     compute_switch_frame(value)
 
 
+class DandelinConeCylinderSwitchOcclusionTests(unittest.TestCase):
+    def test_five_keyframes_have_certified_plane_roles_and_sphere_order(self) -> None:
+        for progress in (0.0, 0.25, 0.5, 0.75, 1.0):
+            with self.subTest(progress=progress):
+                frame = compute_switch_occlusion_frame(progress)
+                self.assertTrue(frame.surface_layering_authoritative)
+                self.assertFalse(frame.physical_surface_visibility_authoritative)
+                self.assertEqual(
+                    {role for role, _paths in frame.plane_contours},
+                    set(PlaneDepthRole),
+                )
+                self.assertTrue(
+                    all(frame.contours_for(role) for role in PlaneDepthRole)
+                )
+
+                far = next(
+                    item for item in frame.sphere_layers if item.plane_is_in_front
+                )
+                near = next(
+                    item
+                    for item in frame.sphere_layers
+                    if not item.plane_is_in_front
+                )
+                self.assertEqual(far.plane_side, -1)
+                self.assertEqual(near.plane_side, 1)
+                rank = {
+                    item_id: index
+                    for index, item_id in enumerate(frame.draw_order)
+                }
+                plane_ids = {
+                    role: (fill_id, outline_id)
+                    for role, fill_id, outline_id in frame.plane_item_ids
+                }
+                for item_id in plane_ids[PlaneDepthRole.BEHIND_SURFACE]:
+                    self.assertLess(rank[item_id], rank[far.item_id])
+                for role in (
+                    PlaneDepthRole.OUTSIDE_PROJECTION,
+                    PlaneDepthRole.BETWEEN_SURFACE_SHEETS,
+                    PlaneDepthRole.IN_FRONT_OF_SURFACE,
+                ):
+                    for item_id in plane_ids[role]:
+                        self.assertLess(rank[far.item_id], rank[item_id])
+                for role in (
+                    PlaneDepthRole.BEHIND_SURFACE,
+                    PlaneDepthRole.OUTSIDE_PROJECTION,
+                    PlaneDepthRole.BETWEEN_SURFACE_SHEETS,
+                ):
+                    for item_id in plane_ids[role]:
+                        self.assertLess(rank[item_id], rank[near.item_id])
+                self.assertLess(
+                    rank[frame.hidden_section_item_id],
+                    rank[near.item_id],
+                )
+                self.assertLess(
+                    rank[far.item_id],
+                    rank[frame.hidden_section_item_id],
+                )
+                self.assertLess(
+                    rank[near.item_id],
+                    rank[frame.visible_section_item_id],
+                )
+
+    def test_near_cylinder_plane_partition_converges_without_role_loss(self) -> None:
+        near = compute_switch_occlusion_frame(0.9999)
+        cylinder = compute_switch_occlusion_frame(1.0)
+
+        def signed_area(
+            contours: tuple[tuple[tuple[float, float], ...], ...],
+        ) -> float:
+            result = 0.0
+            for contour in contours:
+                points = np.asarray(contour, dtype=float)
+                result += 0.5 * float(
+                    np.sum(
+                        points[:, 0] * np.roll(points[:, 1], -1)
+                        - points[:, 1] * np.roll(points[:, 0], -1)
+                    )
+                )
+            return result
+
+        for role in PlaneDepthRole:
+            with self.subTest(role=role.value):
+                self.assertAlmostEqual(
+                    signed_area(near.contours_for(role)),
+                    signed_area(cylinder.contours_for(role)),
+                    delta=1.0e-3,
+                )
+
+
 class DandelinConeCylinderSwitchCairoTests(unittest.TestCase):
     def test_keyframes_have_sphere_surface_and_section_pixels(self) -> None:
         frames: list[np.ndarray] = []
@@ -126,7 +217,7 @@ class DandelinConeCylinderSwitchCairoTests(unittest.TestCase):
                 "save_last_frame": False,
             }
         ):
-            for progress in (0.0, 0.5, 1.0):
+            for progress in (0.0, 0.25, 0.5, 0.75, 1.0):
                 scene = Scene()
                 scene.camera.background_color = BACKGROUND_COLOR
                 scene.add(build_switch_diagram(progress))
@@ -160,8 +251,45 @@ class DandelinConeCylinderSwitchCairoTests(unittest.TestCase):
                 self.assertGreater(int(np.count_nonzero(section_yellow)), 8)
 
         self.assertGreater(int(np.count_nonzero(frames[0] != frames[1])), 1500)
-        self.assertGreater(int(np.count_nonzero(frames[1] != frames[2])), 1500)
-        self.assertGreater(int(np.count_nonzero(frames[0] != frames[2])), 2500)
+        self.assertGreater(int(np.count_nonzero(frames[1] != frames[2])), 1200)
+        self.assertGreater(int(np.count_nonzero(frames[2] != frames[3])), 1000)
+        self.assertGreater(int(np.count_nonzero(frames[3] != frames[4])), 800)
+        self.assertGreater(int(np.count_nonzero(frames[0] != frames[4])), 2500)
+
+    def test_cylinder_plane_outline_switches_order_across_the_two_spheres(self) -> None:
+        with tempconfig(
+            {
+                "renderer": "cairo",
+                "pixel_width": 960,
+                "pixel_height": 540,
+                "frame_rate": 12,
+                "disable_caching": True,
+                "write_to_movie": False,
+                "save_last_frame": False,
+            }
+        ):
+            scene = Scene()
+            scene.camera.background_color = BACKGROUND_COLOR
+            scene.add(build_switch_diagram(1.0))
+            scene.camera.reset()
+            scene.camera.capture_mobjects(scene.mobjects)
+            pixels = scene.camera.pixel_array[:, :, :3].astype(int)
+
+        far_sphere_boundary = pixels[382:387, 448:453]
+        near_sphere_boundary = pixels[233:238, 478:483]
+        far_cyan = float(
+            np.mean(
+                far_sphere_boundary[:, :, 1]
+                - far_sphere_boundary[:, :, 0]
+            )
+        )
+        near_cyan = float(
+            np.mean(
+                near_sphere_boundary[:, :, 1]
+                - near_sphere_boundary[:, :, 0]
+            )
+        )
+        self.assertGreater(far_cyan - near_cyan, 12.0)
 
 
 if __name__ == "__main__":

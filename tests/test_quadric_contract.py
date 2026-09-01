@@ -5,7 +5,7 @@ from pathlib import Path
 import subprocess
 import sys
 import unittest
-from math import pi
+from math import atan, pi
 
 import numpy as np
 
@@ -344,6 +344,34 @@ class ConeContractTests(unittest.TestCase):
         )
         self.assertEqual(len(cone.end_caps), 2)
         self.assertTrue(cone.contains((0, 0, -1)))
+
+    def test_finite_frustum_scale_excludes_a_remote_support_apex(self) -> None:
+        apex_z = -1.0e6
+        slope = 1.0e-6
+        frustum = ConeSpec(
+            "near-cylinder-frustum",
+            (0.0, 0.0, apex_z),
+            (0.0, 0.0, 1.0),
+            atan(slope),
+            (-3.0 - apex_z, 5.8 - apex_z),
+            radial_axis=(1.0, 0.0, 0.0),
+        )
+
+        points = np.asarray(frustum.characteristic_points, dtype=float)
+        self.assertEqual(points.shape, (8, 3))
+        self.assertLess(float(np.max(np.abs(points))), 6.0)
+        self.assertFalse(
+            np.any(np.all(points == np.asarray(frustum.apex), axis=1))
+        )
+
+        apex_cone = ConeSpec(
+            "apex-cone",
+            (0.0, 0.0, 0.0),
+            (0.0, 0.0, 1.0),
+            pi / 6.0,
+            (0.0, 2.0),
+        )
+        self.assertEqual(apex_cone.characteristic_points[0], apex_cone.apex)
 
 
 class PlaneContractTests(unittest.TestCase):
