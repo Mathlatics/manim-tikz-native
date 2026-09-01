@@ -13,6 +13,7 @@ from polyhedron_visibility.quadrics.conics import ConicKind, classify_conic
 from polyhedron_visibility.quadrics.contract import (
     ConeModel,
     ConeSpec,
+    CylinderModel,
     CylinderSpec,
     SectionPlane,
     SphereSpec,
@@ -241,6 +242,27 @@ class FiniteCylinderSectionTests(unittest.TestCase):
                 self.assertIs(trace.supporting_kind, kind)
                 self.assertIs(trace.finite_topology, topology)
                 self.assert_trace_lies_on_finite_surface(trace, self.cylinder, plane)
+
+    def test_open_cylinder_section_has_no_unpainted_cap_chords(self) -> None:
+        cylinder = CylinderSpec(
+            "open-cylinder",
+            (0.0, 0.0, 0.0),
+            (0.0, 0.0, 1.0),
+            2.0,
+            (-3.0, 3.0),
+            radial_axis=(1.0, 0.0, 0.0),
+            model=CylinderModel.OPEN,
+        )
+        plane = SectionPlane("open-axial", (0.0, 0.0, 0.0), (1.0, 0.0, 0.0))
+
+        self.assertEqual(section_cap_chord_curve_ids("open-section", cylinder), ())
+        curves = compute_quadric_section_boundary_curves(
+            "open-section",
+            cylinder,
+            plane,
+        )
+        self.assertTrue(curves)
+        self.assertFalse(any(isinstance(item, SegmentCurve) for item in curves))
 
     def test_finite_axial_range_can_split_one_supporting_ellipse_into_arcs(self) -> None:
         narrow = CylinderSpec(

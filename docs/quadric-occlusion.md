@@ -15,10 +15,12 @@ read as supporting more than the tested v1 combinations.
 
 ## Scope
 
-The public contract targets finite, opaque teaching solids built from:
+The public contract targets finite teaching surfaces, including closed solids
+and explicitly open shells, built from:
 
 - spheres;
-- right circular cylinders, with explicit axial bounds and optional caps;
+- right circular cylinders, with explicit axial bounds and an explicit closed
+  solid or open lateral-shell model;
 - right circular cones, with explicit axial bounds and one of three finite
   teaching models: a closed single cone, an open single shell, or an open
   double shell;
@@ -88,6 +90,22 @@ Finite teaching solids add explicit trim rules.  For cylinders and cones the
 axial interval, nappe selection, and cap policy are therefore part of the
 solid contract and are not encoded by `Q`.  This prevents a non-existent
 infinite extension from hiding a curve.
+
+### Finite cylinder models
+
+`CylinderSpec.model` separates two authored objects that share the same
+infinite quadratic support:
+
+- `CylinderModel.CLOSED` is the historical finite solid with two planar caps;
+- `CylinderModel.OPEN` is only the finite lateral shell. Its two axial endpoint
+  circles are trim rims, not cap disks, and therefore do not participate in
+  volume membership, ray hits, or section cap chords.
+
+Omitting `model` preserves the historical closed-cylinder behavior. As with
+open cones, calling `contains()` on an open cylinder is an error.
+The Manim binding always paints `OPEN` through separate far/near lateral masks;
+each projected terminal disk is a hole in its owning sheet, never an implicit
+cap fill. `CLOSED` keeps the historical single opaque-proxy fill path.
 
 ### Finite cone models
 

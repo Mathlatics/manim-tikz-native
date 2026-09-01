@@ -17,6 +17,7 @@ from polyhedron_visibility.quadrics.contract import (
     CircularTrimRimSpec,
     ConeModel,
     ConeSpec,
+    CylinderModel,
     CylinderSpec,
     PlanarCapSpec,
 )
@@ -305,6 +306,34 @@ class PlanarSurfaceRimContractTests(unittest.TestCase):
                 by_id[source_id],
                 cap,
                 source_kind=BoundarySourceKind.SURFACE_CAP_RIM,
+            )
+
+    def test_open_cylinder_uses_trim_sources_instead_of_cap_sources(self) -> None:
+        cylinder = CylinderSpec(
+            "open-cylinder",
+            (0.25, -1.0, 2.5),
+            (1.0, 2.0, 3.0),
+            1.25,
+            (-0.75, 2.5),
+            radial_axis=(2.0, -1.0, 0.0),
+            model=CylinderModel.OPEN,
+        )
+        sources = build_surface_boundary_sources(
+            (cylinder,),
+            VIEW,
+            include_silhouettes=False,
+        )
+
+        self.assertEqual(cylinder.end_caps, ())
+        self.assertEqual(len(sources), 2)
+        by_id = {source.source_id: source for source in sources}
+        for rim in cylinder.trim_rims:
+            source_id = f"boundary:{cylinder.surface_id}:{rim.role}:rim"
+            self.assertIn(source_id, by_id)
+            self.assert_source_contract(
+                by_id[source_id],
+                rim,
+                source_kind=BoundarySourceKind.SURFACE_TRIM_RIM,
             )
 
     def test_closed_and_open_single_cones_use_distinct_real_boundaries(

@@ -80,7 +80,7 @@
     {"id": "closed_cone_topology", "surface": "closed_cone", "pivotHeight": 1.2, "startAngle": 55.0, "endAngle": 65.0, "view": "isometric"},
     {"id": "open_frustum_topology", "surface": "open_frustum", "pivotHeight": 1.5, "startAngle": 55.0, "endAngle": 65.0, "view": "isometric"}
   ],
-  "expectedSolverSemanticDigest": "9174e811f5296b7cef307ba8f78739ef7a9a2d8169514ae6b49e3abaa5c938e2",
+  "expectedSolverSemanticDigest": "fb4deb5a2f93b39afe5f5e2f3403be84fcc3e5380815f36833ead63f16a088af",
   "expectedCompositorDigests": {
     "closed_cone_above_critical": "44cba638258670f88c89a96219c4d9f5adc7bf1d42060c740c548c0ed926a6ce",
     "closed_cone_below_critical": "1acbc3283585f7cbed2be94e2e92e1c24c3319d1cbb2055db72e5d0d71c9c6dc",
@@ -94,8 +94,8 @@
     "closed_frustum_below_critical": "fffac460734f5b909d0d00a9d0271119074baeb78c7e596e4b4915a0c077a876",
     "closed_frustum_empty": "9b834eee8b0c17afe0de5ecb621d7a1f5909929fea1961fd0b29e172e25b9e3e",
     "closed_frustum_exact_parabola": "7870e5f15eee08071a32c11c7a42bf761d4de9d892b8ad4e57e7530e21fc034e",
-    "closed_frustum_near_vertical": "389f959d9bc83bb7ceeb26b0095fc723c270bee77fa91c34d515ea7977e41191",
-    "closed_frustum_through_apex_generator": "8ebc99458a24407fd78484072ffc74d3548a773dd316b0469c61fc4090acc4fa",
+    "closed_frustum_near_vertical": "76cd9744824b5144c8c79b2e9fade2930b2e91da60a3cff01953c8345371047c",
+    "closed_frustum_through_apex_generator": "0b29013bc72170e2b36ed04fd2209a1bc9557ab6bc29640ee955e1787401f246",
     "closed_frustum_transverse_axis": "09ce8310b004e4251cb71aaa13cbe2c31bae23bde132b676c67f330dba63caaa",
     "closed_frustum_two_cap_chords": "f4812c9279bbb259bb3c9019b483d53823e0571253e8062e153c8125dfce3b1d",
     "open_cone_above_critical": "8fd7128368134a2b30fa60b624fd70cbe56f8ae92f654457cd293b3599e0b023",
@@ -107,11 +107,11 @@
     "open_cone_terminal_tangent": "b38e6180c96f8903bfdc6d2ea7c4b8f17cbfa71cf42d9a69ae38e80169b9a681",
     "open_cone_through_apex_generator": "bc6ff9f364c5ce5e97516913c2ca4308a9941995b6a5c3951d3a578d3078c03c",
     "open_cone_transverse_isometric": "24a5c4d63eab84ac17e8adb58041f31b622467b8b15ff9834c8e804eb2ae7e5e",
-    "open_frustum_above_critical_near_side": "5cdac06e8ba77698ca6b5dbc4a04fd5e7d131c94348e900676306770e27a0749",
-    "open_frustum_below_critical": "b6ac2cbe16b89d9be339279161ed40c22a7709a09b8a40dda5dbaac26a272b10",
+    "open_frustum_above_critical_near_side": "3d7563c7077a537850dc9cf31c6c5d49d98a29169914f1c67720797996735241",
+    "open_frustum_below_critical": "d2e3991732fba783b79cecaf6f09f62e80dd16bd42fd9b7227500b681db13d25",
     "open_frustum_exact_parabola_side": "755483cfbed527bc8d179011f4a7a2cd9f97995eb3c46e8a644a4e52dde78632",
     "open_frustum_through_apex_hyperbola": "dfaaf44e27e9c6a202bf0a3f16ade420f4e7a2597ce6e15c793bdd3877482c9e",
-    "open_frustum_transverse_isometric": "09c3d69c95413704d5709ace7b5f0c936e3b1a2533e6b0762d7e757d72197a81",
+    "open_frustum_transverse_isometric": "83a0823664b28ed02f19b2395b0f3628a87fa35fdd5a9ce3a058f7bf42edd4ee",
     "open_frustum_two_side_rims": "af9656cbc20724c481a1854d97515e9291f9b83c2336f9b0b784895d65b8b0d4",
     "open_frustum_vertical": "87d4ab5910084a137412933d79a7bd5be3f6923558fa9c33b5439fea77cb0d9b"
   }

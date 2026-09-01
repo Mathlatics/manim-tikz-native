@@ -43,7 +43,12 @@ from ..geometry import (
 from ..parallel_solver import ParallelView
 from ..topology import ParameterInterval
 from .conics import ConicKind
-from .critical import AnalyticCurve3D, _curve_chart
+from .critical import (
+    AnalyticCurve3D,
+    CriticalEventError,
+    _curve_chart,
+    _tan_half_angle_root_domains,
+)
 from .curves import EllipseArcCurve, ParametricConicBranch, SegmentCurve
 from .roots import (
     PolynomialRootError,
@@ -1379,7 +1384,7 @@ def _projected_contact_roundoff(
     )
 
 
-def _stationary_contact_ulp_residual_limit(
+def _projected_contact_ulp_residual_limit(
     source: AnalyticCurve3D,
     source_model: _ProjectedModel,
     target: _ProjectedModel,
@@ -1389,7 +1394,7 @@ def _stationary_contact_ulp_residual_limit(
     parameter_epsilon: float,
     screen_epsilon: float,
 ) -> float:
-    """Convert a certified local contact ULP enclosure to residual units."""
+    """Convert a certified projected-contact ULP enclosure to residual units."""
 
     source_point = view.matrix[:2] @ np.asarray(
         source.point(parameter), dtype=float
@@ -2184,14 +2189,22 @@ def _candidate_source_parameters(
         expected_degree = 2 if target.line is not None else 4
         while len(coefficients) <= expected_degree:
             coefficients.append(0.0)
-        screen = view.matrix[:2]
         for seam in chart.chart_poles:
-            seam_point = screen @ np.asarray(source.point(seam), dtype=float)
-            if _direct_equation_matches(
+            # Display-scale geometry tolerance is intentionally too broad
+            # here: a true tangent just beside the pole can put the seam
+            # point quadratically close to the target while its tiny leading
+            # coefficient remains essential.  Clear the formal infinity root
+            # only when the authored seam contact is indistinguishable at the
+            # arithmetic ULP level.
+            if _projected_contact_ulp_residual_limit(
+                source,
+                source_model,
                 target,
-                seam_point,
+                view,
+                seam,
+                parameter_epsilon=parameter_epsilon,
                 screen_epsilon=screen_epsilon,
-            ):
+            ) > 0.0:
                 coefficients[expected_degree] = 0.0
                 break
     coefficients = tuple(coefficients)
@@ -2226,23 +2239,6 @@ def _candidate_source_parameters(
     ):
         residual = _normalized_polynomial_residual(coefficients, stationary)
         stationary_parameters = chart.parameters(stationary, parameter_epsilon)
-        local_residual_limit = max(
-            (
-                _stationary_contact_ulp_residual_limit(
-                    source,
-                    source_model,
-                    target,
-                    view,
-                    parameter,
-                    parameter_epsilon=parameter_epsilon,
-                    screen_epsilon=screen_epsilon,
-                )
-                for parameter in stationary_parameters
-            ),
-            default=0.0,
-        )
-        if residual > max(stationary_residual_limit, local_residual_limit):
-            continue
         certified_parameters = tuple(
             parameter
             for parameter in stationary_parameters
@@ -2255,9 +2251,26 @@ def _candidate_source_parameters(
                 parameter_epsilon=parameter_epsilon,
                 screen_epsilon=screen_epsilon,
             )
+            and (
+                residual <= stationary_residual_limit
+                or _projected_contact_ulp_residual_limit(
+                    source,
+                    source_model,
+                    target,
+                    view,
+                    parameter,
+                    parameter_epsilon=parameter_epsilon,
+                    screen_epsilon=screen_epsilon,
+                )
+                > 0.0
+            )
         )
         if not certified_parameters:
             continue
+        # A ULP contact proves that the directly projected curves meet inside
+        # their arithmetic enclosure.  Paired with the tangent-direction
+        # certificate for the same authored parameter, that is stronger
+        # evidence than a cancellation-prone chart residual near a pole.
         if any(
             abs(stationary - previous[0])
             <= parameter_epsilon * max(1.0, abs(stationary))
@@ -2287,15 +2300,32 @@ def _candidate_source_parameters(
                     (item.chart_root.value, item.parameter, False) for item in roots
                 )
             else:
-                roots = solve_real_polynomial(
-                    solve_coefficients,
-                    domain=chart.root_domain,
-                    context=context,
-                    parameter_tolerance=(
-                        parameter_epsilon
-                        if chart.name == "parameter"
-                        else max(4096.0 * _FLOAT_EPSILON, parameter_epsilon)
-                    ),
+                root_domains = (
+                    _tan_half_angle_root_domains(
+                        chart,
+                        solve_coefficients,
+                        parameter_epsilon,
+                        max(
+                            (abs(item) for item in solve_coefficients),
+                            default=np.finfo(float).tiny,
+                        ),
+                    )
+                    if chart.name == "tan_half_angle"
+                    else (chart.root_domain,)
+                )
+                roots = tuple(
+                    root
+                    for domain in root_domains
+                    for root in solve_real_polynomial(
+                        solve_coefficients,
+                        domain=domain,
+                        context=context,
+                        parameter_tolerance=(
+                            parameter_epsilon
+                            if chart.name == "parameter"
+                            else max(4096.0 * _FLOAT_EPSILON, parameter_epsilon)
+                        ),
+                    )
                 )
                 root_entries.extend(
                     (root.value, parameter, False)
@@ -2305,7 +2335,7 @@ def _candidate_source_parameters(
                         parameter_epsilon,
                     )
                 )
-    except (OverflowError, PolynomialRootError) as exc:
+    except (CriticalEventError, OverflowError, PolynomialRootError) as exc:
         raise ProjectedCurveIntersectionError(
             f"projected crossings for {source.curve_id!r} and "
             f"{target.curve.curve_id!r} are ambiguous: {exc}"
@@ -2330,12 +2360,15 @@ def _candidate_source_parameters(
     for parameter in candidates:
         if not source.domain.contains(parameter, tolerance=parameter_epsilon):
             continue
-        point = screen @ np.asarray(source.point(parameter), dtype=float)
-        if _direct_equation_matches(
+        if _projected_contact_ulp_residual_limit(
+            source,
+            source_model,
             target,
-            point,
+            view,
+            parameter,
+            parameter_epsilon=parameter_epsilon,
             screen_epsilon=screen_epsilon,
-        ):
+        ) > 0.0:
             parameter_entries.append((float(parameter), False))
 
     normalized: list[_SourceParameterCandidate] = []

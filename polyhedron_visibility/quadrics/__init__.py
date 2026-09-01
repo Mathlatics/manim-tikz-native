@@ -24,6 +24,7 @@ _EXPORTS: Final[dict[str, tuple[str, str]]] = {
     "CircularTrimRimSpec": (".contract", "CircularTrimRimSpec"),
     "ConeModel": (".contract", "ConeModel"),
     "ConeSpec": (".contract", "ConeSpec"),
+    "CylinderModel": (".contract", "CylinderModel"),
     "CylinderSpec": (".contract", "CylinderSpec"),
     "PlanarCapSpec": (".contract", "PlanarCapSpec"),
     "PlaneDisplayPatchSpec": (".contract", "PlaneDisplayPatchSpec"),

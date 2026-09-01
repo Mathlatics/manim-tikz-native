@@ -25,19 +25,27 @@ import json
 from math import isfinite
 from typing import Sequence
 
+import numpy as np
+
 from ..compositor import PainterConstraint, stable_topological_sort
 from ..geometry import GeometryContext, GeometryQuantity, ResolvedGeometryContext
 from ..parallel_solver import ParallelView
+from ..topology import ParameterInterval
+from ..visibility import VisibilityKind
 from .boundary_compositing import (
     BoundaryOcclusionScope,
+    BoundarySemanticKind,
+    BoundarySourceKind,
     BoundarySectionAnchors,
     QuadricBoundaryCompositingFrame,
     QuadricBoundarySource,
+    QuadricBoundaryVisibilitySpan,
     QuadricRankOneSectionSourceGroup,
     compute_boundary_visibility,
     compute_quadric_boundary_compositing,
     compute_quadric_boundary_crossings,
 )
+from .critical import _NestedSilhouetteTangencyCertificate
 from .curves import EllipseArcCurve
 from .boundary_section import (
     certify_rank_one_section_boundary_sources,
@@ -51,6 +59,10 @@ from .contract import (
     SectionPlane,
     SphereSpec,
 )
+from .curve_intersections import (
+    ProjectedCurveIntersectionError,
+    compute_projected_curve_crossings,
+)
 from .global_occlusion import GlobalQuadricFrame, compute_global_quadric_frame
 from .nested_tangent_compositing import (
     NestedTangentParentFrame,
@@ -63,6 +75,10 @@ from .section_compositing import (
     PlanePatchProjectionKind,
     QuadricSectionCompositingFrame,
     compute_quadric_section_compositing,
+)
+from .surface_boundaries import (
+    build_surface_boundary_sources,
+    plane_outline_sources,
 )
 
 
@@ -571,6 +587,353 @@ def _merge_relations(
     )
 
 
+def _nested_plane_outline_visibility_spans(
+    sources: tuple[QuadricBoundarySource, ...],
+    spans_by_source: dict[
+        str,
+        tuple[QuadricBoundaryVisibilitySpan, ...],
+    ],
+    section: QuadricSectionCompositingFrame,
+    *,
+    parameter_tolerance: float,
+) -> dict[str, tuple[QuadricBoundaryVisibilitySpan, ...]]:
+    """Combine mother-owned plane roles with external-surface visibility.
+
+    The one-surface section compositor is the authority for a plane edge's
+    ``PlaneDepthRole``.  The ordinary curve visibility kernel is independently
+    authoritative for external occluders such as registered tangent spheres.
+    Intersecting both interval partitions keeps those contracts narrow and
+    avoids asking either solver to infer the other's evidence.
+    """
+
+    plane_sources = tuple(
+        source
+        for source in sources
+        if source.source_kind is BoundarySourceKind.PLANE_PATCH_EDGE
+    )
+    if not plane_sources:
+        return spans_by_source
+    if section.projection_kind is not PlanePatchProjectionKind.AREA:
+        raise SceneOcclusionError(
+            "registered nested plane edges require an area-valued plane patch"
+        )
+
+    expected_sources = plane_outline_sources(section.plane, section.patch)
+    edge_index_by_id = {
+        source.source_id: edge_index
+        for edge_index, source in enumerate(expected_sources)
+    }
+    actual_ids = {source.source_id for source in plane_sources}
+    if actual_ids != set(edge_index_by_id):
+        raise SceneOcclusionError(
+            "registered nested plane edges must cover the finite patch exactly"
+        )
+    expected_by_id = {source.source_id: source for source in expected_sources}
+    for source in plane_sources:
+        expected = expected_by_id[source.source_id]
+        if (
+            source.curve != expected.curve
+            or source.owner_id != section.patch.patch_id
+            or source.occlusion_scope is not BoundaryOcclusionScope.ALL_SURFACES
+        ):
+            raise SceneOcclusionError(
+                f"registered plane edge {source.source_id!r} does not match "
+                "the finite patch with all-surface occlusion"
+            )
+
+    outlines_by_edge = {
+        edge_index: tuple(
+            sorted(
+                (
+                    fragment
+                    for fragment in section.plane_outline_fragments
+                    if fragment.edge_index == edge_index
+                ),
+                key=lambda fragment: fragment.interval.start,
+            )
+        )
+        for edge_index in range(4)
+    }
+    result = dict(spans_by_source)
+    hidden_roles = {
+        PlaneDepthRole.BEHIND_SURFACE,
+        PlaneDepthRole.BETWEEN_SURFACE_SHEETS,
+    }
+    for source in plane_sources:
+        edge_index = edge_index_by_id[source.source_id]
+        role_spans = outlines_by_edge[edge_index]
+        raw_spans = spans_by_source[source.source_id]
+        pieces: list[QuadricBoundaryVisibilitySpan] = []
+        for role_span in role_spans:
+            for raw_span in raw_spans:
+                start = max(role_span.interval.start, raw_span.interval.start)
+                end = min(role_span.interval.end, raw_span.interval.end)
+                if end - start <= parameter_tolerance:
+                    continue
+                external_occluders = set(raw_span.occluder_surface_ids)
+                external_occluders.discard(section.surface_id)
+                if role_span.role in hidden_roles:
+                    external_occluders.add(section.surface_id)
+                occluders = tuple(sorted(external_occluders))
+                kind = (
+                    VisibilityKind.HIDDEN if occluders else VisibilityKind.VISIBLE
+                )
+                current = QuadricBoundaryVisibilitySpan(
+                    ParameterInterval(start, end),
+                    kind,
+                    occluders,
+                    role_span.role.value,
+                )
+                if (
+                    pieces
+                    and pieces[-1].kind is current.kind
+                    and pieces[-1].occluder_surface_ids
+                    == current.occluder_surface_ids
+                    and pieces[-1].depth_role == current.depth_role
+                    and abs(pieces[-1].interval.end - current.interval.start)
+                    <= parameter_tolerance
+                ):
+                    previous = pieces.pop()
+                    current = QuadricBoundaryVisibilitySpan(
+                        ParameterInterval(previous.interval.start, current.interval.end),
+                        current.kind,
+                        current.occluder_surface_ids,
+                        current.depth_role,
+                    )
+                pieces.append(current)
+
+        domain = source.curve.domain
+        if (
+            not pieces
+            or abs(pieces[0].interval.start - domain.start) > parameter_tolerance
+            or abs(pieces[-1].interval.end - domain.end) > parameter_tolerance
+            or any(
+                abs(first.interval.end - second.interval.start)
+                > parameter_tolerance
+                for first, second in zip(pieces, pieces[1:])
+            )
+        ):
+            raise SceneOcclusionError(
+                f"registered plane edge {source.source_id!r} lost interval coverage"
+            )
+        result[source.source_id] = tuple(pieces)
+    return result
+
+
+def _nested_silhouette_support_tangencies(
+    sources: tuple[QuadricBoundarySource, ...],
+    surfaces: tuple[QuadricSurfaceSpec, ...],
+    nested_parent: NestedTangentParentFrame,
+    view: ParallelView,
+    *,
+    context: ResolvedGeometryContext,
+) -> dict[str, tuple[_NestedSilhouetteTangencyCertificate, ...]]:
+    """Certify sphere/mother support tangencies from registered silhouettes.
+
+    The nested parent has already certified each sphere as internally tangent
+    to the mother.  A tangential, coincident-depth crossing between their true
+    projected silhouettes therefore identifies one repeated root of the
+    sphere-outline ray discriminant without expanding the ill-conditioned
+    near-cylinder quartic.
+    """
+
+    by_surface_id = {surface.surface_id: surface for surface in surfaces}
+    mother = by_surface_id.get(nested_parent.mother_surface_id)
+    if not isinstance(mother, (ConeSpec, CylinderSpec)):
+        raise SceneOcclusionError(
+            "nested silhouette certification lost its cone/cylinder mother"
+        )
+    sphere_ids = {item.sphere_surface_id for item in nested_parent.contacts}
+    spheres = tuple(
+        sorted(
+            (
+                surface
+                for surface_id in sphere_ids
+                if isinstance(
+                    (surface := by_surface_id.get(surface_id)),
+                    SphereSpec,
+                )
+            ),
+            key=lambda item: item.surface_id,
+        )
+    )
+    if len(spheres) != len(sphere_ids):
+        raise SceneOcclusionError(
+            "nested silhouette certification lost a registered tangent sphere"
+        )
+
+    expected = tuple(
+        source
+        for source in build_surface_boundary_sources(
+            (mother, *spheres),
+            view,
+            include_cap_rims=False,
+            include_silhouettes=True,
+            context=context,
+        )
+        if source.source_kind is BoundarySourceKind.SURFACE_SILHOUETTE
+    )
+    expected_by_id = {source.source_id: source for source in expected}
+    expected_sphere_ids = {
+        source.source_id
+        for source in expected
+        if source.owner_surface_id in sphere_ids
+    }
+    expected_mother_ids = {
+        source.source_id
+        for source in expected
+        if source.owner_surface_id == mother.surface_id
+    }
+    # The narrow theorem used below requires one true silhouette circle for
+    # each sphere and two distinct finite mother generators.  Other view
+    # degeneracies retain the ordinary analytic solver.
+    if (
+        len(expected_sphere_ids) != len(sphere_ids)
+        or len(expected_mother_ids) != 2
+    ):
+        return {}
+
+    related_surface_ids = {mother.surface_id, *sphere_ids}
+    relevant_claims = tuple(
+        source
+        for source in sources
+        if source.source_id in expected_by_id
+        or (
+            source.owner_surface_id in related_surface_ids
+            and (
+                source.source_kind is BoundarySourceKind.SURFACE_SILHOUETTE
+                or source.semantic_kind is BoundarySemanticKind.TRUE_SILHOUETTE
+            )
+        )
+    )
+    for source in relevant_claims:
+        canonical = expected_by_id.get(source.source_id)
+        if canonical is None:
+            raise SceneOcclusionError(
+                f"registered nested silhouette {source.source_id!r} has no "
+                "canonical surface-boundary identity"
+            )
+        if (
+            source.curve != canonical.curve
+            or source.owner_id != canonical.owner_id
+            or source.owner_surface_id != canonical.owner_surface_id
+            or source.source_kind is not canonical.source_kind
+            or source.semantic_kind is not canonical.semantic_kind
+            or source.occlusion_scope is not canonical.occlusion_scope
+        ):
+            raise SceneOcclusionError(
+                f"registered nested silhouette {source.source_id!r} does not "
+                "match its canonical surface boundary"
+            )
+
+    actual_by_id = {
+        source.source_id: source
+        for source in sources
+        if source.source_id in expected_by_id
+    }
+    # Boundary registration is intentionally composable.  A caller may omit
+    # any intrinsic silhouettes; without the complete canonical catalog this
+    # optimization simply does not participate.
+    if set(actual_by_id) != set(expected_by_id):
+        return {}
+
+    sphere_sources = tuple(
+        actual_by_id[source_id]
+        for source_id in sorted(expected_sphere_ids)
+    )
+    mother_sources = tuple(
+        actual_by_id[source_id]
+        for source_id in sorted(expected_mother_ids)
+    )
+    result: dict[str, tuple[_NestedSilhouetteTangencyCertificate, ...]] = {}
+    parameter_epsilon = context.epsilon(GeometryQuantity.PARAMETER)
+    boundary_epsilon = context.epsilon(GeometryQuantity.BOUNDARY)
+    for sphere_source in sphere_sources:
+        certificates: list[_NestedSilhouetteTangencyCertificate] = []
+        for mother_source in mother_sources:
+            try:
+                crossings = compute_projected_curve_crossings(
+                    (sphere_source.curve, mother_source.curve),
+                    view,
+                    context=context,
+                )
+            except ProjectedCurveIntersectionError as exc:
+                raise SceneOcclusionError(
+                    "registered sphere/mother silhouette tangency cannot be "
+                    f"certified: {sphere_source.source_id!r}, "
+                    f"{mother_source.source_id!r}: {exc}"
+                ) from exc
+            if len(crossings) != 1:
+                raise SceneOcclusionError(
+                    "each registered mother silhouette generator must have "
+                    "one sphere-silhouette tangency"
+                )
+            crossing = crossings[0]
+            if not crossing.tangential or not crossing.coincident_depth:
+                raise SceneOcclusionError(
+                    "registered sphere/mother silhouette crossing is not a "
+                    "coincident-depth tangency"
+                )
+            if crossing.first_curve_id == sphere_source.curve.curve_id:
+                sphere_parameter = crossing.first_parameter
+                witness_parameter = crossing.second_parameter
+            elif crossing.second_curve_id == sphere_source.curve.curve_id:
+                sphere_parameter = crossing.second_parameter
+                witness_parameter = crossing.first_parameter
+            else:  # pragma: no cover - crossing input owns both identities
+                raise SceneOcclusionError(
+                    "sphere silhouette crossing lost its source identity"
+                )
+            sphere_point = np.asarray(
+                sphere_source.curve.point(sphere_parameter),
+                dtype=float,
+            )
+            witness_point = np.asarray(
+                mother_source.curve.point(witness_parameter),
+                dtype=float,
+            )
+            world_residual = float(np.linalg.norm(sphere_point - witness_point))
+            if world_residual > boundary_epsilon:
+                raise SceneOcclusionError(
+                    "registered coincident-depth silhouette crossing does not "
+                    "identify one world point"
+                )
+            certificates.append(
+                _NestedSilhouetteTangencyCertificate(
+                    sphere_source.source_id,
+                    mother.surface_id,
+                    sphere_parameter,
+                    mother_source.source_id,
+                    witness_parameter,
+                    crossing.crossing_id,
+                    tuple(float(item) for item in sphere_point),
+                    world_residual,
+                )
+            )
+        certificates.sort(key=lambda item: (item.parameter, item.crossing_id))
+        if (
+            len(certificates) != 2
+            or certificates[1].parameter - certificates[0].parameter
+            <= parameter_epsilon
+        ):
+            raise SceneOcclusionError(
+                "registered sphere silhouette must have two distinct mother "
+                "support tangencies"
+            )
+        if float(
+            np.linalg.norm(
+                np.asarray(certificates[1].world_point, dtype=float)
+                - np.asarray(certificates[0].world_point, dtype=float)
+            )
+        ) <= boundary_epsilon:
+            raise SceneOcclusionError(
+                "registered sphere silhouette tangencies do not have two "
+                "distinct world witnesses"
+            )
+        result[sphere_source.source_id] = tuple(certificates)
+    return result
+
+
 def _attach_boundaries(
     sources: tuple[QuadricBoundarySource, ...],
     surfaces: tuple[QuadricSurfaceSpec, ...],
@@ -586,12 +949,31 @@ def _attach_boundaries(
 ) -> QuadricBoundaryCompositingFrame | None:
     if not sources:
         return None
+    nested_silhouette_tangencies = (
+        {}
+        if nested_parent is None
+        else _nested_silhouette_support_tangencies(
+            sources,
+            surfaces,
+            nested_parent,
+            view,
+            context=context,
+        )
+    )
     spans = compute_boundary_visibility(
         sources,
         surfaces,
         view,
         context=context,
+        _nested_silhouette_tangencies_by_source=nested_silhouette_tangencies,
     )
+    if section is not None and nested_parent is not None:
+        spans = _nested_plane_outline_visibility_spans(
+            sources,
+            spans,
+            section,
+            parameter_tolerance=context.epsilon(GeometryQuantity.PARAMETER),
+        )
     rank_one_group: QuadricRankOneSectionSourceGroup | None = None
     mother = None
     if section is not None:

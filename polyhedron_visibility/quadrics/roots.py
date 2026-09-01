@@ -157,6 +157,41 @@ def _coerce_domain(
     return ParameterInterval(-bound, bound)
 
 
+def _sign_variations(coefficients: Sequence[float]) -> int:
+    """Return the exact sign changes after zero coefficients are removed."""
+
+    signs = tuple(1 if value > 0.0 else -1 for value in coefficients if value != 0.0)
+    return sum(left != right for left, right in zip(signs, signs[1:]))
+
+
+def _descartes_excludes_domain_roots(
+    coefficients: Sequence[float],
+    domain: ParameterInterval,
+) -> bool:
+    """Certify that one authored half-axis contains no real polynomial root.
+
+    Descartes' rule of signs says a polynomial with no coefficient sign
+    changes has no strictly positive roots.  Applying the same test to
+    ``p(-x)`` covers the negative half-axis.  This exact pre-check avoids
+    mapping an obviously root-free tan-half-angle tail to an enormous
+    normalized interval, where floating-point cancellation can otherwise
+    manufacture a false endpoint candidate.
+    """
+
+    # Keep a possible root at x=0 in the ordinary validated path.
+    if coefficients[0] == 0.0:
+        return False
+    if domain.start >= 0.0:
+        return _sign_variations(coefficients) == 0
+    if domain.end <= 0.0:
+        reflected = tuple(
+            value if index % 2 == 0 else -value
+            for index, value in enumerate(coefficients)
+        )
+        return _sign_variations(reflected) == 0
+    return False
+
+
 def _polyval(coefficients: Sequence[float], value: float) -> np.longdouble:
     argument = np.longdouble(value)
     result = np.longdouble(0.0)
@@ -468,6 +503,9 @@ def solve_real_polynomial(
                 residual,
             ),
         )
+
+    if _descartes_excludes_domain_roots(canonical, interval):
+        return ()
 
     center = interval.midpoint
     half_width = 0.5 * interval.length

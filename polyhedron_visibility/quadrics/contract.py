@@ -57,6 +57,18 @@ class ConeModel(str, Enum):
     ANALYTIC_DOUBLE = "analytic_double"
 
 
+class CylinderModel(str, Enum):
+    """Finite cylinder models accepted by the public geometry contract.
+
+    ``CLOSED`` retains the historical finite solid with two planar caps.
+    ``OPEN`` is only the finite lateral shell; its axial endpoints are real
+    circular trim boundaries, not unpainted cap occluders.
+    """
+
+    CLOSED = "closed"
+    OPEN = "open"
+
+
 def _identity(value: object, label: str) -> str:
     if not isinstance(value, str) or not value.strip():
         raise QuadricContractError(f"{label} must be a non-empty string")
@@ -641,7 +653,7 @@ class SphereSpec:
 
 @dataclass(frozen=True, slots=True)
 class CylinderSpec:
-    """A finite circular cylinder around an infinite cylindrical support."""
+    """A finite circular cylinder solid or open lateral shell."""
 
     surface_id: str
     origin: tuple[float, float, float]
@@ -649,6 +661,7 @@ class CylinderSpec:
     radius: float
     axial_range: tuple[float, float]
     radial_axis: tuple[float, float, float] | None = None
+    model: CylinderModel | str = CylinderModel.CLOSED
 
     def __post_init__(self) -> None:
         surface_id = _identity(self.surface_id, "surface_id")
@@ -660,12 +673,19 @@ class CylinderSpec:
             else _point3(self.radial_axis, "cylinder radial_axis")
         )
         frame = _frame(origin, axis, radial, "cylinder")
+        try:
+            model = CylinderModel(self.model)
+        except (TypeError, ValueError) as exc:
+            raise QuadricContractError(
+                "cylinder model must be 'closed' or 'open'"
+            ) from exc
         object.__setattr__(self, "surface_id", surface_id)
         object.__setattr__(self, "origin", origin)
         object.__setattr__(self, "axis", frame.z_axis)
         object.__setattr__(self, "radial_axis", frame.x_axis)
         object.__setattr__(self, "radius", _positive(self.radius, "cylinder radius"))
         object.__setattr__(self, "axial_range", _axial_range(self.axial_range))
+        object.__setattr__(self, "model", model)
 
     @property
     def frame(self) -> AffineFrame3D:
@@ -687,7 +707,13 @@ class CylinderSpec:
         return self.support_quadric
 
     @property
-    def end_caps(self) -> tuple[PlanarCapSpec, PlanarCapSpec]:
+    def is_open_shell(self) -> bool:
+        return self.model is CylinderModel.OPEN
+
+    @property
+    def end_caps(self) -> tuple[PlanarCapSpec, ...]:
+        if self.is_open_shell:
+            return ()
         frame = self.frame
         axis = np.asarray(frame.z_axis, dtype=float)
         origin = np.asarray(self.origin, dtype=float)
@@ -714,6 +740,29 @@ class CylinderSpec:
         )
 
     @property
+    def trim_rims(self) -> tuple[CircularTrimRimSpec, ...]:
+        if not self.is_open_shell:
+            return ()
+        frame = self.frame
+        axis = np.asarray(frame.z_axis, dtype=float)
+        origin = np.asarray(self.origin, dtype=float)
+        return tuple(
+            CircularTrimRimSpec(
+                f"{self.surface_id}:trim:{suffix}",
+                self.surface_id,
+                tuple(float(item) for item in origin + axial * axis),
+                tuple(float(item) for item in normal),
+                self.radius,
+                radial_axis=frame.x_axis,
+                role=role,
+            )
+            for axial, suffix, role, normal in (
+                (self.axial_range[0], "min", "trim_min", -axis),
+                (self.axial_range[1], "max", "trim_max", axis),
+            )
+        )
+
+    @property
     def characteristic_points(self) -> tuple[tuple[float, float, float], ...]:
         frame = self.frame
         origin = np.asarray(self.origin, dtype=float)
@@ -727,6 +776,10 @@ class CylinderSpec:
         )
 
     def contains(self, point: Sequence[float], *, context: ContextInput = None) -> bool:
+        if self.is_open_shell:
+            raise QuadricContractError(
+                "an open cylinder shell has no filled-volume contains relation"
+            )
         value = np.asarray(_point3(point, "cylinder query point"), dtype=float)
         resolved = _resolve(context, self.characteristic_points)
         local = self.frame.to_local_point(value)
@@ -1320,6 +1373,7 @@ __all__ = [
     "CircularTrimRimSpec",
     "ConeModel",
     "ConeSpec",
+    "CylinderModel",
     "CylinderSpec",
     "PlanarCapSpec",
     "PlaneDisplayPatchSpec",

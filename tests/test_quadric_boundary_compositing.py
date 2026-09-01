@@ -33,7 +33,9 @@ from polyhedron_visibility.quadrics.compositing import (
     QuadricPaintRelation,
 )
 from polyhedron_visibility.quadrics.contract import (
+    ConeModel,
     ConeSpec,
+    CylinderModel,
     CylinderSpec,
     PlaneDisplayPatchSpec,
     SectionPlane,
@@ -1426,6 +1428,58 @@ class QuadricBoundaryContractTests(unittest.TestCase):
             <= by_kind
         )
 
+    def test_open_cone_and_cylinder_keep_the_same_boundary_slot_identities(
+        self,
+    ) -> None:
+        cone = ConeSpec(
+            "transition-surface",
+            (0.0, 0.0, -1000.0),
+            (0.0, 0.0, 1.0),
+            1.0e-3,
+            (997.0, 1005.8),
+            radial_axis=(1.0, 0.0, 0.0),
+            model=ConeModel.OPEN_SINGLE,
+        )
+        cylinder = CylinderSpec(
+            "transition-surface",
+            (0.0, 0.0, 0.0),
+            (0.0, 0.0, 1.0),
+            1.0,
+            (-3.0, 5.8),
+            radial_axis=(1.0, 0.0, 0.0),
+            model=CylinderModel.OPEN,
+        )
+
+        self.assertEqual(
+            surface_boundary_slot_descriptors((cone,)),
+            surface_boundary_slot_descriptors((cylinder,)),
+        )
+        expected_ids = {
+            "boundary:transition-surface:silhouette:generator:0",
+            "boundary:transition-surface:silhouette:generator:1",
+            "boundary:transition-surface:trim_min:rim",
+            "boundary:transition-surface:trim_max:rim",
+        }
+        for surface in (cone, cylinder):
+            descriptors = surface_boundary_slot_descriptors((surface,))
+            self.assertEqual(
+                {item.source_id for item in descriptors},
+                expected_ids,
+            )
+
+        def source_identity(surface):
+            return tuple(
+                (
+                    item.source_id,
+                    item.owner_id,
+                    item.owner_surface_id,
+                    item.source_kind,
+                )
+                for item in build_surface_boundary_sources((surface,), VIEW)
+            )
+
+        self.assertEqual(source_identity(cone), source_identity(cylinder))
+
     def test_silhouette_generator_identity_is_continuous_across_azimuth_seam(
         self,
     ) -> None:
@@ -1612,14 +1666,12 @@ class QuadricBoundaryContractTests(unittest.TestCase):
             surface_item_by_id={"solid": "surface-front"},
             section_anchors=anchors,
         )
-        self.assertTrue(
-            all(
-                diagrammatic.draw_order.index(item.item_id)
-                > diagrammatic.draw_order.index("outline-front")
-                for item in diagrammatic.fragments
-                if item.effective_visibility_kind is VisibilityKind.HIDDEN
-            )
-        )
+        role_brackets = {
+            "behind_surface": ("plane-behind", "outline-behind"),
+            "outside_projection": ("plane-outside", "outline-outside"),
+            "between_surface_sheets": ("plane-between", "outline-between"),
+            "in_front_of_surface": ("plane-front", "outline-front"),
+        }
         depth = compute_quadric_boundary_compositing(
             (source,),
             spans,
@@ -1629,6 +1681,16 @@ class QuadricBoundaryContractTests(unittest.TestCase):
             surface_item_by_id={"solid": "surface-front"},
             section_anchors=anchors,
         )
+        for frame in (physical, diagrammatic, depth):
+            rank = {
+                item_id: index for index, item_id in enumerate(frame.draw_order)
+            }
+            for item in frame.fragments:
+                if not item.painted:
+                    continue
+                far, near = role_brackets[item.depth_role]
+                self.assertLess(rank[far], rank[item.item_id])
+                self.assertLess(rank[item.item_id], rank[near])
         hidden = [
             item for item in depth.fragments
             if item.effective_visibility_kind is VisibilityKind.HIDDEN

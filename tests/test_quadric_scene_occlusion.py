@@ -7,7 +7,7 @@ import unittest
 
 import numpy as np
 
-from polyhedron_visibility.geometry import GeometryContext
+from polyhedron_visibility.geometry import GeometryContext, GeometryQuantity
 from polyhedron_visibility.parallel_solver import ParallelView
 from polyhedron_visibility.topology import ParameterInterval
 from polyhedron_visibility.visibility import VisibilityKind
@@ -25,6 +25,10 @@ from polyhedron_visibility.quadrics.contract import (
     SectionPlane,
     SphereSpec,
 )
+from polyhedron_visibility.quadrics.critical import (
+    CriticalEventKind,
+    compute_curve_critical_events,
+)
 from polyhedron_visibility.quadrics.curves import EllipseArcCurve, SegmentCurve
 from polyhedron_visibility.quadrics.global_occlusion import (
     compute_global_quadric_frame,
@@ -40,9 +44,11 @@ from polyhedron_visibility.quadrics.scene_occlusion import (
     SceneOcclusionPath,
     SceneOcclusionRequest,
     SceneSectionSpec,
+    _nested_silhouette_support_tangencies,
     compute_scene_occlusion_frame,
 )
 from polyhedron_visibility.quadrics.section_compositing import (
+    PlaneDepthRole,
     PlanePatchProjectionKind,
     compute_quadric_section_compositing,
 )
@@ -50,7 +56,9 @@ from polyhedron_visibility.quadrics.sections import (
     compute_quadric_section_boundary_curves,
 )
 from polyhedron_visibility.quadrics.surface_boundaries import (
+    build_surface_boundary_sources,
     curve_boundary_source,
+    plane_outline_sources,
     section_curve_boundary_source,
 )
 
@@ -176,12 +184,326 @@ def _request(progress: float) -> SceneOcclusionRequest:
     )
 
 
+def _request_with_intrinsic_silhouettes(
+    progress: float,
+) -> tuple[SceneOcclusionRequest, tuple]:
+    request = _request(progress)
+    silhouettes = tuple(
+        replace(source, style_id="style:test-nested-silhouette")
+        for source in build_surface_boundary_sources(
+            request.surfaces,
+            request.view,
+            include_cap_rims=False,
+            include_silhouettes=True,
+        )
+    )
+    return (
+        replace(
+            request,
+            boundary_sources=(*request.boundary_sources, *silhouettes),
+        ),
+        silhouettes,
+    )
+
+
 @lru_cache(maxsize=8)
 def _frame(progress: float):
     return compute_scene_occlusion_frame(_request(progress))
 
 
 class QuadricSceneOcclusionTests(unittest.TestCase):
+    def test_canonical_nested_silhouettes_emit_geometric_critical_evidence(
+        self,
+    ) -> None:
+        request, silhouettes = _request_with_intrinsic_silhouettes(0.9999)
+        frame = compute_scene_occlusion_frame(request)
+        context = frame.global_frame.geometry_context
+        certificates = _nested_silhouette_support_tangencies(
+            request.boundary_sources,
+            request.surfaces,
+            frame.nested_parent_frame,
+            request.view,
+            context=context,
+        )
+        sphere_sources = tuple(
+            source
+            for source in silhouettes
+            if source.owner_surface_id.startswith("sphere:")
+        )
+        self.assertEqual(
+            set(certificates),
+            {source.source_id for source in sphere_sources},
+        )
+        boundary_epsilon = context.epsilon(
+            GeometryQuantity.BOUNDARY
+        )
+        mother_id = frame.nested_parent_frame.mother_surface_id
+        for source in sphere_sources:
+            with self.subTest(source_id=source.source_id):
+                items = certificates[source.source_id]
+                self.assertEqual(len(items), 2)
+                self.assertEqual(
+                    len({item.witness_curve_id for item in items}),
+                    2,
+                )
+                self.assertTrue(
+                    all(item.world_residual <= boundary_epsilon for item in items)
+                )
+                self.assertGreater(
+                    float(
+                        np.linalg.norm(
+                            np.asarray(items[1].world_point)
+                            - np.asarray(items[0].world_point)
+                        )
+                    ),
+                    boundary_epsilon,
+                )
+
+                selected_surfaces = tuple(
+                    surface
+                    for surface in request.surfaces
+                    if surface.surface_id != source.owner_surface_id
+                )
+                events = compute_curve_critical_events(
+                    source.curve,
+                    selected_surfaces,
+                    request.view,
+                    context=context,
+                    _nested_silhouette_tangencies=items,
+                )
+                evidence = tuple(
+                    item
+                    for event in events
+                    for item in event.evidence
+                    if item.surface_id == mother_id
+                )
+                support = tuple(
+                    item
+                    for item in evidence
+                    if item.kind is CriticalEventKind.SUPPORT_TANGENCY
+                    and item.equation.startswith(
+                        "nested_tangent_silhouette_support:"
+                    )
+                )
+                contact = tuple(
+                    item
+                    for item in evidence
+                    if item.kind
+                    is CriticalEventKind.CURVE_SURFACE_INTERSECTION
+                    and item.equation.startswith(
+                        "nested_tangent_silhouette_contact:"
+                    )
+                )
+                self.assertEqual(len(support), 2)
+                self.assertEqual(len(contact), 2)
+                for item in (*support, *contact):
+                    self.assertEqual(item.chart, "geometric_certificate")
+                    self.assertEqual(item.coefficients, ())
+                    self.assertLessEqual(item.residual, boundary_epsilon)
+                self.assertNotIn(
+                    "ray_discriminant",
+                    {item.equation for item in evidence},
+                )
+                self.assertNotIn(
+                    "curve_on_surface",
+                    {item.equation for item in evidence},
+                )
+                self.assertIn(
+                    "ray_linear_coefficient",
+                    {item.equation for item in evidence},
+                )
+
+    def test_tampered_canonical_nested_silhouette_fails_closed(self) -> None:
+        request, silhouettes = _request_with_intrinsic_silhouettes(0.5)
+        target = next(
+            source
+            for source in silhouettes
+            if source.owner_surface_id == "sphere:+1"
+        )
+        shifted_curve = EllipseArcCurve(
+            target.curve.curve_id,
+            (
+                target.curve.center[0] + 0.01,
+                target.curve.center[1],
+                target.curve.center[2],
+            ),
+            target.curve.first_axis,
+            target.curve.second_axis,
+            domain=target.curve.domain,
+        )
+        variants = {
+            "curve": replace(target, curve=shifted_curve),
+            "owner": replace(target, owner_id="forged-sphere-owner"),
+            "surface": replace(target, owner_surface_id="mother"),
+            "kind": replace(
+                target,
+                source_kind=BoundarySourceKind.ANALYTIC_CURVE,
+            ),
+            "semantic": replace(
+                target,
+                semantic_kind=BoundarySemanticKind.SURFACE_BOUNDARY,
+            ),
+            "scope": replace(
+                target,
+                occlusion_scope=BoundaryOcclusionScope.OWNER_AND_EXTERNAL,
+            ),
+        }
+        for label, forged in variants.items():
+            with self.subTest(label=label), self.assertRaisesRegex(
+                SceneOcclusionError,
+                "does not match its canonical surface boundary",
+            ):
+                compute_scene_occlusion_frame(
+                    replace(
+                        request,
+                        boundary_sources=tuple(
+                            forged if source.source_id == target.source_id else source
+                            for source in request.boundary_sources
+                        ),
+                    )
+                )
+
+    def test_partial_nested_silhouette_catalog_uses_generic_solver(self) -> None:
+        request, silhouettes = _request_with_intrinsic_silhouettes(0.5)
+        omitted_id = "boundary:mother:silhouette:generator:1"
+        partial_sources = tuple(
+            source
+            for source in request.boundary_sources
+            if source.source_id != omitted_id
+        )
+        partial_request = replace(request, boundary_sources=partial_sources)
+        frame = compute_scene_occlusion_frame(partial_request)
+        self.assertIs(
+            frame.dispatch_path,
+            SceneOcclusionPath.NESTED_TANGENT_SECTION,
+        )
+        self.assertIn(
+            "boundary:sphere:+1:silhouette",
+            {source.source_id for source in frame.boundary_frame.sources},
+        )
+        self.assertEqual(
+            _nested_silhouette_support_tangencies(
+                partial_request.boundary_sources,
+                partial_request.surfaces,
+                frame.nested_parent_frame,
+                partial_request.view,
+                context=frame.global_frame.geometry_context,
+            ),
+            {},
+        )
+
+    def test_nested_plane_outline_requires_the_complete_finite_patch(self) -> None:
+        request = _request(0.5)
+        outlines = plane_outline_sources(
+            _PLANE,
+            _PATCH,
+            occlusion_scope=BoundaryOcclusionScope.ALL_SURFACES,
+        )
+
+        with self.assertRaisesRegex(
+            SceneOcclusionError,
+            "cover the finite patch exactly",
+        ):
+            compute_scene_occlusion_frame(
+                replace(
+                    request,
+                    boundary_sources=(*request.boundary_sources, *outlines[:3]),
+                )
+            )
+
+    def test_nested_plane_outline_combines_mother_roles_and_sphere_occlusion(
+        self,
+    ) -> None:
+        request = _request(0.5)
+        outlines = plane_outline_sources(
+            _PLANE,
+            _PATCH,
+            occlusion_scope=BoundaryOcclusionScope.ALL_SURFACES,
+        )
+        frame = compute_scene_occlusion_frame(
+            replace(
+                request,
+                boundary_sources=(*request.boundary_sources, *outlines),
+            )
+        )
+        boundary = frame.boundary_frame
+        rank = {item_id: index for index, item_id in enumerate(frame.draw_order)}
+        mother_id = frame.section_frame.surface_id
+        items = frame.section_frame.paint_items
+        fill_by_role = {
+            PlaneDepthRole.BEHIND_SURFACE: items.plane_behind,
+            PlaneDepthRole.OUTSIDE_PROJECTION: items.plane_outside,
+            PlaneDepthRole.BETWEEN_SURFACE_SHEETS: items.plane_between,
+            PlaneDepthRole.IN_FRONT_OF_SURFACE: items.plane_front,
+        }
+        outline_by_role = items.outline_by_role
+        sphere_items = frame.nested_parent_frame.surface_items
+        fragments = tuple(
+            item
+            for item in boundary.fragments
+            if item.source_id in {source.source_id for source in outlines}
+        )
+        self.assertEqual(len(fragments), 14)
+        combined_occlusion = False
+        hidden_roles = {
+            PlaneDepthRole.BEHIND_SURFACE,
+            PlaneDepthRole.BETWEEN_SURFACE_SHEETS,
+        }
+        by_source = {
+            source.source_id: tuple(
+                sorted(
+                    (
+                        item
+                        for item in fragments
+                        if item.source_id == source.source_id
+                    ),
+                    key=lambda item: item.interval.start,
+                )
+            )
+            for source in outlines
+        }
+        for source in outlines:
+            pieces = by_source[source.source_id]
+            self.assertTrue(pieces)
+            self.assertAlmostEqual(
+                pieces[0].interval.start,
+                source.curve.domain.start,
+            )
+            self.assertAlmostEqual(
+                pieces[-1].interval.end,
+                source.curve.domain.end,
+            )
+            for first, second in zip(pieces, pieces[1:]):
+                self.assertAlmostEqual(first.interval.end, second.interval.start)
+
+            for fragment in pieces:
+                role = PlaneDepthRole(fragment.depth_role)
+                if role in hidden_roles:
+                    self.assertIn(mother_id, fragment.occluder_surface_ids)
+                else:
+                    self.assertNotIn(mother_id, fragment.occluder_surface_ids)
+                if mother_id in fragment.occluder_surface_ids and any(
+                    item.startswith("sphere:")
+                    for item in fragment.occluder_surface_ids
+                ):
+                    combined_occlusion = True
+                if fragment.painted:
+                    self.assertLess(
+                        rank[fill_by_role[role]],
+                        rank[fragment.item_id],
+                    )
+                    self.assertLess(
+                        rank[fragment.item_id],
+                        rank[outline_by_role[role]],
+                    )
+                for occluder_id in fragment.occluder_surface_ids:
+                    if occluder_id.startswith("sphere:"):
+                        self.assertLess(
+                            rank[fragment.item_id],
+                            rank[sphere_items[occluder_id]],
+                        )
+        self.assertTrue(combined_occlusion)
+
     def test_single_section_is_the_unchanged_existing_fast_path(self) -> None:
         mother, _records = _geometry(0.5)
         request = SceneOcclusionRequest(

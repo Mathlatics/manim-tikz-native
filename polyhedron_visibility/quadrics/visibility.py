@@ -37,6 +37,7 @@ from .critical import (
     ContextInput,
     CriticalEvent,
     QuadricSurfaceSpec,
+    _NestedSilhouetteTangencyCertificate,
     _resolved_context,
     compute_curve_critical_events,
 )
@@ -287,6 +288,9 @@ def compute_curve_visibility(
     view: ParallelView,
     *,
     context: ContextInput = None,
+    _nested_silhouette_tangencies: Sequence[
+        _NestedSilhouetteTangencyCertificate
+    ] | None = None,
 ) -> CurveVisibilityRecord:
     """Partition one curve by analytic events and classify each open cell.
 
@@ -310,6 +314,7 @@ def compute_curve_visibility(
         surface_items,
         view,
         context=resolved,
+        _nested_silhouette_tangencies=_nested_silhouette_tangencies,
     )
     cells = partition_parameter_domain(
         curve.domain,

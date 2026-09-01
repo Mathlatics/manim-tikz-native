@@ -18,6 +18,7 @@ from polyhedron_visibility.quadrics.algebra import (
 )
 from polyhedron_visibility.quadrics.contract import (
     ConeSpec,
+    CylinderModel,
     CylinderSpec,
     PlanarCapSpec,
     PlaneDisplayPatchSpec,
@@ -310,6 +311,54 @@ class CylinderContractTests(unittest.TestCase):
         hits = cylinder.ray_hits((1, 0, 2), (0, 0, -1))
         self.assertEqual([item.role for item in hits], ["cap_max", "cap_min"])
         np.testing.assert_allclose([item.parameter for item in hits], (1, 3))
+
+    def test_open_shell_has_trim_rims_without_unpainted_cap_occluders(self) -> None:
+        cylinder = CylinderSpec(
+            "open-cylinder",
+            (0, 0, 0),
+            (0, 0, 1),
+            1,
+            (-1, 1),
+            model=CylinderModel.OPEN,
+        )
+
+        self.assertTrue(cylinder.is_open_shell)
+        self.assertEqual(cylinder.end_caps, ())
+        self.assertEqual(
+            tuple(item.role for item in cylinder.trim_rims),
+            ("trim_min", "trim_max"),
+        )
+        self.assertEqual(
+            tuple(item.rim_id for item in cylinder.trim_rims),
+            ("open-cylinder:trim:min", "open-cylinder:trim:max"),
+        )
+        self.assertEqual(cylinder.ray_hits((0, 0, 2), (0, 0, -1)), ())
+        np.testing.assert_allclose(
+            [
+                item.parameter
+                for item in cylinder.ray_hits((2, 0, 0), (-1, 0, 0))
+            ],
+            (1, 3),
+        )
+        with self.assertRaisesRegex(
+            QuadricContractError,
+            "open cylinder shell has no filled-volume contains relation",
+        ):
+            cylinder.contains((0, 0, 0))
+
+    def test_invalid_cylinder_model_is_rejected(self) -> None:
+        with self.assertRaisesRegex(
+            QuadricContractError,
+            "cylinder model must be 'closed' or 'open'",
+        ):
+            CylinderSpec(
+                "cylinder",
+                (0, 0, 0),
+                (0, 0, 1),
+                1,
+                (-1, 1),
+                model="solid-ish",
+            )
 
 
 class ConeContractTests(unittest.TestCase):

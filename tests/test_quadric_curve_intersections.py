@@ -862,6 +862,62 @@ class ProjectedConicCrossingTests(unittest.TestCase):
                 self.assertAlmostEqual(crossings[0].first_parameter, pi)
                 self.assertTrue(crossings[0].tangential)
 
+    def test_tangency_just_beside_chart_pole_is_not_split_at_seam(self) -> None:
+        circle = CircleArcCurve(
+            "circle",
+            (0.0, 0.0, 0.0),
+            1.0,
+            (0.0, 0.0, 1.0),
+            radial_axis=(1.0, 0.0, 0.0),
+        )
+        parameter = pi + 5.0e-5
+        point = np.asarray(circle.point(parameter), dtype=float)
+        tangent = np.asarray(circle.tangent(parameter), dtype=float)
+        # Keep the true contact away from the segment midpoint so the general
+        # tan-half-angle crossing path, rather than the midpoint shortcut,
+        # owns this regression.
+        line = SegmentCurve(
+            "line",
+            tuple(point - tangent + (0.0, 0.0, 1.0)),
+            tuple(point + 3.0 * tangent + (0.0, 0.0, 1.0)),
+        )
+
+        crossings = compute_projected_curve_crossings(
+            (circle, line),
+            IDENTITY_VIEW,
+        )
+
+        self.assertEqual(len(crossings), 1)
+        self.assertAlmostEqual(crossings[0].first_parameter, parameter, places=10)
+        self.assertAlmostEqual(crossings[0].second_parameter, 0.25, places=10)
+        self.assertTrue(crossings[0].tangential)
+
+    def test_near_pole_genuine_secant_keeps_two_crossings(self) -> None:
+        circle = CircleArcCurve(
+            "circle",
+            (0.0, 0.0, 0.0),
+            1.0,
+            (0.0, 0.0, 1.0),
+            radial_axis=(1.0, 0.0, 0.0),
+        )
+        parameter = pi + 5.0e-5
+        radial = np.asarray(circle.point(parameter), dtype=float)
+        tangent = np.asarray(circle.tangent(parameter), dtype=float)
+        secant_point = (1.0 - 1.0e-10) * radial
+        line = SegmentCurve(
+            "line",
+            tuple(secant_point - tangent + (0.0, 0.0, 1.0)),
+            tuple(secant_point + 3.0 * tangent + (0.0, 0.0, 1.0)),
+        )
+
+        crossings = compute_projected_curve_crossings(
+            (circle, line),
+            IDENTITY_VIEW,
+        )
+
+        self.assertEqual(len(crossings), 2)
+        self.assertTrue(all(not item.tangential for item in crossings))
+
     def test_partial_circle_domain_filters_the_other_intersection(self) -> None:
         circle = CircleArcCurve(
             "arc",

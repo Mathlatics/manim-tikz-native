@@ -3,10 +3,16 @@ from __future__ import annotations
 from copy import deepcopy
 from math import cos, pi, sin
 import unittest
+from unittest.mock import patch
 
 import numpy as np
-from manim import Scene, config, tempconfig
+from manim import Scene, ValueTracker, config, smooth, tempconfig
 from polyhedron_visibility.visibility import VisibilityKind
+from polyhedron_visibility.quadrics.boundary_compositing import (
+    BoundaryOcclusionScope,
+    BoundarySourceKind,
+)
+from polyhedron_visibility.quadrics.contract import CylinderModel
 
 from examples.dandelin_cone_cylinder_switch.dandelin_cone_cylinder_switch import (
     AXIAL_RANGE,
@@ -18,6 +24,10 @@ from examples.dandelin_cone_cylinder_switch.dandelin_cone_cylinder_switch import
     PlaneDepthRole,
     PROJECTION_SCALE,
     SURFACE_RADIUS,
+    TEACHING_UI_Z_INDEX,
+    _header,
+    _progress_legend,
+    _surface_spec,
     build_switch_diagram,
     compute_switch_occlusion_frame,
     compute_switch_frame,
@@ -43,6 +53,14 @@ class DandelinConeCylinderSwitchGeometryTests(unittest.TestCase):
         self.assertIsNone(cylinder.apex_z)
         for z in AXIAL_RANGE:
             self.assertAlmostEqual(cylinder.radius_at(z), SURFACE_RADIUS)
+
+        cylinder_surface = _surface_spec(cylinder)
+        self.assertIs(cylinder_surface.model, CylinderModel.OPEN)
+        self.assertEqual(cylinder_surface.end_caps, ())
+        self.assertEqual(
+            tuple(item.role for item in cylinder_surface.trim_rims),
+            ("trim_min", "trim_max"),
+        )
         for sphere in cylinder.spheres:
             self.assertAlmostEqual(sphere.radius, SURFACE_RADIUS)
             self.assertAlmostEqual(sphere.surface_contact_radius, SURFACE_RADIUS)
@@ -120,6 +138,66 @@ class DandelinConeCylinderSwitchGeometryTests(unittest.TestCase):
 
 
 class DandelinConeCylinderSwitchOcclusionTests(unittest.TestCase):
+    def test_teaching_ui_layer_stays_above_every_geometry_fragment(self) -> None:
+        diagram = build_switch_diagram(0.5)
+        header = _header()
+        legend = _progress_legend(ValueTracker(0.5))
+
+        self.assertTrue(diagram.submobjects)
+        self.assertLess(
+            max(item.z_index for item in diagram.get_family()),
+            TEACHING_UI_Z_INDEX,
+        )
+        self.assertTrue(
+            all(item.z_index == TEACHING_UI_Z_INDEX for item in header.get_family())
+        )
+        self.assertTrue(
+            all(item.z_index == TEACHING_UI_Z_INDEX for item in legend.get_family())
+        )
+
+    def test_every_geometric_stroke_has_one_registered_boundary_source(self) -> None:
+        common = {
+            *(f"boundary:plane:switch-plane:edge:{index}" for index in range(4)),
+            "boundary:switch-sphere:+1:silhouette",
+            "boundary:switch-sphere:-1:silhouette",
+            "boundary:switch-surface:silhouette:generator:0",
+            "boundary:switch-surface:silhouette:generator:1",
+            "boundary:switch-surface:trim_max:rim",
+            "switch-axis",
+            "switch-contact:+1",
+            "switch-contact:-1",
+            "switch-section:component:ellipse",
+        }
+        for progress in (0.0, 0.25, 0.5, 0.75, 1.0):
+            with self.subTest(progress=progress):
+                boundary = compute_switch_occlusion_frame(
+                    progress
+                ).scene_frame.boundary_frame
+                sources = boundary.sources
+                source_ids = {item.source_id for item in sources}
+                expected = set(common)
+                if progress > 0.0:
+                    expected.add("boundary:switch-surface:trim_min:rim")
+                self.assertEqual(source_ids, expected)
+                self.assertEqual(len(sources), len(source_ids))
+                self.assertEqual(
+                    {item.source_id for item in boundary.fragments},
+                    source_ids,
+                )
+                plane_edges = tuple(
+                    item
+                    for item in sources
+                    if item.source_kind is BoundarySourceKind.PLANE_PATCH_EDGE
+                )
+                self.assertEqual(len(plane_edges), 4)
+                self.assertTrue(
+                    all(
+                        item.occlusion_scope
+                        is BoundaryOcclusionScope.ALL_SURFACES
+                        for item in plane_edges
+                    )
+                )
+
     def test_five_keyframes_have_certified_plane_roles_and_sphere_order(self) -> None:
         for progress in (0.0, 0.25, 0.5, 0.75, 1.0):
             with self.subTest(progress=progress):
@@ -224,6 +302,57 @@ class DandelinConeCylinderSwitchOcclusionTests(unittest.TestCase):
                     delta=1.0e-3,
                 )
 
+    def test_near_cylinder_sphere_and_mother_silhouettes_keep_four_tangencies(
+        self,
+    ) -> None:
+        boundary = compute_switch_occlusion_frame(
+            0.9999
+        ).scene_frame.boundary_frame
+        sphere_ids = {
+            "boundary:switch-sphere:-1:silhouette",
+            "boundary:switch-sphere:+1:silhouette",
+        }
+        mother_ids = {
+            "boundary:switch-surface:silhouette:generator:0",
+            "boundary:switch-surface:silhouette:generator:1",
+        }
+        crossings = tuple(
+            item
+            for item in boundary.crossings
+            if {
+                item.first_curve_id,
+                item.second_curve_id,
+            }
+            & sphere_ids
+            and {
+                item.first_curve_id,
+                item.second_curve_id,
+            }
+            & mother_ids
+        )
+
+        self.assertEqual(len(crossings), 4)
+        self.assertTrue(all(item.tangential for item in crossings))
+        self.assertTrue(all(item.coincident_depth for item in crossings))
+        self.assertTrue(
+            all(
+                item.far_curve_id is None and item.near_curve_id is None
+                for item in crossings
+            )
+        )
+
+    def test_smooth_animation_tail_has_no_uncertified_intermediate_frame(
+        self,
+    ) -> None:
+        for frame_index in range(37, 46):
+            progress = float(smooth(frame_index / 45.0))
+            with self.subTest(frame_index=frame_index, progress=progress):
+                frame = compute_switch_occlusion_frame(progress)
+                self.assertEqual(
+                    len(frame.draw_order),
+                    len(set(frame.draw_order)),
+                )
+
     def test_contact_curves_are_not_embedded_in_sphere_body_items(self) -> None:
         diagram = build_switch_diagram(1.0)
         frame = diagram.switch_occlusion_frame
@@ -244,7 +373,21 @@ class DandelinConeCylinderSwitchOcclusionTests(unittest.TestCase):
             body = by_id[sphere.item_id]
             self.assertEqual(body.switch_metadata["switchPaintKind"], "sphere_body")
             self.assertFalse(body.switch_metadata["contactCurvesEmbedded"])
+            self.assertFalse(body.switch_metadata["silhouetteEmbedded"])
             self.assertTrue(contact_ids.isdisjoint({body.switch_paint_item_id}))
+
+        structural = tuple(
+            item
+            for item in by_id.values()
+            if "boundaryFragmentsEmbedded" in item.switch_metadata
+        )
+        self.assertEqual(len(structural), 10)
+        self.assertTrue(
+            all(
+                item.switch_metadata["boundaryFragmentsEmbedded"] is False
+                for item in structural
+            )
+        )
 
     def test_manim_can_deepcopy_immutable_scene_evidence_for_fade(self) -> None:
         diagram = build_switch_diagram(0.5)
@@ -256,6 +399,7 @@ class DandelinConeCylinderSwitchOcclusionTests(unittest.TestCase):
 
     def test_live_refresh_matches_direct_fragment_topology_and_z_order(self) -> None:
         live = build_switch_diagram(0.0)
+        root_identity = id(live)
         for progress in (0.25, 0.5, 0.75, 0.9999, 1.0, 0.5, 0.0):
             with self.subTest(progress=progress):
                 refresh_switch_diagram(live, progress)
@@ -275,6 +419,49 @@ class DandelinConeCylinderSwitchOcclusionTests(unittest.TestCase):
                     live.switch_occlusion_frame.draw_order,
                     direct.switch_occlusion_frame.draw_order,
                 )
+                self.assertEqual(id(live), root_identity)
+
+    def test_live_refresh_rolls_back_before_mutating_on_failed_frame(self) -> None:
+        diagram = build_switch_diagram(0.5)
+        original_children = tuple(diagram.submobjects)
+        original_frame = diagram.switch_occlusion_frame
+
+        with patch(
+            "examples.dandelin_cone_cylinder_switch."
+            "dandelin_cone_cylinder_switch.build_switch_diagram",
+            side_effect=RuntimeError("failed certification"),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "failed certification"):
+                refresh_switch_diagram(diagram, 0.75)
+
+        self.assertEqual(len(diagram.submobjects), len(original_children))
+        self.assertTrue(
+            all(
+                actual is expected
+                for actual, expected in zip(
+                    diagram.submobjects,
+                    original_children,
+                )
+            )
+        )
+        self.assertIs(diagram.switch_occlusion_frame, original_frame)
+
+    def test_hidden_dashes_are_anchored_to_their_semantic_source(self) -> None:
+        diagram = build_switch_diagram(0.5)
+        dashed = tuple(
+            item
+            for item in diagram.submobjects
+            if getattr(item, "switch_metadata", {}).get("strokePattern")
+            == "dashed"
+        )
+
+        self.assertTrue(dashed)
+        self.assertTrue(
+            all(item.switch_metadata["dashPhaseAnchored"] for item in dashed)
+        )
+        self.assertTrue(
+            all(item.switch_metadata["dashPeriod"] > 0.0 for item in dashed)
+        )
 
     def test_scene_keeps_dynamic_diagram_as_one_cairo_moving_root(self) -> None:
         scene = DandelinConeCylinderSwitch()

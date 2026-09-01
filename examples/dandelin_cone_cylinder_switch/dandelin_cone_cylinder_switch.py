@@ -19,9 +19,9 @@ Preview with::
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from functools import lru_cache
-from math import acos, atan, atan2, ceil, cos, isfinite, pi, sin, sqrt
+from math import atan, cos, isfinite, pi, sin, sqrt
 from typing import Sequence
 
 import numpy as np
@@ -29,8 +29,6 @@ from manim import (
     DOWN,
     UP,
     Circle,
-    DashedLine,
-    DashedVMobject,
     Dot,
     FadeIn,
     Line,
@@ -58,14 +56,22 @@ from polyhedron_visibility.quadrics.compositing import QuadricPaintPolicy
 from polyhedron_visibility.quadrics.contract import (
     ConeModel,
     ConeSpec,
+    CylinderModel,
     CylinderSpec,
     PlaneDisplayPatchSpec,
     SectionPlane,
     SphereSpec,
 )
-from polyhedron_visibility.quadrics.curves import EllipseArcCurve
+from polyhedron_visibility.quadrics.curves import EllipseArcCurve, SegmentCurve
 from polyhedron_visibility.quadrics.nested_tangent_compositing import (
     NestedTangentSphereSpec,
+)
+from polyhedron_visibility.quadrics.manim_runtime import (
+    _adaptive_project_curve_samples,
+    _dash_polyline_anchored,
+    _polyline_lengths,
+    _slice_projected_curve_samples,
+    _source_distance_at_parameter,
 )
 from polyhedron_visibility.quadrics.scene_occlusion import (
     SceneOcclusionFrame,
@@ -81,12 +87,16 @@ from polyhedron_visibility.quadrics.sections import (
     compute_quadric_section_boundary_curves,
 )
 from polyhedron_visibility.quadrics.surface_boundaries import (
+    build_surface_boundary_sources,
     curve_boundary_source,
+    plane_outline_sources,
     section_curve_boundary_source,
 )
 
 
 BACKGROUND_COLOR = "#0B1622"
+GEOMETRY_Z_BASE = 10.0
+TEACHING_UI_Z_INDEX = 10_000.0
 SURFACE_RADIUS = 1.45
 AXIAL_RANGE = (-3.0, 5.8)
 CONE_SLOPE = SURFACE_RADIUS / abs(AXIAL_RANGE[0])
@@ -331,6 +341,7 @@ def _surface_spec(frame: DandelinSwitchFrame) -> ConeSpec | CylinderSpec:
             SURFACE_RADIUS,
             AXIAL_RANGE,
             radial_axis=(1.0, 0.0, 0.0),
+            model=CylinderModel.OPEN,
         )
     if frame.apex_z is None:  # pragma: no cover - guarded by slope above
         raise ValueError("a non-cylindrical switch frame requires a finite apex")
@@ -385,6 +396,46 @@ def _compute_switch_occlusion_frame(progress: float) -> SwitchOcclusionFrame:
                 sphere_id,
             )
         )
+    sources.extend(
+        replace(
+            source,
+            style_id=(
+                "style:switch-sphere-silhouette"
+                if source.owner_surface_id is not None
+                and source.owner_surface_id.startswith("switch-sphere:")
+                else "style:switch-surface-boundary"
+            ),
+        )
+        for source in build_surface_boundary_sources(
+            (surface, *spheres),
+            _PARALLEL_VIEW,
+            include_cap_rims=True,
+            include_silhouettes=True,
+        )
+    )
+    sources.extend(
+        replace(source, style_id="style:switch-plane-outline")
+        for source in plane_outline_sources(
+            _SECTION_PLANE,
+            _PLANE_PATCH,
+            occlusion_scope=BoundaryOcclusionScope.ALL_SURFACES,
+        )
+    )
+    axis_id = "switch-axis"
+    sources.append(
+        curve_boundary_source(
+            SegmentCurve(
+                axis_id,
+                (0.0, 0.0, AXIAL_RANGE[0] - 0.15),
+                (0.0, 0.0, AXIAL_RANGE[1] + 0.15),
+            ),
+            source_kind=BoundarySourceKind.FEATURE_LINE,
+            semantic_kind=BoundarySemanticKind.TEACHING_FEATURE,
+            occlusion_scope=BoundaryOcclusionScope.ALL_SURFACES,
+            owner_id=axis_id,
+            style_id="style:switch-axis",
+        )
+    )
     section_curves = compute_quadric_section_boundary_curves(
         "switch-section",
         surface,
@@ -554,36 +605,6 @@ def _path(
     return result
 
 
-def _front_runs(
-    points: Sequence[Sequence[float]],
-    visible: Sequence[bool],
-) -> tuple[tuple[Sequence[float], ...], ...]:
-    if len(points) != len(visible):
-        raise ValueError("visibility flags must match the cyclic point count")
-    if not points or not any(visible):
-        return ()
-    if all(visible):
-        return (tuple((*points, points[0])),)
-
-    hidden_index = next(index for index, value in enumerate(visible) if not value)
-    ordered = [
-        (hidden_index + 1 + offset) % len(points)
-        for offset in range(len(points))
-    ]
-    runs: list[tuple[Sequence[float], ...]] = []
-    active: list[Sequence[float]] = []
-    for index in ordered:
-        if visible[index]:
-            active.append(points[index])
-        elif active:
-            if len(active) >= 2:
-                runs.append(tuple(active))
-            active = []
-    if active and len(active) >= 2:
-        runs.append(tuple(active))
-    return tuple(runs)
-
-
 def _tag_paint_item(
     item: VMobject | VGroup,
     item_id: str,
@@ -676,77 +697,20 @@ def _surface_sheet_groups(
     front_patches.sort(key=lambda item: item[0])
     back = VGroup(*(polygon for _, polygon in back_patches))
     front = VGroup(*(polygon for _, polygon in front_patches))
-
-    for z in AXIAL_RANGE:
-        rim = tuple(
-            _surface_point(frame, z, float(theta))
-            for theta in np.linspace(0.0, 2.0 * pi, 97)[:-1]
-        )
-        rim_visible = tuple(
-            float(
-                np.dot(
-                    np.asarray(
-                        (cos(float(theta)), sin(float(theta)), -frame.slope),
-                        dtype=float,
-                    ),
-                    _DEPTH_AXIS,
-                )
-            )
-            > 0.0
-            for theta in np.linspace(0.0, 2.0 * pi, 97)[:-1]
-        )
-        for run in _front_runs(rim, tuple(not item for item in rim_visible)):
-            back.add(
-                _path(
-                    run,
-                    color=SURFACE_STROKE,
-                    width=1.15,
-                    opacity=0.30,
-                )
-            )
-        for run in _front_runs(rim, rim_visible):
-            front.add(
-                _path(
-                    run,
-                    color=SURFACE_STROKE,
-                    width=1.55,
-                    opacity=0.74,
-                )
-            )
-
-    radial_view_length = float(np.hypot(_DEPTH_AXIS[0], _DEPTH_AXIS[1]))
-    silhouette_ratio = frame.slope * float(_DEPTH_AXIS[2]) / radial_view_length
-    if abs(silhouette_ratio) > 1.0 + 1.0e-12:
-        raise ValueError("surface silhouette has no finite generator")
-    silhouette_ratio = min(1.0, max(-1.0, silhouette_ratio))
-    silhouette_phase = atan2(float(_DEPTH_AXIS[1]), float(_DEPTH_AXIS[0]))
-    silhouette_offset = acos(silhouette_ratio)
-    for theta in (
-        silhouette_phase - silhouette_offset,
-        silhouette_phase + silhouette_offset,
-    ):
-        generator = _path(
-            (
-                _surface_point(frame, z_min, theta),
-                _surface_point(frame, z_max, theta),
-            ),
-            color=SURFACE_STROKE,
-            width=1.55,
-            opacity=0.78,
-        )
-        front.add(generator)
     return (
         _tag_paint_item(
             back,
             back_item_id,
             kind="surface_sheet",
             sheetSide="back",
+            boundaryFragmentsEmbedded=False,
         ),
         _tag_paint_item(
             front,
             front_item_id,
             kind="surface_sheet",
             sheetSide="front",
+            boundaryFragmentsEmbedded=False,
         ),
     )
 
@@ -768,44 +732,18 @@ def _plane_paint_items(
             kind="plane_fill",
             planeDepthRole=role.value,
             planeOccludedBySurface=occluded,
+            boundaryFragmentsEmbedded=False,
         )
 
-        outline_members: list[VMobject | DashedVMobject] = []
-        for path in occlusion.outline_paths_for(role):
-            base = VMobject()
-            points = tuple(_screen_point(point) for point in path)
-            base.set_points_as_corners(points)
-            base.set_fill(opacity=0.0)
-            base.set_stroke(
-                color=OCCLUDED_PLANE_STROKE if occluded else "#86F7E4",
-                width=1.0 if occluded else 1.2,
-                opacity=0.52 if occluded else 0.62,
-            )
-            if occluded:
-                length = float(base.get_arc_length())
-                if length <= 0.0:
-                    continue
-                dashed = DashedVMobject(
-                    base,
-                    num_dashes=max(2, min(96, int(ceil(length / 0.24)))),
-                    dashed_ratio=0.52,
-                )
-                dashed.set_stroke(
-                    color=OCCLUDED_PLANE_STROKE,
-                    width=1.0,
-                    opacity=0.52,
-                )
-                outline_members.append(dashed)
-            else:
-                outline_members.append(base)
-        outline = VGroup(*outline_members)
+        outline = VGroup()
         result[outline_item_id] = _tag_paint_item(
             outline,
             outline_item_id,
             kind="plane_outline",
             planeDepthRole=role.value,
             planeOccludedBySurface=occluded,
-            strokePattern="dashed" if occluded else "solid",
+            strokePattern="structural-anchor",
+            boundaryFragmentsEmbedded=False,
         )
     return result
 
@@ -827,9 +765,8 @@ def _sphere_paint_items(
             radius=screen_radius,
             fill_color=SPHERE_COLOR,
             fill_opacity=0.25,
-            stroke_color=SPHERE_STROKE,
-            stroke_width=1.7,
-            stroke_opacity=0.82,
+            stroke_width=0.0,
+            stroke_opacity=0.0,
         ).move_to(center)
         glow = Circle(
             radius=0.70 * screen_radius,
@@ -850,6 +787,7 @@ def _sphere_paint_items(
             kind="sphere_body",
             planeSide=sphere.plane_side,
             contactCurvesEmbedded=False,
+            silhouetteEmbedded=False,
         )
     return items, _tag_paint_item(
         foci,
@@ -858,112 +796,207 @@ def _sphere_paint_items(
     )
 
 
-def _point_segment_distance(
-    point: np.ndarray,
-    start: np.ndarray,
-    end: np.ndarray,
-) -> float:
-    delta = end - start
-    squared = float(np.dot(delta, delta))
-    if squared == 0.0:
-        return float(np.linalg.norm(point - start))
-    ratio = float(np.dot(point - start, delta) / squared)
-    ratio = min(1.0, max(0.0, ratio))
-    return float(np.linalg.norm(point - (start + ratio * delta)))
-
-
-def _fragment_world_points(
-    source: QuadricBoundarySource,
-    fragment: QuadricBoundaryPaintFragment,
+def _projected_path(
+    points: Sequence[Sequence[float]],
     *,
-    max_screen_error: float = 0.0025,
-    max_segments: int = 512,
-) -> tuple[tuple[float, float, float], ...]:
-    """Sample an already-certified interval only for renderer approximation."""
-
-    curve = source.curve
-    cache: dict[float, np.ndarray] = {}
-
-    def screen(parameter: float) -> np.ndarray:
-        if parameter not in cache:
-            cache[parameter] = project_point(curve.point(parameter))[:2]
-        return cache[parameter]
-
-    intervals = [(fragment.interval.start, fragment.interval.end)]
-    probes = (0.25, 0.5, 0.75)
-    while True:
-        split_indices: list[int] = []
-        for index, (start, end) in enumerate(intervals):
-            first = screen(start)
-            last = screen(end)
-            observed = max(
-                _point_segment_distance(
-                    screen(start + fraction * (end - start)),
-                    first,
-                    last,
-                )
-                for fraction in probes
-            )
-            if observed > max_screen_error:
-                split_indices.append(index)
-        if not split_indices:
-            break
-        if len(intervals) + len(split_indices) > max_segments:
-            raise ValueError(
-                f"curve fragment {fragment.item_id!r} exceeds display capacity"
-            )
-        split_set = set(split_indices)
-        refined: list[tuple[float, float]] = []
-        for index, (start, end) in enumerate(intervals):
-            if index not in split_set:
-                refined.append((start, end))
-                continue
-            midpoint = 0.5 * (start + end)
-            refined.extend(((start, midpoint), (midpoint, end)))
-        intervals = refined
-    parameters = (intervals[0][0], *(end for _start, end in intervals))
-    return tuple(curve.point(parameter) for parameter in parameters)
+    color: str,
+    width: float,
+    opacity: float,
+) -> VMobject:
+    result = VMobject()
+    values = tuple(np.asarray(point, dtype=float) for point in points)
+    if values:
+        result.set_points_as_corners(values)
+    result.set_fill(opacity=0.0)
+    result.set_stroke(color=color, width=width, opacity=opacity)
+    return result
 
 
 def _boundary_paint_items(
     occlusion: SwitchOcclusionFrame,
-) -> dict[str, VMobject | DashedVMobject]:
+) -> dict[str, VMobject | VGroup]:
+    styles = {
+        "style:switch-contact": (
+            "contact_curve",
+            SPHERE_COLOR,
+            SPHERE_COLOR,
+            3.0,
+            1.5,
+            1.0,
+            0.30,
+            0.18,
+            False,
+        ),
+        "style:switch-section": (
+            "section_curve",
+            SECTION_COLOR,
+            SECTION_COLOR,
+            4.0,
+            1.9,
+            1.0,
+            0.30,
+            0.18,
+            False,
+        ),
+        "style:switch-sphere-silhouette": (
+            "sphere_silhouette",
+            SPHERE_STROKE,
+            SPHERE_STROKE,
+            1.7,
+            1.2,
+            0.82,
+            0.38,
+            0.16,
+            False,
+        ),
+        "style:switch-surface-boundary": (
+            "surface_boundary",
+            SURFACE_STROKE,
+            SURFACE_STROKE,
+            1.55,
+            1.1,
+            0.78,
+            0.34,
+            0.18,
+            False,
+        ),
+        "style:switch-plane-outline": (
+            "plane_outline",
+            "#86F7E4",
+            OCCLUDED_PLANE_STROKE,
+            1.2,
+            1.0,
+            0.62,
+            0.52,
+            0.24,
+            False,
+        ),
+        "style:switch-axis": (
+            "axis",
+            "#A8BED0",
+            "#A8BED0",
+            1.15,
+            0.85,
+            0.30,
+            0.16,
+            0.20,
+            True,
+        ),
+    }
     source_map = {item.source_id: item for item in occlusion.curve_sources}
-    result: dict[str, VMobject | DashedVMobject] = {}
+    fragments_by_source = {
+        source_id: tuple(
+            item
+            for item in occlusion.curve_fragments
+            if item.source_id == source_id and item.painted
+        )
+        for source_id in source_map
+    }
+    projected_sources: dict[
+        str,
+        tuple[np.ndarray, np.ndarray, np.ndarray],
+    ] = {}
+    display_offset = np.asarray(
+        (PROJECTION_OFFSET[0], PROJECTION_OFFSET[1], 0.0),
+        dtype=float,
+    )
+    for source_id, source in source_map.items():
+        fragments = fragments_by_source[source_id]
+        required_parameters = tuple(
+            value
+            for fragment in fragments
+            for value in (fragment.interval.start, fragment.interval.end)
+        )
+        parameters, points = _adaptive_project_curve_samples(
+            source.curve,
+            _PARALLEL_VIEW,
+            required_parameters=required_parameters,
+            max_chord_error=0.0025,
+            max_segments=512,
+        )
+        points = points + display_offset
+        cumulative, _length = _polyline_lengths(points)
+        projected_sources[source_id] = (parameters, points, cumulative)
+
+    result: dict[str, VMobject | VGroup] = {}
     for fragment in occlusion.curve_fragments:
         if not fragment.painted:
             continue
         source = source_map[fragment.source_id]
-        contact = source.style_id == "style:switch-contact"
         visible = (
             fragment.effective_visibility_kind is VisibilityKind.VISIBLE
         )
-        base = _path(
-            _fragment_world_points(source, fragment),
-            color=SPHERE_COLOR if contact else SECTION_COLOR,
-            width=(3.0 if visible else 1.5) if contact else (4.0 if visible else 1.9),
-            opacity=1.0 if visible else 0.30,
+        try:
+            (
+                paint_kind,
+                visible_color,
+                hidden_color,
+                visible_width,
+                hidden_width,
+                visible_opacity,
+                hidden_opacity,
+                dash_step,
+                force_dashed,
+            ) = styles[source.style_id]
+        except KeyError as exc:
+            raise ValueError(
+                f"unsupported switch boundary style {source.style_id!r}"
+            ) from exc
+        color = visible_color if visible else hidden_color
+        width = visible_width if visible else hidden_width
+        opacity = visible_opacity if visible else hidden_opacity
+        parameters, source_points, source_cumulative = projected_sources[
+            source.source_id
+        ]
+        points = _slice_projected_curve_samples(
+            parameters,
+            source_points,
+            fragment.interval.start,
+            fragment.interval.end,
+            curve_id=source.curve.curve_id,
         )
-        value: VMobject | DashedVMobject = base
-        if fragment.render_intent is BoundaryRenderIntent.DASHED:
-            length = float(base.get_arc_length())
-            if length > 0.0:
-                value = DashedVMobject(
-                    base,
-                    num_dashes=max(2, min(96, int(ceil(length / 0.18)))),
-                    dashed_ratio=0.54,
+        base = _projected_path(
+            points,
+            color=color,
+            width=width,
+            opacity=opacity,
+        )
+        value: VMobject | VGroup = base
+        dashed = force_dashed or fragment.render_intent is BoundaryRenderIntent.DASHED
+        if dashed:
+            dashes = _dash_polyline_anchored(
+                points,
+                source_distance_start=_source_distance_at_parameter(
+                    parameters,
+                    source_points,
+                    fragment.interval.start,
+                    cumulative=source_cumulative,
+                ),
+                dash_length=0.54 * dash_step,
+                dash_gap=0.46 * dash_step,
+                capacity=256,
+            )
+            value = VGroup(
+                *(
+                    _projected_path(
+                        dash.points,
+                        color=color,
+                        width=width,
+                        opacity=opacity,
+                    )
+                    for dash in dashes
                 )
-                value.set_stroke(
-                    color=SPHERE_COLOR if contact else SECTION_COLOR,
-                    width=1.5 if contact else 1.9,
-                    opacity=0.30,
-                )
+            )
         result[fragment.item_id] = _tag_paint_item(
             value,
             fragment.item_id,
-            kind="contact_curve" if contact else "section_curve",
+            kind=paint_kind,
             sourceId=fragment.source_id,
+            sourceKind=source.source_kind.value,
             visibility=fragment.effective_visibility_kind.value,
+            strokePattern="dashed" if dashed else "solid",
+            dashPhaseAnchored=dashed,
+            dashPeriod=dash_step if dashed else 0.0,
             occluderSurfaceIds=fragment.occluder_surface_ids,
             analyticInterval=(
                 fragment.interval.start,
@@ -978,16 +1011,6 @@ def build_switch_diagram(progress: object) -> VGroup:
 
     frame = compute_switch_frame(progress)
     occlusion = compute_switch_occlusion_frame(frame.progress)
-    axis = DashedLine(
-        project_point((0.0, 0.0, AXIAL_RANGE[0] - 0.15)),
-        project_point((0.0, 0.0, AXIAL_RANGE[1] + 0.15)),
-        dash_length=0.10,
-        color="#A8BED0",
-        stroke_width=1.15,
-        stroke_opacity=0.30,
-    )
-    axis.set_z_index(1.0)
-
     surface_back, surface_front = _surface_sheet_groups(
         frame,
         occlusion.surface_back_item_id,
@@ -1009,12 +1032,14 @@ def build_switch_diagram(progress: object) -> VGroup:
             "switch painter items disagree with certified draw order: "
             f"missing={missing}, unexpected={unexpected}"
         )
+    if GEOMETRY_Z_BASE + len(occlusion.draw_order) - 1 >= TEACHING_UI_Z_INDEX:
+        raise ValueError("switch geometry exhausted the reserved teaching UI layer")
     ordered: list[VMobject | VGroup] = []
     for rank, item_id in enumerate(occlusion.draw_order):
         item = paint_items[item_id]
-        item.set_z_index(10.0 + rank, family=True)
+        item.set_z_index(GEOMETRY_Z_BASE + rank, family=True)
         ordered.append(item)
-    result = VGroup(axis, *ordered)
+    result = VGroup(*ordered)
     result.switch_occlusion_frame = occlusion
     return result
 
@@ -1050,7 +1075,7 @@ def _header() -> VGroup:
         color="#BFD5E4",
     ).next_to(title, DOWN, buff=0.09)
     group = VGroup(title, subtitle)
-    group.set_z_index(100.0)
+    group.set_z_index(TEACHING_UI_Z_INDEX, family=True)
     return group
 
 
@@ -1071,7 +1096,7 @@ def _progress_legend(tracker: ValueTracker) -> VGroup:
 
     marker.add_updater(follow_progress)
     group = VGroup(track, marker, left, right)
-    group.set_z_index(100.0)
+    group.set_z_index(TEACHING_UI_Z_INDEX, family=True)
     return group
 
 

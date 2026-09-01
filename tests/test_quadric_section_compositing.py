@@ -21,6 +21,7 @@ from polyhedron_visibility.quadrics.compositing import (
 from polyhedron_visibility.quadrics.contract import (
     ConeModel,
     ConeSpec,
+    CylinderModel,
     PlaneDisplayPatchSpec,
     SectionPlane,
     SphereSpec,
@@ -1904,6 +1905,7 @@ class QuadricSectionCompositingTests(unittest.TestCase):
             radius,
             (-3.0, 5.8),
             radial_axis=(1.0, 0.0, 0.0),
+            model=CylinderModel.OPEN,
         )
         depth = _unit((0.75, -1.25, 0.55))
         screen_right = _unit((-depth[1], depth[0], 0.0))
@@ -1942,6 +1944,11 @@ class QuadricSectionCompositingTests(unittest.TestCase):
 
         cone_frame = section_frame(cone)
         cylinder_frame = section_frame(cylinder)
+        self.assertEqual(cylinder.end_caps, ())
+        self.assertEqual(
+            tuple(item.role for item in cylinder.trim_rims),
+            ("trim_min", "trim_max"),
+        )
         self.assertIs(cone_frame.projection_kind, PlanePatchProjectionKind.AREA)
         self.assertEqual(
             {fragment.role for fragment in cone_frame.plane_fragments},

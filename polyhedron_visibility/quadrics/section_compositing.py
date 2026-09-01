@@ -101,6 +101,10 @@ QuadricSurfaceSpec = SphereSpec | CylinderSpec | ConeSpec
 ContextInput = GeometryContext | ResolvedGeometryContext | None
 
 
+def _is_open_shell(surface: QuadricSurfaceSpec) -> bool:
+    return isinstance(surface, (CylinderSpec, ConeSpec)) and surface.is_open_shell
+
+
 class QuadricSectionCompositingError(ValueError):
     """A quadric/plane painter frame cannot be certified without guessing."""
 
@@ -2699,10 +2703,10 @@ def _surface_ray_solver(
     is_cylinder = isinstance(surface, CylinderSpec)
     radius = surface.radius if is_cylinder else 0.0
     slope = 0.0 if is_cylinder else surface.slope
-    if is_cylinder:
-        cap_axials = (lower, upper)
-    elif surface.is_open_shell:
+    if _is_open_shell(surface):
         cap_axials = ()
+    elif is_cylinder:
+        cap_axials = (lower, upper)
     else:
         # Match ``ConeSpec.end_caps`` without rebuilding validated cap
         # dataclasses for every ray query.  The adaptive section compositor
@@ -3637,8 +3641,7 @@ def compute_quadric_section_compositing(
 
     if (
         section_tangent_constraints
-        and isinstance(surface, ConeSpec)
-        and surface.is_open_shell
+        and _is_open_shell(surface)
     ):
         # A finite lateral section arc does not necessarily supply tangent
         # directions around a full turn.  Close that support envelope with the
@@ -3677,17 +3680,17 @@ def compute_quadric_section_compositing(
             )
 
     # A filled cylinder/cone cap closes the finite section with a real line
-    # segment in the cutting plane.  An open cone shell has no such cap: its
-    # lateral section arc ends on the projected trim rim instead.  Adding the
-    # axial half-plane for an open shell would invent a straight chord between
-    # those endpoints and turn that chord into a false plane-depth boundary.
+    # segment in the cutting plane.  An open cylinder or cone shell has no such
+    # cap: its lateral section arc ends on the projected trim rim instead.
+    # Adding the axial half-plane for an open shell would invent a straight
+    # chord between those endpoints and turn it into a false plane-depth boundary.
     # Keep the tangent envelope free of that cap; the outer proxy bounds it and
     # the explicit projected trim-rim partition below supplies the curved
     # internal boundary.
     if (
         section_tangent_constraints
         and axial_mapping is not None
-        and not (isinstance(surface, ConeSpec) and surface.is_open_shell)
+        and not _is_open_shell(surface)
     ):
         axial_direction, axial_offset, lower, upper = axial_mapping
         axial_norm_squared = float(np.dot(axial_direction, axial_direction))
@@ -3732,15 +3735,16 @@ def compute_quadric_section_compositing(
             "finite section tangent partition unexpectedly became empty"
         )
 
-    # A projected trim rim is an internal hit-count boundary for an open cone
-    # shell.  It is not, in general, part of the convex outer projection proxy:
+    # A projected trim rim is an internal hit-count boundary for an open
+    # cylinder or cone shell.  It is not, in general, part of the convex outer
+    # projection proxy:
     # the visible mouth arc can lie strictly inside that proxy.  Represent each
     # non-degenerate projected rim disk by a circumscribed tangent polygon so
     # the adaptive role partition can split on the real curved boundary.  In
     # particular, this prevents the finite lateral-section envelope from being
     # closed by an artificial chord between its two trim-rim endpoints.
     open_shell_trim_partitions: list[_PlanePartitionPolygon] = []
-    if isinstance(surface, ConeSpec) and surface.is_open_shell:
+    if _is_open_shell(surface):
         trim_chord_error = max(
             screen_epsilon * 32.0,
             error / _OPEN_SHELL_TRIM_BOUNDARY_CHORD_DIVISOR,
@@ -3908,9 +3912,7 @@ def compute_quadric_section_compositing(
                 open_shell_trim_partitions.append(clipped_rim[0])
     trim_partitions = tuple(open_shell_trim_partitions)
 
-    if section_partition is not None and not (
-        isinstance(surface, ConeSpec) and surface.is_open_shell
-    ):
+    if section_partition is not None and not _is_open_shell(surface):
         stable_interior = np.mean(
             np.asarray(
                 tuple(
@@ -4121,7 +4123,7 @@ def compute_quadric_section_compositing(
     def partition_inside_depth_roles(
         polygon: _PlanePartitionPolygon,
     ) -> tuple[tuple[PlaneDepthRole, _PlanePartitionPolygon], ...] | None:
-        if isinstance(surface, ConeSpec) and surface.is_open_shell:
+        if _is_open_shell(surface):
             candidates = (polygon,)
             for boundary in tuple(
                 item
@@ -4191,7 +4193,7 @@ def compute_quadric_section_compositing(
         for candidate in between:
             role = polygon_role(candidate)
             if role is None or (
-                not (isinstance(surface, ConeSpec) and surface.is_open_shell)
+                not _is_open_shell(surface)
                 and role is not PlaneDepthRole.BETWEEN_SURFACE_SHEETS
             ):
                 return None
@@ -5094,9 +5096,7 @@ def compute_quadric_section_compositing(
         for index, child in enumerate(_subdivide_triangle(world)):
             visit(child, f"{path}.{index}", depth + 1)
 
-    use_adaptive_open_shell_partition = (
-        isinstance(surface, ConeSpec) and surface.is_open_shell
-    )
+    use_adaptive_open_shell_partition = _is_open_shell(surface)
     if section_partition is None or use_adaptive_open_shell_partition:
         for root_index, indices in enumerate(((0, 1, 2), (0, 2, 3))):
             visit(patch_corners[list(indices)], str(root_index), 0)
