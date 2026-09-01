@@ -1,31 +1,31 @@
 {
   "schema": "manim-quadric-section-release-manifest/v1",
-  "release_id": "quadric-section-v1-current-main-dandelin-plane-occlusion-cues-2026-09-01",
+  "release_id": "quadric-section-v1-current-main-dandelin-cone-cylinder-switch-2026-09-01",
   "contract_id": "quadric-section-v1",
-  "implementation_base_commit": "a910df25fc26c5565b181d8e9a550187dfa4ec20",
-  "implementation_head_commit": "6d251756262d57fde8f5914545f0c1679db7c66f",
-  "implementation_tree_sha": "7b5c2c501d8ef1bfe12ba91eaa6c7719de051b52",
-  "merged_main_commit": "ae2a567d9cda42942cfb066f0c6186ae4a76740f",
+  "implementation_base_commit": "5fcceb4a97c8796782f3b1b9f89f001e60b50208",
+  "implementation_head_commit": "42ae3e1de44064cee116d7bc2fbbf7b99b77c3bc",
+  "implementation_tree_sha": "b11f234af8fb338d9ed9bde294895d8c6893cc11",
+  "merged_main_commit": "7b29523e7890fae3b9fef4b4c59b1f112c9d0566",
   "components": {
     "asset_compiler": {
       "contract_revision": "tikz-native-contract:asset_compiler/v2",
-      "render_revision": "source-sha256:de3e3e293c02e1258557a5035ea3a41f83d35f618437930c4374cabe5d8bcf3a"
+      "render_revision": "source-sha256:60907e2a0c656dc3f2c2944e7d7d9939382d08fe7e347a7792c8956b0107adf2"
     },
     "quadric_geometry": {
       "contract_revision": "tikz-native-contract:quadric_geometry/v1",
-      "render_revision": "source-sha256:e3cd1fd5e5534e4d6ba7a29bf9b822332b48a85315bc427b03da137c8a8b43bd"
+      "render_revision": "source-sha256:1762b2612ec62297a5159b5ee387fa3bda471abdcda09a890274ace6b755f1a2"
     },
     "quadric_visibility": {
       "contract_revision": "tikz-native-contract:quadric_visibility/v2",
-      "render_revision": "source-sha256:b4174ebd8370f3cd77195237fe4e05dc814ff4bc14be5afd24ebdf304b87b2fa"
+      "render_revision": "source-sha256:63978204830f1c6fd559461f152d496b7b27515235ff922c99e94451f9f539f7"
     },
     "quadric_manim": {
       "contract_revision": "tikz-native-contract:quadric_manim/v1",
-      "render_revision": "source-sha256:7b916621f7cfda69397a93a73018970482367a3ec526235a848e736d74ad113e"
+      "render_revision": "source-sha256:f1cf9ba6c56870a2199c3cc129509d41518059dcd2776555873697c63f506629"
     }
   },
   "build_artifacts": {
-    "source_date_epoch": 1788202952,
+    "source_date_epoch": 1788258343,
     "builder_python": "3.12.13",
     "build_frontend": "build 1.6.0",
     "build_backend": "setuptools 84.0.0",
@@ -34,11 +34,11 @@
     "twine_check": "twine 7.0.0 passed",
     "wheel": {
       "filename": "manim_tikz_native-0.1.1-py3-none-any.whl",
-      "sha256": "f39d57177e8fb2c090586fcdb03355c6a3c2a3750a7820e13cc8fe086705ff40"
+      "sha256": "c69692d38b8ab38133d004a3947f97934e1ac4968e5435d93f632ee91a145c8a"
     },
     "sdist": {
       "filename": "manim_tikz_native-0.1.1.tar.gz",
-      "sha256": "ce56f88259b04f2deae5e53f3d5331747b846c9feaf9e5e9a0eee389ad0eb47c",
+      "sha256": "7a5083db8a37a6329e0a7160dc36a9178b232a998889d8bf9246ef13103f726b",
       "normalization": "sorted regular files and links; USTAR; uid/gid 0; root owner/group; SOURCE_DATE_EPOCH mtime; gzip -n -9 equivalent; gzip OS byte 255"
     }
   },
@@ -323,6 +323,51 @@
       "outcome": "pass",
       "test": "tests.test_tikz_native_dandelin_cairo.TikzNativeDandelinCairoTests.test_plane_occlusion_dashes_and_tint_reach_real_cairo_pixels"
     },
+    "dandelin_switch_endpoint_geometry": {
+      "layer": "renderer_neutral",
+      "outcome": "pass",
+      "test": "tests.test_dandelin_cone_cylinder_switch.DandelinConeCylinderSwitchGeometryTests.test_endpoints_are_one_true_cone_and_one_true_cylinder"
+    },
+    "dandelin_switch_boundary_catalog": {
+      "layer": "renderer_neutral",
+      "outcome": "pass",
+      "test": "tests.test_dandelin_cone_cylinder_switch.DandelinConeCylinderSwitchOcclusionTests.test_every_geometric_stroke_has_one_registered_boundary_source"
+    },
+    "dandelin_switch_keyframe_parent_order": {
+      "layer": "renderer_neutral",
+      "outcome": "pass",
+      "test": "tests.test_dandelin_cone_cylinder_switch.DandelinConeCylinderSwitchOcclusionTests.test_five_keyframes_have_certified_plane_roles_and_sphere_order"
+    },
+    "dandelin_switch_near_cylinder_tangencies": {
+      "layer": "renderer_neutral",
+      "outcome": "pass",
+      "test": "tests.test_dandelin_cone_cylinder_switch.DandelinConeCylinderSwitchOcclusionTests.test_near_cylinder_nested_tangencies_create_no_crossing_slivers"
+    },
+    "dandelin_switch_live_binding": {
+      "layer": "manim",
+      "outcome": "pass",
+      "test": "tests.test_dandelin_cone_cylinder_switch.DandelinConeCylinderSwitchOcclusionTests.test_live_refresh_matches_direct_fragment_topology_and_z_order"
+    },
+    "dandelin_switch_cairo_pixels": {
+      "layer": "cairo",
+      "outcome": "pass",
+      "test": "tests.test_dandelin_cone_cylinder_switch.DandelinConeCylinderSwitchCairoTests.test_keyframes_have_sphere_surface_and_section_pixels"
+    },
+    "open_cylinder_lateral_geometry": {
+      "layer": "renderer_neutral",
+      "outcome": "pass",
+      "test": "tests.test_open_cylinder_component_fill.OpenCylinderProjectionLayerTests.test_head_on_and_oblique_openings_cancel_the_outer_fill"
+    },
+    "open_cylinder_lateral_binding": {
+      "layer": "manim",
+      "outcome": "pass",
+      "test": "tests.test_open_cylinder_component_fill.OpenCylinderManimBindingTests.test_open_cylinder_always_prepares_two_open_side_sheets"
+    },
+    "open_cylinder_lateral_cairo": {
+      "layer": "cairo",
+      "outcome": "pass",
+      "test": "tests.test_open_cylinder_component_fill.OpenCylinderManimBindingTests.test_head_on_cairo_keeps_open_center_clear_and_closed_center_filled"
+    },
     "dandelin_v2_contract_restore": {
       "layer": "renderer_neutral",
       "outcome": "pass",
@@ -539,6 +584,40 @@
         "dandelin_plane_occlusion_style_manim",
         "dandelin_plane_occlusion_style_cairo",
         "dandelin_v2_contract_restore"
+      ]
+    },
+    {
+      "id": "dandelin_cone_cylinder_switch_unified_occlusion",
+      "kind": "renderer_neutral_manim_and_cairo",
+      "expected": {
+        "curve_visibility_authoritative": true,
+        "surface_layering_authoritative": true,
+        "physical_surface_visibility_authoritative": false,
+        "stable_boundary_source_catalog": true,
+        "near_cylinder_crossing_slivers": 0,
+        "live_binding_matches_direct_frame": true
+      },
+      "evidence_ids": [
+        "dandelin_switch_endpoint_geometry",
+        "dandelin_switch_boundary_catalog",
+        "dandelin_switch_keyframe_parent_order",
+        "dandelin_switch_near_cylinder_tangencies",
+        "dandelin_switch_live_binding",
+        "dandelin_switch_cairo_pixels"
+      ]
+    },
+    {
+      "id": "open_cylinder_lateral_shell_fill",
+      "kind": "renderer_neutral_manim_and_cairo",
+      "expected": {
+        "open_lateral_shell": true,
+        "drawn_end_caps": false,
+        "head_on_center_clear": true
+      },
+      "evidence_ids": [
+        "open_cylinder_lateral_geometry",
+        "open_cylinder_lateral_binding",
+        "open_cylinder_lateral_cairo"
       ]
     }
   ]
