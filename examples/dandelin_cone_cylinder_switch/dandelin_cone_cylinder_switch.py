@@ -40,16 +40,20 @@ from manim import (
     VGroup,
     VMobject,
     ValueTracker,
-    always_redraw,
     config,
     smooth,
 )
 
-from polyhedron_visibility.compositor import (
-    PainterConstraint,
-    stable_topological_sort,
-)
 from polyhedron_visibility.parallel_solver import ParallelView
+from polyhedron_visibility.visibility import VisibilityKind
+from polyhedron_visibility.quadrics.boundary_compositing import (
+    BoundaryOcclusionScope,
+    BoundaryRenderIntent,
+    BoundarySemanticKind,
+    BoundarySourceKind,
+    QuadricBoundaryPaintFragment,
+    QuadricBoundarySource,
+)
 from polyhedron_visibility.quadrics.compositing import QuadricPaintPolicy
 from polyhedron_visibility.quadrics.contract import (
     ConeModel,
@@ -57,14 +61,28 @@ from polyhedron_visibility.quadrics.contract import (
     CylinderSpec,
     PlaneDisplayPatchSpec,
     SectionPlane,
+    SphereSpec,
 )
-from polyhedron_visibility.quadrics.global_occlusion import (
-    compute_global_quadric_frame,
+from polyhedron_visibility.quadrics.curves import EllipseArcCurve
+from polyhedron_visibility.quadrics.nested_tangent_compositing import (
+    NestedTangentSphereSpec,
+)
+from polyhedron_visibility.quadrics.scene_occlusion import (
+    SceneOcclusionFrame,
+    SceneOcclusionRequest,
+    SceneSectionSpec,
+    compute_scene_occlusion_frame as compute_registered_scene_occlusion_frame,
 )
 from polyhedron_visibility.quadrics.section_compositing import (
     PlaneDepthRole,
-    compute_quadric_section_compositing,
     merge_quadric_plane_fragment_contours,
+)
+from polyhedron_visibility.quadrics.sections import (
+    compute_quadric_section_boundary_curves,
+)
+from polyhedron_visibility.quadrics.surface_boundaries import (
+    curve_boundary_source,
+    section_curve_boundary_source,
 )
 
 
@@ -190,6 +208,7 @@ class SwitchOcclusionFrame:
     """Renderer-neutral teaching-transparent painter evidence for one frame."""
 
     progress: float
+    scene_frame: SceneOcclusionFrame
     surface_back_item_id: str
     surface_front_item_id: str
     plane_item_ids: tuple[tuple[PlaneDepthRole, str, str], ...]
@@ -208,8 +227,6 @@ class SwitchOcclusionFrame:
         ...,
     ]
     sphere_layers: tuple[SwitchSphereLayer, SwitchSphereLayer]
-    hidden_section_item_id: str
-    visible_section_item_id: str
     focus_item_id: str
     draw_order: tuple[str, ...]
     surface_layering_authoritative: bool = True
@@ -226,6 +243,22 @@ class SwitchOcclusionFrame:
         role: PlaneDepthRole,
     ) -> tuple[tuple[tuple[float, float], ...], ...]:
         return dict(self.plane_outline_paths)[role]
+
+    @property
+    def curve_sources(self) -> tuple[QuadricBoundarySource, ...]:
+        boundary = self.scene_frame.boundary_frame
+        return () if boundary is None else boundary.sources
+
+    @property
+    def curve_fragments(self) -> tuple[QuadricBoundaryPaintFragment, ...]:
+        boundary = self.scene_frame.boundary_frame
+        return () if boundary is None else boundary.fragments
+
+    def __deepcopy__(self, memo: dict[int, object]) -> "SwitchOcclusionFrame":
+        """Share this immutable evidence when Manim copies a diagram."""
+
+        memo[id(self)] = self
+        return self
 
 
 def compute_switch_frame(progress: object) -> DandelinSwitchFrame:
@@ -319,22 +352,72 @@ def _surface_spec(frame: DandelinSwitchFrame) -> ConeSpec | CylinderSpec:
 def _compute_switch_occlusion_frame(progress: float) -> SwitchOcclusionFrame:
     geometry = compute_switch_frame(progress)
     surface = _surface_spec(geometry)
-    base = compute_global_quadric_frame(
-        (),
-        (surface,),
-        _PARALLEL_VIEW,
-        paint_policy=QuadricPaintPolicy.PHYSICAL,
-        max_chord_error=_SECTION_MAX_SCREEN_ERROR,
-        max_segments=_SECTION_MAX_SEGMENTS,
-    ).frame
-    section = compute_quadric_section_compositing(
-        base,
+    spheres: list[SphereSpec] = []
+    sources: list[QuadricBoundarySource] = []
+    bindings: list[NestedTangentSphereSpec] = []
+    for sphere in geometry.spheres:
+        sphere_id = f"switch-sphere:{sphere.plane_side:+d}"
+        contact_id = f"switch-contact:{sphere.plane_side:+d}"
+        sphere_spec = SphereSpec(sphere_id, sphere.center, sphere.radius)
+        contact_curve = EllipseArcCurve(
+            contact_id,
+            (0.0, 0.0, sphere.surface_contact_z),
+            (sphere.surface_contact_radius, 0.0, 0.0),
+            (0.0, sphere.surface_contact_radius, 0.0),
+        )
+        spheres.append(sphere_spec)
+        sources.append(
+            curve_boundary_source(
+                contact_curve,
+                source_kind=BoundarySourceKind.ANALYTIC_CURVE,
+                semantic_kind=BoundarySemanticKind.TEACHING_FEATURE,
+                occlusion_scope=BoundaryOcclusionScope.OWNER_AND_EXTERNAL,
+                owner_id=sphere_id,
+                owner_surface_id=sphere_id,
+                style_id="style:switch-contact",
+            )
+        )
+        bindings.append(
+            NestedTangentSphereSpec(
+                sphere_id,
+                surface.surface_id,
+                contact_id,
+                sphere_id,
+            )
+        )
+    section_curves = compute_quadric_section_boundary_curves(
+        "switch-section",
         surface,
         _SECTION_PLANE,
-        _PLANE_PATCH,
-        _PARALLEL_VIEW,
-        max_screen_error=_SECTION_MAX_SCREEN_ERROR,
     )
+    sources.extend(
+        section_curve_boundary_source(
+            curve,
+            surface,
+            _SECTION_PLANE,
+            section_id="switch-section",
+            authoritative_curves=section_curves,
+            style_id="style:switch-section",
+        )
+        for curve in section_curves
+    )
+    scene_frame = compute_registered_scene_occlusion_frame(
+        SceneOcclusionRequest(
+            "dandelin-cone-cylinder-switch",
+            (surface, *spheres),
+            _PARALLEL_VIEW,
+            tuple(sources),
+            SceneSectionSpec(surface.surface_id, _SECTION_PLANE, _PLANE_PATCH),
+            tuple(bindings),
+            QuadricPaintPolicy.DEPTH_AWARE_DIAGRAMMATIC,
+            max_chord_error=_SECTION_MAX_SCREEN_ERROR,
+            max_surface_segments=_SECTION_MAX_SEGMENTS,
+        )
+    )
+    section = scene_frame.section_frame
+    nested = scene_frame.nested_parent_frame
+    if section is None or nested is None or scene_frame.boundary_frame is None:
+        raise ValueError("the switch scene lost its registered occlusion evidence")
     contours = merge_quadric_plane_fragment_contours(
         _SECTION_PLANE,
         _PLANE_PATCH,
@@ -361,156 +444,23 @@ def _compute_switch_occlusion_frame(progress: float) -> SwitchOcclusionFrame:
     plane_item_ids = tuple(
         (role, fill_ids[role], outline_ids[role]) for role in PlaneDepthRole
     )
-
-    denominator = float(
-        np.dot(
-            np.asarray(_SECTION_PLANE.normal, dtype=float),
-            np.asarray(_PARALLEL_VIEW.view_direction, dtype=float),
-        )
-    )
-    if abs(denominator) <= 1.0e-12:
-        raise ValueError("the cutting plane is edge-on to the fixed view")
-    sphere_layers: list[SwitchSphereLayer] = []
-    for sphere in geometry.spheres:
-        signed_distance = _SECTION_PLANE.signed_distance(sphere.center)
-        tangency_error = abs(abs(signed_distance) - sphere.radius)
-        if tangency_error > max(1.0e-10, 1.0e-10 * sphere.radius):
-            raise ValueError("a switch sphere lost its plane-tangency certificate")
-        parameter = -signed_distance / denominator
-        if abs(parameter) <= 1.0e-12:
-            raise ValueError("a switch sphere has unresolved plane depth")
-        sphere_layers.append(
-            SwitchSphereLayer(
-                sphere.plane_side,
-                f"switch-sphere:{sphere.plane_side:+d}",
-                float(parameter),
-            )
-        )
-    far_spheres = tuple(
-        item for item in sphere_layers if item.plane_is_in_front
-    )
-    near_spheres = tuple(
-        item for item in sphere_layers if not item.plane_is_in_front
-    )
-    if len(far_spheres) != 1 or len(near_spheres) != 1:
-        raise ValueError("the fixed view must separate the two switch spheres")
-    far_sphere = far_spheres[0]
-    near_sphere = near_spheres[0]
-
-    hidden_section_item_id = "switch-section:hidden"
-    visible_section_item_id = "switch-section:visible"
-    focus_item_id = "switch-foci"
-    base_nodes = tuple(section.draw_order)
-    nodes = (
-        *base_nodes,
-        *(item.item_id for item in sphere_layers),
-        hidden_section_item_id,
-        visible_section_item_id,
-        focus_item_id,
-    )
-    relations = [
-        PainterConstraint(item.far_item_id, item.near_item_id)
-        for item in section.order_relations
-    ]
-    surface_back = paint_items.surface_back
-    surface_front = paint_items.surface_front
-    behind_nodes = (
-        fill_ids[PlaneDepthRole.BEHIND_SURFACE],
-        outline_ids[PlaneDepthRole.BEHIND_SURFACE],
-        fill_ids[PlaneDepthRole.OUTSIDE_PROJECTION],
-        outline_ids[PlaneDepthRole.OUTSIDE_PROJECTION],
-        fill_ids[PlaneDepthRole.BETWEEN_SURFACE_SHEETS],
-        outline_ids[PlaneDepthRole.BETWEEN_SURFACE_SHEETS],
-    )
-    front_nodes = (
-        fill_ids[PlaneDepthRole.OUTSIDE_PROJECTION],
-        outline_ids[PlaneDepthRole.OUTSIDE_PROJECTION],
-        fill_ids[PlaneDepthRole.BETWEEN_SURFACE_SHEETS],
-        outline_ids[PlaneDepthRole.BETWEEN_SURFACE_SHEETS],
-        fill_ids[PlaneDepthRole.IN_FRONT_OF_SURFACE],
-        outline_ids[PlaneDepthRole.IN_FRONT_OF_SURFACE],
-    )
-    plane_front_nodes = (
-        fill_ids[PlaneDepthRole.IN_FRONT_OF_SURFACE],
-        outline_ids[PlaneDepthRole.IN_FRONT_OF_SURFACE],
-    )
-    for sphere in sphere_layers:
-        relations.extend(
-            (
-                PainterConstraint(surface_back, sphere.item_id),
-                PainterConstraint(sphere.item_id, surface_front),
-            )
-        )
-        if sphere.plane_is_in_front:
-            relations.extend(
-                PainterConstraint(sphere.item_id, item_id)
-                for item_id in front_nodes
-            )
-            relations.extend(
-                PainterConstraint(item_id, sphere.item_id)
-                for item_id in (
-                    fill_ids[PlaneDepthRole.BEHIND_SURFACE],
-                    outline_ids[PlaneDepthRole.BEHIND_SURFACE],
-                )
-            )
-        else:
-            relations.extend(
-                PainterConstraint(item_id, sphere.item_id)
-                for item_id in behind_nodes
-            )
-            relations.extend(
-                PainterConstraint(sphere.item_id, item_id)
-                for item_id in plane_front_nodes
-            )
-    relations.append(
-        PainterConstraint(far_sphere.item_id, near_sphere.item_id)
-    )
-    relations.extend(
-        (
-            PainterConstraint(surface_back, hidden_section_item_id),
-            PainterConstraint(far_sphere.item_id, hidden_section_item_id),
-            PainterConstraint(
-                fill_ids[PlaneDepthRole.BETWEEN_SURFACE_SHEETS],
-                hidden_section_item_id,
-            ),
-            PainterConstraint(
-                outline_ids[PlaneDepthRole.BETWEEN_SURFACE_SHEETS],
-                hidden_section_item_id,
-            ),
-            PainterConstraint(hidden_section_item_id, near_sphere.item_id),
-            PainterConstraint(hidden_section_item_id, surface_front),
-        )
-    )
-    core_nodes = (*base_nodes, *(item.item_id for item in sphere_layers))
-    relations.extend(
-        PainterConstraint(item_id, visible_section_item_id)
-        for item_id in (*core_nodes, hidden_section_item_id)
-    )
-    relations.extend(
-        PainterConstraint(item_id, focus_item_id)
-        for item_id in (*core_nodes, hidden_section_item_id, visible_section_item_id)
-    )
-
-    preferred: list[str] = []
-    for item_id in base_nodes:
-        preferred.append(item_id)
-        if item_id == surface_back:
-            preferred.append(far_sphere.item_id)
-        if item_id == outline_ids[PlaneDepthRole.BETWEEN_SURFACE_SHEETS]:
-            preferred.extend((hidden_section_item_id, near_sphere.item_id))
-    preferred.extend((visible_section_item_id, focus_item_id))
-    preferred_rank = {
-        item_id: index for index, item_id in enumerate(preferred)
+    contacts = {
+        item.sphere_surface_id: item for item in nested.contacts
     }
-    draw_order = stable_topological_sort(
-        nodes,
-        relations,
-        key=lambda item_id: (preferred_rank.get(item_id, len(preferred)), item_id),
+    sphere_layers = tuple(
+        SwitchSphereLayer(
+            sphere.plane_side,
+            f"switch-sphere:{sphere.plane_side:+d}",
+            contacts[f"switch-sphere:{sphere.plane_side:+d}"].plane_ray_parameter,
+        )
+        for sphere in geometry.spheres
     )
+    focus_item_id = "switch-foci"
     return SwitchOcclusionFrame(
         progress=progress,
-        surface_back_item_id=surface_back,
-        surface_front_item_id=surface_front,
+        scene_frame=scene_frame,
+        surface_back_item_id=paint_items.surface_back,
+        surface_front_item_id=paint_items.surface_front,
         plane_item_ids=plane_item_ids,
         plane_contours=tuple(
             (role, contours[role]) for role in PlaneDepthRole
@@ -519,10 +469,14 @@ def _compute_switch_occlusion_frame(progress: float) -> SwitchOcclusionFrame:
             (role, tuple(outline_paths[role])) for role in PlaneDepthRole
         ),
         sphere_layers=(sphere_layers[0], sphere_layers[1]),
-        hidden_section_item_id=hidden_section_item_id,
-        visible_section_item_id=visible_section_item_id,
         focus_item_id=focus_item_id,
-        draw_order=draw_order,
+        draw_order=(*scene_frame.draw_order, focus_item_id),
+        surface_layering_authoritative=(
+            scene_frame.surface_layering_authoritative
+        ),
+        physical_surface_visibility_authoritative=(
+            scene_frame.physical_surface_visibility_authoritative
+        ),
     )
 
 
@@ -885,41 +839,6 @@ def _sphere_paint_items(
         ).move_to(center + np.asarray((-0.12, 0.16, 0.0)) * screen_radius)
         members.add(body, glow)
 
-        ring_points = tuple(
-            (
-                sphere.surface_contact_radius * cos(float(theta)),
-                sphere.surface_contact_radius * sin(float(theta)),
-                sphere.surface_contact_z,
-            )
-            for theta in np.linspace(0.0, 2.0 * pi, 97)[:-1]
-        )
-        ring_visible = tuple(
-            float(
-                np.dot(
-                    np.asarray((cos(float(theta)), sin(float(theta)), -frame.slope)),
-                    _DEPTH_AXIS,
-                )
-            )
-            > 0.0
-            for theta in np.linspace(0.0, 2.0 * pi, 97)[:-1]
-        )
-        hidden_ring = _path(
-            ring_points,
-            color=SPHERE_COLOR,
-            width=1.5,
-            opacity=0.30,
-            close=True,
-        )
-        members.add(hidden_ring)
-        for run in _front_runs(ring_points, ring_visible):
-            visible_ring = _path(
-                run,
-                color=SPHERE_COLOR,
-                width=3.0,
-                opacity=1.0,
-            )
-            members.add(visible_ring)
-
         focus = project_point(sphere.plane_contact)
         halo = Dot(focus, radius=0.10, color=FOCUS_COLOR, fill_opacity=0.18)
         point = Dot(focus, radius=0.048, color=FOCUS_COLOR)
@@ -928,8 +847,9 @@ def _sphere_paint_items(
         items[item_id] = _tag_paint_item(
             members,
             item_id,
-            kind="sphere",
+            kind="sphere_body",
             planeSide=sphere.plane_side,
+            contactCurvesEmbedded=False,
         )
     return items, _tag_paint_item(
         foci,
@@ -938,65 +858,119 @@ def _sphere_paint_items(
     )
 
 
-def _section_paint_items(
-    frame: DandelinSwitchFrame,
-    occlusion: SwitchOcclusionFrame,
-) -> tuple[VMobject, VGroup]:
-    theta_values = np.linspace(0.0, 2.0 * pi, 145)[:-1]
-    points = tuple(section_point(frame, float(theta)) for theta in theta_values)
-    near_layer = next(
-        layer for layer in occlusion.sphere_layers if not layer.plane_is_in_front
-    )
-    near_sphere = next(
-        sphere
-        for sphere in frame.spheres
-        if sphere.plane_side == near_layer.plane_side
-    )
-    near_center = project_point(near_sphere.center)
-    near_radius = PROJECTION_SCALE * near_sphere.radius
-    visible: list[bool] = []
-    for theta, point in zip(theta_values, points):
-        surface_facing = float(
-            np.dot(
-                np.asarray((cos(float(theta)), sin(float(theta)), -frame.slope)),
-                _DEPTH_AXIS,
+def _point_segment_distance(
+    point: np.ndarray,
+    start: np.ndarray,
+    end: np.ndarray,
+) -> float:
+    delta = end - start
+    squared = float(np.dot(delta, delta))
+    if squared == 0.0:
+        return float(np.linalg.norm(point - start))
+    ratio = float(np.dot(point - start, delta) / squared)
+    ratio = min(1.0, max(0.0, ratio))
+    return float(np.linalg.norm(point - (start + ratio * delta)))
+
+
+def _fragment_world_points(
+    source: QuadricBoundarySource,
+    fragment: QuadricBoundaryPaintFragment,
+    *,
+    max_screen_error: float = 0.0025,
+    max_segments: int = 512,
+) -> tuple[tuple[float, float, float], ...]:
+    """Sample an already-certified interval only for renderer approximation."""
+
+    curve = source.curve
+    cache: dict[float, np.ndarray] = {}
+
+    def screen(parameter: float) -> np.ndarray:
+        if parameter not in cache:
+            cache[parameter] = project_point(curve.point(parameter))[:2]
+        return cache[parameter]
+
+    intervals = [(fragment.interval.start, fragment.interval.end)]
+    probes = (0.25, 0.5, 0.75)
+    while True:
+        split_indices: list[int] = []
+        for index, (start, end) in enumerate(intervals):
+            first = screen(start)
+            last = screen(end)
+            observed = max(
+                _point_segment_distance(
+                    screen(start + fraction * (end - start)),
+                    first,
+                    last,
+                )
+                for fraction in probes
             )
-        ) > 0.0
-        projected = project_point(point)
-        outside_near_sphere = (
-            float(np.linalg.norm(projected[:2] - near_center[:2]))
-            >= near_radius + 0.018
+            if observed > max_screen_error:
+                split_indices.append(index)
+        if not split_indices:
+            break
+        if len(intervals) + len(split_indices) > max_segments:
+            raise ValueError(
+                f"curve fragment {fragment.item_id!r} exceeds display capacity"
+            )
+        split_set = set(split_indices)
+        refined: list[tuple[float, float]] = []
+        for index, (start, end) in enumerate(intervals):
+            if index not in split_set:
+                refined.append((start, end))
+                continue
+            midpoint = 0.5 * (start + end)
+            refined.extend(((start, midpoint), (midpoint, end)))
+        intervals = refined
+    parameters = (intervals[0][0], *(end for _start, end in intervals))
+    return tuple(curve.point(parameter) for parameter in parameters)
+
+
+def _boundary_paint_items(
+    occlusion: SwitchOcclusionFrame,
+) -> dict[str, VMobject | DashedVMobject]:
+    source_map = {item.source_id: item for item in occlusion.curve_sources}
+    result: dict[str, VMobject | DashedVMobject] = {}
+    for fragment in occlusion.curve_fragments:
+        if not fragment.painted:
+            continue
+        source = source_map[fragment.source_id]
+        contact = source.style_id == "style:switch-contact"
+        visible = (
+            fragment.effective_visibility_kind is VisibilityKind.VISIBLE
         )
-        visible.append(surface_facing and outside_near_sphere)
-    hidden = _path(
-        points,
-        color=SECTION_COLOR,
-        width=1.9,
-        opacity=0.30,
-        close=True,
-    )
-    visible_group = VGroup()
-    for run in _front_runs(points, visible):
-        front = _path(
-            run,
-            color=SECTION_COLOR,
-            width=4.0,
-            opacity=1.0,
+        base = _path(
+            _fragment_world_points(source, fragment),
+            color=SPHERE_COLOR if contact else SECTION_COLOR,
+            width=(3.0 if visible else 1.5) if contact else (4.0 if visible else 1.9),
+            opacity=1.0 if visible else 0.30,
         )
-        visible_group.add(front)
-    return (
-        _tag_paint_item(
-            hidden,
-            occlusion.hidden_section_item_id,
-            kind="section_hidden",
-        ),
-        _tag_paint_item(
-            visible_group,
-            occlusion.visible_section_item_id,
-            kind="section_visible",
-            sphereOcclusionAware=True,
-        ),
-    )
+        value: VMobject | DashedVMobject = base
+        if fragment.render_intent is BoundaryRenderIntent.DASHED:
+            length = float(base.get_arc_length())
+            if length > 0.0:
+                value = DashedVMobject(
+                    base,
+                    num_dashes=max(2, min(96, int(ceil(length / 0.18)))),
+                    dashed_ratio=0.54,
+                )
+                value.set_stroke(
+                    color=SPHERE_COLOR if contact else SECTION_COLOR,
+                    width=1.5 if contact else 1.9,
+                    opacity=0.30,
+                )
+        result[fragment.item_id] = _tag_paint_item(
+            value,
+            fragment.item_id,
+            kind="contact_curve" if contact else "section_curve",
+            sourceId=fragment.source_id,
+            visibility=fragment.effective_visibility_kind.value,
+            occluderSurfaceIds=fragment.occluder_surface_ids,
+            analyticInterval=(
+                fragment.interval.start,
+                fragment.interval.end,
+            ),
+        )
+    return result
 
 
 def build_switch_diagram(progress: object) -> VGroup:
@@ -1026,9 +1000,7 @@ def build_switch_diagram(progress: object) -> VGroup:
     }
     spheres, foci = _sphere_paint_items(frame, occlusion)
     paint_items.update(spheres)
-    hidden_section, visible_section = _section_paint_items(frame, occlusion)
-    paint_items[occlusion.hidden_section_item_id] = hidden_section
-    paint_items[occlusion.visible_section_item_id] = visible_section
+    paint_items.update(_boundary_paint_items(occlusion))
     paint_items[occlusion.focus_item_id] = foci
     if set(paint_items) != set(occlusion.draw_order):
         missing = sorted(set(occlusion.draw_order) - set(paint_items))
@@ -1045,6 +1017,24 @@ def build_switch_diagram(progress: object) -> VGroup:
     result = VGroup(axis, *ordered)
     result.switch_occlusion_frame = occlusion
     return result
+
+
+def refresh_switch_diagram(diagram: VGroup, progress: object) -> VGroup:
+    """Atomically replace one live diagram with a newly certified frame.
+
+    ``always_redraw`` delegates to ``Mobject.become``.  That operation aligns
+    unequal submobject trees and intentionally retains the old allocation,
+    which is unsafe here because analytic curve events can change the number
+    of boundary fragments.  The outer diagram keeps its Scene identity while
+    this function swaps its complete, already-ordered child list as one unit.
+    """
+
+    if not isinstance(diagram, VGroup):
+        raise TypeError("diagram must be a VGroup")
+    replacement = build_switch_diagram(progress)
+    diagram.submobjects = list(replacement.submobjects)
+    diagram.switch_occlusion_frame = replacement.switch_occlusion_frame
+    return diagram
 
 
 def _header() -> VGroup:
@@ -1088,15 +1078,37 @@ def _progress_legend(tracker: ValueTracker) -> VGroup:
 class DandelinConeCylinderSwitch(Scene):
     """Round-trip cone/cylinder switch with two analytic tangent spheres."""
 
+    def get_moving_and_static_mobjects(self, animations):
+        """Keep Cairo's moving set rooted above dynamic analytic fragments.
+
+        Boundary events can split or merge painter fragments while the switch
+        is running.  Cairo normally freezes a flattened family list at the
+        beginning of each animation, so replacing those children would leave
+        stale family members in its frame cache.  Returning the stable scene
+        roots makes Cairo expand the *current* family on every frame.  This is
+        deliberately local to the example; the renderer-neutral occlusion
+        coordinator still returns immutable frame evidence.
+        """
+
+        del animations
+        roots: list[VMobject] = []
+        for item in (*self.mobjects, *self.foreground_mobjects):
+            if not any(item is existing for existing in roots):
+                roots.append(item)
+        return roots, []
+
     def construct(self) -> None:
         self.camera.background_color = BACKGROUND_COLOR
         progress = ValueTracker(0.0)
         header = _header()
         legend = _progress_legend(progress)
-        diagram = always_redraw(lambda: build_switch_diagram(progress.get_value()))
+        diagram = build_switch_diagram(progress.get_value())
 
         self.add_foreground_mobjects(header, legend)
         self.play(FadeIn(diagram), FadeIn(header), FadeIn(legend), run_time=0.65)
+        diagram.add_updater(
+            lambda item: refresh_switch_diagram(item, progress.get_value())
+        )
         self.wait(0.65)
         self.play(
             progress.animate.set_value(1.0),
@@ -1129,6 +1141,7 @@ __all__: Sequence[str] = (
     "compute_switch_occlusion_frame",
     "compute_switch_frame",
     "project_point",
+    "refresh_switch_diagram",
     "section_point",
 )
 

@@ -1888,16 +1888,47 @@ def compute_quadric_boundary_compositing(
                     fragment_anchors.surface_front,
                     "depth_aware_hidden_owner_boundary",
                 )
-            else:
-                far_anchor = (
-                    fragment_anchors.surface_back
-                    if fragment.plane_relation == "boundary_behind_plane"
-                    else fragment_anchors.outline_between
+            elif (
+                fragment.plane_relation == "boundary_behind_plane"
+                and "behind_surface" in fragment.plane_depth_roles
+            ):
+                # The certified plane relation already places this fragment
+                # before every overlapping plane role.  Some of those roles
+                # are themselves behind ``surface_back``; adding the usual
+                # ``surface_back -> fragment`` edge would therefore create a
+                # false cycle.  The surface occlusion only needs the upper
+                # half of the bracket here.
+                relations.append(
+                    QuadricPaintRelation(
+                        fragment.item_id,
+                        fragment_anchors.surface_front,
+                        "depth_aware_hidden_boundary_before_surface_front",
+                    )
                 )
+            elif fragment.plane_relation == "boundary_behind_plane":
                 _add_bracket(
                     relations,
                     fragment.item_id,
-                    far_anchor,
+                    fragment_anchors.surface_back,
+                    fragment_anchors.surface_front,
+                    "depth_aware_hidden_boundary_behind_plane",
+                )
+            elif fragment.plane_relation == "outside_patch":
+                # No finite plane pixels overlap this fragment.  Keep it
+                # between the mother's coincident projection sheets without
+                # tying it to an unrelated plane outline role.
+                _add_bracket(
+                    relations,
+                    fragment.item_id,
+                    fragment_anchors.surface_back,
+                    fragment_anchors.surface_front,
+                    "depth_aware_hidden_boundary_outside_patch",
+                )
+            else:
+                _add_bracket(
+                    relations,
+                    fragment.item_id,
+                    fragment_anchors.outline_between,
                     fragment_anchors.surface_front,
                     "depth_aware_hidden_boundary",
                 )

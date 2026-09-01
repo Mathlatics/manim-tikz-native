@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+from copy import deepcopy
 from math import cos, pi, sin
 import unittest
 
 import numpy as np
-from manim import Scene, tempconfig
+from manim import Scene, config, tempconfig
+from polyhedron_visibility.visibility import VisibilityKind
 
 from examples.dandelin_cone_cylinder_switch.dandelin_cone_cylinder_switch import (
     AXIAL_RANGE,
@@ -14,10 +16,13 @@ from examples.dandelin_cone_cylinder_switch.dandelin_cone_cylinder_switch import
     PLANE_NORMAL,
     PLANE_OFFSET,
     PlaneDepthRole,
+    PROJECTION_SCALE,
     SURFACE_RADIUS,
     build_switch_diagram,
     compute_switch_occlusion_frame,
     compute_switch_frame,
+    project_point,
+    refresh_switch_diagram,
     section_point,
 )
 
@@ -150,7 +155,6 @@ class DandelinConeCylinderSwitchOcclusionTests(unittest.TestCase):
                 for item_id in plane_ids[PlaneDepthRole.BEHIND_SURFACE]:
                     self.assertLess(rank[item_id], rank[far.item_id])
                 for role in (
-                    PlaneDepthRole.OUTSIDE_PROJECTION,
                     PlaneDepthRole.BETWEEN_SURFACE_SHEETS,
                     PlaneDepthRole.IN_FRONT_OF_SURFACE,
                 ):
@@ -158,23 +162,41 @@ class DandelinConeCylinderSwitchOcclusionTests(unittest.TestCase):
                         self.assertLess(rank[far.item_id], rank[item_id])
                 for role in (
                     PlaneDepthRole.BEHIND_SURFACE,
-                    PlaneDepthRole.OUTSIDE_PROJECTION,
                     PlaneDepthRole.BETWEEN_SURFACE_SHEETS,
                 ):
                     for item_id in plane_ids[role]:
                         self.assertLess(rank[item_id], rank[near.item_id])
-                self.assertLess(
-                    rank[frame.hidden_section_item_id],
-                    rank[near.item_id],
+                for item_id in plane_ids[PlaneDepthRole.IN_FRONT_OF_SURFACE]:
+                    self.assertLess(rank[near.item_id], rank[item_id])
+                section_fragments = tuple(
+                    item
+                    for item in frame.curve_fragments
+                    if item.source_id.startswith("switch-section:")
+                    and item.painted
                 )
-                self.assertLess(
-                    rank[far.item_id],
-                    rank[frame.hidden_section_item_id],
+                hidden_section = tuple(
+                    item
+                    for item in section_fragments
+                    if item.surface_visibility_kind is VisibilityKind.HIDDEN
                 )
-                self.assertLess(
-                    rank[near.item_id],
-                    rank[frame.visible_section_item_id],
+                visible_section = tuple(
+                    item
+                    for item in section_fragments
+                    if item.surface_visibility_kind is VisibilityKind.VISIBLE
                 )
+                self.assertTrue(hidden_section)
+                self.assertTrue(visible_section)
+                for fragment in hidden_section:
+                    self.assertLess(rank[far.item_id], rank[fragment.item_id])
+                    self.assertLess(rank[fragment.item_id], rank[near.item_id])
+                for fragment in visible_section:
+                    self.assertLess(rank[near.item_id], rank[fragment.item_id])
+                sphere_hidden = tuple(
+                    item
+                    for item in hidden_section
+                    if near.item_id in item.occluder_surface_ids
+                )
+                self.assertTrue(sphere_hidden)
 
     def test_near_cylinder_plane_partition_converges_without_role_loss(self) -> None:
         near = compute_switch_occlusion_frame(0.9999)
@@ -201,6 +223,73 @@ class DandelinConeCylinderSwitchOcclusionTests(unittest.TestCase):
                     signed_area(cylinder.contours_for(role)),
                     delta=1.0e-3,
                 )
+
+    def test_contact_curves_are_not_embedded_in_sphere_body_items(self) -> None:
+        diagram = build_switch_diagram(1.0)
+        frame = diagram.switch_occlusion_frame
+        by_id = {
+            item.switch_paint_item_id: item
+            for item in diagram.submobjects
+            if hasattr(item, "switch_paint_item_id")
+        }
+        self.assertEqual(set(by_id), set(frame.draw_order))
+        contact_ids = {
+            item.item_id
+            for item in frame.curve_fragments
+            if item.source_id.startswith("switch-contact:") and item.painted
+        }
+        self.assertTrue(contact_ids)
+        self.assertTrue(contact_ids.issubset(by_id))
+        for sphere in frame.sphere_layers:
+            body = by_id[sphere.item_id]
+            self.assertEqual(body.switch_metadata["switchPaintKind"], "sphere_body")
+            self.assertFalse(body.switch_metadata["contactCurvesEmbedded"])
+            self.assertTrue(contact_ids.isdisjoint({body.switch_paint_item_id}))
+
+    def test_manim_can_deepcopy_immutable_scene_evidence_for_fade(self) -> None:
+        diagram = build_switch_diagram(0.5)
+        copied = deepcopy(diagram)
+        self.assertIs(
+            copied.switch_occlusion_frame,
+            diagram.switch_occlusion_frame,
+        )
+
+    def test_live_refresh_matches_direct_fragment_topology_and_z_order(self) -> None:
+        live = build_switch_diagram(0.0)
+        for progress in (0.25, 0.5, 0.75, 0.9999, 1.0, 0.5, 0.0):
+            with self.subTest(progress=progress):
+                refresh_switch_diagram(live, progress)
+                direct = build_switch_diagram(progress)
+
+                def trace(diagram):
+                    return tuple(
+                        (
+                            getattr(item, "switch_paint_item_id", None),
+                            item.z_index,
+                        )
+                        for item in diagram.submobjects
+                    )
+
+                self.assertEqual(trace(live), trace(direct))
+                self.assertEqual(
+                    live.switch_occlusion_frame.draw_order,
+                    direct.switch_occlusion_frame.draw_order,
+                )
+
+    def test_scene_keeps_dynamic_diagram_as_one_cairo_moving_root(self) -> None:
+        scene = DandelinConeCylinderSwitch()
+        diagram = build_switch_diagram(0.0)
+        foreground = build_switch_diagram(1.0)
+        scene.add(diagram)
+        scene.add_foreground_mobject(foreground)
+
+        moving, static = scene.get_moving_and_static_mobjects(())
+
+        self.assertEqual(static, [])
+        self.assertEqual(len(moving), 2)
+        self.assertIs(moving[0], diagram)
+        self.assertIs(moving[1], foreground)
+        self.assertFalse(any(item is diagram.submobjects[0] for item in moving))
 
 
 class DandelinConeCylinderSwitchCairoTests(unittest.TestCase):
@@ -290,6 +379,120 @@ class DandelinConeCylinderSwitchCairoTests(unittest.TestCase):
             )
         )
         self.assertGreater(far_cyan - near_cyan, 12.0)
+
+    def test_cylinder_contact_endpoints_and_section_sphere_cutoff_are_clean(self) -> None:
+        with tempconfig(
+            {
+                "renderer": "cairo",
+                "pixel_width": 960,
+                "pixel_height": 540,
+                "frame_rate": 12,
+                "disable_caching": True,
+                "write_to_movie": False,
+                "save_last_frame": False,
+            }
+        ):
+            scene = Scene()
+            scene.camera.background_color = BACKGROUND_COLOR
+            diagram = build_switch_diagram(1.0)
+            scene.add(diagram)
+            scene.camera.reset()
+            scene.camera.capture_mobjects(scene.mobjects)
+            pixels = scene.camera.pixel_array[:, :, :3].astype(int)
+            frame = diagram.switch_occlusion_frame
+
+            def pixel(point: np.ndarray) -> tuple[int, int]:
+                x = int(
+                    round(
+                        (point[0] + 0.5 * config.frame_width)
+                        * config.pixel_width
+                        / config.frame_width
+                    )
+                )
+                y = int(
+                    round(
+                        (0.5 * config.frame_height - point[1])
+                        * config.pixel_height
+                        / config.frame_height
+                    )
+                )
+                return x, y
+
+            source = next(
+                item
+                for item in frame.curve_sources
+                if item.source_id == "switch-contact:+1"
+            )
+            contact_fragments = tuple(
+                item
+                for item in frame.curve_fragments
+                if item.source_id == source.source_id
+            )
+            visible_ends = {
+                value
+                for item in contact_fragments
+                if item.surface_visibility_kind is VisibilityKind.VISIBLE
+                for value in (item.interval.start, item.interval.end)
+            }
+            hidden_ends = {
+                value
+                for item in contact_fragments
+                if item.surface_visibility_kind is VisibilityKind.HIDDEN
+                for value in (item.interval.start, item.interval.end)
+            }
+            transition_parameters = tuple(
+                sorted(
+                    value
+                    for value in visible_ends
+                    if any(abs(value - other) < 1.0e-10 for other in hidden_ends)
+                )
+            )
+            self.assertEqual(len(transition_parameters), 2)
+            for parameter in transition_parameters:
+                x, y = pixel(project_point(source.curve.point(parameter)))
+                neighborhood = pixels[y - 3 : y + 4, x - 3 : x + 4]
+                orange_score = (
+                    neighborhood[:, :, 0] - neighborhood[:, :, 2]
+                )
+                self.assertGreater(int(np.max(orange_score)), 90)
+
+            geometry = compute_switch_frame(1.0)
+            near_layer = next(
+                item
+                for item in frame.sphere_layers
+                if not item.plane_is_in_front
+            )
+            near_sphere = next(
+                item
+                for item in geometry.spheres
+                if item.plane_side == near_layer.plane_side
+            )
+            center_x, center_y = pixel(project_point(near_sphere.center))
+            radius_pixels = (
+                PROJECTION_SCALE
+                * near_sphere.radius
+                * config.pixel_height
+                / config.frame_height
+            )
+            rows, columns = np.indices(pixels.shape[:2])
+            inside = (
+                np.hypot(columns - center_x, rows - center_y)
+                < radius_pixels - 2.0
+            )
+            red = pixels[:, :, 0]
+            green = pixels[:, :, 1]
+            blue = pixels[:, :, 2]
+            strong_section_yellow = (
+                (red > 200)
+                & (green > 160)
+                & (green < 230)
+                & (blue < 145)
+                & ((red - blue) > 70)
+            )
+            self.assertEqual(
+                int(np.count_nonzero(strong_section_yellow & inside)),
+                0,
+            )
 
 
 if __name__ == "__main__":
