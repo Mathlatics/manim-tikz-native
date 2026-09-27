@@ -1,10 +1,18 @@
 # Source-authoritative parallel-camera shots
 
-This project keeps `figure.tex` and `camera-shots.json` as authored inputs. Run:
+This project keeps `figure.tex` and `camera-shots.json` as authored inputs. To
+keep generated output out of the checkout, copy the example to a fresh
+temporary directory. From the repository root, run:
 
 ```bash
-tikz-native-project build project.json
-tikz-native-project status project.json
+camera_project_directory="$(mktemp -d /tmp/tikz-native-camera-project.XXXXXX)"
+cp -R examples/source_project_camera_shots/. "$camera_project_directory/"
+(
+  cd "$camera_project_directory"
+  tikz-native-project build project.json
+  tikz-native-project status project.json
+  tikz-native-project clean project.json
+)
 ```
 
 The build writes a canonical `camera-shots.json` node next to the disposable

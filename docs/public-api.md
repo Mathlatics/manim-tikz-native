@@ -398,6 +398,8 @@ with controller.session():
     scene.play(...)
 ```
 
+### Automatic face depth cues
+
 Add stable classroom-oriented face depth cues without changing the hidden-line
 solver:
 
@@ -770,12 +772,20 @@ points are:
   `compute_global_quadric_frame()`;
 - `compute_quadric_section_compositing()` and
   `quadric_plane_fragment_contours()`;
+- `SceneOcclusionRequest`, `SceneOcclusionCoordinator`, and
+  `compute_scene_occlusion_frame()` for explicit dispatch between the ordinary
+  global, one-surface/one-plane, and narrow nested-tangent Dandelin paths;
+- `NestedTangentSphereSpec` and `compute_nested_tangent_parent_frame()` for one
+  cone/cylinder mother, one tangent plane, and exactly two registered tangent
+  spheres;
 - `fit_plane_display_patch()`;
 - `compute_plane_motion_schedule()`,
   `track_scheduled_plane_section()`, and `track_moving_section_point()`;
 - `build_section_transition_plan()` and
   `QuadricSectionTransition3D`;
 - `QuadricSection3D`, the low-level finite-section authoring facade;
+- `CompositeQuadricSection3D`, the constrained coordinated facade for one
+  finite `OPEN_DOUBLE` split into its two canonical nappes;
 - `QuadricSectionRig`, `SectionState`, and `QuadricSectionAction`, the natural
   fixed-topology mathematical-action layer;
 - `compute_dandelin_construction()`, `DandelinConstruction3D`, and the static

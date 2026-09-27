@@ -25,21 +25,43 @@ python scripts/run_ci_test_tier.py cairo-smoke
 The exact deferred test identities are reviewed in
 `.github/quadric-test-tiers.json`.  A direct `Scene.render()` test may not be
 added without assigning it to either the small smoke set or the extended set.
-Plain `python -m unittest discover` still runs every test for a deliberate
-local full-suite check.
+Plain `python -m unittest discover` discovers every test, but it does not
+enable the two opt-in real motion-render gates. For a deliberate local
+full-suite check that includes those paths, use:
+
+```bash
+python scripts/run_ci_test_tier.py all
+```
 
 ## Extended Cairo workflow
 
 `Extended Quadric Acceptance` runs nightly, for a published release, or through
-manual workflow dispatch.  It first executes the deferred high-resolution and
-full-video tests, then generates a single evidence directory:
+manual workflow dispatch. It first rebuilds and verifies the rolling
+current-main release sidecar, then executes the deferred high-resolution and
+full-video tests, and finally generates one evidence directory. The local
+equivalent of the workflow order is:
 
 ```bash
-python scripts/run_ci_test_tier.py extended-cairo
+python release/verify_quadric_section_release.py \
+  --manifest release/quadric-section-v1-current-main-manifest.json \
+  --evidence-json \
+  /tmp/quadric-section-acceptance/evidence/release-manifest-verification.json \
+  --failure-artifacts-directory \
+  /tmp/quadric-section-acceptance/evidence/release-build-failure-artifacts
+
+python scripts/run_ci_test_tier.py extended-cairo \
+  --timings-json \
+  /tmp/quadric-section-acceptance/evidence/extended-test-timings.json
 python scripts/generate_quadric_extended_acceptance.py \
   --output /tmp/quadric-section-acceptance \
+  --motion-sweep-workers 2 \
   --render-videos
 ```
+
+The release verifier uses two builds by default. Reproduce the workflow with
+the exact Python/build tool versions documented in
+[`release/README.md`](../release/README.md); a different environment is useful
+for diagnosis but is not release evidence.
 
 The tier manifest also records the opt-in environment gates for the real 2D
 and 3D motion-bridge renders.  The runner applies them before unittest

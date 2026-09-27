@@ -7,8 +7,8 @@
 在仓库根目录执行：
 
 ```bash
-manim --renderer cairo --disable_caching -ql --fps 8 \
-  --media_dir artifacts/classroom-cone-sections/preview \
+python -m manim --renderer cairo --disable_caching -ql --fps 8 \
+  --media_dir media/classroom-cone-sections/preview \
   examples/classroom_cone_sections/classroom_cone_sections.py \
   ConicFamilyTransitionLesson \
   ClosedVsOpenConeLesson \
@@ -20,8 +20,8 @@ manim --renderer cairo --disable_caching -ql --fps 8 \
 高清发布：
 
 ```bash
-manim --renderer cairo --disable_caching -qh --fps 30 \
-  --media_dir artifacts/classroom-cone-sections/release \
+python -m manim --renderer cairo --disable_caching -qh --fps 30 \
+  --media_dir media/classroom-cone-sections/release \
   examples/classroom_cone_sections/classroom_cone_sections.py \
   ConicFamilyTransitionLesson \
   ClosedVsOpenConeLesson \
@@ -49,8 +49,8 @@ manim --renderer cairo --disable_caching -qh --fps 30 \
 关键帧：[椭圆 → 精确抛物线 → 双曲线](gallery/contact-sheets/conic_family_transition.png)
 
 ```bash
-manim -ql --fps 8 examples/classroom_cone_sections/classroom_cone_sections.py ConicFamilyTransitionLesson
-manim -qh --fps 30 examples/classroom_cone_sections/classroom_cone_sections.py ConicFamilyTransitionLesson
+python -m manim --renderer cairo -ql --fps 8 examples/classroom_cone_sections/classroom_cone_sections.py ConicFamilyTransitionLesson
+python -m manim --renderer cairo -qh --fps 30 examples/classroom_cone_sections/classroom_cone_sections.py ConicFamilyTransitionLesson
 ```
 
 ## 场景二：封闭圆锥体与张口圆锥壳
@@ -70,8 +70,8 @@ manim -qh --fps 30 examples/classroom_cone_sections/classroom_cone_sections.py C
 关键帧：[接触底面前 → 中间位置 → 穿过底面](gallery/contact-sheets/closed_vs_open.png)
 
 ```bash
-manim -ql --fps 8 examples/classroom_cone_sections/classroom_cone_sections.py ClosedVsOpenConeLesson
-manim -qh --fps 30 examples/classroom_cone_sections/classroom_cone_sections.py ClosedVsOpenConeLesson
+python -m manim --renderer cairo -ql --fps 8 examples/classroom_cone_sections/classroom_cone_sections.py ClosedVsOpenConeLesson
+python -m manim --renderer cairo -qh --fps 30 examples/classroom_cone_sections/classroom_cone_sections.py ClosedVsOpenConeLesson
 ```
 
 ## 场景三：三种隐藏曲线绘图策略
@@ -95,8 +95,8 @@ manim -qh --fps 30 examples/classroom_cone_sections/classroom_cone_sections.py C
 关键帧：[较低截面 → 并排比较 → 较高截面](gallery/contact-sheets/hidden_curve_policies.png)
 
 ```bash
-manim -ql --fps 8 examples/classroom_cone_sections/classroom_cone_sections.py HiddenCurvePoliciesLesson
-manim -qh --fps 30 examples/classroom_cone_sections/classroom_cone_sections.py HiddenCurvePoliciesLesson
+python -m manim --renderer cairo -ql --fps 8 examples/classroom_cone_sections/classroom_cone_sections.py HiddenCurvePoliciesLesson
+python -m manim --renderer cairo -qh --fps 30 examples/classroom_cone_sections/classroom_cone_sections.py HiddenCurvePoliciesLesson
 ```
 
 ## 场景四：正投影、一般平行投影与侧视退化
@@ -116,8 +116,8 @@ manim -qh --fps 30 examples/classroom_cone_sections/classroom_cone_sections.py H
 关键帧：[正投影 → 一般平行投影 → 精确侧视](gallery/contact-sheets/projection_degeneration.png)
 
 ```bash
-manim -ql --fps 8 examples/classroom_cone_sections/classroom_cone_sections.py ProjectionDegenerationLesson
-manim -qh --fps 30 examples/classroom_cone_sections/classroom_cone_sections.py ProjectionDegenerationLesson
+python -m manim --renderer cairo -ql --fps 8 examples/classroom_cone_sections/classroom_cone_sections.py ProjectionDegenerationLesson
+python -m manim --renderer cairo -qh --fps 30 examples/classroom_cone_sections/classroom_cone_sections.py ProjectionDegenerationLesson
 ```
 
 ## 场景五：平面碰到底面时，截面边界为什么改变
@@ -137,8 +137,8 @@ manim -qh --fps 30 examples/classroom_cone_sections/classroom_cone_sections.py P
 关键帧：[纯侧面截线 → 接触后第一条可见短弦 → 侧面弧加底面弦](gallery/contact-sheets/cap_chord_topology.png)
 
 ```bash
-manim -ql --fps 8 examples/classroom_cone_sections/classroom_cone_sections.py CapChordTopologyLesson
-manim -qh --fps 30 examples/classroom_cone_sections/classroom_cone_sections.py CapChordTopologyLesson
+python -m manim --renderer cairo -ql --fps 8 examples/classroom_cone_sections/classroom_cone_sections.py CapChordTopologyLesson
+python -m manim --renderer cairo -qh --fps 30 examples/classroom_cone_sections/classroom_cone_sections.py CapChordTopologyLesson
 ```
 
 ## 重新生成审查关键帧

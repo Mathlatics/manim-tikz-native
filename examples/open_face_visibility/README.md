@@ -5,7 +5,8 @@ hinge, seven boundary edges, and one probe line. No per-line/per-face occlusion
 relations are authored.
 
 ```bash
-manim -pql examples/open_face_visibility/dihedral_auto_occlusion.py \
+python -m manim --renderer cairo -ql \
+  examples/open_face_visibility/dihedral_auto_occlusion.py \
   DihedralAutoOcclusionDemo
 ```
 

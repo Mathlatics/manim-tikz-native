@@ -24,16 +24,20 @@ display coordinates. The dash phase remains anchored to the full semantic edge,
 so an animated occlusion boundary clips the pattern instead of restarting it.
 
 ```bash
-manim -pql examples/derived_dihedral_extraction/derived_dihedral_extraction_demo.py \
+python -m manim --renderer cairo -ql \
+  examples/derived_dihedral_extraction/derived_dihedral_extraction_demo.py \
   RectangularBoxDihedralDemo
 
-manim -pql examples/derived_dihedral_extraction/derived_dihedral_extraction_demo.py \
+python -m manim --renderer cairo -ql \
+  examples/derived_dihedral_extraction/derived_dihedral_extraction_demo.py \
   TetrahedronDihedralDemo
 
-manim -pql examples/derived_dihedral_extraction/derived_dihedral_extraction_demo.py \
+python -m manim --renderer cairo -ql \
+  examples/derived_dihedral_extraction/derived_dihedral_extraction_demo.py \
   SquarePyramidDihedralDemo
 
-manim -pql examples/derived_dihedral_extraction/derived_dihedral_extraction_demo.py \
+python -m manim --renderer cairo -ql \
+  examples/derived_dihedral_extraction/derived_dihedral_extraction_demo.py \
   RectangularBoxDihedralRoundTripDemo
 ```
 

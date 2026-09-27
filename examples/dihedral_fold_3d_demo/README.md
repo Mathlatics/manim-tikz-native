@@ -94,7 +94,7 @@ v1 固定使用 `end_policy: restore_entry`：片段结束时恢复入口几何�
 在仓库根目录中，使用安装了 Manim 0.20.1 的 Python：
 
 ```bash
-python -m manim -ql \
+python -m manim --renderer cairo -ql \
   examples/dihedral_fold_3d_demo/scene.py \
   DihedralFold3DAnimationDemo \
   --media_dir /path/to/an-empty-media-directory

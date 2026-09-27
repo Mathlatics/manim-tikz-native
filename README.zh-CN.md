@@ -1,411 +1,230 @@
 # manim-tikz-native 中文说明
 
-这个项目把一套**受控的 TikZ 写法**转换成真正的 Manim 对象，而不是把整张
-TikZ 图压成一张 SVG 或图片。转换后的直线、面、点、标签仍然有各自的名字，
-因此可以继续使用 `ValueTracker`、`scene.play()` 和普通 Manim 动画来驱动。
+[![CI](https://github.com/Mathlatics/manim-tikz-native/actions/workflows/ci.yml/badge.svg)](https://github.com/Mathlatics/manim-tikz-native/actions/workflows/ci.yml)
+[![Python 3.11 / 3.12](https://img.shields.io/badge/python-3.11%20%7C%203.12-blue.svg)](https://www.python.org/)
+[![Manim 0.20.1](https://img.shields.io/badge/Manim-0.20.1-6c55a3.svg)](https://www.manim.community/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-它还包含两套自动遮挡能力：
+一套面向数学教学动画的语义几何工具链：把文档明确支持的 TikZ 子集编译成可编辑
+的原生 Manim 对象，并为显式登记的多面体、二次曲面、圆锥曲线和教学构造提供
+解析的平行投影遮挡。
 
-- 闭合凸多面体：所有登记的凸面共同参与计算，语义边会自动切成可见实线和
-  被遮挡虚线；
-- 开放凸面：适合二面角、折叠板等不构成封闭多面体的图形，并能处理显式声明的
-  铰链共边以及半透明面的前后次序。
+项目会保留稳定对象身份；当源码或几何无法认证时明确失败，不会把内容压成 SVG、
+位图，也不会猜一个看起来差不多的 `z_index`。
 
-普通多面体使用的多投影相机默认采用教材常用的斜二测画法：退行轴按二分之一
-缩短；遮挡控制器仍要求作者显式传入同一投影，避免计算和实际画面悄悄不一致。
-二次曲面和圆锥曲线的 Manim 控制器默认采用无剪切的正等测投影，并让世界坐标
-中的竖直轴在画面中保持竖直。作者仍可显式传入其他平行投影；从 TikZ 编译的
-图形则继续以 TikZ 源码中写明的投影为准。
+[English](README.md) · [项目文档](docs/README.md) ·
+[中文操作指南](docs/user-guide.zh-CN.md) · [公共 API](docs/public-api.md) ·
+[示例](examples/) · [贡献说明](CONTRIBUTING.md)
 
-现在还提供渲染器无关的 `ParallelCameraState`：可以直接指定观察方向、世界坐标
-目标点、目标点在画面中的锚点和缩放，也可以按某个平面构造正视、斜视和精确
-侧视视角。新的安全切换路径会保证每个中间帧的三维平行相机矩阵都保持可逆。
-精确侧视也是合法相机状态：有限截平面片会明确切换成零面积 `LINE` 帧，隐藏
-平面填充，只保留一条不重复描边的有限近侧轮廓线，并且不再作为有面积的遮挡体。
-同一帧中的圆、椭圆、抛物线和双曲线截线也会按解析几何重新认证：保留下来的
-一维实线/虚线按后侧在前、前侧在后的顺序绘制；退化为单点的端盖弦保留固定
-对象身份但不伪造一小段线。外部曲线或其他曲面的重合仍然不会被自动忽略。
+> **版本说明：**当前正式发布版是
+> [`v0.1.1`](https://github.com/Mathlatics/manim-tikz-native/releases/tag/v0.1.1)。
+> GitHub `main` 还包含 `CHANGELOG.md` 中列在 `Unreleased` 下的已审查、未发布能力；
+> 不能把所有主干功能都说成已经包含在 v0.1.1 安装包中。
 
-在这个相机状态之上，现在可以用 `ParallelCameraShot` 和
-`ParallelCameraShotSequence` 编排带名称、时长、停留、提示词和安全旋转路径的教学
-镜头；序列使用 `parallel-shot-sequence/v1` 契约。`ParallelCameraSafeFrame` 可以在
-不改变目标点及其画面锚点的前提下，为一组世界点自动求最大合适缩放。动态跟随则
-由 `ParallelCameraTargetFollowController` 在静态镜头准确到位后启用，只更新目标点，
-并按“已经位于跟随器之前的目标生产者 → 跟随器 → 二次曲面遮挡”的确定顺序在
-同一帧更新；失败时自动拆除 updater、清除 Cairo 静态缓存并恢复镜头。三个可直接
-渲染的验收动画见
-[语义相机镜头示例](examples/parallel_camera_shots/README.md)。
-相机、移动截平面、拓扑双 bank、有限平面片和真实自动遮挡控制器的一体化契约，
-见[平行相机与截面序列](docs/parallel-camera-section-sequence.md)；三段完整 Cairo
-验收场景位于
-[parallel_camera_section_rig_demo.py](examples/parallel_camera_section_rig_demo.py)。
+![椭圆、抛物线和双曲线过渡](https://raw.githubusercontent.com/Mathlatics/manim-tikz-native/main/examples/classroom_cone_sections/gallery/contact-sheets/conic_family_transition.png)
 
-这条一体化路径现在又补齐了五项基础之上的合成能力：相切截线会使用固定的点
-对象，不会伪造一小段线；球、圆柱、圆锥的轮廓、端盖圆周和指定母线会进入真实
-遮挡求解；“画多深”“是否参加遮挡”“采用哪种深度表达”是三个彼此独立的逐帧
-开关；语义相机、继承缩放、画面中心和最终偏移会作为一个完整视口事务一起切换；
-多个未挂载的截面 Rig 还可以汇总到唯一的全局控制器，让甲物体的曲线、点和轮廓
-真正被乙物体遮挡。全局 v1 暂不接受多个可见截平面片，因为那需要把多个平面和
-多个实体共同切分，不能用简单调整图层顺序代替。相切点、三轴控制和跨 Rig 遮挡
-的三段短动画位于
-[parallel_camera_advanced_compositor_demo.py](examples/parallel_camera_advanced_compositor_demo.py)。
+## 项目包含什么
 
-## 圆锥截口 Quick Start
+### 1. 语义 TikZ 编译
 
-普通使用者只需要声明圆锥、当前截平面和“平移/旋转”这类数学动作。高层 Rig
-会自动生成完整截线、判断实线/虚线、排好曲面与平面图层，并在动画开始前建立
-固定容量对象；不需要手工管理 tracker、曲线 ID、端盖弦 ID 或 painter band。
+- 把受控的二维/三维 TikZ 编译成真正的 `Line`、`Polygon`、`Circle`、
+  `Ellipse`、`Dot`、`Tex`、`MathTex`、箭头和角标对象；
+- 保存命名坐标、路径、语义 ID 和几何关系，供后续动画继续驱动；
+- 三维图既可按源码视角固定投影，也可保留世界坐标交给 Manim 相机；
+- 用 source project 从作者源码可重复生成 ShapeAsset、合成计划、相机镜头和
+  Manim 源码等派生产物。
 
-```python
-from math import pi
-from manim import Scene
-from polyhedron_visibility.quadrics import (
-    ConeSpec, QuadricSectionRig, SectionPlane,
-)
+### 2. 解析几何与自动遮挡
 
-class ConeSectionRigQuickStart(Scene):
-    def construct(self):
-        cone = ConeSpec("cone", (0, 0, -1.5), (0, 0, 1), pi / 6, (0, 4))
-        plane = SectionPlane(
-            "cut", (0, 0, -0.4), (0.45, 0, 1), u_axis=(0, 1, 0),
-        )
-        with QuadricSectionRig(
-            self, surface=cone, section_id="cone-section", plane=plane,
-            paint_policy="depth_aware_diagrammatic",
-        ).session() as section:
-            self.play(section.animate_plane_shift(0.6), run_time=2)
-            self.play(section.animate_plane_rotation(
-                axis=(0, 0, 1), angle=pi / 3, pivot=cone.apex,
-            ), run_time=2)
+- 闭合凸多面体、有限开放面、铰链、自由直线、移动截平面、复制体交接和抽离二面角；
+- 有限球、封闭/开放圆柱、封闭圆锥、开放单锥壳和有限开放双锥壳；
+- 圆、椭圆、抛物线、双曲线、相切点、轮廓线、截口圆、接触圆和真实截线的
+  解析可见性；
+- 在支持范围内，为半透明教学图形建立确定的从远到近绘制关系。
+
+### 3. 平行相机与固定容量 Manim 运行时
+
+- `ParallelCameraState` 同时保存观察方向、世界目标点、画面锚点和缩放，并支持
+  平面正视、斜视和精确侧视；
+- 命名镜头、安全切换、目标跟随、截面时间线、拓扑双 bank、视口事务和受限的
+  多 Rig 全局协调；
+- 预先分配 Cairo 槽位，保持虚线相位和对象身份；更新失败时保留上一正确帧并
+  完整恢复，不在 updater 里临时替换 Mobject。
+
+稳定的架构依赖方向是：
+
+```text
+Geometry -> Topology -> Visibility -> Compositor -> Manim bindings
+几何         拓扑          可见性          绘制关系       Manim 绑定
 ```
 
-直接渲染仓库中的完整示例：
+前四层不依赖 Manim。详细说明见[项目架构](docs/architecture.md)和
+[几何内核分层](docs/geometry-kernel-layers.md)。
 
-```bash
-manim -r 480,270 --fps 15 \
-  examples/quadrics/quadric_section_rig_quick_start.py \
-  ConeSectionRigQuickStart
-```
+## 应该从哪个入口开始
 
-构图时可传 `render_profile="preview"`；正式课堂视频改传 `"final"`，并使用
-960×540、30 fps。
-Preview、Final、Release/Evidence 三档的准确区别，以及一行容量扫描入口，见
-[圆锥截口创作工作流](docs/quadric-authoring-workflow.md)。
+| 目标 | 推荐入口 | 起步文档 |
+| --- | --- | --- |
+| 把 TikZ 编译成原生 Manim 对象 | `compile_document()` + 原生 renderer | [首个 TikZ 场景](docs/user-guide.zh-CN.md#路线一把-tikz-编译成原生-manim-对象) |
+| 从 TikZ 作者源码重建派生产物 | `tikz-native-project` | [源码权威项目](docs/source-authoritative-projects.md) |
+| 处理闭合凸体的隐藏线 | `OcclusionScene3D` | [自动遮挡](docs/automatic-occlusion.md) |
+| 处理开放面或铰链 | `OpenFaceScene3D` | [开放面示例](examples/open_face_visibility/README.md) |
+| 给凸体加入一个移动截平面，并可附加自由直线 | `ConvexSectionScene3D` | [凸截面示例](examples/convex_sections/README.md) |
+| 制作一个有限二次曲面截面动画 | `QuadricSectionRig` | [二次曲面 Quick Start](docs/quadric-authoring-workflow.md) |
+| 处理没有截平面的多个分离二次曲面和曲线 | `QuadricOcclusion3D` | [二次曲面遮挡](docs/quadric-occlusion.md) |
+| 制作回调式或拓扑变化截面 | `QuadricSection3D` / `QuadricSectionTransition3D` | [二次曲面创作](docs/quadric-authoring-workflow.md) |
+| 协调 `OPEN_DOUBLE` 双锥截面 | `CompositeQuadricSection3D` | [二次曲面示例](examples/quadrics/README.md) |
+| 计算丹德林球 | `compute_dandelin_construction()` | [丹德林球契约](docs/dandelin-spheres-v1.md) |
+| 实时重算丹德林曲线实虚 | `DandelinOcclusion3D` | [丹德林使用指南](docs/user-guide.zh-CN.md#路线五选择正确的丹德林路径) |
+| 在 Manim 中播放语义相机镜头 | `MultiProjectionCamera` + `play_parallel_camera_shot_sequence()` | [相机镜头示例](examples/parallel_camera_shots/README.md) |
 
-`QuadricSectionRig` 位于现有 `QuadricSection3D` 之上，不另写求交或绘制器。每个
-动作在交给 `Scene.play` 之前先解析整条运动的临界位置；如果会进入空集、退化，
-或改变曲线族、分支数、组件数、端盖弦启用状态，就提前报错。圆/椭圆的底层标签
-变化、双曲线分支标签翻转和周期参数缝则统一映射到固定槽。画面事务失败时，平面
-状态也会一起回滚。
+完整 Python 和 JSON 接口见[公共 API](docs/public-api.md)。
 
-丹德林球的解析几何、有限圆锥认证和静态 Cairo 教学叠加入口见
-[丹德林球 v1 契约](docs/dandelin-spheres-v1.md)；其中的球体图层是讲解用示意叠加，
-并不声称已经完成圆锥与相切球之间的真实多实体遮挡。可直接渲染的椭圆、抛物线、
-双曲线三幕示例见[丹德林球课堂场景](examples/classroom_dandelin_spheres/README.md)。
-同一份认证构造还能分别生成“轴截面真圆图”和“截面平面圆锥曲线图”；后者不会把
-焦点误画成球心，也不会伪造并不存在的球截面圆。
-对应的受控 TikZ 三视图命令与可编译示例见
-[TikZ-native 丹德林三视图](examples/tikz_dandelin_views/README.md)。其中空间图可启用
-`mode=depth_aware_diagrammatic`：圆锥轮廓、球轮廓、相切圆、截线、截平面边界和
-准线会按同一投影自动分成实线与遮挡虚线，并进入同一个片段级 painter graph
-（绘制先后关系图）。`DandelinOcclusion3D` 还可在平行相机变化时用固定槽位实时重算
-同一份证据；半透明曲面填充仍按教学图层绘制。若改用
-`mode=depth_aware_teaching_transparent`，还会把圆锥拆成远、近两片，把每个球插入
-所属圆锥叶的两片之间，并将截平面拆成 behind / outside / between / front 区域后
-按当前相机自动排序；相切圆线条负责覆盖等深接缝。这个模式认证的是课堂示意图层，
-因此必须保留 `show-contact-circles=true`，隐藏相切圆会在编译前被拒绝；它仍不冒充
-光学透明材质或完整的物理隐藏面结果。首版覆盖单叶圆、椭圆和抛物线；
-双曲线可继续使用前一种自动实虚线模式，无法认证的曲面分片会提前拒绝。
+## 五分钟起步
 
-## 显式三维平面、圆和椭圆
-
-普通 TikZ 的 `circle` 和 `ellipse` 只给出中心与二维半径，不能唯一确定它们在三维
-世界中位于哪个平面。因此，受控三维语法要求先显式声明一个静态支撑平面：
-
-```tex
-\begin{tikzpicture}[space view={(-0.35,-0.35),(1,0),(0,1)}]
-  \coordinate (O) at (0,0,0);
-  \coordinate (U) at (1,0,0);
-  \coordinate (V) at (0,1,0);
-  \DeclareSpacePlane{base-plane}{O/U/V};
-  \DrawSpaceCircle[draw=red,line width=1pt]
-    {circle-a}{base-plane}{0,0}{1.5};
-  \DrawSpaceEllipse[draw=blue]
-    {ellipse-a}{base-plane}{0.5,-0.25}{2}{1};
-\end{tikzpicture}
-```
-
-其中 `O` 是平面原点，`O -> U` 决定局部 u 轴正方向和曲线参数起点，`V` 决定
-局部 v 轴的正侧；曲线中心使用这个平面内的两个局部坐标。`O -> U` 与 `O -> V`
-的长度只用于认证方向和朝向，不会缩放局部坐标或半轴，后两者仍使用世界坐标单位。
-v1 只支持静态 O/U/V 和连续实线描边，填充、虚线、圆弧/椭圆弧以及 O/U/V 的
-动画都会明确拒绝。当前
-embedded geometry-driver 运行时只要同一图片中含有这类曲线就会提前拒绝，即使
-曲线平面与主动驱动无关；只移动 Manim 相机、保持 O/U/V 不变则仍然支持。
-`NativeFixedViewRenderer` 会把一般投影画成真实的仿射椭圆；精确侧视时，圆周或
-椭圆周会退化成一条有两个端点的有限线段，不会延长成无限直线。
-`NativeManim3DRenderer` 则保留曲线所在的真实世界平面，因此改变 Manim 相机不会
-先把源几何压扁成二维图形。
-这套语法只创建独立的静态曲线，不会虚构一张圆盘，也不会自动把曲线登记进
-二次曲面遮挡或统一合成。
-
-普通二维 TikZ 圆和椭圆的写法保持不变；没有 `DeclareSpacePlane` 的三维圆或椭圆
-会明确失败，不会猜测支撑平面。完整边界见
-[支持的 TikZ 子集](docs/supported-tikz.md)和
-[公共 API](docs/public-api.md#explicit-tikz-planar-curves-in-3d)。
-
-现在还提供一套独立的二次曲面模块：在正交投影或一般平行投影下，支持有限
-球体、带端盖圆柱、封闭单锥、张口单锥壳和有限张口双锥壳。封闭单锥的底面是
-真正的平面端盖；张口圆锥只有侧面和开口圆周，不会把开口误当成底面。双锥壳
-会稳定拆成共享顶点的上下两个单锥壳，动画更新时不会替换对象。模块还能解析
-计算平面截出的圆、椭圆、抛物线、
-双曲线及退化情况，并把语义直线、圆弧、椭圆弧和截口曲线自动切成前方实线与
-后方虚线。曲线与曲线投影相交时，也会根据真实深度建立绘图次序。多个彼此严格
-分离的凸二次曲面可以共同参加同一份全局遮挡；如果实体相交或出现无法证明的
-循环前后关系，模块会明确报错，不会猜测画面。
-
-当旋转截平面使圆锥截线依次变成椭圆、抛物线和双曲线时，Manim 控制器会自动
-使用两组预先建立的曲线槽位交接画面。临界位置使用解析计算得到的真正抛物线，
-前后短暂交叉淡化；所有曲线始终进入同一套曲面遮挡和绘图排序，不会在动画中途
-临时创建、删除或冒充另一种数学分支。
-
-二次曲面现在也支持“一个有限凸二次曲面 + 一个截平面”的统一绘图。工具会把
-屏幕中的平面分成实体后方、远近曲面之间、实体前方和投影外部四类区域，再把
-远侧曲面、这些平面区域、近侧曲面、平面边框以及截口实线/虚线放进同一份从后
-到前的图层关系。计算时使用自适应小三角形保证边界精度，真正交给 Manim 绘制
-前又会合并成连续轮廓，因此不会显示内部三角网格的拼接线。接近相切时的小截口
-还会由解析二次型主动触发细分，不依赖“刚好采样到”才出现。
-
-普通场景可以优先使用高层 `QuadricSection3D` 接口：只声明曲面、截面 ID 和
-当前截平面，它就会从同一份截平面自动计算完整截线，并预留以后可能出现的端盖弦
-槽位，不再要求作者手工同步 `section_plane`、`curves` 和
-`allocated_curve_ids`。如果确实只研究平面与曲面轮廓的遮挡，可以显式设置
-`draw_section_boundary=False`；椭圆、抛物线、双曲线之间的拓扑切换则继续委托
-现有固定容量过渡控制器，不另建一套绘制器。拓扑切换时，侧面圆锥曲线使用两组
-固定槽交叉淡化；真实端盖弦始终由当前截平面计算，并保留一个固定的 `cap_min` 或
-`cap_max` 身份，不会把临界时刻的另一张平面的弦误当成当前截线。
-`show_plane=False` 表示完整关闭截平面填充、边框、深度分区和它对曲线的遮挡，
-并不只是把绿色矩形设为透明。
-对于已经声明完整旋转日程的动画，还可以设置
-`use_plane_patch_envelope=True`：系统会用有限实体到旋转轴心的解析距离上界，一次
-算出全程共用的平面矩形，避免每帧重新拟合和矩形边缘轻微跳动。这个矩形只负责
-显示范围，不会反过来改变截线或遮挡真值；普通回调没有完整运动范围，因此不能
-使用这一开关。
-
-日常调镜头、文字和颜色时，可以显式使用 `QUADRIC_PREVIEW_PROFILE`：它采用
-480×270、15 fps、较宽松但仍有明确误差上限的显示折线，并暂时关闭圆锥分组件
-明暗；正式输出再换成 960×540、30 fps 的 `QUADRIC_FINAL_PROFILE`。预览模式仍然
-计算真实截线、语义边界、实虚判断和绘制顺序，不是跳过遮挡计算。
-`QuadricCapacityPlanner` 还可以让现有控制器逐帧走完指定进度和解析关键时刻，记录
-曲面数、边界源数、每个源的 fragment、虚线段、投影长度、平面小片和射线分类峰值，
-随后生成紧凑的 `QuadricManimLimits`。规划器会恢复原 tracker、对象身份和 Scene
-状态；任何一帧超限或几何无法认证都会明确失败。规划结果只保证列出的实际帧和
-关键时刻，不会把有限抽样冒充成整个连续区间的数学上界。具体用法见
-[二次曲面与圆锥曲线遮挡](docs/quadric-occlusion.md#previewfinal-profiles-and-capacity-planning)。
-
-有限张口双锥使用独立的高层 `CompositeQuadricSection3D` 协调器。它先把一份
-`OPEN_DOUBLE` 展开成共享顶点的正、负两个单锥壳，再让现有单曲面算法分别求解，
-最后只绘制一次公共截平面，并把两组曲面、截线和轮廓线合并进同一份绘制顺序。
-两个锥瓣各自保留固定槽位，物理上分开的截线 ID 还能追溯到同一条数学双曲线分支。
-这项支持会保留并检查投影接触的完整点集：只有位于共同顶点容差内的一个单点
-可以通过；远离顶点的接触点、非零长度的重合线段或正面积重叠都会明确失败。
-精确沿截平面观察时，两个锥瓣会各自认证一维截线，再合并成一条有限、无空洞、
-不重复描边的近侧平面轮廓；平面填充消失，但截线的实虚关系、两个锥面的轮廓和
-绘制顺序仍会按当前视角重新计算。相机从有面积视角切到这条直线再切回来时，复用
-原来的固定槽位，不会临时增加或替换 Manim 对象。
-
-## 圆锥截口 v1 的明确边界
-
-当前发布能力以
-[圆锥截口 v1 支持契约](docs/quadric-section-v1-contract.md)为准，不应概括成
-“所有圆锥情况都已支持”。v1 完整支持封闭有限单锥、张口有限单锥壳、圆台截线
-与普通遮挡、圆台侧面和两个真实端盖的分组件明暗、平行投影，以及“一个有限凸
-二次曲面 + 一个有限截平面片”。圆锥的开口圆周、单曲面有限截平面片以及满足
-共同顶点单点接触条件的双锥公共截平面，即使在精确侧视时投影成有限线段，也属于
-已支持情况。
-Manim 的正式生产绑定目前只支持 Cairo。
-
-明确拒绝或暂不支持的范围包括：透视投影、OpenGL 正式绑定、多个一般相交二次
-曲面与同一个截平面的局部合成，以及两个锥瓣投影并非只在共同顶点单点接触的
-双锥视角。
-双锥协调器目前只支持截线拓扑固定的平面回调，不能直接承担椭圆、抛物线、双曲线
-族之间的计划切换。若一维曲线排列本身发生无法认证的正长度重合，仍会明确失败。
-这些情况不会靠猜测或临时图层补丁生成一个看似可用的画面。长期稳定的机器可读
-支持承诺固定在
-[`tests/fixtures/quadric-section-v1-contract.json`](tests/fixtures/quadric-section-v1-contract.json)
-；某次发布的提交、组件实现摘要、构建产物校验值和测试证据固定在
-[`release/quadric-section-v1-release-manifest.json`](release/quadric-section-v1-release-manifest.json)
-；Cairo 验收阈值固定在
-[`tests/baselines/quadric-section-v1-cairo.json`](tests/baselines/quadric-section-v1-cairo.json)。
-普通 PR 为什么只保留快速测试、哪些 960×540 关键帧和完整动画改在夜间或发布时
-运行，以及证据包中每个 JSON、CSV 和视频的含义，见
-[分层 Cairo 验收说明](docs/extended-quadric-ci.md)。
-
-在闭合凸多面体上，还可以继续加入两类对象：
-
-- 独立直线：自动计算直线进入、穿过和离开实体的位置，实体内部的部分自动画成
-  虚线，并可显示稳定的交点标记；
-- 独立截面：移动一个无限延展的数学平面时，自动得到点、线段、三角形、四边形
-  或更多边的凸截面，并让截面边界、原多面体边和辅助线一起参加遮挡计算。画面中
-  的有限矩形默认会自动放大到覆盖完整立体图形，不需要作者预估平面尺寸。
-
-当半透明截平面真正穿过实体时，还可以显式启用“准确透明排序”。模块会先把
-完整平面分成截面内部与外部区域，再沿交线切开被穿过的实体面，最后把这些局部
-三角片按当前平行视角从远到近排列。因此不再需要把整张平面粗暴地放在实体前面
-或后面。
-
-还可以从一个闭合凸多面体中选取两个相邻面，复制成一个可独立移动的二面角。
-复制体刚出现时，原面与原棱会把显示权交给高亮的二面角，因此不会因为重叠绘制
-而突然变深或变粗；平移刚开始时，原面与原棱会按二者在最终画面坐标中的分离
-距离平滑恢复，而不是在第一张运动帧突然全部出现。分离距离达到默认的 `0.12`
-画面单位后，原多面体与复制出的二面角会以完整强度同时参加全局线条遮挡。
-启用准确透明排序后，两组半透明面发生穿插时会先被切成局部三角片，再按
-当前视角逐片排列前后，而不是把整个二面角一律放在原立体的前面或后面。只有
-两个有限多边形真正相交时才会切分；来自同一原始面、处于同一有效前后位置的连续
-三角片会合并成一次透明填充，因此内部计算用的三角边不会显示在最终画面中。
-
-“重合时只显示一次、分离时平滑恢复”现在不是二面角专用逻辑。模块会在复制发生时
-冻结原顶点、原面、原棱与复制体之间的一一对应关系。整块多面体、截面或任意已登记
-子结构都可以使用同一套交接计算：完全重合时复制体拥有画面，开始分离后只恢复与它
-对应的原面和原棱，复制体本身始终保持完整强度。二面角控制器已经改为复用这套通用
-模块，原有 `identity_handoff_distance` 用法保持不变。
-
-现在这条准确模式还会把“面片、可见实线段、被遮挡虚线段”放进同一份前后关系
-图。直线会在穿过面深度的位置以及投影交叉点处继续细分，然后 Manim 按局部深度
-统一绘制。这样不仅虚实判断正确，线与面、线与线交叉处的最终像素层级也正确，
-不会再把所有线条无条件盖在所有半透明面之上。
-
-二面角移出后，还可以选择原多面体的任意一个面作为底面。模块会以原多面体全部
-已登记顶点的几何中心定义旋转；复制出的二面角继承这个中心，发生平移后旋转中心
-也随它一起平移。因此原立体和二面角会在各自当前位置绕自己的中心同步改变朝向，
-而不是绕同一个固定世界点公转。示例还让原立体向一侧移动、二面角向另一侧移动，
-最终分列画面两边；实线、虚线和透明面碎片仍使用同一份逐帧结果更新。
-
-自动适配时，`half_width` 和 `half_height` 只是显示矩形的最小尺寸。模块会按
-当前立体图形在平面两个方向上的完整范围增加 15% 留白；同一次动画中只会继续
-扩大，不会缩小抖动。只有确实要表现一块有限薄片时，才设置
-`plane_patch_mode="strict"`。
-
-闭合凸多面体还可以启用“立体感提示层”：近面会保留较强的原色和不透明度，
-远面、背向面会自动褪色；不同朝向还会在原色附近产生连续的冷暖色阶，投影外
-轮廓会略微加粗。原有虚实线遮挡保持不变，截平面仍使用单独的教学配色。这是
-为了让课件中的前后关系更容易读懂，并不是物理光照模拟。示例采用等轴视角，
-避免正对单个大面而看不到其他面。
-
-## 安装
+项目 CI 验证 Python 3.11 和 3.12；发布证据环境固定为 Python 3.12.13。
+包依赖固定 Manim Community 0.20.1。
 
 ```bash
 git clone https://github.com/Mathlatics/manim-tikz-native.git
 cd manim-tikz-native
-python3 -m venv .venv
+python3.12 -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
 python -m pip install -e ".[test]"
 ```
 
-macOS 上有一个容易误判成“项目坏了”的环境坑：如果 `.venv` 目录带 Finder 的
-hidden 标志，setuptools 生成的 editable `.pth` 文件也可能继承该标志；Python
-3.12 会跳过它。结果是仓库根目录内可以导入，但 Manim 切换到示例文件目录后却
-提示找不到本项目。遇到这种情况只修复隔离虚拟环境的标志，并从仓库外复核导入：
+系统还需要 Cairo/Pango、FFmpeg、XeLaTeX、TikZ、`dvisvgm`、Fandol 和
+Latin Modern 字体。完整安装方法见[中文操作指南](docs/user-guide.zh-CN.md#一选择经过验证的环境)。
+
+检查四个版本化入口：
 
 ```bash
-chflags -R nohidden .venv
-(cd /tmp && "$OLDPWD/.venv/bin/python" -c \
-  'import polyhedron_visibility, tikz_native')
+tikz-native health
+tikz-native-rig-2d health
+tikz-native-rig-3d health
+tikz-native-source-v3 health
 ```
 
-另外需要安装 XeLaTeX、TikZ、Fandol 字体、Latin Modern 字体和 FFmpeg。
-
-如果希望始终以 TikZ 源码为准，并可重复生成临时的 ShapeAsset、统一合成计划和
-Manim Python 源码，可以使用源码项目命令：
+直接渲染仓库中的圆锥截面起步动画：
 
 ```bash
-tikz-native-project build project.json
-tikz-native-project status project.json
-tikz-native-project rebuild project.json
-tikz-native-project clean project.json
+python -m manim --renderer cairo -r 480,270 --fps 15 \
+  --media_dir media/quadric-quickstart \
+  examples/quadrics/quadric_section_rig_quick_start.py \
+  ConeSectionRigQuickStart
 ```
 
-项目清单、缓存失效、事务保护和失败关闭规则见
-[源码权威项目说明](docs/source-authoritative-projects.md)。
+如果希望先从 TikZ 开始，请照着
+[包含 `figure.tex` 和 `scene.py` 的完整两文件示例](docs/user-guide.zh-CN.md#路线一把-tikz-编译成原生-manim-对象)
+操作。
 
-## 主要示例
+## 圆锥截面 Quick Start
+
+普通作者只描述“截平面平移/旋转”这样的数学动作。高层 Rig 会自动处理有限截线、
+实线/虚线、平面与曲面的绘制关系、固定对象槽位和失败回滚：
+
+```python
+from math import pi
+
+from manim import Scene
+from polyhedron_visibility.quadrics import ConeSpec, QuadricSectionRig, SectionPlane
+
+
+class ConeSectionLesson(Scene):
+    def construct(self):
+        cone = ConeSpec("cone", (0, 0, -1.5), (0, 0, 1), pi / 6, (0, 4))
+        plane = SectionPlane(
+            "cut", (0, 0, -0.4), (0.45, 0, 1), u_axis=(0, 1, 0)
+        )
+        with QuadricSectionRig(
+            self,
+            surface=cone,
+            section_id="cone-section",
+            plane=plane,
+            paint_policy="depth_aware_diagrammatic",
+        ).session() as section:
+            self.play(section.animate_plane_shift(0.6), run_time=2)
+            self.play(
+                section.animate_plane_rotation(
+                    axis=(0, 0, 1), angle=pi / 3, pivot=cone.apex
+                ),
+                run_time=2,
+            )
+```
+
+调构图时使用 `render_profile="preview"`、480×270、15 fps；课堂成片改用
+`render_profile="final"`、960×540、30 fps。完整 Preview / Final /
+Release-Evidence 区别见[有限二次曲面创作工作流](docs/quadric-authoring-workflow.md)。
+
+## 丹德林能力边界
+
+丹德林功能有几种有意不同的显示契约：
+
+| 路径 | 已认证内容 | 没有声称的内容 |
+| --- | --- | --- |
+| `DandelinSection3D` | 解析构造和普通圆锥截线 | 球—锥面的物理遮挡；辅助对象位于顶层教学带。 |
+| `DandelinOcclusion3D` | 在固定 Cairo 槽位中随实时相机重算曲线实线/虚线片段 | 物理隐藏面或截平面填充。 |
+| depth-aware 空间 TikZ | 冻结视角下的边界实线/虚线片段 | 运动、相机镜头或物理隐藏面。 |
+| `depth_aware_teaching_transparent` | 静态空间视图、单锥瓣圆/椭圆/抛物线的曲线片段与课堂绘制顺序；必须显示接触圆 | 运动、其他视图、光学透明或不透明实体隐藏面。 |
+| nested-tangent 场景协调器 | 一个圆锥/圆柱母面、一个相切平面、恰好两只相切球和登记过的边界 | 任意多对象遮挡。 |
+
+[圆锥面—圆柱面切换示例](examples/dandelin_cone_cylinder_switch/README.md)使用狭义
+nested-tangent 路径：平面边、母面边、球轮廓、接触圆、真实截线和教学轴线都进入
+同一套解析片段图。半透明填充仍是教学图层；这个示例的最终 Manim 组装也仍属于
+场景代码，不是通用 `DandelinConeCylinderSwitch3D` 公共 facade。
+
+## 必须理解的边界
+
+- 这不是任意 TikZ 转换器；不支持的语法会明确失败，不会改用 SVG 或位图。
+- 自动遮挡要求稳定、显式的拓扑；不能从任意 `VGroup` 或 mesh 猜出可靠模型。
+- 自动遮挡和二次曲面的正式绑定使用 Cairo 与平行投影；透视和 OpenGL 等价绑定
+  不属于 v1 承诺。
+- 普通全局多二次曲面路径要求严格分离。双锥和丹德林相切构型使用的是明确、狭义
+  的协调器，不是一般相交曲面求解器。
+- 教学透明的 painter order 不等于物理光照、折射或通用透明材质模拟。
+- 仓库包含渲染器无关的 motion / section timeline 契约，但不包含浏览器/PPT 编辑器、
+  应用层通用时间线数据库、ShapeAsset 数据库或预览缓存服务。
+
+精确支持与拒绝条件见[支持的 TikZ 子集](docs/supported-tikz.md)、
+[自动遮挡](docs/automatic-occlusion.md)和
+[有限圆锥截面 v1 契约](docs/quadric-section-v1-contract.md)。
+
+## 示例导航
+
+| 示例 | 内容 |
+| --- | --- |
+| [解析椭圆动画](examples/analytic_geometry_ellipse_demo/README.md) | 由 geometry rig 驱动的语义 TikZ 对象。 |
+| [凸体截面](examples/convex_sections/README.md) | 自由直线、移动截面和准确平面/实体透明排序。 |
+| [抽离二面角](examples/derived_dihedral_extraction/README.md) | 复制交接、分离、统一线/面排序和往返。 |
+| [二次曲面示例](examples/quadrics/README.md) | 球、圆柱、圆锥、圆锥曲线族和拓扑切换。 |
+| [高中圆锥截面课堂](examples/classroom_cone_sections/README.md) | 五段带审查关键帧的教学场景。 |
+| [丹德林课堂三幕](examples/classroom_dandelin_spheres/README.md) | 椭圆、抛物线、双曲线的静态教学叠加。 |
+| [丹德林圆锥—圆柱切换](examples/dandelin_cone_cylinder_switch/README.md) | 两只相切球与连续变化的母面。 |
+| [语义相机镜头](examples/parallel_camera_shots/README.md) | 命名平行视角、精确侧视、目标跟随和回滚。 |
+| [源码项目相机镜头](examples/source_project_camera_shots/README.md) | 作者相机 JSON 与可重建派生产物。 |
+
+## 测试与贡献
+
+开发、构建需要安装 `.[dev]`。请按修改范围选择测试层级；下面三条层级命令是
+备选，不是每次都要依次重复执行：
 
 ```bash
-# 闭合凸多面体
-manim -pql examples/polyhedron_visibility/cube_auto_occlusion.py \
-  CubeAutoOcclusionDemo
-
-# 开放二面角
-manim -pql examples/open_face_visibility/dihedral_auto_occlusion.py \
-  DihedralAutoOcclusionDemo
-
-# 直线穿过正方体、移动截面，以及两者组合
-manim -pql examples/convex_sections/convex_sections_demo.py \
-  LineThroughCubeDemo
-manim -pql examples/convex_sections/convex_sections_demo.py \
-  MovingPlaneSectionDemo
-manim -pql examples/convex_sections/convex_sections_demo.py \
-  CombinedSectionAndLineDemo
-manim -pql examples/convex_sections/convex_sections_demo.py \
-  AccurateTransparentSectionDemo
-
-# 四种凸多面体的面明暗、轮廓和动态截面
-manim -pql examples/convex_sections/other_convex_solids_demo.py \
-  TetrahedronSectionDemo TriangularPrismSectionDemo \
-  SquarePyramidSectionDemo OctahedronSectionDemo
-
-# 从长方体、四面体、四棱锥中复制并移出一个二面角
-manim -pql \
-  examples/derived_dihedral_extraction/derived_dihedral_extraction_demo.py \
-  RectangularBoxDihedralDemo TetrahedronDihedralDemo \
-  SquarePyramidDihedralDemo RectangularBoxDihedralRoundTripDemo
-
-# 球面、圆柱、圆锥截口，以及多个二次曲面的全局遮挡
-manim -pql examples/quadrics/quadric_occlusion_demo.py \
-  MovingSphereSectionDemo ObliqueCylinderSectionDemo \
-  ConeSectionFamiliesDemo ConeSectionTopologyTransitionDemo \
-  GlobalQuadricOcclusionDemo
-
-# 对比封闭单锥、张口单锥壳、张口双锥壳，以及平面与开口的交互
-manim -pql examples/quadrics/cone_model_comparison_demo.py \
-  ConeModelComparisonDemo ConeModelPlaneComparisonDemo
-
-# 五个带教学停顿、参数说明和教师提示的高中圆锥截口场景
-manim -ql --fps 8 \
-  examples/classroom_cone_sections/classroom_cone_sections.py \
-  ConicFamilyTransitionLesson ClosedVsOpenConeLesson \
-  HiddenCurvePoliciesLesson ProjectionDegenerationLesson \
-  CapChordTopologyLesson
+python scripts/run_ci_test_tier.py core
+python scripts/run_ci_test_tier.py cairo-smoke
+python scripts/run_ci_test_tier.py all
+python -m build
+python -m twine check dist/*
 ```
 
-课堂场景的数学结论、逐场景命令和 15 张审查关键帧见
-[高中课堂圆锥截口场景库](examples/classroom_cone_sections/README.md)。
+高清关键帧、完整运动扫描、可复现构建和 MP4 证据另行运行。修改运行时或发布证据
+之前，请阅读[贡献说明](CONTRIBUTING.md)、
+[维护与发布指南](docs/maintainer-guide.md)和
+[扩展 Cairo 验收](docs/extended-quadric-ci.md)。
 
-其中往返示例会让高亮复制体完成分离、同步旋转，再重新回到与原形状完全重合的
-位置。反向过程仍使用同一套语义交接计算，因此末帧重新只显示一份形状，不会出现
-两份半透明对象叠加变深。四面体示例专门展示纯分离交接；长方体与四棱锥示例还会
-继续展示同步底面旋转。
+## 许可与安全
 
-## 需要特别理解的边界
+MIT，见 [LICENSE](LICENSE) 与 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
 
-这不是“任意 TikZ 转 Manim”。它只接受文档中明确列出的写法。遇到暂不支持的
-复杂路径、裁剪、渐变、任意宏或拓扑突变时，转换会给出错误并停止，不会偷偷换成
-SVG 或位图。这样做的目的，是保证动画中的每个对象都可读、可编辑、可恢复。
-
-自动遮挡也要求明确的几何语义：顶点、面和需要显示的直线必须有稳定身份。
-模块不会从一个任意 `VGroup` 中猜测拓扑。完整规则见：
-
-- [公共 API](docs/public-api.md)
-- [自动遮挡](docs/automatic-occlusion.md)
-- [圆锥截口创作工作流](docs/quadric-authoring-workflow.md)
-- [二次曲面与圆锥曲线遮挡](docs/quadric-occlusion.md)
-- [圆锥截口 v1 支持契约](docs/quadric-section-v1-contract.md)
-- [快速 CI 与扩展 Cairo 验收](docs/extended-quadric-ci.md)
-- [高中课堂圆锥截口场景库](examples/classroom_cone_sections/README.md)
-- [支持的 TikZ 子集](docs/supported-tikz.md)
-- [架构说明](docs/architecture.md)
-
-本仓库只提供可复用的 Manim 模块，不包含网页编辑器、PPT、时间线、ShapeAsset
-数据库或 ShapeState 数据。源码项目命令会在专用输出目录中生成可随时重建的
-ShapeAsset JSON，但不会管理应用层的素材库。
+TikZ 编译会调用外部 TeX 与 Manim 工具。不要在包含敏感文件的环境中，以不受限
+shell escape 处理不可信源码；详见 [SECURITY.md](SECURITY.md)。

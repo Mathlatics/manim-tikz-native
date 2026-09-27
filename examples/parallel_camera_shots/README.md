@@ -28,15 +28,15 @@ motion and visibility cannot silently drift apart.
 Run one scene at a time:
 
 ```bash
-PYTHONPATH=. manim --renderer=cairo -ql -r 480,270 --fps 6 \
+python -m manim --renderer cairo -ql -r 480,270 --fps 6 \
   examples/parallel_camera_shots/semantic_parallel_camera_demo.py \
   SemanticPlaneShotDemo
 
-PYTHONPATH=. manim --renderer=cairo -ql -r 480,270 --fps 6 \
+python -m manim --renderer cairo -ql -r 480,270 --fps 6 \
   examples/parallel_camera_shots/semantic_parallel_camera_demo.py \
   SingleConeSectionShotDemo
 
-PYTHONPATH=. manim --renderer=cairo -ql -r 480,270 --fps 6 \
+python -m manim --renderer cairo -ql -r 480,270 --fps 6 \
   examples/parallel_camera_shots/semantic_parallel_camera_demo.py \
   OpenDoubleSectionShotDemo
 ```

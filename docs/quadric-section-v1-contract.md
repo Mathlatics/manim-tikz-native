@@ -122,19 +122,29 @@ underlying component ABI to have the same number.
 | `quadric_visibility` | `tikz-native-contract:quadric_visibility/v2` |
 | `quadric_manim` | `tikz-native-contract:quadric_manim/v1` |
 
-The separate release manifest records the exact base commit, live
-`source-sha256` render/cache revisions, reproducible wheel and sdist checksums,
-the Cairo environment, and executable evidence names. A behavior-preserving
-implementation change may update that manifest without pretending the semantic
-support promise changed. The manifest is an external checksum sidecar and is
-therefore excluded from the archives whose checksums it records. A persisted
-author-data ABI revision changes only when existing saved data can no longer be
-read safely.
+Two external release sidecars record exact commits, live `source-sha256`
+render/cache revisions, reproducible wheel/sdist checksums, the Cairo
+environment, and executable evidence names:
+
+- `release/quadric-section-v1-release-manifest.json` is the frozen historical
+  record for the published v0.1.1 bytes;
+- `release/quadric-section-v1-current-main-manifest.json` follows the latest
+  reviewed main-branch implementation.
+
+A behavior-preserving implementation change may refresh the rolling
+current-main sidecar without pretending the semantic support promise changed.
+It must never relabel the frozen historical manifest. Both sidecars are
+excluded from the archives whose checksums they record, avoiding a checksum
+self-reference. A persisted author-data ABI revision changes only when existing
+saved data can no longer be read safely. See
+[`release/README.md`](../release/README.md) for the complete lifecycle.
 
 ## Canonical release fixtures
 
-The release manifest fixes geometry, view matrices, expected semantic counts,
-and evidence test names for these cases:
+The frozen v0.1.1 release manifest fixes geometry, view matrices, expected
+semantic counts, and evidence test names for these seven historical cases.
+The rolling current-main manifest contains additional fixtures and is the
+authority for the latest reviewed `main`:
 
 1. closed finite cone versus open finite shell semantics;
 2. the oblique open-shell cutting-plane frame at offset `0.48`, including the
@@ -199,9 +209,10 @@ V1 never guesses an image outside the matrix:
 ## Change control
 
 Bug fixes that preserve this matrix may keep the public support-contract ID;
-their release manifest, Provider render/cache revisions, build checksums, and
-inspected Cairo evidence are updated independently. Expanding a row from
-unsupported to supported requires new
+their rolling current-main manifest, Provider render/cache revisions, build
+checksums, and inspected Cairo evidence are updated independently. The frozen
+v0.1.1 manifest remains unchanged. Expanding a row from unsupported to
+supported requires new
 canonical geometry, renderer-neutral tests, and—if exposed through Manim—a
 real Cairo regression. Perspective rendering, OpenGL production binding, and
 multi-surface local section arrangements are follow-up projects, not implicit

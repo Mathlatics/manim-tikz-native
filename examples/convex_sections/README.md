@@ -3,10 +3,14 @@
 Render the ordinary-Manim demos with Manim Community 0.20.1:
 
 ```bash
-manim -pql examples/convex_sections/convex_sections_demo.py LineThroughCubeDemo
-manim -pql examples/convex_sections/convex_sections_demo.py MovingPlaneSectionDemo
-manim -pql examples/convex_sections/convex_sections_demo.py CombinedSectionAndLineDemo
-manim -pql examples/convex_sections/convex_sections_demo.py AccurateTransparentSectionDemo
+python -m manim --renderer cairo -ql \
+  examples/convex_sections/convex_sections_demo.py LineThroughCubeDemo
+python -m manim --renderer cairo -ql \
+  examples/convex_sections/convex_sections_demo.py MovingPlaneSectionDemo
+python -m manim --renderer cairo -ql \
+  examples/convex_sections/convex_sections_demo.py CombinedSectionAndLineDemo
+python -m manim --renderer cairo -ql \
+  examples/convex_sections/convex_sections_demo.py AccurateTransparentSectionDemo
 ```
 
 The examples register one closed convex cube, its twelve semantic edges, one
@@ -32,10 +36,14 @@ Four additional closed solids exercise different face/edge topology and
 different section polygons:
 
 ```bash
-manim -pql examples/convex_sections/other_convex_solids_demo.py TetrahedronSectionDemo
-manim -pql examples/convex_sections/other_convex_solids_demo.py TriangularPrismSectionDemo
-manim -pql examples/convex_sections/other_convex_solids_demo.py SquarePyramidSectionDemo
-manim -pql examples/convex_sections/other_convex_solids_demo.py OctahedronSectionDemo
+python -m manim --renderer cairo -ql \
+  examples/convex_sections/other_convex_solids_demo.py TetrahedronSectionDemo
+python -m manim --renderer cairo -ql \
+  examples/convex_sections/other_convex_solids_demo.py TriangularPrismSectionDemo
+python -m manim --renderer cairo -ql \
+  examples/convex_sections/other_convex_solids_demo.py SquarePyramidSectionDemo
+python -m manim --renderer cairo -ql \
+  examples/convex_sections/other_convex_solids_demo.py OctahedronSectionDemo
 ```
 
 Each scene registers the whole closed solid, all of its semantic edges, one

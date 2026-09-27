@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+- reorganize the GitHub documentation around a bilingual landing page,
+  copy-ready user workflows, an indexed reference map, and a maintainer guide;
+  align example commands with the supported Cairo environment and document the
+  exact current-main evidence refresh procedure;
 - add opt-in `depth_aware_diagrammatic` hidden-line visibility to static TikZ
   Dandelin spatial views by reusing the analytic quadric boundary kernel;
   certify each sphere's one-dimensional tangent contact with the exact cone

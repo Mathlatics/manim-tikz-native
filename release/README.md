@@ -36,11 +36,23 @@ otherwise writes a host-specific byte even when the decompressed tar payload
 is identical, which would give macOS and Linux different checksums.
 
 Verify the latest main-branch evidence from the repository root with the
-pinned release environment:
+pinned release environment. The current workflow uses Python 3.12.13 and these
+exact build tools:
+
+```bash
+python -m pip install \
+  build==1.6.0 \
+  setuptools==84.0.0 \
+  twine==7.0.0 \
+  wheel==0.48.0
+```
+
+Then run the verifier (two builds are the default):
 
 ```bash
 python release/verify_quadric_section_release.py \
   --manifest release/quadric-section-v1-current-main-manifest.json \
+  --build-count 2 \
   --evidence-json /tmp/quadric-section-release-verification.json \
   --failure-artifacts-directory /tmp/quadric-section-release-failure
 ```
@@ -51,6 +63,9 @@ does not treat a later production checkout as the released source tree.
 
 The optional failure directory receives the wheel, raw sdist, and normalized
 sdist from a hash-mismatching run. Successful verification leaves it empty.
+When refreshing the rolling sidecar, the verifier does not calculate and
+insert new hashes automatically. Follow the complete
+[probe, hash, and two-build refresh procedure](../docs/maintainer-guide.md#current-main-evidence-refresh).
 
 The scheduled, manually dispatched, and published-release
 `Extended Quadric Acceptance` workflow verifies the current-main sidecar. A
